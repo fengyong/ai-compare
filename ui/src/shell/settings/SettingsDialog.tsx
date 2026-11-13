@@ -274,6 +274,7 @@ function kindName(kind: SessionKind): string {
     'hex-compare': '十六进制比较',
     'picture-compare': '图片比较',
     'folder-sync': '文件夹同步',
+    'folder-merge': '文件夹合并',
   };
   return meta[kind];
 }

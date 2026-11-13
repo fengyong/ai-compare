@@ -95,11 +95,23 @@ export function createDefaultRegistry(): ViewRegistry {
       caps: { panes: 2, editable: false, reports: false, layoutSwitch: true },
       commands: ['session.save', 'session.saveAs', 'session.lock'],
     },
-    // 以下三类/同步：视图本体属 P8/P9，先注册元数据占位（主页置灰 + 阶段 tooltip）
-    { kind: 'table-compare', order: 3, caps: { panes: 2, editable: false, reports: false, layoutSwitch: true }, commands: [] },
-    { kind: 'hex-compare', order: 4, caps: { panes: 2, editable: false, reports: false, layoutSwitch: true }, commands: [] },
-    { kind: 'picture-compare', order: 5, caps: { panes: 2, editable: false, reports: false, layoutSwitch: true }, commands: [] },
-    { kind: 'folder-sync', order: 6, caps: { panes: 2, editable: false, reports: false, layoutSwitch: false }, commands: [] },
+    // P8：文件夹同步/合并视图接入（SYNC-001~005 / DMRG-001~003）
+    {
+      kind: 'folder-sync',
+      order: 3,
+      caps: { panes: 2, editable: false, reports: true, layoutSwitch: false },
+      commands: ['session.save', 'session.saveAs', 'session.lock', 'sync.run', 'sync.swapSides'],
+    },
+    {
+      kind: 'folder-merge',
+      order: 4,
+      caps: { panes: 3, editable: false, reports: true, layoutSwitch: false },
+      commands: ['session.save', 'session.saveAs', 'session.lock', 'merge.decideLeft', 'merge.decideRight', 'merge.skip'],
+    },
+    // 以下三类：视图本体属 P9，注册元数据占位（主页置灰 + 阶段 tooltip）
+    { kind: 'table-compare', order: 5, caps: { panes: 2, editable: false, reports: false, layoutSwitch: true }, commands: [] },
+    { kind: 'hex-compare', order: 6, caps: { panes: 2, editable: false, reports: false, layoutSwitch: true }, commands: [] },
+    { kind: 'picture-compare', order: 7, caps: { panes: 2, editable: false, reports: false, layoutSwitch: true }, commands: [] },
   ];
   for (const d of defs) {
     const meta = KIND_META[d.kind];

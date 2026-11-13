@@ -41,4 +41,24 @@ dirOperate: boolean,
  * P7：三向文本合并入口（text/merge3/* 四方法）
  * 可选字段（缺省 true）：旧引擎载荷不含该字段时按 true 解析
  */
-threeWayMerge?: boolean, };
+threeWayMerge?: boolean, 
+/**
+ * P9：表格比较入口（table/open|sections）
+ * 可选字段（缺省 true）：旧引擎载荷不含该字段时按 true 解析
+ */
+tableCompare?: boolean, 
+/**
+ * P9：十六进制比较入口（hex/open|bytes 分页）
+ * 可选字段（缺省 true）：旧引擎载荷不含该字段时按 true 解析
+ */
+hexCompare?: boolean, 
+/**
+ * P9：补丁应用入口（text/patch/apply）
+ * 可选字段（缺省 true）：旧引擎载荷不含该字段时按 true 解析
+ */
+patchApply?: boolean, 
+/**
+ * P6 提案合入：dir/execute 文件操作执行（dryRun + 执行 + rescan delta）
+ * 可选字段（缺省 true）：旧引擎载荷不含该字段时按 true 解析
+ */
+dirExecute?: boolean, };

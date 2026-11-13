@@ -7,7 +7,10 @@
 //! - 过滤器引擎侧求值（[`filter`]：BC 掩码语义全集 + 三类过滤）；
 //! - CRC 内容比较 + LRU/SQLite 缓存（[`compare`]、[`cache`]，zip 中心目录
 //!   预计算经 `VfsProvider::stored_crc32` 免读判定）；
-//! - 同步状态机数据层（[`sync`]：5 预设 + 自定义规则 operate 计划，不执行）；
+//! - 同步状态机数据层（[`sync`]：5 预设 + 自定义规则 operate 计划，不执行；
+//!   P8 增调度策略 [`sync::SyncStrategy`] 与端到端 [`sync::run_sync`] 报告）；
+//! - 文件夹三路合并数据层（[`merge3way`]：base/left/right 扫描对齐、diff3
+//!   分类、合并计划生成 + execute 层执行，P8）；
 //! - 手动对齐 / 模式对齐扩展口（[`align`]）与平铺模式（[`session::DirModel`]）；
 //! - 惰性 + 后台扫描状态机（[`session::DirModel`]，ADR-004：顶层立即应答、
 //!   后台 tokio 任务推进 delta、聚合状态增量上推、全链路取消令牌、进度事件）。
@@ -20,6 +23,7 @@ pub mod cache;
 pub mod compare;
 pub mod execute;
 pub mod filter;
+pub mod merge3way;
 pub mod quick;
 pub mod session;
 pub mod sync;
@@ -35,9 +39,17 @@ pub use align::{ByNameAligner, ManualAlignApplier, NameAligner, AlignedPair, Pat
 pub use cache::HashCache;
 pub use compare::{content_same, fold_chunk, ContentHashMode, CHUNK_SIZE};
 pub use filter::{NameFilter, OtherFilter};
+pub use merge3way::{
+    plan_merge, run_folder_merge, scan_merge, DirMergeRow, MergeCategory, MergeDecision, MergeNode, MergeOpKind,
+    MergePlanParams, MergePlanResult, MergePlannedOp, MergeRoots, MergeRowState, MergeScanResult, MergeScanStats,
+    MergeTarget,
+};
 pub use quick::QuickTest;
 pub use session::{DirDeltaData, DirModel, DirSessionOptions};
-pub use sync::plan_operations;
+pub use sync::{
+    apply_strategy, plan_operations, plan_with_strategy, run_sync, BatchRunReport, BatchStats, ConflictPolicy,
+    OpRecord, RecordStatus, SyncPlan, SyncReport, SyncRequest, SyncStrategy,
+};
 
 pub use execute::{
     execute_ops, execute_planned_operations, sanitize_rel, ExecuteOptions, ExecuteReport, FileOp,

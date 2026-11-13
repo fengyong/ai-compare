@@ -87,6 +87,8 @@ export type { WhitespaceMode } from './generated/WhitespaceMode';
 
 import type { DiffSide } from './generated/DiffSide';
 import type { CompareCriteria } from './generated/CompareCriteria';
+import type { EntryKind } from './generated/EntryKind';
+import type { SideInfo } from './generated/SideInfo';
 
 /** 比较侧（docs/03 §4.1 Side）；生成类型已有 DiffSide，此为向后兼容别名 */
 export type Side = DiffSide;
@@ -183,4 +185,151 @@ export type DirExecuteResult = {
   skipped: DirExecuteOpResult[];
   dryRun: boolean;
   cancelled: boolean;
+};
+
+/* ============================================================
+ * 4. P8 提案：文件夹三路合并协议（UI 本地先行，mock 同形模拟）
+ * ============================================================
+ *
+ * ai-dir 引擎侧三路合并数据层已落地（engine/ai-dir/src/merge3way.rs：
+ * scan_merge / plan_merge / run_folder_merge，含 diff3 分类/决策继承/
+ * 输出目标三根执行），但 ai-protocol 归并行 P9 独占，RPC 入口待主会话
+ * 协调合入。本地类型与引擎结构同形（camelCase serde 形态见
+ * merge3way::DirMergeRow 及 P8 交付报告"协议/RPC 变更清单"）：
+ *
+ *   dir/mergeScan    { base, left, right } →
+ *     { sessionId, rows: DirMergeRow[], stats }
+ *   dir/mergePlan    { sessionId, target, decisions } →
+ *     { sessionId, target, ops: MergePlannedOp[], stats }
+ *   dir/mergeExecute { sessionId, target, ops } →
+ *     { sessionId, target, total, copied, deleted, skipped, failed,
+ *       cancelled, details: MergeExecDetail[], log: string[] }
+ *
+ * mock 引擎已同形实现（浏览器可演示）；真实引擎合入后 UI 零改动切换。
+ */
+
+/** 叶级 diff3 分类（对齐 engine/ai-dir merge3way::MergeCategory） */
+export type DirMergeCategory =
+  | 'same'
+  | 'leftChanged'
+  | 'rightChanged'
+  | 'bothSame'
+  | 'deletedRight'
+  | 'deletedLeft'
+  | 'conflict'
+  | 'leftOnly'
+  | 'rightOnly'
+  | 'baseOnly';
+
+/** 着色口径（FR-DMRG-002：绿=可自动 / 红=冲突 / 灰=孤立 / 暗=三方一致） */
+export type DirMergeRowState = 'same' | 'auto' | 'conflict' | 'orphan';
+
+/** 三路合并行（对齐 merge3way::DirMergeRow；平铺行 + parent 构树） */
+export type DirMergeRow = {
+  relPath: string;
+  name: string;
+  kind: EntryKind;
+  base: SideInfo | null;
+  left: SideInfo | null;
+  right: SideInfo | null;
+  category: DirMergeCategory;
+  rowState: DirMergeRowState;
+  /** 父 rel 路径（根的直接子项为 null） */
+  parent: string | null;
+  depth: number;
+  /** 叶子级内容冲突（双击 → 文本合并视图占位判定） */
+  conflictLeaf: boolean;
+};
+
+export type DirMergeScanStats = {
+  total: number;
+  files: number;
+  dirs: number;
+  same: number;
+  auto: number;
+  conflict: number;
+  orphan: number;
+};
+
+export type DirMergeScanParams = {
+  base: string;
+  left: string;
+  right: string;
+  /** 客户端分配的合并会话句柄 */
+  sessionId: string;
+};
+
+export type DirMergeScanResult = {
+  sessionId: string;
+  rows: DirMergeRow[];
+  stats: DirMergeScanStats;
+};
+
+/** 合并目标（FR-DMRG-001：左/右/第三输出文件夹） */
+export type MergeTarget = 'left' | 'right' | 'output';
+
+/** 行决策（引擎 merge3way::MergeDecision 同形） */
+export type MergeDecision = 'auto' | 'takeLeft' | 'takeRight' | 'both' | 'skip';
+
+/** 合并计划动作（引擎 merge3way::MergeOpKind 同形） */
+export type MergeOpKind = 'takeLeft' | 'takeRight' | 'deleteTarget' | 'keep';
+
+/** 一条合并计划操作（PlannedOperation 三字段同形） */
+export type MergePlannedOp = {
+  kind: MergeOpKind;
+  path: string;
+  reason: string;
+};
+
+export type DirMergePlanStats = {
+  total: number;
+  copied: number;
+  deleted: number;
+  touched: number;
+  skipped: number;
+  failed: number;
+};
+
+export type DirMergePlanParams = {
+  sessionId: string;
+  target: MergeTarget;
+  /** rel 路径 -> 显式决策（目录决策递归展开到子树） */
+  decisions: Record<string, MergeDecision>;
+};
+
+export type DirMergePlanResult = {
+  sessionId: string;
+  target: MergeTarget;
+  ops: MergePlannedOp[];
+  stats: DirMergePlanStats;
+};
+
+/** 单项执行明细（kind 取 MergeOpKind 标签） */
+export type MergeExecDetail = {
+  kind: MergeOpKind | 'unknown';
+  path: string;
+  reason: string;
+  status: 'copied' | 'deleted' | 'touched' | 'planned' | 'skipped' | 'failed';
+  detail: string | null;
+};
+
+export type DirMergeExecuteParams = {
+  sessionId: string;
+  target: MergeTarget;
+  ops: MergePlannedOp[];
+};
+
+export type DirMergeExecuteResult = {
+  sessionId: string;
+  target: MergeTarget;
+  total: number;
+  copied: number;
+  deleted: number;
+  touched: number;
+  skipped: number;
+  failed: number;
+  cancelled: boolean;
+  details: MergeExecDetail[];
+  /** 日志面板行（对齐 FR-SYNC/DMRG 报告需求） */
+  log: string[];
 };

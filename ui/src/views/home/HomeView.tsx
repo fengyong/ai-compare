@@ -16,6 +16,8 @@ import { S } from '../../strings';
  */
 export function HomeView() {
   const openFolderTab = useShell((st) => st.openFolderTab);
+  const openFolderSyncTab = useShell((st) => st.openFolderSyncTab);
+  const openFolderMergeTab = useShell((st) => st.openFolderMergeTab);
   const openTextTab = useShell((st) => st.openTextTab);
   const setNotice = useShell((st) => st.setNotice);
   const [showPanel, setShowPanel] = useState(() => sessionService.getUiState().showSessionPanel !== false);
@@ -68,6 +70,17 @@ export function HomeView() {
       else setNotice(S.home.textPathRequired);
       return;
     }
+    // P8：文件夹同步复用左右两路径；文件夹合并三路以左路径兼任基准
+    if (kind === 'folder-sync') {
+      if (left.trim() && right.trim()) openFolderSyncTab(left.trim(), right.trim());
+      else setNotice(S.home.pathRequired);
+      return;
+    }
+    if (kind === 'folder-merge') {
+      if (left.trim() && right.trim()) openFolderMergeTab(left.trim(), left.trim(), right.trim());
+      else setNotice(S.home.pathRequired);
+      return;
+    }
   };
 
   const onDrop = async (e: React.DragEvent, kind?: SessionKind) => {
@@ -81,6 +94,8 @@ export function HomeView() {
     if (pair.warning) setNotice(pair.warning);
     if (pair.left && pair.right) {
       if (kind === 'text-compare') void openTextTab(pair.left, pair.right);
+      else if (kind === 'folder-sync') openFolderSyncTab(pair.left, pair.right);
+      else if (kind === 'folder-merge') openFolderMergeTab(pair.left, pair.left, pair.right);
       else openFolderTab(pair.left, pair.right);
     }
   };

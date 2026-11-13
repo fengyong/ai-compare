@@ -11,14 +11,15 @@
  * 会话文件只存覆盖项（overrides），不存全量——见 scopes.ts。
  */
 
-/** 六类会话类型（P4 主页大按钮口径：文本/表格/十六进制/图片/文件夹/同步） */
+/** 会话类型（P4 六类 + P8 增文件夹合并）：主页大按钮口径 */
 export type SessionKind =
   | 'folder-compare'
   | 'text-compare'
   | 'table-compare'
   | 'hex-compare'
   | 'picture-compare'
-  | 'folder-sync';
+  | 'folder-sync'
+  | 'folder-merge';
 
 export const SESSION_KINDS: readonly SessionKind[] = [
   'folder-compare',
@@ -27,6 +28,7 @@ export const SESSION_KINDS: readonly SessionKind[] = [
   'hex-compare',
   'picture-compare',
   'folder-sync',
+  'folder-merge',
 ];
 
 export function isSessionKind(v: unknown): v is SessionKind {
@@ -48,7 +50,8 @@ export const KIND_META: Record<SessionKind, KindMeta> = {
   'table-compare': { title: '表格比较', icon: '📊', phase: 'P9', implemented: false },
   'hex-compare': { title: '十六进制比较', icon: '🔢', phase: 'P9', implemented: false },
   'picture-compare': { title: '图片比较', icon: '🖼️', phase: 'P9', implemented: false },
-  'folder-sync': { title: '文件夹同步', icon: '🔄', phase: 'P8', implemented: false },
+  'folder-sync': { title: '文件夹同步', icon: '🔄', phase: 'P8', implemented: true },
+  'folder-merge': { title: '文件夹合并', icon: '🔀', phase: 'P8', implemented: true },
 };
 
 /** 设置作用域（FR-SES-006 四选项 + 子会话专属两项） */
