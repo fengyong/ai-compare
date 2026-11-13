@@ -1,0 +1,17 @@
+# ai-compare 项目级 cargo 配置
+# crates.io 走 rsproxy.cn 镜像（大陆网络下官方源极慢）；不影响全局环境
+[source.crates-io]
+replace-with = 'rsproxy-sparse'
+
+[source.rsproxy-sparse]
+registry = "sparse+https://rsproxy.cn/index/"
+
+[registries.rsproxy]
+index = "sparse+https://rsproxy.cn/index/"
+
+# rustup 工具链下载镜像（供 CI/脚本参考，本机已装 stable）
+# RUSTUP_DIST_SERVER=https://rsproxy.cn
+# RUSTUP_UPDATE_ROOT=https://rsproxy.cn/rustup
+
+[net]
+git-fetch-with-cli = true

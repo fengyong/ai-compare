@@ -24,22 +24,24 @@
 
 ## 当前阶段与断点
 
-**当前**：等待 M0.3 的架构设计 agent 完成（后台运行中）。
+**当前**：M1 Walking Skeleton（docs/04 P0 阶段）双线并行开发中——引擎线 agent、UI 线 agent 均在后台运行。
 
-**下一步（M0.3 完成后立即执行）**：
-1. 验收 docs/03、docs/04（行数、章节完整性）
-2. 初始化 monorepo（git init、目录结构按 docs/03 的规划：engine/、cli/、ui/、docs/、tests/）
-3. 按 docs/04 的「首个可运行切片」启动开发：优先 Rust diff 引擎核心（行级 Myers/patience + 行内词级 diff + diff3）+ 目录扫描对齐，配套单测；UI 壳随后
-4. 开发方式：后台 agent 并行（引擎线 / 测试线 / UI 线），每个 agent 完成后由主会话验收并更新本文件
-5. 23:00 后加大并行度（多 agent 同时开发不同模块）
+**下一步（任一 agent 完成后）**：
+1. 验收该线交付物（引擎线：`cargo build/test/clippy` 全绿、协议收发演示、aic 退出码；UI 线：`pnpm build/test` 全绿、cargo check）
+2. 两线都完成后做集成验收：引擎+UI 对接联调、`aic diff` 与 `diff -u` 对拍、PB-04 冒烟基准 → M1 打勾 + git commit
+3. M1 完成后进入 M2（docs/04 P1 diff 核心完备化 + P2 目录引擎完备化可并行），23:00 后加大并行度
+4. 断点恢复入口：若两 agent 均中断且无登记，按本节从第 1 步重新验收重启
 
 ## 运行中任务登记
 
 | 时间 | 任务 | 状态 |
 | --- | --- | --- |
 | 2026-11-13 21:1x | Agent「架构设计与开发计划」→ docs/03 + docs/04 | ✅ 完成 |
-| 2026-11-13 21:3x | Agent「P0 引擎线」→ Rust workspace + 引擎 crates + aic CLI + 测试 | 运行中 |
-| 2026-11-13 21:3x | Agent「P0 UI 线」→ Tauri2+React 壳 + 目录/文本视图 | 运行中 |
+| 2026-11-13 21:3x | Agent「P0 引擎线」→ Rust workspace + 引擎 crates + aic CLI + 测试 | 运行中（21:44 巡检确认存活，处于读文档/早期阶段） |
+| 2026-11-13 21:3x | Agent「P0 UI 线」→ Tauri2+React 壳 + 目录/文本视图 | 运行中（21:44 巡检确认存活） |
+| 2026-11-13 21:44 | 后台：rustup default stable 修复工具链 | ❌ 失败：与原安装任务并发竞争 downloads 目录（教训：勿并行跑两个 rustup） |
+| 2026-11-13 21:52 | 后台：原 rustup 安装任务仍在下载 stable 工具链（40MB/~200MB） | ⛔ 已主动终止：官方源仅 1.3MB/min，预估还需 1.5h+ |
+| 2026-11-13 21:55 | 重装：rsproxy.cn 镜像装 stable 工具链 | ✅ 完成：rustc/cargo 1.100.0，40 秒装完；另建项目级 `.cargo/config.toml`（crates.io 走 rsproxy 镜像） |
 
 （agent 完成或中断时更新此表；看护任务据此判断是否有工作进行中）
 
@@ -50,10 +52,13 @@
 - 代码须带单测；引擎层（Rust）保持无 UI 依赖，可全量单测
 - 遵循 docs/03 架构决策；如需偏离，先在 docs/03 追加 ADR 再动手
 - 历史决策详见 docs/01、docs/02
-- 工具链：node v26.8.1 / pnpm 12.18.0 已装；rustup stable 安装中（完成后 cargo 在 `$HOME/.cargo/bin`，agent 执行前先 `source "$HOME/.cargo/env"`）
+- 工具链：node v26.8.1 / pnpm 12.18.0 / rustc+cargo 1.100.0（stable，已装好）；crates.io 已配项目级 rsproxy.cn 镜像（`.cargo/config.toml`）；cargo 在 `$HOME/.cargo/bin`，agent 执行前先 `source "$HOME/.cargo/env"`
 
 ## 事件日志
 
 - 2026-11-13 21:0x：目录确认为空，启动双调研 agent
 - 2026-11-13 21:1x：调研完成（docs/01、docs/02 验收通过）；启动架构设计 agent；建立本进度文件与看护定时任务（每 20 分钟）
 - 2026-11-13 21:2x：git init（main 分支）+ 首次提交（docs/01、docs/02、PROGRESS.md）；等待架构 agent 完成
+- 2026-11-13 21:3x：M0.3 完成（docs/03 1033 行 / docs/04 584 行，验收通过并提交）；rustup 后台安装；启动 P0 引擎线 + UI 线双 agent
+- 2026-11-13 21:44：**首次看护巡检**：两开发 agent 均存活（运行中，早期读文档阶段）；发现 rustup 默认工具链缺失 → 已后台修复；docs/01~04 齐全；无中断，无需重启
+- 2026-11-13 21:55：**工具链危机解除**：官方源下载过慢（1.3MB/min）→ 终止原任务改用 rsproxy.cn 镜像，40 秒装完 rustc/cargo 1.100.0；建项目级 crates 镜像配置；UI 线已有产出（ui/ 目录脚手架成型），引擎线 agent 曾停滞 15min（疑等待 cargo），现应自行恢复；提交 .cargo/config.toml
