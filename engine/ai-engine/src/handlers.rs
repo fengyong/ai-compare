@@ -9,7 +9,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use ai_core::{LineTable, TextDiffOptions};
+use ai_core::LineTable;
 use ai_protocol::{error::codes, RpcErrorObject};
 use ai_vfs::VfsPath;
 use serde_json::json;
@@ -64,7 +64,9 @@ pub async fn dispatch(
         ai_protocol::method::DIR_ALIGN => dir_align(params, ctx, out).await,
         ai_protocol::method::DIR_OPERATE => dir_operate(params, ctx).await,
         ai_protocol::method::TEXT_OPEN => text_open(params, ctx).await,
-        ai_protocol::method::TEXT_SECTIONS => text_sections(params, ctx).await,
+        ai_protocol::method::TEXT_SECTIONS => text_sections(params, ctx, out).await,
+        ai_protocol::method::TEXT_LINES => text_lines(params, ctx).await,
+        ai_protocol::method::TEXT_INLINE_DIFF => text_inline_diff(params, ctx).await,
         ai_protocol::method::SESSION_CLOSE => session_close(params, ctx).await,
         other => Err(RpcErrorObject {
             code: codes::METHOD_NOT_FOUND,
@@ -84,11 +86,14 @@ fn initialize() -> Result<Handled, RpcErrorObject> {
         capabilities: ai_protocol::EngineCapabilities {
             dir_compare: true,
             text_compare: true,
-            inline_diff: false,
+            // P3：行内差异懒计算入口开放（text/inlineDiff；超长/超时降级见 inline.rs）
+            inline_diff: true,
             cancel: true,
             delta_batching: true,
             max_delta_batch_rows: u32::try_from(crate::batch::DEFAULT_MAX_BATCH_ROWS)
                 .unwrap_or(u32::MAX),
+            // P3：text/lines 行内容分页入口开放
+            lines_read: Some(true),
             dir_background_scan: true,
             dir_filters: true,
             dir_operate: true,
@@ -442,7 +447,8 @@ fn push_delta(
     }
 }
 
-/// text/open：读两侧文本 -> diff -> 存会话 -> 应答统计
+/// text/open：读两侧文本 -> diff（P3 起走 DiffConfig：重要性 + 手动对齐）
+/// -> 存会话（含两侧行表）-> 应答统计
 async fn text_open(
     params: Option<serde_json::Value>,
     ctx: &HandlerCtx,
@@ -454,7 +460,6 @@ async fn text_open(
     let left_path = VfsPath::parse(&params.left).map_err(|e| mapping::vfs_error_to_rpc(&e))?;
     let right_path = VfsPath::parse(&params.right).map_err(|e| mapping::vfs_error_to_rpc(&e))?;
     let opts_dto = params.options.clone().unwrap_or_default();
-    let opts: TextDiffOptions = mapping::text_options_from_dto(&opts_dto);
 
     let left_text = ctx
         .vfs
@@ -469,20 +474,41 @@ async fn text_open(
 
     let lt = LineTable::from_text(&left_text);
     let rt = LineTable::from_text(&right_text);
-    let out = ai_core::diff_text(&lt, &rt, &opts)
+
+    // P3：骨架选项 + 重要性模型 + 手动对齐（无新参数时与 P0 diff_text 行为一致）
+    let mut config = ai_core::DiffConfig { base: mapping::text_options_from_dto(&opts_dto), ..ai_core::DiffConfig::default() };
+    if let Some(spec) = &params.importance {
+        config.importance = mapping::importance_from_dto(spec);
+    }
+    if let Some(spec) = &params.manual {
+        config.manual = mapping::manual_from_dto(spec);
+        config
+            .manual
+            .validate(lt.len() as u32, rt.len() as u32)
+            .map_err(|e| ai_protocol::error_object(codes::INVALID_PARAMS, format!("{e}")))?;
+    }
+
+    let keyed = ai_core::diff_config(&lt, &rt, &config)
         .map_err(|e| ai_protocol::error_object(codes::INVALID_PARAMS, format!("{e}")))?;
+    let out = keyed.output;
 
     let left_line_count = u32::try_from(lt.len()).unwrap_or(u32::MAX);
     let right_line_count = u32::try_from(rt.len()).unwrap_or(u32::MAX);
-    let dtos: Vec<ai_protocol::Section> = out.sections.iter().map(mapping::section_to_dto).collect();
-    let section_count = dtos.len() as u32;
+    let section_count = u32::try_from(out.sections.len()).unwrap_or(u32::MAX);
     let summary = mapping::summary_to_dto(&out.summary);
 
     {
         let mut sessions = ctx.sessions.lock().await;
         sessions.insert(
             params.session_id.clone(),
-            Session::Text(TextSessionData { sections: dtos, summary }),
+            Session::Text(TextSessionData {
+                sections: out.sections,
+                summary: out.summary,
+                left: lt,
+                right: rt,
+                config,
+                rev: 0,
+            }),
         );
     }
 
@@ -496,31 +522,325 @@ async fn text_open(
     Ok(Handled::Value(serde_json::to_value(&result).expect("text/open 结果可序列化")))
 }
 
+/// 取文本会话（可变访问；闭包可失败。会话表锁内不做重活/不做 await）
+async fn with_text_session<T>(
+    sessions: &SessionMap,
+    id: &str,
+    f: impl FnOnce(&mut TextSessionData) -> Result<T, RpcErrorObject>,
+) -> Result<T, RpcErrorObject> {
+    let mut sessions = sessions.lock().await;
+    let session = sessions.get_mut(id).ok_or_else(|| session_not_found(id))?;
+    match session {
+        Session::Text(data) => f(data),
+        Session::Dir(_) => Err(bad_params(format!("会话不是文本会话: {id}"))),
+    }
+}
+
+/// Change section 的行内懒计算（窗口化触发）：完成时把状态写回会话。
+/// 返回 (逐行结果, 是否存在降级行)。
+///
+/// 逐行位置配对（第 i 行对第 i 行，与 ai-core inline_diff_section 同语义），
+/// 但降级行（超长/超时）也保留在结果中（spans 空 + truncated=true），
+/// 供 UI 按整行差异渲染并驱动 Partial 状态（docs/03 §6.2）。
+fn compute_inline(
+    data: &mut TextSessionData,
+    core_idx: usize,
+) -> (Vec<ai_protocol::InlineLineDiffDto>, bool) {
+    let section = data.sections[core_idx];
+    let (Some(l), Some(r)) = (section.left, section.right) else {
+        return (Vec::new(), false);
+    };
+    let n = l.len().min(r.len()) as usize;
+    let inline_opts = data.config.base.inline.clone();
+    let mut dtos = Vec::with_capacity(n);
+    let mut any_truncated = false;
+    for k in 0..n {
+        let li = l.start as usize + k;
+        let ri = r.start as usize + k;
+        let result = ai_core::inline_diff_line(&data.left.line(li).text, &data.right.line(ri).text, &inline_opts);
+        any_truncated |= result.truncated;
+        dtos.push(mapping::inline_line_diff_to_dto(&ai_core::InlineLineDiff {
+            left_line: li as u32,
+            right_line: ri as u32,
+            result,
+        }));
+    }
+    // 状态写回：Full / Partial（docs/03 §4.1 InlineState；NotComputed -> 懒计算完成）
+    data.sections[core_idx].inline = if any_truncated {
+        ai_core::sections::InlineState::Partial
+    } else {
+        ai_core::sections::InlineState::Full
+    };
+    (dtos, any_truncated)
+}
+
 /// text/sections：窗口化取 section
+///
+/// P3 扩展（全部可选，旧载荷行为不变）：
+/// - 窗口内 Change section 触发行内懒计算（inline 状态 NotComputed -> Full/Partial，
+///   能力位 inlineDiff=true 时 UI 可预期替换段带状态）；
+/// - `withKeys`：响应附带窗口内差异行的逐行 (raw, importance) 双键；
+/// - `importance`：以指定重要性模型重判（ImportanceUpdate 语义，不重跑 diff），
+///   变更的 section id 按重要性分组推送 `text/sections` 通知。
 async fn text_sections(
     params: Option<serde_json::Value>,
     ctx: &HandlerCtx,
+    out: tokio::sync::mpsc::UnboundedSender<crate::server::Outbound>,
 ) -> Result<Handled, RpcErrorObject> {
     let params: ai_protocol::TextSectionsParams = parse_params(params)?;
-    let sessions = ctx.sessions.lock().await;
-    let session = sessions
-        .get(&params.session_id)
-        .ok_or_else(|| session_not_found(&params.session_id))?;
-    let data = match session {
-        Session::Text(data) => data,
-        Session::Dir(_) => return Err(bad_params(format!("会话不是文本会话: {}", params.session_id))),
-    };
-    let total = u32::try_from(data.sections.len()).unwrap_or(u32::MAX);
-    let start = params.offset.min(total) as usize;
-    let end = start.saturating_add(params.count as usize).min(data.sections.len());
-    let result = ai_protocol::TextSectionsResult {
-        session_id: params.session_id,
-        offset: params.offset,
-        total,
-        has_more: end < data.sections.len(),
-        sections: data.sections[start..end].to_vec(),
-    };
-    Ok(Handled::Value(serde_json::to_value(&result).expect("text/sections 结果可序列化")))
+    let session_id = params.session_id.clone();
+
+    // 1. 重要性重判（先于取数；core classify_sections 按当前行表与选项重判）
+    let mut importance_notifications: Vec<ai_protocol::RpcServerNotification> = Vec::new();
+    if let Some(spec) = &params.importance {
+        let imp = mapping::importance_from_dto(spec);
+        let events = with_text_session(&ctx.sessions, &session_id, |data| {
+            let classification = ai_core::classify_sections(
+                &data.sections,
+                &data.left,
+                &data.right,
+                &data.config.base,
+                &imp,
+                &data.config.manual,
+            );
+            let changed = ai_core::apply_classification(&mut data.sections, &classification);
+            data.config.importance = imp;
+            Ok((changed, data.summary))
+        })
+        .await?;
+        let (changed, summary) = events;
+        if !changed.is_empty() {
+            data_rev_bump(&ctx.sessions, &session_id).await?;
+            // core SectionEvent::ImportanceUpdate 语义：一组 ids 共享一个重要性；
+            // 按 Importance 枚举序分组推送（顺序确定，录制/回放友好）
+            let groups: [(ai_protocol::Importance, ai_core::sections::Importance); 3] = [
+                (ai_protocol::Importance::Important, ai_core::sections::Importance::Important),
+                (ai_protocol::Importance::Unimportant, ai_core::sections::Importance::Unimportant),
+                (ai_protocol::Importance::Ignored, ai_core::sections::Importance::Ignored),
+            ];
+            let sections_snapshot =
+                with_text_session(&ctx.sessions, &session_id, |data| Ok(data.sections.clone()))
+                    .await?;
+            for (dto_imp, core_imp) in groups {
+                let ids: Vec<u32> = sections_snapshot
+                    .iter()
+                    .filter(|s| changed.contains(&s.id) && s.important == core_imp)
+                    .map(|s| s.id)
+                    .collect();
+                if ids.is_empty() {
+                    continue;
+                }
+                let rev = with_text_session(&ctx.sessions, &session_id, |data| Ok(data.rev)).await?;
+                let payload = ai_protocol::TextSectionsNotification {
+                    session_id: session_id.clone(),
+                    rev,
+                    appended: Vec::new(),
+                    done: false,
+                    summary: mapping::summary_to_dto(&summary),
+                    event: ai_protocol::TextSectionEventKind::ImportanceUpdate,
+                    replaced_span: None,
+                    with: None,
+                    updated_ids: Some(ids),
+                    importance: Some(dto_imp),
+                };
+                importance_notifications.push(ai_protocol::RpcServerNotification::new(
+                    ai_protocol::method::TEXT_SECTIONS_NOTIFY,
+                    &payload,
+                ));
+            }
+        }
+    }
+
+    // 2. 窗口取数 + 行内懒计算 + 双键
+    let result = with_text_session(&ctx.sessions, &session_id, |data| {
+        let total = u32::try_from(data.sections.len()).unwrap_or(u32::MAX);
+        let start = params.offset.min(total) as usize;
+        let end = start.saturating_add(params.count as usize).min(data.sections.len());
+        let window = start..end;
+
+        // Change section 行内懒计算（NotComputed 才算；已算过直接取状态）
+        let need_inline: Vec<usize> = data.sections[window.clone()]
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| {
+                s.kind == ai_core::sections::SectionKind::Change
+                    && s.inline == ai_core::sections::InlineState::NotComputed
+            })
+            .map(|(i, _)| i)
+            .collect();
+        for i in need_inline {
+            let _ = compute_inline(data, window.start + i);
+        }
+
+        let dtos: Vec<ai_protocol::Section> = data.sections[window.clone()]
+            .iter()
+            .map(mapping::section_to_dto)
+            .collect();
+
+        // 逐行双键（FR-TXT-010：仅差异行，Equal section 不含）
+        let line_keys = if params.with_keys == Some(true) {
+            let opts = data.config.base.clone();
+            let imp = data.config.importance.clone();
+            let mut entries = Vec::new();
+            for sec in &data.sections[window] {
+                match sec.kind {
+                    ai_core::sections::SectionKind::Equal => {}
+                    ai_core::sections::SectionKind::Change | ai_core::sections::SectionKind::Delete => {
+                        let l = sec.left.expect("Change/Delete 必有左区间");
+                        for i in l.start..l.end {
+                            entries.push(mapping::line_keys_entry(
+                                ai_core::options::DiffSide::Left,
+                                i,
+                                &data.left,
+                                i as usize,
+                                &opts,
+                                &imp,
+                            ));
+                        }
+                        if sec.kind == ai_core::sections::SectionKind::Change {
+                            let r = sec.right.expect("Change 必有右区间");
+                            for i in r.start..r.end {
+                                entries.push(mapping::line_keys_entry(
+                                    ai_core::options::DiffSide::Right,
+                                    i,
+                                    &data.right,
+                                    i as usize,
+                                    &opts,
+                                    &imp,
+                                ));
+                            }
+                        }
+                    }
+                    ai_core::sections::SectionKind::Insert => {
+                        let r = sec.right.expect("Insert 必有右区间");
+                        for i in r.start..r.end {
+                            entries.push(mapping::line_keys_entry(
+                                ai_core::options::DiffSide::Right,
+                                i,
+                                &data.right,
+                                i as usize,
+                                &opts,
+                                &imp,
+                            ));
+                        }
+                    }
+                }
+            }
+            Some(entries)
+        } else {
+            None
+        };
+
+        let has_more = end < data.sections.len();
+        Ok(ai_protocol::TextSectionsResult {
+            session_id: session_id.clone(),
+            offset: params.offset,
+            total,
+            has_more,
+            sections: dtos,
+            line_keys,
+        })
+    })
+    .await?;
+
+    // 3. 通知按序入队：importance 组先于应答（响应在最后，见 dir/expand 同款顺序约定）
+    for n in importance_notifications {
+        let _ = out.send(crate::server::Outbound::Notification(n));
+    }
+    Ok(Handled::Value(
+        serde_json::to_value(&result).expect("text/sections 结果可序列化"),
+    ))
+}
+
+/// 会话版本号 +1（重要性重判等模型变更）
+async fn data_rev_bump(sessions: &SessionMap, id: &str) -> Result<(), RpcErrorObject> {
+    with_text_session(sessions, id, |data| {
+        data.rev += 1;
+        Ok(())
+    })
+    .await
+}
+
+/// text/lines：行内容按需分页（docs/03 §2.3.2 大内容约定；能力位 linesRead）
+///
+/// 行数据来自会话内已解码的行表（text/open 时读入）；越界 start 钳制到表尾，
+/// done = 本页之后无更多行（与 UI mock 实现语义一致）。
+async fn text_lines(
+    params: Option<serde_json::Value>,
+    ctx: &HandlerCtx,
+) -> Result<Handled, RpcErrorObject> {
+    let params: ai_protocol::TextLinesParams = parse_params(params)?;
+    let result = with_text_session(&ctx.sessions, &params.session_id, |data| {
+        let (table_len, texts): (usize, Vec<String>) = match params.side {
+            ai_protocol::DiffSide::Left => {
+                let t = &data.left;
+                (t.len(), t.lines_range(0, t.len()).iter().map(|e| e.text.clone()).collect())
+            }
+            ai_protocol::DiffSide::Right => {
+                let t = &data.right;
+                (t.len(), t.lines_range(0, t.len()).iter().map(|e| e.text.clone()).collect())
+            }
+        };
+        let start = (params.start as usize).min(table_len);
+        let end = start.saturating_add(params.count as usize).min(table_len);
+        Ok(ai_protocol::TextLinesResult {
+            side: params.side,
+            start: start as u32,
+            lines: texts[start..end].to_vec(),
+            done: end >= table_len,
+        })
+    })
+    .await?;
+    Ok(Handled::Value(serde_json::to_value(&result).expect("text/lines 结果可序列化")))
+}
+
+/// text/inlineDiff：单个 section 的行内差异懒计算（能力位 inlineDiff=true）
+///
+/// - Change section：逐行位置配对计算（超长行 > maxLineChars 或超时降级，
+///   对应行 truncated=true，section 状态记 Partial）；
+/// - Equal/Insert/Delete：无行内差异内容，状态记 Full；
+/// - 计算结果状态写回会话（下次直接命中，不重算）。
+async fn text_inline_diff(
+    params: Option<serde_json::Value>,
+    ctx: &HandlerCtx,
+) -> Result<Handled, RpcErrorObject> {
+    let params: ai_protocol::TextInlineDiffParams = parse_params(params)?;
+    let result = with_text_session(&ctx.sessions, &params.session_id, |data| {
+        let core_idx = data
+            .sections
+            .iter()
+            .position(|s| s.id == params.section_id)
+            .ok_or_else(|| {
+                ai_protocol::error_object_with_data(
+                    codes::INVALID_PARAMS,
+                    format!("section 不存在: {}", params.section_id),
+                    serde_json::json!({ "sessionId": params.session_id, "sectionId": params.section_id }),
+                )
+            })?;
+        let kind = data.sections[core_idx].kind;
+        let (lines, state) = match kind {
+            ai_core::sections::SectionKind::Change => {
+                let (dtos, any_truncated) = compute_inline(data, core_idx);
+                let state = if any_truncated {
+                    ai_protocol::InlineState::Partial
+                } else {
+                    ai_protocol::InlineState::Full
+                };
+                (dtos, state)
+            }
+            // Equal/Insert/Delete：无行内差异内容，无待算工作
+            _ => (Vec::new(), ai_protocol::InlineState::Full),
+        };
+        Ok(ai_protocol::TextInlineDiffResult {
+            session_id: params.session_id.clone(),
+            section_id: params.section_id,
+            kind: mapping::section_to_dto(&data.sections[core_idx]).kind,
+            state,
+            lines,
+        })
+    })
+    .await?;
+    Ok(Handled::Value(serde_json::to_value(&result).expect("text/inlineDiff 结果可序列化")))
 }
 
 /// session/close：幂等关闭（不存在也返回成功）；目录会话取消后台扫描
@@ -791,5 +1111,299 @@ mod p2_tests {
         };
         assert_eq!(resp["updatedRows"], 2, "对齐后两侧重判: {}", resp);
         drop(rx);
+    }
+}
+
+#[cfg(test)]
+mod p3_tests {
+    use super::*;
+    use crate::server::Outbound;
+    use serde_json::json;
+
+    fn ctx() -> HandlerCtx {
+        HandlerCtx::new(512)
+    }
+
+    fn chan() -> (
+        tokio::sync::mpsc::UnboundedSender<Outbound>,
+        tokio::sync::mpsc::UnboundedReceiver<Outbound>,
+    ) {
+        tokio::sync::mpsc::unbounded_channel()
+    }
+
+    /// 文本语料：首尾相同 + Change（含尾随空白差异行）+ Insert
+    async fn open_text(c: &HandlerCtx, id: &str) {
+        let dir = tempfile::tempdir().unwrap();
+        let l = dir.path().join("L.txt");
+        let r = dir.path().join("R.txt");
+        std::fs::write(&l, "alpha\nbeta one  \ngamma\n").unwrap();
+        std::fs::write(&r, "alpha\nbeta one\ngamma\nNEW\n").unwrap();
+        let (tx, _rx) = chan();
+        let _ = dispatch(
+            "text/open",
+            Some(json!({"sessionId": id, "left": l.to_string_lossy(), "right": r.to_string_lossy()})),
+            c,
+            &ai_dir::CancelFlag::new(),
+            tx,
+        )
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn text_lines_pagination_clamps_and_reports_done() {
+        let c = ctx();
+        open_text(&c, "t1").await;
+        // 第 1 页：2 行，done=false
+        let r = dispatch(
+            "text/lines",
+            Some(json!({"sessionId": "t1", "side": "left", "start": 0, "count": 2})),
+            &c, &ai_dir::CancelFlag::new(), chan().0,
+        )
+        .await
+        .unwrap();
+        let v = match r { Handled::Value(v) => v, _ => panic!("形态") };
+        assert_eq!(v["side"], "left");
+        assert_eq!(v["start"], 0);
+        assert_eq!(v["lines"].as_array().unwrap().len(), 2);
+        assert_eq!(v["done"], false);
+        // 第 2 页越界钳制：start=2 取 10 行 -> 只剩 1 行，done=true
+        let r = dispatch(
+            "text/lines",
+            Some(json!({"sessionId": "t1", "side": "left", "start": 2, "count": 10})),
+            &c, &ai_dir::CancelFlag::new(), chan().0,
+        )
+        .await
+        .unwrap();
+        let v = match r { Handled::Value(v) => v, _ => panic!("形态") };
+        assert_eq!(v["start"], 2);
+        assert_eq!(v["lines"].as_array().unwrap().len(), 1);
+        assert_eq!(v["done"], true);
+        // 越界 start（>= 行数）钳制为空页
+        let r = dispatch(
+            "text/lines",
+            Some(json!({"sessionId": "t1", "side": "right", "start": 99, "count": 5})),
+            &c, &ai_dir::CancelFlag::new(), chan().0,
+        )
+        .await
+        .unwrap();
+        let v = match r { Handled::Value(v) => v, _ => panic!("形态") };
+        assert_eq!(v["start"], 4, "right 侧行数 4，start 钳制到表尾");
+        assert_eq!(v["lines"].as_array().unwrap().len(), 0);
+        assert_eq!(v["done"], true);
+        // 会话不存在 -> 410
+        let e = dispatch(
+            "text/lines",
+            Some(json!({"sessionId": "ghost", "side": "left", "start": 0, "count": 1})),
+            &c, &ai_dir::CancelFlag::new(), chan().0,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(e.code, codes::SESSION_NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn text_inline_diff_lazy_compute_and_states() {
+        let c = ctx();
+        open_text(&c, "t2").await;
+        // sections：equal(0) / change(1) / insert(2)
+        let r = dispatch(
+            "text/sections",
+            Some(json!({"sessionId": "t2", "offset": 0, "count": 10})),
+            &c, &ai_dir::CancelFlag::new(), chan().0,
+        )
+        .await
+        .unwrap();
+        let v = match r { Handled::Value(v) => v, _ => panic!("形态") };
+        let secs = v["sections"].as_array().unwrap();
+        assert_eq!(secs[1]["inline"], "full", "text/sections 窗口内 Change 触发懒计算: {v}");
+        assert_eq!(secs[2]["inline"], "notComputed", "Insert 无行内内容");
+        // inlineDiff RPC：Change section 返回 spans（"beta one  " vs "beta one" 词级 Replace）
+        let r = dispatch(
+            "text/inlineDiff",
+            Some(json!({"sessionId": "t2", "sectionId": 1})),
+            &c, &ai_dir::CancelFlag::new(), chan().0,
+        )
+        .await
+        .unwrap();
+        let v = match r { Handled::Value(v) => v, _ => panic!("形态") };
+        assert_eq!(v["kind"], "change");
+        assert_eq!(v["state"], "full");
+        let lines = v["lines"].as_array().unwrap();
+        assert_eq!(lines.len(), 1, "Change 单行配对");
+        assert_eq!(lines[0]["leftLine"], 1);
+        assert_eq!(lines[0]["rightLine"], 1);
+        let kinds: Vec<&str> = lines[0]["spans"].as_array().unwrap().iter().map(|s| s["kind"].as_str().unwrap()).collect();
+        assert!(kinds.contains(&"delete"), "尾随空白词级差异: {kinds:?}");
+        // 非 Change section：状态 Full、无行内容
+        let r = dispatch(
+            "text/inlineDiff",
+            Some(json!({"sessionId": "t2", "sectionId": 0})),
+            &c, &ai_dir::CancelFlag::new(), chan().0,
+        )
+        .await
+        .unwrap();
+        let v = match r { Handled::Value(v) => v, _ => panic!("形态") };
+        assert_eq!(v["kind"], "equal");
+        assert_eq!(v["state"], "full");
+        assert_eq!(v["lines"].as_array().unwrap().len(), 0);
+        // section 不存在 -> INVALID_PARAMS
+        let e = dispatch(
+            "text/inlineDiff",
+            Some(json!({"sessionId": "t2", "sectionId": 99})),
+            &c, &ai_dir::CancelFlag::new(), chan().0,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(e.code, codes::INVALID_PARAMS);
+    }
+
+    #[tokio::test]
+    async fn text_inline_diff_partial_on_oversized_line() {
+        let c = ctx();
+        let dir = tempfile::tempdir().unwrap();
+        let big = "x".repeat(2000);
+        let l = dir.path().join("L.txt");
+        let r = dir.path().join("R.txt");
+        std::fs::write(&l, format!("{big}\n")).unwrap();
+        std::fs::write(&r, format!("{big}y\n")).unwrap();
+        let (tx, _rx) = chan();
+        let _ = dispatch(
+            "text/open",
+            Some(json!({"sessionId": "t3", "left": l.to_string_lossy(), "right": r.to_string_lossy()})),
+            &c, &ai_dir::CancelFlag::new(), tx,
+        )
+        .await
+        .unwrap();
+        let r = dispatch(
+            "text/inlineDiff",
+            Some(json!({"sessionId": "t3", "sectionId": 0})),
+            &c, &ai_dir::CancelFlag::new(), chan().0,
+        )
+        .await
+        .unwrap();
+        let v = match r { Handled::Value(v) => v, _ => panic!("形态") };
+        assert_eq!(v["state"], "partial", "超长行（> maxLineChars 1000）降级: {v}");
+        let lines = v["lines"].as_array().unwrap();
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0]["truncated"], true);
+        assert_eq!(lines[0]["spans"].as_array().unwrap().len(), 0, "降级行无 spans");
+    }
+
+    #[tokio::test]
+    async fn text_sections_with_keys_and_importance_update() {
+        let c = ctx();
+        open_text(&c, "t4").await;
+        // withKeys：Change 段（左行 1 + 右行 1）+ Insert 段（右行 3）= 3 个双键条目
+        let r = dispatch(
+            "text/sections",
+            Some(json!({"sessionId": "t4", "offset": 0, "count": 10, "withKeys": true})),
+            &c, &ai_dir::CancelFlag::new(), chan().0,
+        )
+        .await
+        .unwrap();
+        let v = match r { Handled::Value(v) => v, _ => panic!("形态") };
+        let keys = v["lineKeys"].as_array().expect("withKeys 应返回 lineKeys");
+        assert_eq!(keys.len(), 3);
+        assert_eq!(keys[0]["side"], "left");
+        assert_eq!(keys[0]["line"], 1);
+        assert_eq!(keys[0]["raw"], "beta one  ");
+        assert_eq!(keys[1]["side"], "right");
+        assert_eq!(keys[1]["raw"], "beta one");
+        // 默认重要性模型下（尾随空白重要）两侧键不同
+        assert_ne!(keys[0]["importance"], keys[1]["importance"]);
+
+        // importance 重判：尾随空白不重要 -> Change 段转 Unimportant，通知推送 ImportanceUpdate
+        let (tx, mut rx) = chan();
+        let r = dispatch(
+            "text/sections",
+            Some(json!({
+                "sessionId": "t4", "offset": 0, "count": 10,
+                "importance": {"trailingWsUnimportant": true}
+            })),
+            &c, &ai_dir::CancelFlag::new(), tx,
+        )
+        .await
+        .unwrap();
+        let v = match r { Handled::Value(v) => v, _ => panic!("形态") };
+        let secs = v["sections"].as_array().unwrap();
+        assert_eq!(secs[1]["important"], "unimportant", "尾随空白差异重判为不重要: {v}");
+        assert_eq!(secs[2]["important"], "important", "孤儿行始终重要（FR-TXT-010）");
+        // 通知：通知先于应答入队（此时应答尚在返回值中），rx 里只有通知
+        let mut got = Vec::new();
+        while let Ok(msg) = rx.try_recv() {
+            got.push(msg);
+        }
+        let notif = got
+            .iter()
+            .find(|m| matches!(m, Outbound::Notification(n) if n.method == "text/sections"))
+            .expect("应推送 text/sections ImportanceUpdate 通知");
+        let payload = match notif {
+            Outbound::Notification(n) => &n.params,
+            _ => unreachable!(),
+        };
+        assert_eq!(payload["event"], "importanceUpdate");
+        assert_eq!(payload["updatedIds"], json!([1]));
+        assert_eq!(payload["importance"], "unimportant");
+        // 重判后 withKeys 的重要性键随新规则折叠 -> 两侧一致
+        let r = dispatch(
+            "text/sections",
+            Some(json!({"sessionId": "t4", "offset": 0, "count": 10, "withKeys": true})),
+            &c, &ai_dir::CancelFlag::new(), chan().0,
+        )
+        .await
+        .unwrap();
+        let v = match r { Handled::Value(v) => v, _ => panic!("形态") };
+        let keys = v["lineKeys"].as_array().unwrap();
+        assert_eq!(keys[0]["importance"], keys[1]["importance"], "重判后双键一致");
+    }
+
+    #[tokio::test]
+    async fn manual_align_options_on_text_open() {
+        let c = ctx();
+        let dir = tempfile::tempdir().unwrap();
+        let l = dir.path().join("L.txt");
+        let r = dir.path().join("R.txt");
+        // 左：keep, A, B, tail；右：keep, tail
+        std::fs::write(&l, "keep\nA\nB\ntail\n").unwrap();
+        std::fs::write(&r, "keep\ntail\n").unwrap();
+        let (tx, _rx) = chan();
+        // 手动对齐：keep(0,1) 对 keep(0,1)（锚点无效组合会被 validate 拒绝）
+        let err = dispatch(
+            "text/open",
+            Some(json!({
+                "sessionId": "t5", "left": l.to_string_lossy(), "right": r.to_string_lossy(),
+                "manual": {"alignAnchors": [{"left": {"start": 0, "end": 2}, "right": {"start": 0, "end": 1}}]}
+            })),
+            &c, &ai_dir::CancelFlag::new(), tx,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.code, codes::INVALID_PARAMS, "等长校验：锚点行数不等应拒绝");
+        // 隔离左侧行 1..3 -> A/B 不与右侧行配对（独立 Delete），不产生 Change
+        let (tx, _rx) = chan();
+        let r = dispatch(
+            "text/open",
+            Some(json!({
+                "sessionId": "t5", "left": l.to_string_lossy(), "right": r.to_string_lossy(),
+                "manual": {"isolate": [{"side": "left", "range": {"start": 1, "end": 3}}]}
+            })),
+            &c, &ai_dir::CancelFlag::new(), tx,
+        )
+        .await
+        .unwrap();
+        let v = match r { Handled::Value(v) => v, _ => panic!("形态") };
+        let _ = v;
+        let r = dispatch(
+            "text/sections",
+            Some(json!({"sessionId": "t5", "offset": 0, "count": 10})),
+            &c, &ai_dir::CancelFlag::new(), chan().0,
+        )
+        .await
+        .unwrap();
+        let v = match r { Handled::Value(v) => v, _ => panic!("形态") };
+        let kinds: Vec<&str> = v["sections"].as_array().unwrap().iter().map(|s| s["kind"].as_str().unwrap()).collect();
+        assert!(kinds.contains(&"delete"), "隔离后 A/B 成 Delete 块: {kinds:?}");
+        assert!(!kinds.contains(&"change"), "隔离行不与对侧配对成 Change: {kinds:?}");
     }
 }

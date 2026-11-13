@@ -21,6 +21,11 @@ deltaBatching: boolean,
  */
 maxDeltaBatchRows: number, 
 /**
+ * P3：text/lines 行内容分页入口（大内容按需分页，docs/03 §2.3.2）
+ * 可选字段（缺省 true）：旧引擎载荷不含该字段时按 true 解析
+ */
+linesRead?: boolean, 
+/**
  * P2：dir/open 惰性 + 后台扫描（lazyScan 参数与 dir/progress 通知）
  */
 dirBackgroundScan: boolean, 

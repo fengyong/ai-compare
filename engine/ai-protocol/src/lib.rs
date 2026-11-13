@@ -56,6 +56,10 @@ pub mod method {
     pub const TEXT_SECTIONS: &str = "text/sections";
     /// text/sections 的流式推送变体（引擎 -> UI 通知，P0 定义类型、暂不推送）
     pub const TEXT_SECTIONS_NOTIFY: &str = "text/sections";
+    /// 行内容按需分页（P3，docs/03 §2.3.2 大内容约定）
+    pub const TEXT_LINES: &str = "text/lines";
+    /// 行内差异懒计算（P3，docs/03 §2.3.2 text/inlineDiff {sectionId}）
+    pub const TEXT_INLINE_DIFF: &str = "text/inlineDiff";
     /// 关闭会话（释放引擎侧模型）
     pub const SESSION_CLOSE: &str = "session/close";
     /// 取消请求（UI -> 引擎通知，LSP 风格）

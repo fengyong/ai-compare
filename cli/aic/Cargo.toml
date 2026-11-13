@@ -4,11 +4,16 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "ai-compare CLI（aic）：diff / quick（进程内链接引擎库，docs/03 §2.1 同一契约两种宿主）"
+description = "ai-compare CLI（aic/aicc 双形态）：diff / quick / 等待型包装（进程内链接引擎库，docs/03 §2.1 同一契约两种宿主）"
 
 [[bin]]
 name = "aic"
 path = "src/main.rs"
+
+# aicc：等待型包装（FR-CLI-001 双形态；VCS difftool/mergetool 调用面）
+[[bin]]
+name = "aicc"
+path = "src/bin/aicc.rs"
 
 [lib]
 name = "aic"

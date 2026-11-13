@@ -44,8 +44,8 @@ pub use inline::{
 };
 pub use incremental::{DiffEngine, TextEdit};
 pub use keys::{
-    aggregate_unimportant, classify_sections, importance_key, raw_key, KeyedDiffOutput, LineKeyPair,
-    LineKeys, SectionKeyInfo,
+    aggregate_unimportant, apply_classification, classify_sections, importance_key, raw_key,
+    KeyedDiffOutput, LineKeyPair, LineKeys, SectionKeyInfo,
 };
 pub use lines::{LineEnding, LineEntry, LineTable};
 pub use myers::{coalesce_ops, diff_seq_deadline, RawOp};
