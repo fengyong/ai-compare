@@ -49,7 +49,9 @@
 | 2026-11-13 23:36 | Agent「P1 diff 核心完备化」（engine/ai-core，算法矩阵/重要性/增量重diff） | ✅ 完成并验收（01:1x）：ai-core 91/91 测试、clippy 零警、对拍 19/21 与 difflib+git 逐 hunk 一致（2 歧义用例性质校验+编辑量守恒）、PB-05 20 万行 standard 24.9ms；提交（仅 P1 文件）；遗留——协议 DTO 映射（Replace/ImportanceUpdate/双键/手动对齐）待 P2/P5 排期 |
 | 2026-11-13 23:36 | Agent「P2 目录引擎完备化」（ai-dir/ai-vfs/protocol/cli，惰性扫描/过滤器/缓存/同步状态机） | ✅ 完成并验收（02:1x）：workspace **259 测试**全绿、clippy 零警、golden 重固化仅 3 能力字段差异、新二进制 e2e 通过、PB-03 10 万项 1.54s 达标、PB-10 delta 23.3ms；修复 5 个关键缺陷（含单线程 runtime 死锁红线）；**M2 联合验收通过并提交** |
 | 2026-11-14 02:2x | Agent「M3/P3 CLI 全集+文本 RPC 接线+P1 协议映射」（引擎侧：cli/tests/protocol/ai-engine/ai-core API） | ✅ 完成并验收（03:1x）：workspace **318 测试**全绿（+59）、clippy 零警、新二进制 e2e 含 inline=full 路径、git difftool 冒烟 10 断言通过、协议向后兼容有逐字节锚定测试；提交 8b67a72（仅 P3 scope+generated/） |
-| 2026-11-14 02:2x | Agent「M3/P5 文本比较视图完备化」（ui/ 独占：编辑/折叠/语法高亮/查找替换/编码/概览条） | 运行中（03:1x 活跃；工作树已有 ui/ 产出待其交付） |
+| 2026-11-14 02:2x | Agent「M3/P5 文本比较视图完备化」（ui/ 独占：编辑/折叠/语法高亮/查找替换/编码/概览条） | ✅ 完成并验收（03:5x）：214/214 测试（+80）、build/lint/e2e 全绿、冒烟 8 场景实录（编辑→重 diff→撤销→折叠→查找替换 481 命中→概览条跳转→会话缓存存活）；冒烟期自修 3 真实缺陷；提交 5fb8090 |
+| 2026-11-14 04:0x | Agent「M3/P6 文件夹视图与文件操作」（ui/ 独占 + ai-vfs 写 API + ai-dir 执行层） | 运行中 |
+| 2026-11-14 04:0x | Agent「M3/P7 三向合并引擎」（ai-core merge3 + ai-protocol 本波协议权 + ai-engine + aic merge + diff3/git 对拍） | 运行中 |
 | 2026-11-13 23:36 | Agent「P4 UI 壳与会话体系」（ui/，主页/多窗口/会话持久化/ViewRegistry） | ✅ 完成并验收（含一次并发中断+SendMessage 原地续跑）：134/134 测试（+83）、build/lint/e2e:engine 全绿、浏览器冒烟全流程通过（00:47 主会话复验）；遗留项见 ui/README P4 边界 |
 
 ### M3 断点（下一步，P3/P5 并行）
@@ -104,3 +106,5 @@
 - 2026-11-14 03:00：**第 2 次巡检**：P3/P5 高度活跃（模型调用 2s/5s 前各一次，尚在文档消化与设计段）；不干预
 - 2026-11-14 03:1x：**P3 完成并验收提交**（8b67a72，41 文件 +3547）：aicc 等待型包装（difftool/mergetool 双约定）、退出码 11-13 细分、rules 重要性判等、diff 算法开关、text/lines+inlineDiff RPC、P1 协议映射（SectionEvent 双键/手动对齐，旧载荷逐字节不变有测试锚定）；git difftool 真仓库冒烟 10 断言通过；318 测试全绿；协调事项——UI 本地 TextLines 类型与 generated/ 重复，P5 交付时切 re-export；P5 继续运行
 - 2026-11-14 03:20：**第 3 次巡检**：P5 活跃（构建验证/设计段，近 12 分钟无落盘属正常）；不干预
+- 2026-11-14 03:5x：**P5 完成并验收提交**（5fb8090）：UI 214/214 测试（+80）、e2e 含 P3 新 RPC 面；**M2 MVP 用户故事全量闭环**（五线 P1/P2/P3/P4/P5 齐备）；累计引擎 318 + UI 214 = 532 测试
+- 2026-11-14 04:0x：**M3 下一波双线启动**：P6（文件夹视图+文件操作：ui/ 独占 + ai-vfs 写 API + ai-dir 执行层）、P7（三向合并引擎：ai-core merge3 + 协议权移交 P7 + aic merge + GNU diff3/git merge-file 对拍）；文件权限零交集；P6 所需新 RPC 若涉及 ai-engine 写报告由主会话协调
