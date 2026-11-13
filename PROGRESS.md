@@ -53,8 +53,8 @@
 | 2026-11-14 04:0x | Agent「M3/P6 文件夹视图与文件操作」（ui/ 独占 + ai-vfs 写 API + ai-dir 执行层） | ✅ 完成并验收（04:1x）：ai-vfs 21 + ai-dir 79 测试、UI 265（+51）、e2e 过、冒烟 8 场景含镜像落盘 53 项；**主会话全量验证时遇 P7 中间态瞬态失败（2 失败/5 警告），隔离按 crate 复验 P6 scope 全绿后精确提交**；交接——`dir/execute` RPC 提案（DTO 已同形实现于 UI+mock）待下波引擎接线；已代 P7 重固化 golden（threeWayMerge 能力位） |
 | 2026-11-14 04:0x | Agent「M3/P7 三向合并引擎」（ai-core merge3 + ai-protocol 本波协议权 + ai-engine + aic merge + diff3/git 对拍） | ✅ 完成并波次联合验收通过（04:3x）：workspace **420/0 全绿**、clippy 零警、e2e 过；**git merge-file 对拍 28/28 逐字节一致（100%）**，GNU diff3 18/28（差异归类：GNU -A bracketed 语义 vs git 语义，以 git 一致为准）；重要性开关冲突缩小行为有测试；提交入库 |
 | 2026-11-14 04:3x | Agent「M3/P9 表格/十六进制引擎」（ai-core 表格列模型+hex 字节视图模型 + ai-protocol 本波协议权 + ai-engine + cli） | ✅ 完成并波次联合验收通过（05:4x）：workspace **603/0 全绿**（+183）、clippy 零警、e2e 过；对拍 csv 18/18、xxd 6/6、git apply 11/11 结论一致（5 差异全归类）；**dir/execute 接线完成（P6 积压清偿）**；提交入库 |
-| 2026-11-14 05:5x | Agent「M3/P10 文件格式与规则体系」（引擎 formats/rules 注册表+检测+持久化+协议+设置 UI；strings.ts 归 P10） | 运行中 |
-| 2026-11-14 05:5x | Agent「M3/P6b 文件夹视图遗留批」（ui/views/folder-compare 独占：批量重命名对话框/编辑菜单命令/空格标记；不动 strings.ts/store.ts/viewRegistry） | 运行中 |
+| 2026-11-14 05:5x | Agent「M3/P10 文件格式与规则体系」（引擎 formats/rules 注册表+检测+持久化+协议+设置 UI；strings.ts 归 P10） | ⚠️ 06:0x 配额中断于 CLI 后、设置 UI 前；**主会话接手收尾引擎侧**：修 formatAware 缺 ts(optional)、golden/replay 重固化（仅 formatRules 一行）；workspace 699/0 全绿已提交；▶️ 07:1x SendMessage 续跑补设置 UI 两新页 |
+| 2026-11-14 05:5x | Agent「M3/P6b 文件夹视图遗留批」（ui/views/folder-compare 独占：批量重命名对话框/编辑菜单命令/空格标记；不动 strings.ts/store.ts/viewRegistry） | ✅ 完成并验收提交（07:1x）：UI 361 测试（+42）、build/lint/e2e 全绿（agent 冒烟已过+主会话复验门禁；中断于最后门禁，实测全绿）；批量重命名 DOS 掩码+正则/空格标记/编辑命令/快速比较/复制路径/基文件夹导航 |
 | 2026-11-13 23:36 | Agent「P4 UI 壳与会话体系」（ui/，主页/多窗口/会话持久化/ViewRegistry） | ✅ 完成并验收（含一次并发中断+SendMessage 原地续跑）：134/134 测试（+83）、build/lint/e2e:engine 全绿、浏览器冒烟全流程通过（00:47 主会话复验）；遗留项见 ui/README P4 边界 |
 
 ### M3 断点（下一步，P3/P5 并行）
@@ -122,5 +122,7 @@
 - 2026-11-14 05:1x：**P8 完成并 scope 验收提交**：同步策略调度（SyncStrategy 四项可配 + run_sync 端到端 SyncReport）+ 文件夹三路合并数据层（align3/scan_merge/plan_merge，MergeRowState 自底向上聚合）+ 同步视图（预设→策略→预览→逐项改写→执行→报告导出）+ 三栏合并视图（决策继承展开/冲突进度/执行）；主会话修 3 处 trivial clippy 告警；**协议积压清单移交 P9/下波**（dir/operate 策略字段、dir/sync、dir/mergeScan|Plan|Execute、dirMerge 能力位、DirExecuteOp 切 re-export）
 - 2026-11-14 05:4x：**P9 完成并波次联合验收提交**：表格引擎（RFC4180/列对齐两轮匹配/单元格 diff）+ hex 引擎（Full/Fast/None 三模式+分页视窗）+ patch 应用引擎（git 头容错/fuzz/CRLF）+ **dir/execute 接线（P6 积压清偿）**；workspace **603/0 全绿**（+183）；对拍 csv 18/18、xxd 6/6、git apply 11/11 结论一致；累计引擎 603 + UI 319 = **922 测试**
 - 2026-11-14 05:5x：**M3 第三波双线启动**：P10（文件格式与规则体系：引擎注册表/检测/规则应用链 + 协议权 + 设置 UI 两新页，strings.ts 归 P10）、P6b（文件夹视图遗留小批：批量重命名/编辑菜单命令/空格标记/快速比较/复制路径/基文件夹导航——ui/views/folder-compare 独占）；与 P10 零交集设计；P11（报告/脚本处理器）排队下一波
+- 2026-11-14 06:0x：P10/P6b 双双配额中断（P10 于 CLI 后设置 UI 前；P6b 于最后门禁前，冒烟已过）
+- 2026-11-14 07:1x：**主会话接手收尾**：① P6b 最后门禁复验全绿（UI 361 测试/build/lint/e2e）→ 验收提交；② P10 引擎侧验收提交（workspace 699/0 全绿；修 formatAware 缺 ts(optional) 导致的 UI 编译破坏——**教训：ts-rs 导出 Option 字段必须带 ts(optional)**；golden/replay 重固化仅 formatRules 一行）；③ P10 SendMessage 续跑补设置 UI（配额窗口已过 1h+，若仍失败由主会话直接实现设置页）
 - 2026-11-14 05:20：**P10/P6b 首巡**：双线活跃（文档消化段）；不干预
 - 2026-11-14 05:40：**第 2 次巡检**：双线高度活跃（实现段推进中）；不干预
