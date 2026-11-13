@@ -34,6 +34,11 @@ export class DirRowCache {
   readonly sessionId: string;
   private readonly rows: DirRow[] = [];
   private readonly indexOfId = new Map<string, number>();
+  /**
+   * P6b：空格标记集（BC 键盘惯例）。挂在会话缓存层——切换标签/重渲染不丢，
+   * 以行 id（rel 路径）为键，与排序/过滤正交（表头排序不冲突）。
+   */
+  private readonly marks = new Set<string>();
   private stats: DirStats = zeroStats();
   private scanState: ScanState = 'running';
   private progress: ScanProgress | null = null;
@@ -65,6 +70,43 @@ export class DirRowCache {
     return { stats: this.stats, scanState: this.scanState, progress: this.progress, total: this.rows.length };
   }
 
+  // ---- P6b：标记集（会话缓存层持久；变更推版本号触发视图重渲染） ----
+
+  getMarks(): ReadonlySet<string> {
+    return this.marks;
+  }
+
+  isMarked(id: string): boolean {
+    return this.marks.has(id);
+  }
+
+  getMarkCount(): number {
+    return this.marks.size;
+  }
+
+  /** 切换单行标记，返回切换后的状态 */
+  toggleMark(id: string): boolean {
+    if (this.marks.has(id)) this.marks.delete(id);
+    else this.marks.add(id);
+    this.bump();
+    return this.marks.has(id);
+  }
+
+  /** 批量设置标记（选中行整批打标/取消） */
+  setMarks(ids: readonly string[], value: boolean): void {
+    let changed = false;
+    for (const id of ids) {
+      if (value && !this.marks.has(id)) {
+        this.marks.add(id);
+        changed = true;
+      } else if (!value && this.marks.has(id)) {
+        this.marks.delete(id);
+        changed = true;
+      }
+    }
+    if (changed) this.bump();
+  }
+
   /** dir/open 应答到达：行数终值与扫描态（delta 批次推完后 rev 与之对齐） */
   applyOpenResult(rowCount: number, scanState: ScanState): void {
     this.scanState = scanState;
@@ -88,6 +130,7 @@ export class DirRowCache {
         this.indexOfId.delete(id); // 必须同步清 id 索引：否则后续同 id upsert 会被误判为更新，覆盖别的行
         this.rows.splice(idx, 1);
         this.reindex(idx);
+        this.marks.delete(id); // 行已消失，标记同步清除（防悬挂 id：仅显示标记过滤出空行）
       }
     }
     this.stats = d.stats ?? this.stats;

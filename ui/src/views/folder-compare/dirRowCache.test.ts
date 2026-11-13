@@ -116,3 +116,36 @@ describe('DirRowCache', () => {
     expect(open).toHaveBeenCalledTimes(2);
   });
 });
+
+/** P6b：标记集会话缓存层（空格标记持久于会话；变更推版本号） */
+describe('DirRowCache marks', () => {
+  it('toggleMark/setMarks 持久于缓存并推版本号', () => {
+    const c = new DirRowCache('s1');
+    let v0 = c.getSnapshot();
+    expect(c.toggleMark('a.txt')).toBe(true);
+    expect(c.isMarked('a.txt')).toBe(true);
+    expect(c.getMarkCount()).toBe(1);
+    expect(c.getSnapshot()).toBe(v0 + 1); // 版本号推进触发视图重渲染
+
+    c.setMarks(['b.txt', 'c.txt'], true);
+    expect(c.getMarkCount()).toBe(3);
+    c.setMarks(['a.txt', 'b.txt'], false);
+    expect(c.isMarked('c.txt')).toBe(true);
+    expect(c.getMarkCount()).toBe(1);
+    expect(c.getMarks().has('c.txt')).toBe(true);
+    v0 = c.getSnapshot();
+    c.setMarks(['zz.txt'], false); // 无变化不推版本
+    expect(c.getSnapshot()).toBe(v0);
+  });
+
+  it('delta removals 同步清标记（防悬挂 id）', () => {
+    const c = new DirRowCache('s1');
+    c.applyDelta({ sessionId: 's1', upserts: [row('a.txt'), row('b.txt')], removals: [], stats: null, progress: null } as unknown as DirDelta);
+    c.toggleMark('a.txt');
+    c.toggleMark('b.txt');
+    c.applyDelta({ sessionId: 's1', upserts: [], removals: ['a.txt'], stats: null, progress: null } as unknown as DirDelta);
+    expect(c.isMarked('a.txt')).toBe(false);
+    expect(c.isMarked('b.txt')).toBe(true);
+    expect(c.getMarkCount()).toBe(1);
+  });
+});

@@ -22,21 +22,38 @@ import {
   type Side,
 } from './dirOps';
 import { displayFilterPreset, SHOW_ALL_DISPLAY_FILTER } from './dirFilters';
-import { buildTreeIndex, expandAll, orderedFlatRows, orderedTreeRows, toggleExpanded, collapseAll, rowDepth } from './dirTree';
-import { clearSelection, emptySelection, invertSelection, onRowClick, selectAll } from './dirSelection';
+import { buildTreeIndex, expandAll, orderedFlatRows, orderedTreeRows, toggleExpanded, collapseAll, rowDepth, type DirSortKey, type DirSortSpec } from './dirTree';
+import { clearSelection, emptySelection, invertSelection, onRowClick, runEditSelectCommand, selectAll, type EditSelectCommand } from './dirSelection';
 import { ConfirmOpsDialog, PlanPreviewDialog, RenameDialog, type ConfirmOpsDialogState, type PlanPreviewDialogState, type RenameDialogState } from './DirOpsDialogs';
+import { BatchRenameDialog, type BatchRenameDialogState } from './BatchRenameDialog';
+import { QuickCompareDialog, type QuickCompareDialogState } from './QuickCompareDialog';
+import { BasePathBar } from './BasePathBar';
+import { renamesToOps } from './renameTemplate';
+import { copyText } from './clipboard';
+import { F } from './localStrings';
 
 /**
- * 文件夹比较视图（docs/03 §3.4.2 folder-compare / P6 完备化）：
+ * 文件夹比较视图（docs/03 §3.4.2 folder-compare / P6 完备化 + P6b 遗留批）：
  * - 虚拟滚动表（TanStack Virtual）：10 万行目标级窗口渲染（PB-04）；
  * - 树形/平铺切换（FR-DIR-021）：树形按展开状态 DFS 序（dirTree.ts），
  *   惰性会话（lazyScan:true）双击目录消费 dir/expand；
  * - 选择模型（FR-DIR-050）：单击/Ctrl 累加/Shift 连选（dirSelection.ts）；
+ * - P6b 编辑菜单（§3.1.6）：选择较新的/较旧的/孤立的（左右/两侧）/
+ *   所有文件/全选/反选——runEditSelectCommand 数据面 + 计数反馈；
+ * - P6b 空格标记：Space 切换选中行标记集（会话缓存层持久，
+ *   橙色角标；仅显示标记过滤；与表头排序正交——均以行 id 为键）；
+ * - P6b 批量重命名（FR-DIR-064）：DOS 掩码/正则模板 + 预览冲突拦截
+ *   → rename ops 走既有确认 → dir/execute 批次链；
+ * - P6b 快速比较（FR-DIR-013）：摘要对话框（size/mtime/状态 + 快速判定说明）；
+ * - P6b 复制文件名/路径（FR-DIR-066）：右键菜单 + navigator.clipboard（降级提示）；
+ * - P6b 基文件夹导航（FR-DIR-003）：可编辑面包屑，点击层级/上一级/交换侧
+ *   → openFolderTab 打开新会话；
  * - 右键操作（FR-DIR-060~066）：复制/移动/删除/重命名/对时 → 确认对话框
  *   （含不可逆警示）→ dir/execute（mock 同形；真实引擎待协议合入）；
  * - 同步预设（FR-DIR-067）：5 预设按钮 → dir/operate 计划预览 → 执行；
  * - 过滤器（FR-DIR-031/033/035）：名称过滤输入栏 + 显示过滤预设 + 抑制
- *   （青绿还原）→ dir/filter（引擎侧求值；mock 同形实现）。
+ *   （青绿还原）→ dir/filter（引擎侧求值；mock 同形实现）；
+ * - P6b 表头排序（FR-DIR-042）：点击列标题循环 升序→降序→默认，标记不受影响。
  */
 
 interface ExecReport {
@@ -46,10 +63,65 @@ interface ExecReport {
   details: { status: string; kind: string; path: string; detail: string | null }[];
 }
 
+/** P6b 标记角标橙色（BC 标记惯例；CSS 归 theme/global.css（他线独占），内联样式） */
+const MARK_ORANGE = '#e8842c';
+
+const markBadgeStyle: React.CSSProperties = {
+  fontSize: 10,
+  color: MARK_ORANGE,
+  border: `1px solid ${MARK_ORANGE}`,
+  borderRadius: 8,
+  padding: '0 5px',
+  marginLeft: 6,
+  flex: 'none',
+};
+
+const editMenuItemStyle: React.CSSProperties = {
+  border: 'none',
+  background: 'transparent',
+  color: 'inherit',
+  textAlign: 'left',
+  padding: '4px 10px',
+  borderRadius: 4,
+  cursor: 'pointer',
+  font: 'inherit',
+  fontSize: 12,
+  whiteSpace: 'nowrap',
+};
+
+/** 编辑菜单命令表（§3.1.6：较新的/较旧的/孤立的，左/右/两侧；全选等复用既有按钮文案） */
+const EDIT_MENU_ITEMS: { key: string; label: string; cmd?: EditSelectCommand; sep?: boolean }[] = [
+  { key: 'files', label: F.editSelectFiles, cmd: 'selectFiles' },
+  { key: 'sep1', label: '', sep: true },
+  { key: 'newerL', label: F.editSelectNewer('左'), cmd: 'selectNewerLeft' },
+  { key: 'newerR', label: F.editSelectNewer('右'), cmd: 'selectNewerRight' },
+  { key: 'newerB', label: F.editSelectNewer('两侧'), cmd: 'selectNewerBoth' },
+  { key: 'sep2', label: '', sep: true },
+  { key: 'olderL', label: F.editSelectOlder('左'), cmd: 'selectOlderLeft' },
+  { key: 'olderR', label: F.editSelectOlder('右'), cmd: 'selectOlderRight' },
+  { key: 'olderB', label: F.editSelectOlder('两侧'), cmd: 'selectOlderBoth' },
+  { key: 'sep3', label: '', sep: true },
+  { key: 'orphanL', label: F.editSelectOrphan('左'), cmd: 'selectOrphanLeft' },
+  { key: 'orphanR', label: F.editSelectOrphan('右'), cmd: 'selectOrphanRight' },
+  { key: 'orphanB', label: F.editSelectOrphan('两侧'), cmd: 'selectOrphanBoth' },
+];
+
+/** 表头列定义（FR-DIR-042：点击列标题排序；内容列不排序） */
+const HEADER_COLUMNS: { label: string; key: DirSortKey | null; align: string }[] = [
+  { label: S.folder.nameCol, key: 'name', align: '' },
+  { label: `${S.folder.leftTag} · ${S.folder.sizeCol}`, key: 'leftSize', align: 'r' },
+  { label: S.folder.mtimeCol, key: 'leftMtime', align: 'r' },
+  { label: S.folder.contentCol, key: null, align: 'c' },
+  { label: `${S.folder.rightTag} · ${S.folder.sizeCol}`, key: 'rightSize', align: 'r' },
+  { label: S.folder.mtimeCol, key: 'rightMtime', align: 'r' },
+];
+
 export function FolderCompareView({ tab }: { tab: Tab }) {
   const folder = tab.folder!;
   const openTextChild = useShell((st) => st.openTextChild);
   const setNotice = useShell((st) => st.setNotice);
+  // P6b：基文件夹导航（FR-DIR-003）——复用既有 store 动作（新标签 = 新会话）
+  const openFolderTab = useShell((st) => st.openFolderTab);
 
   // sessionId 由客户端分配（生成协议 DirOpenParams），标签创建时即确定；
   // delta 前送在 dir/open 之前挂好，无应答/首批通知的竞态
@@ -71,8 +143,17 @@ export function FolderCompareView({ tab }: { tab: Tab }) {
   const [planState, setPlanState] = useState<PlanPreviewDialogState | null>(null);
   const [renameState, setRenameState] = useState<RenameDialogState | null>(null);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; rowId: string } | null>(null);
+  // ---- P6b：编辑菜单 / 标记过滤 / 表头排序 / 批量重命名 / 快速比较 ----
+  const [editMenuOpen, setEditMenuOpen] = useState(false);
+  const [markOnly, setMarkOnly] = useState(false);
+  const [sortSpec, setSortSpec] = useState<DirSortSpec | null>(null);
+  const [batchRenameState, setBatchRenameState] = useState<BatchRenameDialogState | null>(null);
+  const [quickCompareState, setQuickCompareState] = useState<QuickCompareDialogState | null>(null);
 
   const version = useSyncExternalStore(cache.subscribe, cache.getSnapshot);
+  // 标记集（会话缓存层持久；toggle/setMarks 推版本号触发重渲染）
+  const marks = cache.getMarks();
+  const markCount = cache.getMarkCount();
 
   // ---- 会话建立（ensureOpened 幂等：StrictMode 双调用安全；P6 惰性会话） ----
   useEffect(() => {
@@ -120,13 +201,26 @@ export function FolderCompareView({ tab }: { tab: Tab }) {
     };
   }, [cache, folder.left, folder.right]);
 
-  // ---- 可见行（树形 DFS 序 / 平铺名称序；版本号触发重算） ----
+  // ---- 可见行（树形 DFS 序 / 平铺名称序；表头排序 + 仅显示标记过滤；版本号触发重算） ----
   const allRows = cache.getRows();
   const visibleRows = useMemo(() => {
     void version; // 依赖版本号触发重算（rows 数组原地更新）
-    return flat ? orderedFlatRows(allRows) : orderedTreeRows(buildTreeIndex(allRows), expanded);
-  }, [allRows, flat, expanded, version]);
+    // 表头排序（FR-DIR-042）：树形=逐层排序（目录先、父先于子不变）；平铺=全列表排序。
+    // 标记/选择均以行 id 为键，与排序正交。
+    const base = flat ? orderedFlatRows(allRows, sortSpec) : orderedTreeRows(buildTreeIndex(allRows, sortSpec), expanded);
+    // 仅显示标记（P6b）：客户端过滤，不影响引擎侧显示过滤器
+    return markOnly ? base.filter((r) => marks.has(r.id)) : base;
+  }, [allRows, flat, expanded, version, sortSpec, markOnly, marks]);
   const visibleIds = useMemo(() => visibleRows.map((r) => r.id), [visibleRows]);
+  const visibleIdSet = useMemo(() => new Set(visibleIds), [visibleIds]);
+
+  /** 编辑菜单数据面：全量行 + 当前可见性（显示过滤/标记过滤后的实际可见） */
+  const editMenuRows = useMemo(
+    () => allRows.map((r) => (visibleIdSet.has(r.id) ? { ...r, visible: true } : { ...r, visible: false })),
+    // version 驱动 visibleIdSet 变化（allRows 原地更新时引用不变），显式声明意图
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [allRows, visibleIdSet, version]
+  );
 
   // ---- 虚拟滚动 ----
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -251,6 +345,91 @@ export function FolderCompareView({ tab }: { tab: Tab }) {
     return buildOpsForCommand(cmd, rows, ids, arg);
   };
 
+  // ---- P6b：编辑菜单命令（§3.1.6）→ 选择状态更新 + 计数反馈 ----
+  const applyEditCommand = (cmd: EditSelectCommand, label: string): void => {
+    const next = runEditSelectCommand(cmd, selection, editMenuRows, visibleIds);
+    setSelection(next);
+    setEditMenuOpen(false);
+    // 文案局部常量（待并入 strings.ts）
+    setNotice(`${label} — ${F.editSelectedByCommand(next.selected.size)}`);
+  };
+
+  // ---- P6b：空格标记（BC 键盘惯例；Space 切换选中行标记集） ----
+  const toggleSelectionMarks = (): void => {
+    const ids = [...selection.selected];
+    if (ids.length === 0) return;
+    const target = !cache.isMarked(ids[0]);
+    cache.setMarks(ids, target);
+    // 文案局部常量（待并入 strings.ts）
+    setNotice(target ? F.markedCount(ids.length) : `已取消 ${ids.length} 项标记`);
+  };
+  // 供 window 捕获监听读取的即时引用（避免 effect 闭包过期）
+  const toggleSelectionMarksRef = useRef(toggleSelectionMarks);
+  toggleSelectionMarksRef.current = toggleSelectionMarks;
+  const selectionRef = useRef(selection);
+  selectionRef.current = selection;
+
+  // ---- P6b：表头排序（FR-DIR-042）升序→降序→默认 循环 ----
+  const headerSortClick = (key: DirSortKey): void => {
+    setSortSpec((prev) => {
+      if (prev && prev.key === key) return prev.dir === 1 ? { key, dir: -1 } : null;
+      return { key, dir: 1 };
+    });
+  };
+
+  // ---- P6b：基文件夹导航（FR-DIR-003）——面包屑/上一级/交换侧 → 新会话 ----
+  const openBaseSession = (newLeft: string, newRight: string): void => {
+    if (!newLeft.trim() || !newRight.trim()) {
+      setNotice(F.navInvalidPath);
+      return;
+    }
+    openFolderTab(newLeft, newRight);
+  };
+
+  // ---- P6b：复制文件名/路径（FR-DIR-066；clipboard 降级提示） ----
+  const copyRowText = async (label: string, getText: (row: DirRow) => string): Promise<void> => {
+    const { rows, ids } = targetRows();
+    const picked = rows.filter((r) => ids.has(r.id));
+    if (picked.length === 0) return;
+    const text = picked.map(getText).join('\n');
+    const outcome = await copyText(text);
+    if (outcome === 'failed') {
+      // Tauri WebView 剪贴板受限时：内容打印到控制台，提示手动复制
+      console.log(`[ai-compare ${label}]\n${text}`);
+      setNotice(F.copyFailed);
+    } else {
+      setNotice(F.copyDone(picked.length));
+    }
+  };
+
+  const trimSlash = (p: string): string => (p.endsWith('/') || p.endsWith('\\') ? p.slice(0, -1) : p);
+
+  // ---- P6b：批量重命名（FR-DIR-064）对话框与执行链 ----
+  const openBatchRename = (): void => {
+    const { rows, ids } = targetRows();
+    const picked = rows.filter((r) => ids.has(r.id));
+    if (picked.length === 0) return;
+    setBatchRenameState({
+      rows: picked,
+      allRows,
+      onOk: (renames) => {
+        setBatchRenameState(null);
+        runOps(renamesToOps(renames), F.batchRenameTitle);
+      },
+      onCancel: () => setBatchRenameState(null),
+    });
+  };
+
+  // ---- P6b：快速比较（FR-DIR-013）——单行两侧 / 两行互比 ----
+  const openQuickCompare = (): void => {
+    const { rows, ids } = targetRows();
+    const picked = rows.filter((r) => ids.has(r.id));
+    const pickedFiles = picked.filter((r) => r.kind !== 'dir');
+    const target = pickedFiles.length >= 1 ? pickedFiles.slice(0, 2) : [];
+    if (target.length === 0) return;
+    setQuickCompareState({ rows: target, onClose: () => setQuickCompareState(null) });
+  };
+
   // ---- 同步预设（dir/operate 计划预览 -> 确认执行） ----
   const openPreset = async (preset: SyncPreset): Promise<void> => {
     try {
@@ -296,6 +475,29 @@ export function FolderCompareView({ tab }: { tab: Tab }) {
     items.push({ label: S.folder.ctxDelete, onSelect: () => runOps(commandOps('delete'), S.folder.ctxDelete) });
     items.push({ label: S.folder.ctxTouch, disabled: !sourceSide || !row?.[otherSide(sourceSide)], onSelect: () => runOps(commandOps('touch'), S.folder.ctxTouch) });
     items.push(sep);
+    // ---- P6b：快速比较（FR-DIR-013）/ 批量重命名（FR-DIR-064） ----
+    const { ids: targetIds } = targetRows();
+    const pickedFiles = rows.filter((r) => targetIds.has(r.id) && r.kind !== 'dir');
+    items.push({
+      label: F.quickCompare,
+      disabled: pickedFiles.length === 0 || pickedFiles.length > 2,
+      onSelect: () => openQuickCompare(),
+    });
+    items.push({ label: F.batchRename, disabled: pickedFiles.length === 0 && !row, onSelect: () => openBatchRename() });
+    items.push(sep);
+    // ---- P6b：复制文件名/完整路径/相对路径（FR-DIR-066） ----
+    items.push({ label: F.ctxCopyName, disabled: !row, onSelect: () => void copyRowText(F.ctxCopyName, (r) => r.name) });
+    items.push({
+      label: F.ctxCopyFullPath,
+      disabled: !row,
+      onSelect: () =>
+        void copyRowText(F.ctxCopyFullPath, (r) => {
+          const base = trimSlash(r.left ? folder.left : folder.right);
+          return `${base}/${r.id}`;
+        }),
+    });
+    items.push({ label: F.ctxCopyRelPath, disabled: !row, onSelect: () => void copyRowText(F.ctxCopyRelPath, (r) => r.id) });
+    items.push(sep);
     items.push({
       label: S.folder.ctxRename,
       disabled: !row,
@@ -315,13 +517,31 @@ export function FolderCompareView({ tab }: { tab: Tab }) {
     return items;
   };
 
-  // ---- 键盘：Ctrl/Cmd+A 全选 ----
+  // ---- 键盘：Ctrl/Cmd+A 全选（Space 标记见下方 window 捕获监听） ----
   const onKeyDown = (e: React.KeyboardEvent): void => {
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
       e.preventDefault();
       setSelection(selectAll(visibleIds));
     }
   };
+
+  // ---- P6b：空格标记（BC 惯例 FR-DIR-050）——window 捕获监听解耦说明：
+  // 壳层 shortcutEngine（P4，commands.ts 本批不可改）把 Space 绑到过期桩命令
+  // folder.markSelection 并在 window capture 阶段 stopPropagation，React 合成
+  // 事件永远收不到 Space。同节点（window capture）监听器不受 stopPropagation
+  // 影响且注册序靠后：本标记逻辑照常执行，且本视图的反馈文案覆盖过期桩文案。
+  // 输入焦点保护与引擎同口径（INPUT/TEXTAREA/contentEditable 不触发）。
+  useEffect(() => {
+    const onWinKeyDown = (e: KeyboardEvent): void => {
+      if (e.key !== ' ') return;
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
+      if (!selectionRef.current || selectionRef.current.selected.size === 0) return;
+      toggleSelectionMarksRef.current();
+    };
+    window.addEventListener('keydown', onWinKeyDown, true);
+    return () => window.removeEventListener('keydown', onWinKeyDown, true);
+  }, []);
 
   if (error) {
     return (
@@ -338,9 +558,8 @@ export function FolderCompareView({ tab }: { tab: Tab }) {
   return (
     <div className="aic-folder">
       <div className="aic-folder-toolbar">
-        <span className="aic-folder-paths" title={`${folder.left} ⇄ ${folder.right}`}>
-          {folder.left} ⇄ {folder.right}
-        </span>
+        {/* P6b：基文件夹导航（FR-DIR-003）——可编辑面包屑，点击层级/↑/⇄ 打开新会话 */}
+        <BasePathBar left={folder.left} right={folder.right} onOpen={openBaseSession} />
         {ready ? <DirStatsBar snapshot={cache.getStats()} /> : <span style={{ color: 'var(--aic-text-dim)' }}>{S.engine.connecting}</span>}
       </div>
 
@@ -425,6 +644,59 @@ export function FolderCompareView({ tab }: { tab: Tab }) {
           {S.folder.filterClear}
         </button>
         <span className="sep" />
+        {/* P6b：编辑菜单（FR-DIR-050/§3.1.6 编辑菜单命令） */}
+        <span style={{ position: 'relative' }}>
+          <button className="mini" disabled={!ready} onClick={() => setEditMenuOpen((v) => !v)}>
+            {F.editMenu} ▾
+          </button>
+          {editMenuOpen && (
+            <>
+              <div style={{ position: 'fixed', inset: 0, zIndex: 60 }} onClick={() => setEditMenuOpen(false)} />
+              <div
+                style={{
+                  position: 'absolute',
+                  top: 'calc(100% + 2px)',
+                  left: 0,
+                  zIndex: 61,
+                  background: 'var(--aic-bg-panel)',
+                  border: '1px solid var(--aic-border)',
+                  borderRadius: 6,
+                  boxShadow: '0 6px 20px rgba(0,0,0,0.3)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  minWidth: 220,
+                  padding: 4,
+                }}
+                role="menu"
+              >
+                {EDIT_MENU_ITEMS.map((mi) =>
+                  mi.sep ? (
+                    <span key={mi.key} style={{ height: 1, background: 'var(--aic-border)', margin: '3px 0' }} />
+                  ) : (
+                    <button
+                      key={mi.key}
+                      role="menuitem"
+                      style={editMenuItemStyle}
+                      onClick={() => applyEditCommand(mi.cmd!, mi.label)}
+                    >
+                      {mi.label}
+                    </button>
+                  )
+                )}
+                <span style={{ height: 1, background: 'var(--aic-border)', margin: '3px 0' }} />
+                <button style={editMenuItemStyle} onClick={() => { setSelection(selectAll(visibleIds)); setEditMenuOpen(false); }}>
+                  {S.folder.selectAll}
+                </button>
+                <button style={editMenuItemStyle} onClick={() => { setSelection(invertSelection(selection, visibleIds)); setEditMenuOpen(false); }}>
+                  {S.folder.invertSel}
+                </button>
+                <button style={editMenuItemStyle} onClick={() => { setSelection(clearSelection()); setEditMenuOpen(false); }}>
+                  {S.folder.clearSel}
+                </button>
+              </div>
+            </>
+          )}
+        </span>
         <button className="mini" disabled={!ready} onClick={() => setSelection(selectAll(visibleIds))}>
           {S.folder.selectAll}
         </button>
@@ -434,6 +706,21 @@ export function FolderCompareView({ tab }: { tab: Tab }) {
         <button className="mini" disabled={!ready} onClick={() => setSelection(clearSelection())}>
           {S.folder.clearSel}
         </button>
+        {/* P6b：空格标记 —— 仅显示标记过滤 + 标记计数 */}
+        <span className="sep" />
+        <button
+          className={`toggle${markOnly ? ' on' : ''}`}
+          disabled={!ready}
+          title={F.markOnlyHint}
+          onClick={() => setMarkOnly((v) => !v)}
+        >
+          {F.markOnly}
+        </button>
+        {markCount > 0 && (
+          <span className="sel-chip" style={{ color: MARK_ORANGE }} title={F.markHint}>
+            {F.markedCount(markCount)}
+          </span>
+        )}
         {selectedCount > 0 && <span className="sel-chip">{S.folder.selectedCount(selectedCount)}</span>}
         {!flat && (
           <>
@@ -480,12 +767,20 @@ export function FolderCompareView({ tab }: { tab: Tab }) {
       )}
 
       <div className="aic-dir-header">
-        <span>{S.folder.nameCol}</span>
-        <span className="r">{S.folder.leftTag} · {S.folder.sizeCol}</span>
-        <span className="r">{S.folder.mtimeCol}</span>
-        <span className="c">{S.folder.contentCol}</span>
-        <span className="r">{S.folder.rightTag} · {S.folder.sizeCol}</span>
-        <span className="r">{S.folder.mtimeCol}</span>
+        {/* P6b：表头排序（FR-DIR-042）——点击列标题循环 升序→降序→默认；与标记正交 */}
+        {HEADER_COLUMNS.map((col) => {
+          const active = col.key !== null && sortSpec?.key === col.key;
+          const arrow = active ? (sortSpec!.dir === 1 ? ' ▲' : ' ▼') : '';
+          const style: React.CSSProperties = col.key
+            ? { cursor: 'pointer', userSelect: 'none', color: active ? 'var(--aic-text)' : undefined }
+            : {};
+          return (
+            <span key={col.label + col.align} className={col.align} style={style} title={col.key ? '点击排序' : undefined} onClick={() => col.key && headerSortClick(col.key)}>
+              {col.label}
+              {arrow}
+            </span>
+          );
+        })}
       </div>
 
       <div className="aic-dir-scroll" ref={scrollRef} data-version={version} tabIndex={0} onKeyDown={onKeyDown}>
@@ -516,7 +811,13 @@ export function FolderCompareView({ tab }: { tab: Tab }) {
                 }}
               >
                 {row ? (
-                  <DirRowCells row={row} depth={rowDepth(row.id)} expanded={expanded.has(row.id)} onToggleDir={() => toggleDir(row)} />
+                  <DirRowCells
+                    row={row}
+                    depth={rowDepth(row.id)}
+                    expanded={expanded.has(row.id)}
+                    marked={marks.has(row.id)}
+                    onToggleDir={() => toggleDir(row)}
+                  />
                 ) : (
                   <>
                     <span className="aic-dir-cell placeholder">…</span>
@@ -539,6 +840,8 @@ export function FolderCompareView({ tab }: { tab: Tab }) {
       {confirmState && <ConfirmOpsDialog state={confirmState} />}
       {planState && <PlanPreviewDialog state={planState} />}
       {renameState && <RenameDialog state={renameState} />}
+      {batchRenameState && <BatchRenameDialog state={batchRenameState} />}
+      {quickCompareState && <QuickCompareDialog state={quickCompareState} />}
     </div>
   );
 
@@ -575,10 +878,11 @@ function nonExcludeMasks(text: string): string[] {
 }
 
 /**
- * 行渲染（P6）：目录展开箭头 + 名称缩进 + 抑制青绿（FR-DIR-035）。
+ * 行渲染（P6 + P6b）：目录展开箭头 + 名称缩进 + 抑制青绿（FR-DIR-035）+
+ * 标记橙色角标（P6b 空格标记；与抑制徽标并存）。
  * suppressed 行整行青绿色 + 徽标；hidden 行不进入 visibleRows（dirTree 过滤）。
  */
-function DirRowCells({ row, depth, expanded, onToggleDir }: { row: DirRow; depth: number; expanded: boolean; onToggleDir(): void }) {
+function DirRowCells({ row, depth, expanded, marked, onToggleDir }: { row: DirRow; depth: number; expanded: boolean; marked: boolean; onToggleDir(): void }) {
   const vis = statusVisual(row.status);
   const isDir = row.kind === 'dir';
   const isSuppressed = row.suppressed;
@@ -588,7 +892,7 @@ function DirRowCells({ row, depth, expanded, onToggleDir }: { row: DirRow; depth
     <>
       <span
         className={`aic-dir-cell name ${nameClass}`}
-        title={`${row.id} · ${isSuppressed ? `${S.folder.suppressedBadge} · ` : ''}${vis.label}`}
+        title={`${row.id} · ${marked ? `${F.markedBadge} · ` : ''}${isSuppressed ? `${S.folder.suppressedBadge} · ` : ''}${vis.label}`}
         style={{ paddingLeft: 12 + depth * 18 }}
       >
         <span
@@ -603,6 +907,7 @@ function DirRowCells({ row, depth, expanded, onToggleDir }: { row: DirRow; depth
         <span className="aic-dir-name">
           <i className={`aic-dot ${dotClass}`} />
           <span className="fname">{row.name}</span>
+          {marked && <span style={markBadgeStyle}>{F.markedBadge}</span>}
           {isSuppressed && <span className="sup-badge">{S.folder.suppressedBadge}</span>}
         </span>
       </span>
