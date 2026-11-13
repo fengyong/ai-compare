@@ -14,11 +14,12 @@
 - [x] M0.1 需求调研：`docs/01-需求规格说明书.md`（1548 行，163 个编号需求，P0/P1/P2）
 - [x] M0.2 开源竞品与技术调研：`docs/02-开源竞品与技术调研报告.md`（571 行；结论：Rust headless 引擎 + Tauri 2 UI 解耦）
 - [x] M0.3 架构设计 + 开发计划：`docs/03-架构设计文档.md`（1033 行，10 条 ADR）、`docs/04-开发计划.md`（584 行，P0~P17 阶段）✅ 已验收
-- [ ] **M1 Walking Skeleton（进行中，对应 docs/04 P0 阶段）**：端到端最小闭环（选两个本地文件夹 → 目录比较 → 双击文本文件 → 行级+行内 diff → 展示）
-  - [x] UI 线：Tauri 2 + React 壳 + 目录视图 + 文本视图（CM6）+ 双击开子会话 ✅（44/44 测试、build 零错误、浏览器端到端冒烟通过，含差异回传着色；提交 1297af9）
-  - [x] 引擎线：Rust workspace（ai-protocol/ai-core/ai-vfs/ai-dir/ai-engine）+ aic CLI + golden/replay 测试 ✅（119/119 测试、clippy 零警、Myers 300 轮 oracle 对拍、`aic diff`≡`diff -u`、退出码 0/1/2、38 个 ts-rs 类型已生成到 ui/src/protocol/generated/）
-  - [ ] 集成验收：UI 切真实引擎 + e2e:engine 脚本（agent 运行中；完成后 M1 闭环）
-  - [ ] 集成后决策：Cargo.lock 已改为提交（二进制工程惯例）；引擎遗留项（inlineDiff RPC 入口未开放=能力位上报 false、目录 binary 模式走哈希等）记入 P1/P2 处理
+- [x] **M1 Walking Skeleton ✅ 完成**（对应 docs/04 P0 阶段，提交 1297af9/145c61e/a0801ca）：
+  - [x] 引擎线：Rust workspace 五 crate + ai-engine stdio + aic CLI（119 测试、clippy 零警、Myers 300 轮 oracle 对拍、`aic diff`≡`diff -u`、38 个 ts-rs 类型）
+  - [x] UI 线：Tauri2+React 壳 + 目录/文本视图 + 协议客户端（44 测试、浏览器端到端冒烟）
+  - [x] 集成验收：UI 切 generated 类型、引擎路径修正（workspace 根 target）、`pnpm e2e:engine` 真实引擎全链路全绿（initialize→dir/open→delta 断言→text/sections→shutdown）；顺带修复 dirRowCache 删除未清 id 索引 bug；51 UI 测试 / build / lint / cargo check 全绿
+- [ ] **M2 MVP（进行中）**：按 docs/04 并行启动 P1（diff 核心完备化）+ P2（目录引擎完备化）+ P4（UI 壳与会话体系）
+  - ⚠️ 2026-11-13 23:0x 遇 provider 5 小时配额上限（02:10:56 重置）；若 agent 启动仍报配额错误，等待重置后由看护任务重试
 - [ ] M2 MVP（P0 需求）
 - [ ] M3 V1.0（P0+P1）
 - [ ] M4 V2.0（含 Pro 级功能）
@@ -39,7 +40,17 @@
 | --- | --- | --- |
 | 2026-11-13 21:1x | Agent「架构设计与开发计划」→ docs/03 + docs/04 | ✅ 完成 |
 | 2026-11-13 21:3x | Agent「P0 引擎线」→ Rust workspace + 引擎 crates + aic CLI + 测试 | ✅ 完成并验收：119/119 测试、clippy 零警、退出码矩阵 0/1/2、`aic diff` 与 `diff -u` hunks 等价（主会话复验 + 提交）；Myers 经 300 轮 DP-oracle 对拍；PB-04 冒烟 1 万行 0.8ms |
-| 2026-11-13 22:5x | Agent「M1 集成」→ UI 切真实引擎 + generated 类型合入 + e2e:engine 脚本 | 运行中 |
+| 2026-11-13 22:5x | Agent「M1 集成」→ UI 切真实引擎 + generated 类型合入 + e2e:engine 脚本 | ⚠️ 23:04 因 provider 5h 配额中断于半程；主会话接手完成全部剩余工作并验收（a0801ca） |
+| 2026-11-13 23:36 | Agent「P1 diff 核心完备化」（engine/ai-core，算法矩阵/重要性/增量重diff） | 运行中（23:37 巡检：查 imara-diff 文档） |
+| 2026-11-13 23:36 | Agent「P2 目录引擎完备化」（ai-dir/ai-vfs/protocol/cli，惰性扫描/过滤器/缓存/同步状态机） | 运行中 |
+| 2026-11-13 23:36 | Agent「P4 UI 壳与会话体系」（ui/，主页/多窗口/会话持久化/ViewRegistry） | 运行中 |
+
+### M2 断点（下一步，P1/P2/P4 并行）
+
+1. **P1 diff 核心完备化**（agent，权限限定 `engine/ai-core/` + `tests/`）：docs/04 §P1 全项（Myers/Patience/Histogram 接入、重要性规范化、手动对齐、编辑增量重 diff、行内 diff 超时降级、对拍测试矩阵）
+2. **P2 目录引擎完备化**（agent，权限限定 `engine/ai-dir/`、`engine/ai-vfs/`、`engine/ai-protocol/`、`cli/`）：docs/04 §P2 全项（惰性+后台扫描、快速测试全集、CRC 缓存、过滤器引擎侧求值、SQLite 缓存、同步状态机数据层、10 万项 corpora）
+3. **P4 UI 壳与会话体系**（agent，权限限定 `ui/`）：docs/04 §P4 全项（主页视图、标签/窗口管理、会话保存/作用域、sessions.json/state.json、ViewRegistry、快捷键、设置对话框、rev 同步/重连）
+4. 三 agent 文件权限互斥避免冲突；协议类型变更只允许 P2 的 ai-protocol 做，P1/P4 需要新类型时先在 PROGRESS.md 登记（由主会话协调补协议）
 | 2026-11-13 21:3x | Agent「P0 UI 线」→ Tauri2+React 壳 + 目录/文本视图 | ✅ 完成并验收：44/44 测试、build 零错误、cargo check 过、浏览器端到端冒烟通过（22:31 主会话复验 + 提交 1297af9） |
 | 2026-11-13 21:44 | 后台：rustup default stable 修复工具链 | ❌ 失败：与原安装任务并发竞争 downloads 目录（教训：勿并行跑两个 rustup） |
 | 2026-11-13 21:52 | 后台：原 rustup 安装任务仍在下载 stable 工具链（40MB/~200MB） | ⛔ 已主动终止：官方源仅 1.3MB/min，预估还需 1.5h+ |
@@ -70,3 +81,5 @@
 - 2026-11-13 22:44：**第 4 次看护巡检**：引擎线活跃（10s 前有进展），engine/cli/tests 共 113 文件，target/debug 已有 21 项构建产物（编译/测试循环中）；无中断，不干预
 - 2026-11-13 22:5x：**引擎线完成并验收提交**（145c61e，83 文件）：主会话复验 119/119 测试、clippy 零警、退出码 0/1/2、`aic diff`≡`diff -u`（hunks 逐字节一致）；Cargo.lock 改为提交；启动集成 agent（UI 切真实引擎 + e2e:engine）
 - 2026-11-13 23:04：**第 5 次看护巡检**：集成 agent 活跃（5s 前，读文档/类型比对早期）；已过 23:00 进入预算充裕期，集成完成后按计划并行 P1/P2/P4；无中断，不干预
+- 2026-11-13 23:2x：**集成 agent 因 provider 5h 配额中断**（02:10:56 重置）；主会话接手集成收尾：修 4 个 TS 构建错误 + 3 个测试失败（重写 mockEngine 测试对齐 P0 协议面；**修复 dirRowCache removals 未清 indexOfId 的真 bug**）、引擎路径修正、编写 `ui/scripts/e2e-engine.mjs` 真实引擎端到端脚本并全绿、README 更新；51 UI 测试/build/lint/cargo check 全绿
+- 2026-11-13 23:3x：**M1 walking skeleton 正式闭环**（a0801ca）；PROGRESS 登记 M2 断点：P1/P2/P4 三 agent 并行（文件权限互斥；协议类型只归 P2 改）；配额重置前若启动失败则由看护任务 02:10 后重试
