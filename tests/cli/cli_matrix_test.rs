@@ -321,3 +321,164 @@ fn conflict_code_reserved_constant_documented() {
         assert_ne!(exit_code(&out), 14, "当前命令面不得返回冲突码: {args:?}");
     }
 }
+
+// ---------------------------------------------------------------------------
+// aic merge（P7 三向合并）：退出码 0/1/2 + marker 输出 + --conflict-exit-code
+// ---------------------------------------------------------------------------
+
+/// 三方语料（独立于 fixtures 的 diff 语料）
+struct MergeFixtures {
+    _dir: tempfile::TempDir,
+    base: std::path::PathBuf,
+    left: std::path::PathBuf,
+    right: std::path::PathBuf,
+    /// 两侧同改（无冲突）
+    same_base: std::path::PathBuf,
+    same_left: std::path::PathBuf,
+    same_right: std::path::PathBuf,
+    /// 左改头右改尾（干净合并）
+    clean_base: std::path::PathBuf,
+    clean_left: std::path::PathBuf,
+    clean_right: std::path::PathBuf,
+}
+
+fn merge_fixtures() -> MergeFixtures {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let root = dir.path().to_path_buf();
+    let p = |name: &str| root.join(name);
+    std::fs::write(p("c_base.l"), "h\na\nb\nc\nt\n").unwrap();
+    std::fs::write(p("c_left.l"), "h\nL1\nb\nL2\nt\n").unwrap();
+    std::fs::write(p("c_right.l"), "h\nR1\nb\nR2\nt\n").unwrap();
+    std::fs::write(p("s_base.l"), "a\nb\nc\n").unwrap();
+    std::fs::write(p("s_left.l"), "a\nX\nc\n").unwrap();
+    std::fs::write(p("s_right.l"), "a\nX\nc\n").unwrap();
+    std::fs::write(p("k_base.l"), "1\n2\n3\n4\n5\n").unwrap();
+    std::fs::write(p("k_left.l"), "K1\n2\n3\n4\n5\n").unwrap();
+    std::fs::write(p("k_right.l"), "1\n2\n3\n4\nK5\n").unwrap();
+    MergeFixtures {
+        _dir: dir,
+        base: p("c_base.l"),
+        left: p("c_left.l"),
+        right: p("c_right.l"),
+        same_base: p("s_base.l"),
+        same_left: p("s_left.l"),
+        same_right: p("s_right.l"),
+        clean_base: p("k_base.l"),
+        clean_left: p("k_left.l"),
+        clean_right: p("k_right.l"),
+    }
+}
+
+#[test]
+fn merge_exit_matrix() {
+    let f = merge_fixtures();
+    // 干净合并 -> 0，输出含两侧变化
+    let out = run(&aic(), &["merge", &s(&f.clean_base), &s(&f.clean_left), &s(&f.clean_right)]);
+    assert_eq!(exit_code(&out), 0, "无冲突自动合成 -> 0");
+    assert_eq!(stdout(&out), "K1\n2\n3\n4\nK5\n");
+    // 两侧同改 -> 0（不算冲突，FR-TMRG-003）
+    let out = run(&aic(), &["merge", &s(&f.same_base), &s(&f.same_left), &s(&f.same_right)]);
+    assert_eq!(exit_code(&out), 0, "两侧相同变化不算冲突");
+    assert_eq!(stdout(&out), "a\nX\nc\n");
+    // 冲突 -> 1（默认冲突码），marker 模式输出
+    let out = run(&aic(), &["merge", &s(&f.base), &s(&f.left), &s(&f.right)]);
+    assert_eq!(exit_code(&out), 1, "有未决冲突 -> 1");
+    let text = stdout(&out);
+    assert!(text.contains("<<<<<<<") && text.contains("=======") && text.contains(">>>>>>>"), "marker 模式: {text}");
+    assert!(text.contains("L1") && text.contains("R1"));
+    // --conflict-exit-code 14（FR-CLI-004 对齐）
+    let out = run(
+        &aic(),
+        &["merge", &s(&f.base), &s(&f.left), &s(&f.right), "--conflict-exit-code", "14"],
+    );
+    assert_eq!(exit_code(&out), 14, "--conflict-exit-code 14 生效");
+    // --auto：未决冲突按默认策略（left）解析为纯文本，退出码仍为 1
+    let out = run(&aic(), &["merge", &s(&f.base), &s(&f.left), &s(&f.right), "--auto"]);
+    assert_eq!(exit_code(&out), 1, "auto 模式有未决冲突仍 -> 1");
+    assert_eq!(stdout(&out), "h\nL1\nb\nL2\nt\n", "auto 模式输出合成文本（默认取左）");
+    // --auto --on-conflict base
+    let out = run(
+        &aic(),
+        &["merge", &s(&f.base), &s(&f.left), &s(&f.right), "--auto", "--on-conflict", "base"],
+    );
+    assert_eq!(exit_code(&out), 1);
+    assert_eq!(stdout(&out), "h\na\nb\nc\nt\n", "on-conflict base = 还原基");
+    // 错误 -> 2（文件不存在 / 参数不足 / 未知参数）
+    let out = run(&aic(), &["merge", "/nonexistent/aic/z1", &s(&f.left), &s(&f.right)]);
+    assert_eq!(exit_code(&out), 2);
+    let out = run(&aic(), &["merge", &s(&f.base), &s(&f.left)]);
+    assert_eq!(exit_code(&out), 2, "参数不足 -> 2");
+    let out = run(&aic(), &["merge", "--nope", &s(&f.base), &s(&f.left), &s(&f.right)]);
+    assert_eq!(exit_code(&out), 2);
+}
+
+#[test]
+fn merge_marker_styles_and_output_file() {
+    let f = merge_fixtures();
+    // 默认 merge 风格：无 ||||||| base 段
+    let out = run(&aic(), &["merge", &s(&f.base), &s(&f.left), &s(&f.right)]);
+    let text = stdout(&out);
+    assert!(!text.contains("|||||||"), "默认 marker 无 base 段: {text}");
+    // --diff3：含 base 段（GNU diff3 -m / git merge-file --diff3 同形）
+    let out = run(&aic(), &["merge", &s(&f.base), &s(&f.left), &s(&f.right), "--diff3"]);
+    let text = stdout(&out);
+    assert!(text.contains("|||||||"), "--diff3 含 base 段: {text}");
+    let base_name = f.base.file_name().unwrap().to_string_lossy().into_owned();
+    assert!(text.contains(&base_name), "base 段标签 = base 路径: {text}");
+    // -o 写文件（不进 stdout）
+    let out_path = f._dir.path().join("merged.out");
+    let out = run(
+        &aic(),
+        &["merge", &s(&f.clean_base), &s(&f.clean_left), &s(&f.clean_right), "-o", &s(&out_path)],
+    );
+    assert_eq!(exit_code(&out), 0);
+    assert_eq!(stdout(&out), "", "-o 模式不写 stdout");
+    assert_eq!(std::fs::read_to_string(&out_path).unwrap(), "K1\n2\n3\n4\nK5\n");
+}
+
+#[test]
+fn merge_importance_and_window_flags() {
+    let f = merge_fixtures();
+    // 尾随空白不重要的同效冲突：-iu + favor-right 自动采用右侧 -> 0
+    let dir = f._dir.path().to_path_buf();
+    let b = dir.join("w_base.l");
+    let l = dir.join("w_left.l");
+    let r = dir.join("w_right.l");
+    std::fs::write(&b, "a\nb\nc\n").unwrap();
+    std::fs::write(&l, "a\nB  \nc\n").unwrap();
+    std::fs::write(&r, "a\nB\nc\n").unwrap();
+    let out = run(&aic(), &["merge", &s(&b), &s(&l), &s(&r)]);
+    assert_eq!(exit_code(&out), 1, "默认重要性下为冲突 -> 1");
+    let out = run(
+        &aic(),
+        &["merge", &s(&b), &s(&l), &s(&r), "-iu", "--favor-right"],
+    );
+    assert_eq!(exit_code(&out), 0, "-iu + favorRight 不重要冲突自动采用 -> 0");
+    assert_eq!(stdout(&out), "a\nB\nc\n");
+    // 冲突窗口：默认无冲突的两处接近变化，窗口 1 合并为冲突
+    let b = dir.join("g_base.l");
+    let l = dir.join("g_left.l");
+    let r = dir.join("g_right.l");
+    std::fs::write(&b, "a\nmid\nc\n").unwrap();
+    std::fs::write(&l, "A\nmid\nc\n").unwrap();
+    std::fs::write(&r, "a\nmid\nC\n").unwrap();
+    let out = run(&aic(), &["merge", &s(&b), &s(&l), &s(&r)]);
+    assert_eq!(exit_code(&out), 0, "默认（仅更改不同的行）无冲突");
+    let out = run(&aic(), &["merge", &s(&b), &s(&l), &s(&r), "--conflict-window", "1"]);
+    assert_eq!(exit_code(&out), 1, "窗口 1：接近变化标记为冲突供审查");
+    assert!(stdout(&out).contains("<<<<<<<"), "窗口冲突写 marker");
+}
+
+#[test]
+fn aicc_merge_subcommand_passthrough() {
+    // aicc（等待型包装）对 merge 子命令原样透传（FR-CLI-001 双形态）
+    let f = merge_fixtures();
+    let args = ["merge", &s(&f.clean_base), &s(&f.clean_left), &s(&f.clean_right)];
+    let out = run(&aicc(), &args);
+    assert_eq!(exit_code(&out), 0, "aicc merge 干净合并 -> 0");
+    assert_eq!(stdout(&out), "K1\n2\n3\n4\nK5\n");
+    let args = ["merge", &s(&f.base), &s(&f.left), &s(&f.right)];
+    let out = run(&aicc(), &args);
+    assert_eq!(exit_code(&out), 1, "aicc merge 冲突 -> 1（透传）");
+    assert!(stdout(&out).contains("<<<<<<<"));
+}

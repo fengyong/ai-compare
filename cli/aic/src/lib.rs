@@ -20,7 +20,8 @@ use ai_protocol::{DirEntryStatus, EntryKind};
 /// - `11` 二进制差异：quick size/crc/binary 模式的差异细分；
 /// - `12` 相似：rules 模式下仅有不重要差异（FR-TXT-010 重要性判等）；
 /// - `13` 基于规则的差异：rules 模式下存在重要差异；
-/// - `14` 检测到冲突：三向合并专用（P7 /automerge 接入，本阶段仅定义）。
+/// - `14` 检测到冲突：三向合并专用（P7 `aic merge --conflict-exit-code 14`，
+///   默认冲突码为 1；FR-CLI-004 语义可用该开关对齐）。
 ///
 /// 兼容性约定：0/非 0 的粗判定不变（11~14 均为"非相同"），细分码只增不改。
 pub const EXIT_SAME: u8 = 0;

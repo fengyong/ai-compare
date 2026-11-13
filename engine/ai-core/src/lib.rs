@@ -31,6 +31,7 @@ pub mod inline;
 pub mod keys;
 pub mod lines;
 pub mod manual;
+pub mod merge;
 pub mod myers;
 pub mod options;
 pub mod patience;
@@ -48,6 +49,11 @@ pub use keys::{
     KeyedDiffOutput, LineKeyPair, LineKeys, SectionKeyInfo,
 };
 pub use lines::{LineEnding, LineEntry, LineTable};
+pub use merge::{
+    auto_merge_text, merge3, synthesize, ChunkOrigin, ConflictDefault, ConflictDetail, ConflictKind,
+    ConflictRow, FavorSide, MarkerOptions, MarkerStyle, MergeChunk, MergeDecision, MergeModel,
+    MergeOptions, MergeOutput, SynthesizeOptions, UnresolvedPolicy,
+};
 pub use myers::{coalesce_ops, diff_seq_deadline, RawOp};
 pub use options::{
     DiffConfig, DiffSide, ImportanceOptions, InlineLevel, InlineOptions, LineAlignAlgo,

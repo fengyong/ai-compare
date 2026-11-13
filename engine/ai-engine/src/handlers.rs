@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use ai_core::LineTable;
+use ai_core::{MergeDecision, MarkerOptions, MarkerStyle, SynthesizeOptions, UnresolvedPolicy};
 use ai_protocol::{error::codes, RpcErrorObject};
 use ai_vfs::VfsPath;
 use serde_json::json;
@@ -67,6 +68,10 @@ pub async fn dispatch(
         ai_protocol::method::TEXT_SECTIONS => text_sections(params, ctx, out).await,
         ai_protocol::method::TEXT_LINES => text_lines(params, ctx).await,
         ai_protocol::method::TEXT_INLINE_DIFF => text_inline_diff(params, ctx).await,
+        ai_protocol::method::TEXT_MERGE3_OPEN => merge3_open(params, ctx).await,
+        ai_protocol::method::TEXT_MERGE3_SECTIONS => merge3_sections(params, ctx).await,
+        ai_protocol::method::TEXT_MERGE3_DECIDE => merge3_decide(params, ctx).await,
+        ai_protocol::method::TEXT_MERGE3_OUTPUT => merge3_output(params, ctx).await,
         ai_protocol::method::SESSION_CLOSE => session_close(params, ctx).await,
         other => Err(RpcErrorObject {
             code: codes::METHOD_NOT_FOUND,
@@ -94,6 +99,8 @@ fn initialize() -> Result<Handled, RpcErrorObject> {
                 .unwrap_or(u32::MAX),
             // P3：text/lines 行内容分页入口开放
             lines_read: Some(true),
+            // P7：三向文本合并入口开放（text/merge3/*）
+            three_way_merge: Some(true),
             dir_background_scan: true,
             dir_filters: true,
             dir_operate: true,
@@ -421,6 +428,7 @@ async fn dir_model(
             bad_params("该会话未启用 P2 会话模型（lazyScan/过滤器/平铺/对齐任一即可启用）")
         }),
         Session::Text(_) => Err(bad_params(format!("会话不是目录会话: {id}"))),
+        Session::Merge(_) => Err(bad_params(format!("会话不是目录会话: {id}"))),
     }
 }
 
@@ -533,6 +541,7 @@ async fn with_text_session<T>(
     match session {
         Session::Text(data) => f(data),
         Session::Dir(_) => Err(bad_params(format!("会话不是文本会话: {id}"))),
+        Session::Merge(_) => Err(bad_params(format!("会话不是文本会话: {id}"))),
     }
 }
 
@@ -856,6 +865,214 @@ async fn session_close(
         }
     }
     Ok(Handled::Value(serde_json::Value::Null))
+}
+
+// ---------------------------------------------------------------------------
+// P7：text/merge3/*（三向合并；docs/03 §4.5 / FR-TMRG）
+// ---------------------------------------------------------------------------
+
+/// text/merge3/open：读三方文本 -> merge3 模型（一次求出）-> 存会话 -> 应答统计。
+/// 块清单经 text/merge3/sections 分批取回（与 text/open + text/sections 同构）。
+async fn merge3_open(
+    params: Option<serde_json::Value>,
+    ctx: &HandlerCtx,
+) -> Result<Handled, RpcErrorObject> {
+    let params: ai_protocol::MergeOpenParams = parse_params(params)?;
+    if params.session_id.is_empty() {
+        return Err(bad_params("sessionId 不能为空"));
+    }
+    let base_path = VfsPath::parse(&params.base).map_err(|e| mapping::vfs_error_to_rpc(&e))?;
+    let left_path = VfsPath::parse(&params.left).map_err(|e| mapping::vfs_error_to_rpc(&e))?;
+    let right_path = VfsPath::parse(&params.right).map_err(|e| mapping::vfs_error_to_rpc(&e))?;
+
+    let base_text = ctx.vfs.read_file_text(&base_path).await.map_err(|e| mapping::vfs_error_to_rpc(&e))?;
+    let left_text = ctx.vfs.read_file_text(&left_path).await.map_err(|e| mapping::vfs_error_to_rpc(&e))?;
+    let right_text = ctx.vfs.read_file_text(&right_path).await.map_err(|e| mapping::vfs_error_to_rpc(&e))?;
+
+    let base = LineTable::from_text(&base_text);
+    let left = LineTable::from_text(&left_text);
+    let right = LineTable::from_text(&right_text);
+
+    let options = params
+        .options
+        .as_ref()
+        .map(mapping::merge_options_from_dto)
+        .unwrap_or_default();
+
+    let model = ai_core::merge3(&base, &left, &right, &options);
+    let conflict_count = model.conflict_count();
+    let chunk_count = u32::try_from(model.chunks.len()).unwrap_or(u32::MAX);
+    let (base_len, left_len, right_len) = (model.base_len, model.left_len, model.right_len);
+
+    {
+        let mut sessions = ctx.sessions.lock().await;
+        if sessions.contains_key(&params.session_id) {
+            return Err(RpcErrorObject {
+                code: codes::SESSION_EXISTS,
+                message: format!("会话已存在: {}", params.session_id),
+                data: Some(json!({ "sessionId": params.session_id })),
+            });
+        }
+        sessions.insert(
+            params.session_id.clone(),
+            Session::Merge(crate::server::MergeSessionData {
+                base,
+                left,
+                right,
+                model,
+                options,
+                labels: (params.base.clone(), params.left.clone(), params.right.clone()),
+                decisions: HashMap::new(),
+                rev: 0,
+            }),
+        );
+    }
+
+    let result = ai_protocol::MergeOpenResult {
+        session_id: params.session_id,
+        base_line_count: base_len,
+        left_line_count: left_len,
+        right_line_count: right_len,
+        chunk_count,
+        conflict_count,
+        rev: 0,
+    };
+    Ok(Handled::Value(serde_json::to_value(&result).expect("merge3/open 结果可序列化")))
+}
+
+/// 取合并会话（可变访问；会话表锁内不做重活/不做 await）
+async fn with_merge_session<T>(
+    sessions: &SessionMap,
+    id: &str,
+    f: impl FnOnce(&mut crate::server::MergeSessionData) -> Result<T, RpcErrorObject>,
+) -> Result<T, RpcErrorObject> {
+    let mut sessions = sessions.lock().await;
+    let session = sessions.get_mut(id).ok_or_else(|| session_not_found(id))?;
+    match session {
+        Session::Merge(data) => f(data),
+        _ => Err(bad_params(format!("会话不是三向合并会话: {id}"))),
+    }
+}
+
+/// 会话决策状态的合成策略（sections/output 共用；未决冲突渲染 marker 行为空）
+fn session_syn_options(data: &crate::server::MergeSessionData) -> SynthesizeOptions {
+    SynthesizeOptions {
+        unresolved: data.options.conflict_default.clone().to_policy(None),
+    }
+}
+
+/// marker 模式的策略（标签 = 打开时路径原串）
+fn marker_policy_of(data: &crate::server::MergeSessionData, style: MarkerStyle) -> SynthesizeOptions {
+    SynthesizeOptions {
+        unresolved: UnresolvedPolicy::Markers(MarkerOptions {
+            style,
+            left_label: data.labels.1.clone(),
+            base_label: data.labels.0.clone(),
+            right_label: data.labels.2.clone(),
+        }),
+    }
+}
+
+/// text/merge3/sections：块清单分批窗口（含三方行内容与当前决策状态）
+async fn merge3_sections(
+    params: Option<serde_json::Value>,
+    ctx: &HandlerCtx,
+) -> Result<Handled, RpcErrorObject> {
+    let params: ai_protocol::MergeSectionsParams = parse_params(params)?;
+    let result = with_merge_session(&ctx.sessions, &params.session_id, |data| {
+        let total = u32::try_from(data.model.chunks.len()).unwrap_or(u32::MAX);
+        let start = params.offset.min(total) as usize;
+        let end = start.saturating_add(params.count as usize).min(data.model.chunks.len());
+        let syn = session_syn_options(data);
+        let chunks: Vec<ai_protocol::MergeChunkDto> = data.model.chunks[start..end]
+            .iter()
+            .map(|c| mapping::merge_chunk_to_dto(c, &data.decisions, &data.base, &data.left, &data.right, &syn))
+            .collect();
+        let has_more = end < data.model.chunks.len();
+        Ok(ai_protocol::MergeSectionsResult {
+            session_id: params.session_id.clone(),
+            offset: params.offset,
+            total,
+            has_more,
+            rev: data.rev,
+            chunks,
+        })
+    })
+    .await?;
+    Ok(Handled::Value(serde_json::to_value(&result).expect("merge3/sections 结果可序列化")))
+}
+
+/// text/merge3/decide：块决策提交（幂等——决策内容不变时 rev 与结果不变）
+async fn merge3_decide(
+    params: Option<serde_json::Value>,
+    ctx: &HandlerCtx,
+) -> Result<Handled, RpcErrorObject> {
+    let params: ai_protocol::MergeDecideParams = parse_params(params)?;
+    let session_id = params.session_id.clone();
+    let decided = u32::try_from(params.decisions.len()).unwrap_or(u32::MAX);
+    let result = with_merge_session(&ctx.sessions, &session_id, |data| {
+        // 先解析全部决策（任一非法则整批拒绝）
+        let mut parsed: Vec<(u32, MergeDecision)> = Vec::with_capacity(params.decisions.len());
+        for d in &params.decisions {
+            if d.chunk_id as usize >= data.model.chunks.len() {
+                return Err(bad_params(format!("块不存在: {}", d.chunk_id)));
+            }
+            let core = mapping::merge_decision_from_dto(d).map_err(bad_params)?;
+            parsed.push((d.chunk_id, core));
+        }
+        // 幂等：决策内容与现状完全一致时不递增 rev、不改会话
+        let changed = parsed.iter().any(|(id, dec)| data.decisions.get(id) != Some(dec));
+        if changed {
+            for (id, dec) in parsed {
+                data.decisions.insert(id, dec);
+            }
+            data.rev += 1;
+        }
+        let unresolved = data.model.unresolved_with(&data.decisions);
+        Ok(ai_protocol::MergeDecideResult {
+            session_id: session_id.clone(),
+            rev: data.rev,
+            decided,
+            conflict_count: data.model.conflict_count(),
+            unresolved_chunks: unresolved,
+        })
+    })
+    .await?;
+    Ok(Handled::Value(serde_json::to_value(&result).expect("merge3/decide 结果可序列化")))
+}
+
+/// text/merge3/output：合成输出（决策生效；未决冲突按模式渲染 + 清单）
+async fn merge3_output(
+    params: Option<serde_json::Value>,
+    ctx: &HandlerCtx,
+) -> Result<Handled, RpcErrorObject> {
+    let params: ai_protocol::MergeOutputParams = parse_params(params)?;
+    let result = with_merge_session(&ctx.sessions, &params.session_id, |data| {
+        let syn = match params.mode {
+            Some(ai_protocol::MergeOutputMode::Marker) => {
+                let style = match params.marker_style.unwrap_or(ai_protocol::MergeMarkerStyle::Merge) {
+                    ai_protocol::MergeMarkerStyle::Merge => MarkerStyle::Merge,
+                    ai_protocol::MergeMarkerStyle::Diff3 => MarkerStyle::Diff3,
+                };
+                marker_policy_of(data, style)
+            }
+            // 缺省 Plain：未决冲突走会话 conflict_default 策略
+            _ => session_syn_options(data),
+        };
+        let out = ai_core::synthesize(&data.model, &data.base, &data.left, &data.right, &data.decisions, &syn);
+        let unresolved = data.model.unresolved_with(&data.decisions);
+        let has_conflicts = !unresolved.is_empty();
+        Ok(ai_protocol::MergeOutputResult {
+            session_id: params.session_id.clone(),
+            text: out.text,
+            conflict_count: data.model.conflict_count(),
+            unresolved_chunks: unresolved,
+            has_conflicts,
+            decided_count: u32::try_from(data.decisions.len()).unwrap_or(u32::MAX),
+        })
+    })
+    .await?;
+    Ok(Handled::Value(serde_json::to_value(&result).expect("merge3/output 结果可序列化")))
 }
 
 // ---------------------------------------------------------------------------
@@ -1405,5 +1622,357 @@ mod p3_tests {
         let kinds: Vec<&str> = v["sections"].as_array().unwrap().iter().map(|s| s["kind"].as_str().unwrap()).collect();
         assert!(kinds.contains(&"delete"), "隔离后 A/B 成 Delete 块: {kinds:?}");
         assert!(!kinds.contains(&"change"), "隔离行不与对侧配对成 Change: {kinds:?}");
+    }
+}
+
+#[cfg(test)]
+mod p7_tests {
+    use super::*;
+    use crate::server::Outbound;
+    use serde_json::json;
+
+    fn ctx() -> HandlerCtx {
+        HandlerCtx::new(512)
+    }
+
+    fn chan() -> (
+        tokio::sync::mpsc::UnboundedSender<Outbound>,
+        tokio::sync::mpsc::UnboundedReceiver<Outbound>,
+    ) {
+        tokio::sync::mpsc::unbounded_channel()
+    }
+
+    /// 三方语料：base 头尾同 + 两个冲突块（行 1、行 3）+ 右侧独有尾部
+    async fn open_merge(c: &HandlerCtx, id: &str) -> (tempfile::TempDir, String, String, String) {
+        let dir = tempfile::tempdir().unwrap();
+        let b = dir.path().join("base.l");
+        let l = dir.path().join("left.l");
+        let r = dir.path().join("right.l");
+        std::fs::write(&b, "h\na\nb\nc\nt\n").unwrap();
+        std::fs::write(&l, "h\nL1\nb\nL2\nt\n").unwrap();
+        std::fs::write(&r, "h\nR1\nb\nR2\nt\nR3\n").unwrap();
+        let (tx, _rx) = chan();
+        let handled = dispatch(
+            "text/merge3/open",
+            Some(json!({
+                "sessionId": id,
+                "base": b.to_string_lossy(), "left": l.to_string_lossy(), "right": r.to_string_lossy(),
+            })),
+            c, &ai_dir::CancelFlag::new(), tx,
+        )
+        .await
+        .unwrap();
+        let v = match handled { Handled::Value(v) => v, _ => panic!("形态") };
+        assert_eq!(v["chunkCount"], 6, "Stable+冲突+Stable+冲突+Stable+RightOnly: {v}");
+        assert_eq!(v["conflictCount"], 2);
+        (dir, b.to_string_lossy().into_owned(), l.to_string_lossy().into_owned(), r.to_string_lossy().into_owned())
+    }
+
+    #[tokio::test]
+    async fn merge3_open_sections_and_capability() {
+        let c = ctx();
+        let (tx, _rx) = chan();
+        let init = dispatch("initialize", Some(json!({"clientInfo": {"name": "t"}, "protocolVersion": "1.0"})), &c, &ai_dir::CancelFlag::new(), tx).await.unwrap();
+        let v = match init { Handled::Value(v) => v, _ => panic!("形态") };
+        assert_eq!(v["capabilities"]["threeWayMerge"], true, "P7 能力位");
+
+        let (_d, _b, _l, _r) = open_merge(&c, "m1").await;
+        // sections 分批：offset=1 count=2 -> 冲突块 + 稳定块
+        let r = dispatch(
+            "text/merge3/sections",
+            Some(json!({"sessionId": "m1", "offset": 1, "count": 2})),
+            &c, &ai_dir::CancelFlag::new(), chan().0,
+        )
+        .await
+        .unwrap();
+        let v = match r { Handled::Value(v) => v, _ => panic!("形态") };
+        assert_eq!(v["total"], 6);
+        assert_eq!(v["hasMore"], true);
+        assert_eq!(v["rev"], 0);
+        let chunks = v["chunks"].as_array().unwrap();
+        assert_eq!(chunks.len(), 2);
+        assert_eq!(chunks[0]["origin"], "conflict");
+        assert_eq!(chunks[0]["conflictKind"], "modifyModify");
+        assert_eq!(chunks[0]["conflictUnimportant"], false);
+        assert_eq!(chunks[0]["leftLines"], json!(["L1"]));
+        assert_eq!(chunks[0]["rightLines"], json!(["R1"]));
+        assert_eq!(chunks[0]["unresolved"], true);
+        // 行区间
+        assert_eq!(chunks[0]["base"], json!({"start": 1, "end": 2}));
+        // 越界钳制
+        let r = dispatch(
+            "text/merge3/sections",
+            Some(json!({"sessionId": "m1", "offset": 99, "count": 3})),
+            &c, &ai_dir::CancelFlag::new(), chan().0,
+        )
+        .await
+        .unwrap();
+        let v = match r { Handled::Value(v) => v, _ => panic!("形态") };
+        assert_eq!(v["chunks"].as_array().unwrap().len(), 0);
+        // 会话不存在 -> 410
+        let e = dispatch(
+            "text/merge3/sections",
+            Some(json!({"sessionId": "ghost", "offset": 0, "count": 1})),
+            &c, &ai_dir::CancelFlag::new(), chan().0,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(e.code, codes::SESSION_NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn merge3_decide_idempotent_and_output() {
+        let c = ctx();
+        let (_d, _b, _l, _r) = open_merge(&c, "m2").await;
+
+        // 1. 未决策 output：marker 模式含两处冲突
+        let r = dispatch(
+            "text/merge3/output",
+            Some(json!({"sessionId": "m2", "mode": "marker"})),
+            &c, &ai_dir::CancelFlag::new(), chan().0,
+        )
+        .await
+        .unwrap();
+        let v = match r { Handled::Value(v) => v, _ => panic!("形态") };
+        let marker_text = v["text"].as_str().unwrap();
+        assert_eq!(v["unresolvedChunks"], json!([1, 3]));
+        assert_eq!(v["hasConflicts"], true);
+        assert!(marker_text.contains("<<<<<<<"), "marker 模式渲染冲突: {marker_text}");
+        assert_eq!(marker_text.matches("<<<<<<<").count(), 2);
+
+        // 2. 决策：块 1 取左、块 3 取右
+        let r = dispatch(
+            "text/merge3/decide",
+            Some(json!({
+                "sessionId": "m2",
+                "decisions": [
+                    {"chunkId": 1, "action": "left"},
+                    {"chunkId": 3, "action": "right"}
+                ]
+            })),
+            &c, &ai_dir::CancelFlag::new(), chan().0,
+        )
+        .await
+        .unwrap();
+        let v = match r { Handled::Value(v) => v, _ => panic!("形态") };
+        assert_eq!(v["rev"], 1);
+        assert_eq!(v["unresolvedChunks"], json!([]), "决策后无未决冲突");
+        assert_eq!(v["conflictCount"], 2);
+
+        // 3. 输出稳定（plain 模式 = 决策内容）
+        let r = dispatch(
+            "text/merge3/output",
+            Some(json!({"sessionId": "m2"})),
+            &c, &ai_dir::CancelFlag::new(), chan().0,
+        )
+        .await
+        .unwrap();
+        let v = match r { Handled::Value(v) => v, _ => panic!("形态") };
+        assert_eq!(v["text"], "h\nL1\nb\nR2\nt\nR3\n");
+        assert_eq!(v["hasConflicts"], false);
+        assert_eq!(v["decidedCount"], 2);
+
+        // 4. 幂等：同一决策重复提交 -> rev 不变、输出不漂移
+        let r = dispatch(
+            "text/merge3/decide",
+            Some(json!({
+                "sessionId": "m2",
+                "decisions": [
+                    {"chunkId": 1, "action": "left"},
+                    {"chunkId": 3, "action": "right"}
+                ]
+            })),
+            &c, &ai_dir::CancelFlag::new(), chan().0,
+        )
+        .await
+        .unwrap();
+        let v = match r { Handled::Value(v) => v, _ => panic!("形态") };
+        assert_eq!(v["rev"], 1, "幂等提交不递增 rev");
+        let r = dispatch(
+            "text/merge3/output",
+            Some(json!({"sessionId": "m2"})),
+            &c, &ai_dir::CancelFlag::new(), chan().0,
+        )
+        .await
+        .unwrap();
+        let v = match r { Handled::Value(v) => v, _ => panic!("形态") };
+        assert_eq!(v["text"], "h\nL1\nb\nR2\nt\nR3\n", "重复 decide 不漂移");
+
+        // 5. manual 决策
+        let r = dispatch(
+            "text/merge3/decide",
+            Some(json!({"sessionId": "m2", "decisions": [{"chunkId": 1, "action": "manual", "text": "手\n工"}]})),
+            &c, &ai_dir::CancelFlag::new(), chan().0,
+        )
+        .await
+        .unwrap();
+        let v = match r { Handled::Value(v) => v, _ => panic!("形态") };
+        assert_eq!(v["rev"], 2);
+        let r = dispatch(
+            "text/merge3/output",
+            Some(json!({"sessionId": "m2"})),
+            &c, &ai_dir::CancelFlag::new(), chan().0,
+        )
+        .await
+        .unwrap();
+        let v = match r { Handled::Value(v) => v, _ => panic!("形态") };
+        assert_eq!(v["text"], "h\n手\n工\nb\nR2\nt\nR3\n");
+
+        // 6. Manual 缺 text -> INVALID_PARAMS
+        let e = dispatch(
+            "text/merge3/decide",
+            Some(json!({"sessionId": "m2", "decisions": [{"chunkId": 1, "action": "manual"}]})),
+            &c, &ai_dir::CancelFlag::new(), chan().0,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(e.code, codes::INVALID_PARAMS);
+        // 7. 块不存在 -> INVALID_PARAMS
+        let e = dispatch(
+            "text/merge3/decide",
+            Some(json!({"sessionId": "m2", "decisions": [{"chunkId": 99, "action": "left"}]})),
+            &c, &ai_dir::CancelFlag::new(), chan().0,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(e.code, codes::INVALID_PARAMS);
+    }
+
+    #[tokio::test]
+    async fn merge3_importance_shrinks_conflicts() {
+        // 两侧把同一行改成仅尾随空白不同：默认 -> 冲突；尾随空白不重要 + favorRight -> 自动采用
+        let dir = tempfile::tempdir().unwrap();
+        let b = dir.path().join("b.l");
+        let l = dir.path().join("l.l");
+        let r = dir.path().join("r.l");
+        std::fs::write(&b, "a\nb\nc\n").unwrap();
+        std::fs::write(&l, "a\nB  \nc\n").unwrap();
+        std::fs::write(&r, "a\nB\nc\n").unwrap();
+        let c = ctx();
+        let (tx, _rx) = chan();
+        // 默认选项：1 个未决冲突
+        let _ = dispatch(
+            "text/merge3/open",
+            Some(json!({"sessionId": "mi1", "base": b.to_string_lossy(), "left": l.to_string_lossy(), "right": r.to_string_lossy()})),
+            &c, &ai_dir::CancelFlag::new(), tx,
+        )
+        .await
+        .unwrap();
+        let got = dispatch(
+            "text/merge3/output",
+            Some(json!({"sessionId": "mi1"})),
+            &c, &ai_dir::CancelFlag::new(), chan().0,
+        )
+        .await
+        .unwrap();
+        let v = match got { Handled::Value(v) => v, _ => panic!("形态") };
+        assert_eq!(v["unresolvedChunks"], json!([1]), "默认重要性下为未决冲突: {v}");
+
+        // /iu + favorRight：不重要冲突自动采用右侧，不升级为未决
+        let (tx, _rx) = chan();
+        let _ = dispatch(
+            "text/merge3/open",
+            Some(json!({
+                "sessionId": "mi2",
+                "base": b.to_string_lossy(), "left": l.to_string_lossy(), "right": r.to_string_lossy(),
+                "options": {"importance": {"trailingWsUnimportant": true}, "favor": "right", "ignoreUnimportant": true}
+            })),
+            &c, &ai_dir::CancelFlag::new(), tx,
+        )
+        .await
+        .unwrap();
+        let got = dispatch(
+            "text/merge3/sections",
+            Some(json!({"sessionId": "mi2", "offset": 0, "count": 10})),
+            &c, &ai_dir::CancelFlag::new(), chan().0,
+        )
+        .await
+        .unwrap();
+        let v = match got { Handled::Value(v) => v, _ => panic!("形态") };
+        let chunks = v["chunks"].as_array().unwrap();
+        let cf = chunks.iter().find(|x| x["origin"] == "conflict").expect("冲突块仍在（来源标记）");
+        assert_eq!(cf["conflictUnimportant"], true);
+        assert_eq!(cf["autoResolved"], true);
+        assert_eq!(cf["unresolved"], false);
+        assert_eq!(cf["decision"], "right", "favorRight 自动采用");
+        let got = dispatch(
+            "text/merge3/output",
+            Some(json!({"sessionId": "mi2"})),
+            &c, &ai_dir::CancelFlag::new(), chan().0,
+        )
+        .await
+        .unwrap();
+        let v = match got { Handled::Value(v) => v, _ => panic!("形态") };
+        assert_eq!(v["text"], "a\nB\nc\n", "不重要冲突从受惠侧采用");
+        assert_eq!(v["hasConflicts"], false);
+    }
+
+    #[tokio::test]
+    async fn merge3_conflict_window_option() {
+        // 左改行 0、右改行 2，中间 1 条稳定行：默认无冲突；窗口 1 -> 合并为冲突
+        let dir = tempfile::tempdir().unwrap();
+        let b = dir.path().join("b.l");
+        let l = dir.path().join("l.l");
+        let r = dir.path().join("r.l");
+        std::fs::write(&b, "a\nmid\nc\n").unwrap();
+        std::fs::write(&l, "A\nmid\nc\n").unwrap();
+        std::fs::write(&r, "a\nmid\nC\n").unwrap();
+        let c = ctx();
+        let (tx, _rx) = chan();
+        let _ = dispatch(
+            "text/merge3/open",
+            Some(json!({
+                "sessionId": "mw1",
+                "base": b.to_string_lossy(), "left": l.to_string_lossy(), "right": r.to_string_lossy(),
+                "options": {"conflictWindow": 1}
+            })),
+            &c, &ai_dir::CancelFlag::new(), tx,
+        )
+        .await
+        .unwrap();
+        let got = dispatch(
+            "text/merge3/sections",
+            Some(json!({"sessionId": "mw1", "offset": 0, "count": 10})),
+            &c, &ai_dir::CancelFlag::new(), chan().0,
+        )
+        .await
+        .unwrap();
+        let v = match got { Handled::Value(v) => v, _ => panic!("形态") };
+        let chunks = v["chunks"].as_array().unwrap();
+        let conflicts: Vec<_> = chunks.iter().filter(|x| x["origin"] == "conflict").collect();
+        assert_eq!(conflicts.len(), 1, "窗口合并: {v}");
+        assert_eq!(conflicts[0]["base"], json!({"start": 0, "end": 3}), "冲突块跨稳定间隔");
+        assert_eq!(v["total"], 1, "整个文件合并为单一冲突块（无尾部稳定块）");
+    }
+
+    #[tokio::test]
+    async fn merge3_conflict_default_policy_and_diff3_style() {
+        let c = ctx();
+        let (_d, _b, _l, _r) = open_merge(&c, "m3").await;
+        // 会话级 conflictDefault=base：plain 模式未决冲突取基
+        // （open_merge 的会话未带 options，此处直接验证 marker diff3 风格）
+        let r = dispatch(
+            "text/merge3/output",
+            Some(json!({"sessionId": "m3", "mode": "marker", "markerStyle": "diff3"})),
+            &c, &ai_dir::CancelFlag::new(), chan().0,
+        )
+        .await
+        .unwrap();
+        let v = match r { Handled::Value(v) => v, _ => panic!("形态") };
+        let text = v["text"].as_str().unwrap();
+        assert!(text.contains("<<<<<<<"), "{text}");
+        assert!(text.contains("|||||||"), "diff3 风格含 base 段");
+        assert!(text.contains("=======") && text.contains(">>>>>>>"));
+        // Plain 模式（缺省 conflictDefault=TakeLeft）：未决冲突取左，文本连续
+        let r = dispatch(
+            "text/merge3/output",
+            Some(json!({"sessionId": "m3"})),
+            &c, &ai_dir::CancelFlag::new(), chan().0,
+        )
+        .await
+        .unwrap();
+        let v = match r { Handled::Value(v) => v, _ => panic!("形态") };
+        assert_eq!(v["text"], "h\nL1\nb\nL2\nt\nR3\n");
+        assert_eq!(v["hasConflicts"], true, "plain 模式未决冲突仍列入清单");
     }
 }
