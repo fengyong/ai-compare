@@ -69,3 +69,51 @@ describe('dirTree：树索引与可见行', () => {
     expect(flat.map((r) => r.id)).toEqual(['b.txt', 'a-dir/sub/deep.txt', 'a-dir/inner.txt']);
   });
 });
+
+/** P6b：表头列排序（FR-DIR-042；与标记/选择正交——均以行 id 为键） */
+describe('dirTree 表头排序', () => {
+  const side = (size: number, mtimeMs: number) => ({ size, mtimeMs, attribute: null, unixMode: 0, uid: 0, gid: 0 });
+  const rowOf = (id: string, size: number, mtimeMs: number, missing: 'left' | 'right' | null = null): DirRow => ({
+    id,
+    name: id.split('/').pop() ?? id,
+    kind: 'file',
+    left: missing === 'left' ? null : side(size, mtimeMs),
+    right: missing === 'right' ? null : side(size, mtimeMs),
+    status: 'same',
+    hasChildren: false,
+    hidden: false,
+    suppressed: false,
+  });
+
+  const rows = [
+    rowOf('c.txt', 30, 300),
+    rowOf('a.txt', 10, 100),
+    rowOf('b.txt', 20, 200),
+    rowOf('orphan.txt', 5, 50, 'left'),
+  ];
+
+  it('按左大小升序；缺侧沉底', () => {
+    const asc = orderedFlatRows(rows, { key: 'leftSize', dir: 1 });
+    expect(asc.map((r) => r.name)).toEqual(['a.txt', 'b.txt', 'c.txt', 'orphan.txt']);
+    const desc = orderedFlatRows(rows, { key: 'leftSize', dir: -1 });
+    expect(desc.map((r) => r.name)).toEqual(['c.txt', 'b.txt', 'a.txt', 'orphan.txt']);
+  });
+
+  it('按名称/时间排序且平手回退默认序', () => {
+    const byName = orderedFlatRows(rows, { key: 'name', dir: -1 });
+    expect(byName.map((r) => r.name)).toEqual(['orphan.txt', 'c.txt', 'b.txt', 'a.txt']);
+    const byMtime = orderedFlatRows(rows, { key: 'leftMtime', dir: 1 });
+    // 缺侧沉底（orphan 无 left），其余按 mtime 升序
+    expect(byMtime.map((r) => r.name)).toEqual(['a.txt', 'b.txt', 'c.txt', 'orphan.txt']);
+  });
+
+  it('树形模式逐层排序（目录先）；buildTreeIndex 可选参不影响默认序', () => {
+    const treeRows = [rowOf('z-dir/x.txt', 1, 1), { ...rowOf('z-dir', 1, 1), kind: 'dir' as const, hasChildren: true }, rowOf('a.txt', 99, 99)];
+    const idx = buildTreeIndex(treeRows, { key: 'name', dir: -1 });
+    const vis = orderedTreeRows(idx, new Set(['z-dir']));
+    // 顶层：z-dir（目录先）> a.txt；z-dir 内：x.txt
+    expect(vis.map((r) => r.id)).toEqual(['z-dir', 'z-dir/x.txt', 'a.txt']);
+    const idxDefault = buildTreeIndex(treeRows);
+    expect(orderedTreeRows(idxDefault, new Set()).map((r) => r.id)).toEqual(['z-dir', 'a.txt']);
+  });
+});
