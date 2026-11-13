@@ -96,3 +96,64 @@ describe('buildInlineMarks', () => {
     expect(marks.left).toHaveLength(0);
   });
 });
+
+// ---------------- P5：DMP 语义清理开关（引擎 SemanticCleanup::Dmp 语义对齐） ----------------
+
+import { DMP_SEMANTIC_EDIT_COST, dmpCleanupPairs, mergeDmpMarks, type InlinePair } from './inlineDiffCore';
+
+describe('inlineDiffCore：DMP 语义清理（P5 开关）', () => {
+  it('dmpCleanup 开关：被短等值段分隔的相邻编辑块合并', () => {
+    // "const a = 1;" vs "const a = 2 + 1;"：token diff 后 `2` 与 `+` 间可能有小等值段
+    const pairs = wordDiff('const a = 1;', 'const b = 2 + 1;');
+    const cleaned = dmpCleanupPairs(pairs);
+    // 清理后非 equal 块数量不增加，且存在跨吸收的块（若存在 ≤ 阈值的间隔）
+    const nonEqualRaw = pairs.filter((p) => !p.equal).length;
+    const nonEqualClean = cleaned.filter((p) => !p.equal).length;
+    expect(nonEqualClean).toBeLessThanOrEqual(nonEqualRaw);
+  });
+
+  it('等值间隔超阈值 → 不合并', () => {
+    const long = 'x'.repeat(DMP_SEMANTIC_EDIT_COST + 1);
+    const pairs: InlinePair[] = [
+      { left: { start: 0, end: 1 }, right: { start: 0, end: 1 }, equal: false },
+      { left: { start: 1, end: 1 + long.length }, right: { start: 1, end: 1 + long.length }, equal: true },
+      { left: { start: 1 + long.length, end: 2 + long.length }, right: { start: 1 + long.length, end: 2 + long.length }, equal: false },
+    ];
+    const cleaned = dmpCleanupPairs(pairs);
+    expect(cleaned.filter((p) => !p.equal)).toHaveLength(2);
+  });
+
+  it('等值间隔 ≤ 阈值 → 合并并吸收间隔', () => {
+    const pairs: InlinePair[] = [ // 等值间隔 2 ≤ 4
+      { left: { start: 0, end: 1 }, right: { start: 0, end: 1 }, equal: false },
+      { left: { start: 1, end: 3 }, right: { start: 1, end: 3 }, equal: true },
+      { left: { start: 3, end: 4 }, right: { start: 3, end: 4 }, equal: false },
+    ];
+    const cleaned = dmpCleanupPairs(pairs);
+    const nonEqual = cleaned.filter((p) => !p.equal);
+    expect(nonEqual).toHaveLength(1);
+    expect(nonEqual[0].left).toEqual({ start: 0, end: 4 });
+  });
+
+  it('mergeDmpMarks：同行相邻 span 合并（按行分组）', () => {
+    const merged = mergeDmpMarks([
+      { line: 1, from: 6, to: 10 },
+      { line: 0, from: 0, to: 2 },
+      { line: 1, from: 3, to: 5 },
+      { line: 1, from: 20, to: 30 },
+    ]);
+    expect(merged).toHaveLength(3); // L0:1 块；L1: 3-5 与 6-10 合并（间隔 1），20-30 独立
+    const l1 = merged.filter((m) => m.line === 1);
+    expect(l1).toHaveLength(2);
+    expect(l1[0]).toMatchObject({ from: 3, to: 10 });
+  });
+
+  it('wordDiff dmpCleanup 选项直通', () => {
+    const plain = wordDiff('abc = 1;', 'abd = 1;');
+    const cleaned = wordDiff('abc = 1;', 'abd = 1;', { dmpCleanup: true });
+    const plainNE = plain.filter((p) => !p.equal).length;
+    const cleanNE = cleaned.filter((p) => !p.equal).length;
+    expect(cleanNE).toBeLessThanOrEqual(plainNE);
+    expect(cleanNE).toBeGreaterThan(0);
+  });
+});

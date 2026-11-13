@@ -47,6 +47,12 @@ export interface ThemeTokens {
   gutterImportant: string;
   gutterUnimportant: string;
   gutterAbsent: string;
+
+  /* 概览条（FR-TXT-030 mini-map 色带） */
+  overviewEqual: string;
+  overviewDiff: string;
+  overviewUnimportant: string;
+  overviewAbsent: string;
 }
 
 export const darkTokens: ThemeTokens = {
@@ -78,6 +84,11 @@ export const darkTokens: ThemeTokens = {
   gutterImportant: '#ff6b6b',
   gutterUnimportant: '#60a5fa',
   gutterAbsent: '#565b64',
+
+  overviewEqual: 'rgba(215, 218, 224, 0.16)',
+  overviewDiff: '#ff6b6b',
+  overviewUnimportant: '#60a5fa',
+  overviewAbsent: 'rgba(255, 255, 255, 0.05)',
 };
 
 export function applyTheme(tokens: ThemeTokens = darkTokens): void {
@@ -109,6 +120,10 @@ export function applyTheme(tokens: ThemeTokens = darkTokens): void {
     'aic-gutter-important': tokens.gutterImportant,
     'aic-gutter-unimportant': tokens.gutterUnimportant,
     'aic-gutter-absent': tokens.gutterAbsent,
+    'aic-overview-equal': tokens.overviewEqual,
+    'aic-overview-diff': tokens.overviewDiff,
+    'aic-overview-unimportant': tokens.overviewUnimportant,
+    'aic-overview-absent': tokens.overviewAbsent,
   };
   for (const [k, v] of Object.entries(map)) {
     root.style.setProperty(`--${k}`, v);
