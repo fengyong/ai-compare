@@ -1,0 +1,348 @@
+[
+  {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+      "capabilities": {
+        "cancel": true,
+        "deltaBatching": true,
+        "dirBackgroundScan": true,
+        "dirCompare": true,
+        "dirFilters": true,
+        "dirOperate": true,
+        "inlineDiff": true,
+        "linesRead": true,
+        "maxDeltaBatchRows": 512,
+        "textCompare": true,
+        "threeWayMerge": true
+      },
+      "engine": {
+        "name": "ai-engine",
+        "version": "0.1.0"
+      },
+      "license": {
+        "proUnlocked": true
+      },
+      "protocolVersion": "1.0"
+    }
+  },
+  {
+    "id": 2,
+    "jsonrpc": "2.0",
+    "result": {
+      "baseLineCount": 5,
+      "chunkCount": 6,
+      "conflictCount": 2,
+      "leftLineCount": 5,
+      "rev": 0,
+      "rightLineCount": 6,
+      "sessionId": "m1"
+    }
+  },
+  {
+    "id": 3,
+    "jsonrpc": "2.0",
+    "result": {
+      "chunks": [
+        {
+          "autoResolved": false,
+          "base": {
+            "end": 1,
+            "start": 0
+          },
+          "baseLines": [
+            "h"
+          ],
+          "decided": false,
+          "id": 0,
+          "left": {
+            "end": 1,
+            "start": 0
+          },
+          "leftLines": [
+            "h"
+          ],
+          "origin": "stable",
+          "outputLines": [
+            "h"
+          ],
+          "right": {
+            "end": 1,
+            "start": 0
+          },
+          "rightLines": [
+            "h"
+          ],
+          "unresolved": false
+        },
+        {
+          "autoResolved": false,
+          "base": {
+            "end": 2,
+            "start": 1
+          },
+          "baseLines": [
+            "a"
+          ],
+          "conflictKind": "modifyModify",
+          "conflictRows": [
+            {
+              "left": 1,
+              "right": 1,
+              "unimportant": false
+            }
+          ],
+          "conflictUnimportant": false,
+          "decided": false,
+          "id": 1,
+          "left": {
+            "end": 2,
+            "start": 1
+          },
+          "leftLines": [
+            "L1"
+          ],
+          "origin": "conflict",
+          "outputLines": [
+            "L1"
+          ],
+          "right": {
+            "end": 2,
+            "start": 1
+          },
+          "rightLines": [
+            "R1"
+          ],
+          "unresolved": true
+        },
+        {
+          "autoResolved": false,
+          "base": {
+            "end": 3,
+            "start": 2
+          },
+          "baseLines": [
+            "b"
+          ],
+          "decided": false,
+          "id": 2,
+          "left": {
+            "end": 3,
+            "start": 2
+          },
+          "leftLines": [
+            "b"
+          ],
+          "origin": "stable",
+          "outputLines": [
+            "b"
+          ],
+          "right": {
+            "end": 3,
+            "start": 2
+          },
+          "rightLines": [
+            "b"
+          ],
+          "unresolved": false
+        }
+      ],
+      "hasMore": true,
+      "offset": 0,
+      "rev": 0,
+      "sessionId": "m1",
+      "total": 6
+    }
+  },
+  {
+    "id": 4,
+    "jsonrpc": "2.0",
+    "result": {
+      "chunks": [
+        {
+          "autoResolved": false,
+          "base": {
+            "end": 4,
+            "start": 3
+          },
+          "baseLines": [
+            "c"
+          ],
+          "conflictKind": "modifyModify",
+          "conflictRows": [
+            {
+              "left": 3,
+              "right": 3,
+              "unimportant": false
+            }
+          ],
+          "conflictUnimportant": false,
+          "decided": false,
+          "id": 3,
+          "left": {
+            "end": 4,
+            "start": 3
+          },
+          "leftLines": [
+            "L2"
+          ],
+          "origin": "conflict",
+          "outputLines": [
+            "L2"
+          ],
+          "right": {
+            "end": 4,
+            "start": 3
+          },
+          "rightLines": [
+            "R2"
+          ],
+          "unresolved": true
+        },
+        {
+          "autoResolved": false,
+          "base": {
+            "end": 5,
+            "start": 4
+          },
+          "baseLines": [
+            "t"
+          ],
+          "decided": false,
+          "id": 4,
+          "left": {
+            "end": 5,
+            "start": 4
+          },
+          "leftLines": [
+            "t"
+          ],
+          "origin": "stable",
+          "outputLines": [
+            "t"
+          ],
+          "right": {
+            "end": 5,
+            "start": 4
+          },
+          "rightLines": [
+            "t"
+          ],
+          "unresolved": false
+        },
+        {
+          "autoResolved": false,
+          "base": {
+            "end": 5,
+            "start": 5
+          },
+          "decided": false,
+          "id": 5,
+          "left": {
+            "end": 5,
+            "start": 5
+          },
+          "origin": "rightOnly",
+          "outputLines": [
+            "R3"
+          ],
+          "right": {
+            "end": 6,
+            "start": 5
+          },
+          "rightLines": [
+            "R3"
+          ],
+          "unresolved": false
+        }
+      ],
+      "hasMore": false,
+      "offset": 3,
+      "rev": 0,
+      "sessionId": "m1",
+      "total": 6
+    }
+  },
+  {
+    "id": 5,
+    "jsonrpc": "2.0",
+    "result": {
+      "conflictCount": 2,
+      "decidedCount": 0,
+      "hasConflicts": true,
+      "sessionId": "m1",
+      "text": "h\n<<<<<<< <LEFT>\nL1\n=======\nR1\n>>>>>>> <RIGHT>\nb\n<<<<<<< <LEFT>\nL2\n=======\nR2\n>>>>>>> <RIGHT>\nt\nR3\n",
+      "unresolvedChunks": [
+        1,
+        3
+      ]
+    }
+  },
+  {
+    "id": 6,
+    "jsonrpc": "2.0",
+    "result": {
+      "conflictCount": 2,
+      "decided": 2,
+      "rev": 1,
+      "sessionId": "m1",
+      "unresolvedChunks": []
+    }
+  },
+  {
+    "id": 7,
+    "jsonrpc": "2.0",
+    "result": {
+      "conflictCount": 2,
+      "decided": 2,
+      "rev": 1,
+      "sessionId": "m1",
+      "unresolvedChunks": []
+    }
+  },
+  {
+    "id": 8,
+    "jsonrpc": "2.0",
+    "result": {
+      "conflictCount": 2,
+      "decidedCount": 2,
+      "hasConflicts": false,
+      "sessionId": "m1",
+      "text": "h\nL1\nb\nR2\nt\nR3\n",
+      "unresolvedChunks": []
+    }
+  },
+  {
+    "id": 9,
+    "jsonrpc": "2.0",
+    "result": {
+      "conflictCount": 2,
+      "decided": 1,
+      "rev": 2,
+      "sessionId": "m1",
+      "unresolvedChunks": []
+    }
+  },
+  {
+    "id": 10,
+    "jsonrpc": "2.0",
+    "result": {
+      "conflictCount": 2,
+      "decidedCount": 2,
+      "hasConflicts": false,
+      "sessionId": "m1",
+      "text": "h\n手\n工\nb\nR2\nt\nR3\n",
+      "unresolvedChunks": []
+    }
+  },
+  {
+    "id": 11,
+    "jsonrpc": "2.0",
+    "result": null
+  },
+  {
+    "id": 12,
+    "jsonrpc": "2.0",
+    "result": null
+  }
+]

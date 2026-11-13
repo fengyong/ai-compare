@@ -146,7 +146,21 @@ fn session_inputs(corpus: &harness::Corpus) -> Vec<Value> {
             "importance": { "caseUnimportant": true }
         })),
         harness::req(19, "session/close", json!({"sessionId": "t3"})),
-        harness::req(20, "shutdown", json!({})),
+        // ---- P7：text/merge3/*（三向合并录制面：open/sections/decide/output） ----
+        harness::req(20, "text/merge3/open", json!({
+            "sessionId": "m1",
+            "base": corpus.left.join("same.txt").to_string_lossy(),
+            "left": corpus.left.join("changed.txt").to_string_lossy(),
+            "right": corpus.right.join("changed.txt").to_string_lossy(),
+        })),
+        harness::req(21, "text/merge3/sections", json!({"sessionId": "m1", "offset": 0, "count": 10})),
+        harness::req(22, "text/merge3/decide", json!({
+            "sessionId": "m1",
+            "decisions": [{"chunkId": 0, "action": "left"}]
+        })),
+        harness::req(23, "text/merge3/output", json!({"sessionId": "m1"})),
+        harness::req(24, "session/close", json!({"sessionId": "m1"})),
+        harness::req(25, "shutdown", json!({})),
     ]
 }
 

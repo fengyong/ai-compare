@@ -60,6 +60,14 @@ pub mod method {
     pub const TEXT_LINES: &str = "text/lines";
     /// 行内差异懒计算（P3，docs/03 §2.3.2 text/inlineDiff {sectionId}）
     pub const TEXT_INLINE_DIFF: &str = "text/inlineDiff";
+    /// 三向合并：打开会话（P7，docs/03 §4.5 MergeModel）
+    pub const TEXT_MERGE3_OPEN: &str = "text/merge3/open";
+    /// 三向合并：块清单分批取回（P7）
+    pub const TEXT_MERGE3_SECTIONS: &str = "text/merge3/sections";
+    /// 三向合并：块决策提交（幂等，P7）
+    pub const TEXT_MERGE3_DECIDE: &str = "text/merge3/decide";
+    /// 三向合并：合成输出（含未决冲突清单，P7）
+    pub const TEXT_MERGE3_OUTPUT: &str = "text/merge3/output";
     /// 关闭会话（释放引擎侧模型）
     pub const SESSION_CLOSE: &str = "session/close";
     /// 取消请求（UI -> 引擎通知，LSP 风格）

@@ -40,10 +40,33 @@ pub struct TextSessionData {
     pub rev: u64,
 }
 
+/// 三向合并会话数据（P7，text/merge3/*）
+///
+/// 模型不可变（打开时一次求出）；决策表可变（text/merge3/decide 提交），
+/// 输出由 model + decisions 确定性合成（幂等）。
+#[derive(Debug, Clone)]
+pub struct MergeSessionData {
+    /// 三方行表（块行内容与双键数据源）
+    pub base: ai_core::LineTable,
+    pub left: ai_core::LineTable,
+    pub right: ai_core::LineTable,
+    /// 合并模型（有序块序列；打开时一次求出）
+    pub model: ai_core::merge::MergeModel,
+    /// 打开会话时生效的合并选项（未决冲突默认策略等）
+    pub options: ai_core::merge::MergeOptions,
+    /// marker 标签（(base, left, right)，取打开时的路径原串）
+    pub labels: (String, String, String),
+    /// 块决策表（chunkId -> 决策；显式决策覆盖 auto_decision）
+    pub decisions: std::collections::HashMap<u32, ai_core::merge::MergeDecision>,
+    /// 会话内单调递增版本号（决策内容变化时 +1）
+    pub rev: u64,
+}
+
 #[derive(Clone)]
 pub enum Session {
     Dir(DirSessionData),
     Text(TextSessionData),
+    Merge(MergeSessionData),
 }
 
 pub type SessionMapInner = HashMap<String, Session>;

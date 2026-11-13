@@ -1,0 +1,219 @@
+{
+  "note": "same=逐字节一致; same-after-unglue=EOF 无尾换行 marker 粘连规范化后一致; gnu-A-bracketed=GNU -m 默认 -A 模式行为差异（相同变化也加括号/delete-modify base 段扩展，本实现与 git merge-file --diff3 一致）; ambiguous=重复行歧义语料（合法合并，不逐字比对）; skipped=窗口选项为本实现扩展",
+  "rows": [
+    {
+      "conflictCount": 0,
+      "corpus": "clean_disjoint",
+      "gitDiff3": "same",
+      "gitMerge": "same",
+      "gnuDiff3": "same"
+    },
+    {
+      "conflictCount": 0,
+      "corpus": "clean_interleaved",
+      "gitDiff3": "same",
+      "gitMerge": "same",
+      "gnuDiff3": "same"
+    },
+    {
+      "conflictCount": 0,
+      "corpus": "left_only_change",
+      "gitDiff3": "same",
+      "gitMerge": "same",
+      "gnuDiff3": "same"
+    },
+    {
+      "conflictCount": 0,
+      "corpus": "right_only_append",
+      "gitDiff3": "same",
+      "gitMerge": "same",
+      "gnuDiff3": "same"
+    },
+    {
+      "conflictCount": 0,
+      "corpus": "both_same_change",
+      "gitDiff3": "same",
+      "gitMerge": "same",
+      "gnuDiff3": "gnu-A-bracketed"
+    },
+    {
+      "conflictCount": 0,
+      "corpus": "both_append_same",
+      "gitDiff3": "same",
+      "gitMerge": "same",
+      "gnuDiff3": "gnu-A-bracketed"
+    },
+    {
+      "conflictCount": 0,
+      "corpus": "both_delete_same",
+      "gitDiff3": "same",
+      "gitMerge": "same",
+      "gnuDiff3": "gnu-A-bracketed"
+    },
+    {
+      "conflictCount": 1,
+      "corpus": "conflict_modify_modify",
+      "gitDiff3": "same",
+      "gitMerge": "same",
+      "gnuDiff3": "same"
+    },
+    {
+      "conflictCount": 1,
+      "corpus": "conflict_adjacent_no_stable",
+      "gitDiff3": "same",
+      "gitMerge": "same",
+      "gnuDiff3": "same"
+    },
+    {
+      "conflictCount": 1,
+      "corpus": "conflict_overlap_multiline",
+      "gitDiff3": "same",
+      "gitMerge": "same",
+      "gnuDiff3": "same"
+    },
+    {
+      "conflictCount": 1,
+      "corpus": "conflict_delete_modify",
+      "gitDiff3": "same",
+      "gitMerge": "same",
+      "gnuDiff3": "gnu-A-bracketed"
+    },
+    {
+      "conflictCount": 1,
+      "corpus": "conflict_add_add",
+      "gitDiff3": "same",
+      "gitMerge": "same",
+      "gnuDiff3": "gnu-A-bracketed"
+    },
+    {
+      "conflictCount": 1,
+      "corpus": "conflict_add_add_eof",
+      "gitDiff3": "same",
+      "gitMerge": "same",
+      "gnuDiff3": "same"
+    },
+    {
+      "conflictCount": 0,
+      "corpus": "interleaved_lr",
+      "gitDiff3": "same",
+      "gitMerge": "same",
+      "gnuDiff3": "same"
+    },
+    {
+      "conflictCount": 0,
+      "corpus": "interleaved_near",
+      "gitDiff3": "same",
+      "gitMerge": "same",
+      "gnuDiff3": "same"
+    },
+    {
+      "conflictCount": 0,
+      "corpus": "all_empty",
+      "gitDiff3": "same",
+      "gitMerge": "same",
+      "gnuDiff3": "same"
+    },
+    {
+      "conflictCount": 0,
+      "corpus": "empty_base_same_add",
+      "gitDiff3": "same",
+      "gitMerge": "same",
+      "gnuDiff3": "gnu-A-bracketed"
+    },
+    {
+      "conflictCount": 1,
+      "corpus": "empty_base_conflict_add",
+      "gitDiff3": "same",
+      "gitMerge": "same",
+      "gnuDiff3": "same"
+    },
+    {
+      "conflictCount": 0,
+      "corpus": "empty_base_one_side_add",
+      "gitDiff3": "same",
+      "gitMerge": "same",
+      "gnuDiff3": "same"
+    },
+    {
+      "conflictCount": 0,
+      "corpus": "become_empty_both",
+      "gitDiff3": "same",
+      "gitMerge": "same",
+      "gnuDiff3": "gnu-A-bracketed"
+    },
+    {
+      "conflictCount": 0,
+      "corpus": "crlf_clean",
+      "gitDiff3": "same",
+      "gitMerge": "same",
+      "gnuDiff3": "same"
+    },
+    {
+      "conflictCount": 1,
+      "corpus": "crlf_conflict",
+      "gitDiff3": "same",
+      "gitMerge": "same",
+      "gnuDiff3": "gnu-A-bracketed"
+    },
+    {
+      "conflictCount": 0,
+      "corpus": "unicode_clean",
+      "gitDiff3": "same",
+      "gitMerge": "same",
+      "gnuDiff3": "same"
+    },
+    {
+      "conflictCount": 1,
+      "corpus": "unicode_conflict",
+      "gitDiff3": "same",
+      "gitMerge": "same",
+      "gnuDiff3": "same"
+    },
+    {
+      "conflictCount": 0,
+      "corpus": "eof_clean_merge",
+      "gitDiff3": "same",
+      "gitMerge": "same",
+      "gnuDiff3": "same"
+    },
+    {
+      "conflictCount": 1,
+      "corpus": "eof_conflict_no_newline",
+      "gitDiff3": "same",
+      "gitMerge": "same",
+      "gnuDiff3": "same-after-unglue"
+    },
+    {
+      "conflictCount": 1,
+      "corpus": "repeated_lines_ambiguity",
+      "gitDiff3": "same",
+      "gitMerge": "same",
+      "gnuDiff3": "ambiguous"
+    },
+    {
+      "conflictCount": 1,
+      "corpus": "repeated_lines_conflict",
+      "gitDiff3": "same",
+      "gitMerge": "same",
+      "gnuDiff3": "ambiguous"
+    },
+    {
+      "conflictCount": 1,
+      "corpus": "window_merges_nearby",
+      "gitDiff3": "skipped",
+      "gitMerge": "skipped",
+      "gnuDiff3": "skipped"
+    },
+    {
+      "conflictCount": 0,
+      "corpus": "window_gap_too_far",
+      "gitDiff3": "skipped",
+      "gitMerge": "skipped",
+      "gnuDiff3": "skipped"
+    }
+  ],
+  "tools": {
+    "gitMergeFile": "available",
+    "gnuDiff3": "available"
+  }
+}

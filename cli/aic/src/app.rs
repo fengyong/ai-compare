@@ -1,6 +1,6 @@
 //! `aic` 命令实现（CLI 全集，docs/04 §P3 / docs/01 §4.8）：
 //!
-//! - [`run_cli`]：aic 主入口（diff / quick / help / version）；
+//! - [`run_cli`]：aic 主入口（diff / merge / quick / help / version）；
 //! - `aicc`（bin/aicc.rs）复用本模块作为进程内回退路径。
 //!
 //! 命令面：
@@ -9,17 +9,21 @@
 //!          [-w|--ignore-whitespace] [--ignore-whitespace-amount]
 //!          [--ignore-case] [--compare-eol] [-U <n>] [--color auto|always|never]
 //!          （两侧为目录时递归输出，diff -r 风格）
+//! aic merge <base> <left> <right> [-o <out>] [--auto|--marker] [--diff3]
+//!           [--conflict-exit-code <n>] [--favor-left|--favor-right]
+//!           [-iu|--ignore-unimportant] [--on-conflict <策略>] [--conflict-window <n>]
 //! aic quick <left> <right> [--mode size|crc|binary|rules] [--ignore-whitespace] [--ignore-case]
 //! ```
 //!
 //! 退出码（FR-CLI-004 兼容分层，见 lib.rs 常量文档）：
-//! 0 相同/成功、1 不同(diff)、2 错误、11 二进制差异、12 相似、13 基于规则的差异、
-//! 14 检测到冲突（P7 合并预留）。
+//! 0 相同/成功、1 不同(diff)/有未决冲突(merge)、2 错误、11 二进制差异、12 相似、
+//! 13 基于规则的差异、14 检测到冲突（aic merge --conflict-exit-code 14 可选）。
 
 use std::io::{IsTerminal, Write as _};
 use std::process::ExitCode;
 
 use crate::{aggregate_verdicts, render_dir_diff, render_unified, rules_classify_file, Palette, QuickVerdict, ANSI, PLAIN};
+use ai_core::merge::{ConflictDefault, FavorSide, MarkerOptions, MarkerStyle, MergeOptions, SynthesizeOptions, UnresolvedPolicy};
 use ai_core::options::{ImportanceOptions, LineAlignAlgo, TextDiffOptions, WhitespaceMode};
 use ai_core::LineTable;
 use ai_protocol::CompareCriteria;
@@ -31,6 +35,7 @@ use crate::{EXIT_DIFF, EXIT_ERROR, EXIT_SAME};
 pub fn run_cli(args: &[String]) -> ExitCode {
     match args.first().map(String::as_str) {
         Some("diff") => cmd_diff(&args[1..]),
+        Some("merge") => cmd_merge(&args[1..]),
         Some("quick") => cmd_quick(&args[1..]),
         Some("--help") | Some("-h") | Some("help") => {
             print_usage();
@@ -56,13 +61,22 @@ pub fn print_usage() {
                 [-w|--ignore-whitespace] [--ignore-whitespace-amount] [--ignore-case]\n  \
                 [--compare-eol] [-U <n>] [--color auto|always|never]\n  \
                 （两侧为目录时递归输出，diff -r 风格）\n  \
+         aic merge <base> <left> <right> [-o <out>] [--auto|--marker] [--diff3]\n  \
+                [--conflict-exit-code <n>] [--favor-left|--favor-right]\n  \
+                [-iu|--ignore-unimportant] [--on-conflict left|right|base|leftThenRight|rightThenLeft]\n  \
+                [--conflict-window <n>] [-w] [--ignore-case] [--compare-eol]\n  \
+                （三向合并：退出 0 无冲突 / 1 有未决冲突 / 2 错误；marker 模式以\n\
+                  <<<<<<< / ======= / >>>>>>> 标记冲突，--diff3 附 ||||||| base 段）\n  \
          aic quick <left> <right> [--mode size|crc|binary|rules] [--ignore-whitespace] [--ignore-case]\n\
          \n\
          退出码: 0 相同/成功 / 1 不同 / 2 错误 / 11 二进制差异 / 12 相似（仅不重要差异）\n\
-                 13 基于规则的差异 / 14 冲突（三向合并 P7 预留）\n\
+                 13 基于规则的差异 / 14 冲突（aic merge --conflict-exit-code 14 对齐 FR-CLI-004）\n\
          说明: quick --mode rules 走 ai-core 重要性判等（FR-TXT-010）；--ignore-whitespace/--ignore-case\n\
                把对应方面标记为不重要（仅有不重要差异 -> 12 相似），二进制文件回退二进制判等\n\
-         目录 quick: size=仅大小; crc=分块哈希; binary=逐字节; rules=逐文件规则判定后聚合"
+         目录 quick: size=仅大小; crc=分块哈希; binary=逐字节; rules=逐文件规则判定后聚合\n\
+         merge 说明: 默认 marker 模式（冲突写标记供审查）；--auto 输出自动合成文本，\n\
+               未决冲突按 --on-conflict 策略解析（默认 left，受惠侧语义 /favorleft）；\n\
+               -iu/--ignore-unimportant + --favor-*：不重要冲突自动从受惠侧采用（FR-TMRG-005）"
     );
 }
 
@@ -276,6 +290,184 @@ async fn run_dir_diff(
 enum DiffOutcome {
     Different,
     Error(String),
+}
+
+// ---------------------------------------------------------------------------
+// aic merge（P7 三向合并；FR-CLI-003 /automerge /favorleft|right /force 子集）
+// ---------------------------------------------------------------------------
+
+/// merge 输出策略的 CLI 形态
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MergeOutputKind {
+    /// marker 模式（默认；冲突写标记供审查，/force 语义）
+    Marker,
+    /// auto 模式（--auto；自动合成文本，未决冲突按策略解析）
+    Auto,
+}
+
+pub fn cmd_merge(args: &[String]) -> ExitCode {
+    let mut positional: Vec<&String> = Vec::new();
+    let mut opts = MergeOptions::default();
+    let mut kind = MergeOutputKind::Marker;
+    let mut marker_style = MarkerStyle::Merge;
+    let mut out_path: Option<String> = None;
+    let mut conflict_exit_code: u8 = 1;
+    let mut diff_opts = TextDiffOptions::default();
+
+    let mut i = 0usize;
+    while i < args.len() {
+        let a = args[i].as_str();
+        let next = |i: &mut usize| -> Option<String> {
+            *i += 1;
+            args.get(*i).cloned()
+        };
+        match a {
+            "-o" | "--output" | "--mergeoutput" => match next(&mut i) {
+                Some(p) => out_path = Some(p),
+                None => return arg_error("-o 需要输出路径参数"),
+            },
+            _ if a.starts_with("--output=") => out_path = Some(a["--output=".len()..].to_string()),
+            "--auto" | "--automerge" => kind = MergeOutputKind::Auto,
+            "--marker" => kind = MergeOutputKind::Marker,
+            "--diff3" => marker_style = MarkerStyle::Diff3,
+            "--conflict-exit-code" => match next(&mut i).and_then(|v| v.parse::<u8>().ok()) {
+                Some(n) => conflict_exit_code = n,
+                None => return arg_error("--conflict-exit-code 需要数字参数（默认 1；14 = FR-CLI-004 冲突码）"),
+            },
+            "--favor-left" | "--favorleft" => opts.favor = Some(FavorSide::Left),
+            "--favor-right" | "--favorright" => opts.favor = Some(FavorSide::Right),
+            // /iu 语义：打开忽略不重要差异 = 空白三类/大小写标记为不重要 +
+            // 不重要冲突不升级为未决（FR-TMRG-005；行尾默认已不重要）
+            "-iu" | "--ignore-unimportant" => {
+                opts.ignore_unimportant = true;
+                opts.importance.leading_ws_unimportant = true;
+                opts.importance.embedded_ws_unimportant = true;
+                opts.importance.trailing_ws_unimportant = true;
+                opts.importance.case_unimportant = true;
+            }
+            "--on-conflict" => {
+                let v = next(&mut i).unwrap_or_default();
+                opts.conflict_default = match v.as_str() {
+                    "left" => ConflictDefault::TakeLeft,
+                    "right" => ConflictDefault::TakeRight,
+                    "base" | "center" => ConflictDefault::TakeBase,
+                    "leftThenRight" | "left-then-right" => ConflictDefault::TakeLeftThenRight,
+                    "rightThenLeft" | "right-then-left" => ConflictDefault::TakeRightThenLeft,
+                    _ => return arg_error("--on-conflict 仅支持 left|right|base|leftThenRight|rightThenLeft"),
+                };
+            }
+            "--conflict-window" => match next(&mut i).and_then(|v| v.parse::<u32>().ok()) {
+                Some(n) => opts.conflict_window = Some(n),
+                None => return arg_error("--conflict-window 需要数字参数（FR-TMRG-003 N 行分隔）"),
+            },
+            "-w" | "--ignore-whitespace" => diff_opts.whitespace = WhitespaceMode::IgnoreAll,
+            "--ignore-whitespace-amount" => diff_opts.whitespace = WhitespaceMode::IgnoreAmount,
+            "--ignore-case" | "-i" => diff_opts.ignore_case = true,
+            "--compare-eol" => diff_opts.ignore_eol_style = false,
+            _ if a.starts_with('-') => return arg_error(&format!("未知参数: {a}")),
+            _ => positional.push(&args[i]),
+        }
+        i += 1;
+    }
+    if positional.len() != 3 {
+        return arg_error("merge 需要恰好三个路径参数: <base> <left> <right>");
+    }
+    opts.diff = diff_opts;
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("tokio 运行时");
+    let result = rt.block_on(run_merge(
+        positional[0],
+        positional[1],
+        positional[2],
+        &opts,
+        kind,
+        marker_style,
+        out_path.as_deref(),
+    ));
+    match result {
+        Ok(()) => EXIT_SAME.into(),
+        Err(MergeOutcome::Conflicts) => conflict_exit_code.into(),
+        Err(MergeOutcome::Error(msg)) => {
+            eprintln!("aic merge: {msg}");
+            EXIT_ERROR.into()
+        }
+    }
+}
+
+enum MergeOutcome {
+    /// 存在未决冲突（输出已写出）
+    Conflicts,
+    Error(String),
+}
+
+async fn run_merge(
+    base_s: &str,
+    left_s: &str,
+    right_s: &str,
+    opts: &MergeOptions,
+    kind: MergeOutputKind,
+    marker_style: MarkerStyle,
+    out_path: Option<&str>,
+) -> Result<(), MergeOutcome> {
+    let vfs = LocalFs::new();
+    let (base_p, left_p, right_p) = (
+        VfsPath::parse(base_s).map_err(|e| MergeOutcome::Error(e.to_string()))?,
+        VfsPath::parse(left_s).map_err(|e| MergeOutcome::Error(e.to_string()))?,
+        VfsPath::parse(right_s).map_err(|e| MergeOutcome::Error(e.to_string()))?,
+    );
+    let base_text = vfs.read_file_text(&base_p).await.map_err(|e| MergeOutcome::Error(e.to_string()))?;
+    let left_text = vfs.read_file_text(&left_p).await.map_err(|e| MergeOutcome::Error(e.to_string()))?;
+    let right_text = vfs.read_file_text(&right_p).await.map_err(|e| MergeOutcome::Error(e.to_string()))?;
+
+    let base = LineTable::from_text(&base_text);
+    let left = LineTable::from_text(&left_text);
+    let right = LineTable::from_text(&right_text);
+
+    let model = ai_core::merge3(&base, &left, &right, opts);
+    let unresolved = model.unresolved();
+
+    // 输出策略：marker 模式（默认，/force 语义）or auto 模式（conflict_default 可配）
+    let syn = match kind {
+        MergeOutputKind::Marker => SynthesizeOptions {
+            unresolved: UnresolvedPolicy::Markers(MarkerOptions {
+                style: marker_style,
+                // 标签 = 路径原串（与 GNU diff3 -m / git merge-file 的 argv 标签同形）
+                base_label: base_s.to_string(),
+                left_label: left_s.to_string(),
+                right_label: right_s.to_string(),
+            }),
+        },
+        MergeOutputKind::Auto => SynthesizeOptions {
+            unresolved: opts.conflict_default.clone().to_policy(None),
+        },
+    };
+    let out = ai_core::synthesize(&model, &base, &left, &right, &std::collections::HashMap::new(), &syn);
+
+    match out_path {
+        Some(p) => {
+            std::fs::write(p, out.text.as_bytes())
+                .map_err(|e| MergeOutcome::Error(format!("写输出失败: {e}")))?;
+        }
+        None => {
+            let stdout = std::io::stdout();
+            let mut lock = stdout.lock();
+            let _ = lock.write_all(out.text.as_bytes());
+            let _ = lock.flush();
+        }
+    }
+    if unresolved.is_empty() {
+        Ok(())
+    } else {
+        eprintln!(
+            "aic merge: {} 个未决冲突块（{}）",
+            unresolved.len(),
+            unresolved.iter().map(|id| id.to_string()).collect::<Vec<_>>().join(",")
+        );
+        Err(MergeOutcome::Conflicts)
+    }
 }
 
 // ---------------------------------------------------------------------------

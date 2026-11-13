@@ -17,6 +17,8 @@ pub fn vfs_error_to_rpc(err: &VfsError) -> ai_protocol::RpcErrorObject {
         VfsError::Cancelled => (codes::REQUEST_CANCELLED, "操作被取消".to_string()),
         VfsError::Unsupported(m) => (codes::INTERNAL_ERROR, format!("不支持的操作: {m}")),
         VfsError::Io(e) => (codes::INTERNAL_ERROR, format!("IO 错误: {e}")),
+        // P7 期 ai-vfs 新增变体（并发 agent）：目标已存在 -> 411 会话/目标冲突语义族
+        VfsError::AlreadyExists { path } => (codes::SESSION_EXISTS, format!("目标已存在: {path}")),
     };
     ai_protocol::error_object(code, msg)
 }
@@ -195,6 +197,202 @@ pub fn line_keys_entry(
         line,
         raw: ai_core::raw_key(entry, opts).into_owned(),
         importance: ai_core::importance_key(entry, opts, imp).into_owned(),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// P7：三向合并（text/merge3/*）协议映射
+// ---------------------------------------------------------------------------
+
+/// text/merge3/open options DTO -> core MergeOptions（缺省与 core default 一致）
+pub fn merge_options_from_dto(spec: &ai_protocol::Merge3OptionsSpec) -> ai_core::MergeOptions {
+    let mut o = ai_core::MergeOptions::default();
+    if let Some(algo) = spec.algo {
+        o.diff.algo = match algo {
+            ai_protocol::LineAlignAlgo::Standard => ai_core::LineAlignAlgo::Standard,
+            ai_protocol::LineAlignAlgo::Myers => ai_core::LineAlignAlgo::Myers,
+            ai_protocol::LineAlignAlgo::Patience => ai_core::LineAlignAlgo::Patience,
+            ai_protocol::LineAlignAlgo::Histogram => ai_core::LineAlignAlgo::Histogram,
+        };
+    }
+    if let Some(ws) = spec.whitespace {
+        o.diff.whitespace = match ws {
+            ai_protocol::WhitespaceMode::Significant => ai_core::WhitespaceMode::Significant,
+            ai_protocol::WhitespaceMode::IgnoreAmount => ai_core::WhitespaceMode::IgnoreAmount,
+            ai_protocol::WhitespaceMode::IgnoreAll => ai_core::WhitespaceMode::IgnoreAll,
+        };
+    }
+    if let Some(b) = spec.ignore_case {
+        o.diff.ignore_case = b;
+    }
+    if let Some(b) = spec.ignore_eol_style {
+        o.diff.ignore_eol_style = b;
+    }
+    o.conflict_window = spec.conflict_window;
+    o.favor = spec.favor.map(|f| match f {
+        ai_protocol::MergeFavorSide::Left => ai_core::FavorSide::Left,
+        ai_protocol::MergeFavorSide::Right => ai_core::FavorSide::Right,
+    });
+    if let Some(b) = spec.ignore_unimportant {
+        o.ignore_unimportant = b;
+    }
+    if let Some(imp) = &spec.importance {
+        o.importance = importance_from_dto(imp);
+    }
+    if let Some(d) = spec.conflict_default {
+        o.conflict_default = match d {
+            ai_protocol::MergeConflictDefault::Left => ai_core::ConflictDefault::TakeLeft,
+            ai_protocol::MergeConflictDefault::Right => ai_core::ConflictDefault::TakeRight,
+            ai_protocol::MergeConflictDefault::Base => ai_core::ConflictDefault::TakeBase,
+            ai_protocol::MergeConflictDefault::LeftThenRight => ai_core::ConflictDefault::TakeLeftThenRight,
+            ai_protocol::MergeConflictDefault::RightThenLeft => ai_core::ConflictDefault::TakeRightThenLeft,
+            ai_protocol::MergeConflictDefault::Marker => ai_core::ConflictDefault::Marker,
+        };
+    }
+    o
+}
+
+/// 协议决策 DTO -> core 决策（Manual 需 text）
+pub fn merge_decision_from_dto(
+    d: &ai_protocol::MergeDecisionDto,
+) -> Result<ai_core::MergeDecision, String> {
+    use ai_protocol::MergeDecisionKind as K;
+    Ok(match d.action {
+        K::Left => ai_core::MergeDecision::TakeLeft,
+        K::Right => ai_core::MergeDecision::TakeRight,
+        K::Base => ai_core::MergeDecision::TakeBase,
+        K::LeftThenRight => ai_core::MergeDecision::TakeLeftThenRight,
+        K::RightThenLeft => ai_core::MergeDecision::TakeRightThenLeft,
+        K::Manual => {
+            let text = d.text.as_deref().ok_or("Manual 决策需要 text 字段")?;
+            ai_core::MergeDecision::Manual(
+                text.split('\n').map(|s| s.to_string()).collect::<Vec<_>>(),
+            )
+        }
+    })
+}
+
+/// core 决策 -> 协议决策动作（Manual 决策协议面只报动作，编辑文本以块决策为准）
+fn decision_kind_to_dto(d: &ai_core::MergeDecision) -> ai_protocol::MergeDecisionKind {
+    use ai_core::MergeDecision as D;
+    match d {
+        D::TakeLeft => ai_protocol::MergeDecisionKind::Left,
+        D::TakeRight => ai_protocol::MergeDecisionKind::Right,
+        D::TakeBase => ai_protocol::MergeDecisionKind::Base,
+        D::TakeLeftThenRight => ai_protocol::MergeDecisionKind::LeftThenRight,
+        D::TakeRightThenLeft => ai_protocol::MergeDecisionKind::RightThenLeft,
+        D::Manual(_) => ai_protocol::MergeDecisionKind::Manual,
+    }
+}
+
+fn line_range_dto(r: ai_core::sections::LineRange) -> ai_protocol::LineRange {
+    ai_protocol::LineRange { start: r.start, end: r.end }
+}
+
+/// 合并块 -> 协议 MergeChunkDto（三方行内容 + 决策状态 + 当前合成输出行）
+pub fn merge_chunk_to_dto(
+    c: &ai_core::MergeChunk,
+    decisions: &std::collections::HashMap<u32, ai_core::MergeDecision>,
+    base: &ai_core::LineTable,
+    left: &ai_core::LineTable,
+    right: &ai_core::LineTable,
+    syn: &ai_core::SynthesizeOptions,
+) -> ai_protocol::MergeChunkDto {
+    use ai_core::ChunkOrigin as O;
+    let decision = decisions.get(&c.id).or(c.auto_decision.as_ref());
+    let one = |t: &ai_core::LineTable, r: std::ops::Range<u32>| {
+        (r.start..r.end).map(|i| t.line(i as usize).text.clone()).collect::<Vec<_>>()
+    };
+    // 当前块输出行（决策/策略生效后；marker 行由 output 模式整体渲染，此处为空）
+    let output_lines = chunk_output_lines(c, decisions, base, left, right, syn);
+    let conflict = c.conflict.as_ref();
+    ai_protocol::MergeChunkDto {
+        id: c.id,
+        origin: match c.origin {
+            O::Stable => ai_protocol::MergeChunkOrigin::Stable,
+            O::LeftOnly => ai_protocol::MergeChunkOrigin::LeftOnly,
+            O::RightOnly => ai_protocol::MergeChunkOrigin::RightOnly,
+            O::BothChanged => ai_protocol::MergeChunkOrigin::BothChanged,
+            O::Conflict => ai_protocol::MergeChunkOrigin::Conflict,
+        },
+        base: line_range_dto(c.base),
+        left: line_range_dto(c.left),
+        right: line_range_dto(c.right),
+        conflict_kind: conflict.map(|d| match d.kind {
+            ai_core::ConflictKind::ModifyModify => ai_protocol::MergeConflictKind::ModifyModify,
+            ai_core::ConflictKind::DeleteModify => ai_protocol::MergeConflictKind::DeleteModify,
+            ai_core::ConflictKind::AddAdd => ai_protocol::MergeConflictKind::AddAdd,
+        }),
+        conflict_rows: conflict.map(|d| {
+            d.rows
+                .iter()
+                .map(|r| ai_protocol::MergeConflictRowDto { left: r.left, right: r.right, unimportant: r.unimportant })
+                .collect()
+        }),
+        conflict_unimportant: conflict.map(|d| d.unimportant),
+        base_lines: if c.base.is_empty() { Vec::new() } else { one(base, c.base.start..c.base.end) },
+        left_lines: if c.left.is_empty() { Vec::new() } else { one(left, c.left.start..c.left.end) },
+        right_lines: if c.right.is_empty() { Vec::new() } else { one(right, c.right.start..c.right.end) },
+        decided: decisions.contains_key(&c.id),
+        decision: decision.map(decision_kind_to_dto),
+        auto_resolved: c.auto_decision.is_some(),
+        unresolved: c.origin == O::Conflict && decision.is_none(),
+        output_lines,
+    }
+}
+
+/// 单块输出行（与 core synthesize 决策/策略语义一致；供 sections 与 output 共用）
+fn chunk_output_lines(
+    c: &ai_core::MergeChunk,
+    decisions: &std::collections::HashMap<u32, ai_core::MergeDecision>,
+    base: &ai_core::LineTable,
+    left: &ai_core::LineTable,
+    right: &ai_core::LineTable,
+    syn: &ai_core::SynthesizeOptions,
+) -> Vec<String> {
+    let take = |t: &ai_core::LineTable, r: std::ops::Range<u32>| {
+        (r.start..r.end).map(|i| t.line(i as usize).text.clone()).collect::<Vec<_>>()
+    };
+    let decision = decisions.get(&c.id).or(c.auto_decision.as_ref());
+    match decision {
+        Some(d) => match d {
+            ai_core::MergeDecision::TakeLeft => take(left, c.left.start..c.left.end),
+            ai_core::MergeDecision::TakeRight => take(right, c.right.start..c.right.end),
+            ai_core::MergeDecision::TakeBase => take(base, c.base.start..c.base.end),
+            ai_core::MergeDecision::TakeLeftThenRight => {
+                let mut v = take(left, c.left.start..c.left.end);
+                v.extend(take(right, c.right.start..c.right.end));
+                v
+            }
+            ai_core::MergeDecision::TakeRightThenLeft => {
+                let mut v = take(right, c.right.start..c.right.end);
+                v.extend(take(left, c.left.start..c.left.end));
+                v
+            }
+            ai_core::MergeDecision::Manual(lines) => lines.clone(),
+        },
+        None => match c.origin {
+            ai_core::ChunkOrigin::Stable | ai_core::ChunkOrigin::LeftOnly | ai_core::ChunkOrigin::BothChanged => {
+                take(left, c.left.start..c.left.end)
+            }
+            ai_core::ChunkOrigin::RightOnly => take(right, c.right.start..c.right.end),
+            ai_core::ChunkOrigin::Conflict => match &syn.unresolved {
+                ai_core::UnresolvedPolicy::TakeLeft => take(left, c.left.start..c.left.end),
+                ai_core::UnresolvedPolicy::TakeRight => take(right, c.right.start..c.right.end),
+                ai_core::UnresolvedPolicy::TakeBase => take(base, c.base.start..c.base.end),
+                ai_core::UnresolvedPolicy::TakeLeftThenRight => {
+                    let mut v = take(left, c.left.start..c.left.end);
+                    v.extend(take(right, c.right.start..c.right.end));
+                    v
+                }
+                ai_core::UnresolvedPolicy::TakeRightThenLeft => {
+                    let mut v = take(right, c.right.start..c.right.end);
+                    v.extend(take(left, c.left.start..c.left.end));
+                    v
+                }
+                ai_core::UnresolvedPolicy::Markers(_) => Vec::new(), // marker 行由 output 模式渲染
+            },
+        },
     }
 }
 

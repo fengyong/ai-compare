@@ -76,6 +76,26 @@ pub fn export_all_to_ui() -> Result<usize, Box<dyn std::error::Error>> {
     TextAlignAnchor::export()?;
     SideLineRange::export()?;
     TextManualAlignSpec::export()?;
+    // P7 新增（text/merge3/* 三向合并）
+    MergeChunkOrigin::export()?;
+    MergeConflictKind::export()?;
+    MergeFavorSide::export()?;
+    MergeConflictDefault::export()?;
+    MergeMarkerStyle::export()?;
+    Merge3OptionsSpec::export()?;
+    MergeOpenParams::export()?;
+    MergeOpenResult::export()?;
+    MergeSectionsParams::export()?;
+    MergeConflictRowDto::export()?;
+    MergeDecisionKind::export()?;
+    MergeChunkDto::export()?;
+    MergeSectionsResult::export()?;
+    MergeDecisionDto::export()?;
+    MergeDecideParams::export()?;
+    MergeDecideResult::export()?;
+    MergeOutputMode::export()?;
+    MergeOutputParams::export()?;
+    MergeOutputResult::export()?;
     // P2 新增
     NameFilterSpec::export()?;
     OtherFilterSpec::export()?;
@@ -124,7 +144,7 @@ mod tests {
     #[test]
     fn export_ts_bindings() {
         let n = export_all_to_ui().expect("TS 导出失败");
-        assert!(n >= 58, "应导出全部协议类型，实际 {n}");
+        assert!(n >= 77, "应导出全部协议类型（P7 起含 text/merge3 全家），实际 {n}");
         let ui_dir = ui_generated_dir();
         assert!(ui_dir.join("DirDelta.ts").exists(), "DirDelta.ts 应存在");
         assert!(ui_dir.join("Section.ts").exists(), "Section.ts 应存在");

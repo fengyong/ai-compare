@@ -78,7 +78,7 @@ fn map_vcs_args(args: &[String]) -> Option<Vec<String>> {
     let has_subcommand = rest
         .first()
         .map(String::as_str)
-        .is_some_and(|a| matches!(a, "diff" | "quick" | "help" | "--help" | "-h" | "--version" | "-V"));
+        .is_some_and(|a| matches!(a, "diff" | "merge" | "quick" | "help" | "--help" | "-h" | "--version" | "-V"));
     if has_subcommand {
         return Some(rest);
     }

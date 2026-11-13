@@ -328,6 +328,11 @@ pub struct EngineCapabilities {
     /// P2：dir/operate（同步状态机 operate 计划）
     #[serde(default = "default_true")]
     pub dir_operate: bool,
+    /// P7：三向文本合并入口（text/merge3/* 四方法）
+    /// 可选字段（缺省 true）：旧引擎载荷不含该字段时按 true 解析
+    #[serde(default = "default_some_true", skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub three_way_merge: Option<bool>,
 }
 
 /// 许可能力（ADR-009：开源/自用默认全能力；字段为后续门控留位）
@@ -1025,6 +1030,319 @@ pub struct TextManualAlignSpec {
 }
 
 // ---------------------------------------------------------------------------
+// P7：text/merge3/*（三向文本合并，docs/03 §4.5 MergeModel；FR-TMRG 全系列）
+// ---------------------------------------------------------------------------
+
+/// 合并块来源（有序块序列；三方行区间各自完备划分全表）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub enum MergeChunkOrigin {
+    /// 稳定区（三方键相等）
+    Stable,
+    /// 仅左侧变化（自动取左）
+    LeftOnly,
+    /// 仅右侧变化（自动取右）
+    RightOnly,
+    /// 两侧相同变化（不算冲突）
+    BothChanged,
+    /// 左右不同变化（冲突）
+    Conflict,
+}
+
+/// 冲突类别（验收语料分类：modify-modify / delete-modify / add-add）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub enum MergeConflictKind {
+    ModifyModify,
+    DeleteModify,
+    AddAdd,
+}
+
+/// 受惠侧（FR-TMRG-005 /favorleft|right：不重要冲突自动从受惠侧采用）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub enum MergeFavorSide {
+    Left,
+    Right,
+}
+
+/// 未决冲突默认策略（auto_merge 有冲突时逐冲突默认策略，可配）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub enum MergeConflictDefault {
+    Left,
+    Right,
+    Base,
+    LeftThenRight,
+    RightThenLeft,
+    /// conflict marker 渲染（/force CVS 样式写冲突）
+    Marker,
+}
+
+/// conflict marker 风格：Merge（git merge-file 默认，无 base 段）/ Diff3（GNU diff3 -m，含 base 段）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub enum MergeMarkerStyle {
+    Merge,
+    Diff3,
+}
+
+/// text/merge3/open 选项（全部可选；缺省与 ai-core `MergeOptions::default` 一致）
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase", default)]
+pub struct Merge3OptionsSpec {
+    /// 两路 base↔side diff 的行对齐算法（缺省 Standard）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub algo: Option<LineAlignAlgo>,
+    /// 骨架空白语义（缺省 Significant）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub whitespace: Option<WhitespaceMode>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ignore_case: Option<bool>,
+    /// 行尾风格不参与骨架比较（缺省 true，docs/03 §6.1）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ignore_eol_style: Option<bool>,
+    /// 冲突窗口（FR-TMRG-003 N 行分隔；缺省 None = 仅更改不同的行）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conflict_window: Option<u32>,
+    /// 受惠侧（不重要冲突自动从受惠侧采用）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub favor: Option<MergeFavorSide>,
+    /// 忽略不重要差异（/iu）：不重要冲突不升级为未决冲突
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ignore_unimportant: Option<bool>,
+    /// 重要性模型（FR-TXT-010 上协议面，作用于冲突子对齐与不重要冲突判定）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub importance: Option<ImportanceOptionsSpec>,
+    /// 未决冲突默认策略（auto_merge；plain 输出模式使用）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conflict_default: Option<MergeConflictDefault>,
+}
+
+/// text/merge3/open 参数：base/left/right 三路规格 + 选项
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase", default)]
+pub struct MergeOpenParams {
+    pub session_id: String,
+    /// 公共祖先（中间文件；可为空文件）
+    pub base: String,
+    pub left: String,
+    pub right: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub options: Option<Merge3OptionsSpec>,
+}
+
+/// text/merge3/open 结果（块清单经 text/merge3/sections 流式分批取回）
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct MergeOpenResult {
+    pub session_id: String,
+    pub base_line_count: u32,
+    pub left_line_count: u32,
+    pub right_line_count: u32,
+    pub chunk_count: u32,
+    /// 冲突块总数（含已自动采用的不重要冲突）
+    pub conflict_count: u32,
+    pub rev: u64,
+}
+
+/// text/merge3/sections 参数：块清单分批窗口
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct MergeSectionsParams {
+    pub session_id: String,
+    /// 起始块下标（0 起）
+    pub offset: u32,
+    /// 取回数量上限
+    pub count: u32,
+}
+
+/// 冲突块内行级子对齐提示（L↔R 行配对；unimportant = 仅不重要方面不同）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct MergeConflictRowDto {
+    /// 左侧行号（全表坐标；None = 该行仅右侧存在）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub left: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub right: Option<u32>,
+    pub unimportant: bool,
+}
+
+/// 块决策动作（FR-TMRG-004 采用命令族 + FR-TMRG-005 输出编辑）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub enum MergeDecisionKind {
+    Left,
+    Right,
+    Base,
+    LeftThenRight,
+    RightThenLeft,
+    /// 手动编辑文本（text 字段携带，按 \n 分行；黄块语义）
+    Manual,
+}
+
+/// 合并块（三方行区间 + 行内容 + 决策状态；块清单流式分批）
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct MergeChunkDto {
+    pub id: u32,
+    pub origin: MergeChunkOrigin,
+    /// base 行区间（插入块为空区间占位）
+    pub base: LineRange,
+    pub left: LineRange,
+    pub right: LineRange,
+    /// Conflict 块：冲突类别
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub conflict_kind: Option<MergeConflictKind>,
+    /// Conflict 块：L↔R 行级子对齐提示
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub conflict_rows: Option<Vec<MergeConflictRowDto>>,
+    /// Conflict 块：不重要冲突（左右切片 importance 键序列整体相等）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub conflict_unimportant: Option<bool>,
+    /// 三方行内容（空区间省略；UI 三窗格直接消费）
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub base_lines: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub left_lines: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub right_lines: Vec<String>,
+    /// 决策状态：decided = 有显式决策；auto_resolved = 自动采用（favor/iu）；
+    /// unresolved = 冲突未决
+    pub decided: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub decision: Option<MergeDecisionKind>,
+    pub auto_resolved: bool,
+    pub unresolved: bool,
+    /// 当前合成输出行（决策/策略生效后）
+    pub output_lines: Vec<String>,
+}
+
+/// text/merge3/sections 结果
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct MergeSectionsResult {
+    pub session_id: String,
+    pub offset: u32,
+    /// 块总数
+    pub total: u32,
+    pub has_more: bool,
+    /// 会话版本号（决策提交后递增）
+    pub rev: u64,
+    pub chunks: Vec<MergeChunkDto>,
+}
+
+/// 单条块决策（chunkId + 动作；Manual 需 text）
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct MergeDecisionDto {
+    pub chunk_id: u32,
+    pub action: MergeDecisionKind,
+    /// Manual 动作的编辑文本（按 \n 分行）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+}
+
+/// text/merge3/decide 参数：块决策提交（幂等——同一载荷重复提交不改变会话状态）
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase", default)]
+pub struct MergeDecideParams {
+    pub session_id: String,
+    pub decisions: Vec<MergeDecisionDto>,
+}
+
+/// text/merge3/decide 结果
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct MergeDecideResult {
+    pub session_id: String,
+    /// 会话版本号（决策内容变化才递增；幂等提交 rev 不变）
+    pub rev: u64,
+    /// 本次提交的决策条数
+    pub decided: u32,
+    pub conflict_count: u32,
+    /// 决策后仍未决的冲突块 id（升序）
+    pub unresolved_chunks: Vec<u32>,
+}
+
+/// text/merge3/output 模式：Plain = 合成文本（未决冲突走会话默认策略）；
+/// Marker = 未决冲突以 conflict marker 渲染（纯文本消费）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub enum MergeOutputMode {
+    Plain,
+    Marker,
+}
+
+/// text/merge3/output 参数：合成结果
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase", default)]
+pub struct MergeOutputParams {
+    pub session_id: String,
+    /// 缺省 Plain
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<MergeOutputMode>,
+    /// Marker 模式的 marker 风格（缺省 Merge，git merge-file 同形）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub marker_style: Option<MergeMarkerStyle>,
+}
+
+/// text/merge3/output 结果（text + 未决冲突清单）
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct MergeOutputResult {
+    pub session_id: String,
+    /// 合成输出文本（决策与策略已生效）
+    pub text: String,
+    /// 冲突块总数
+    pub conflict_count: u32,
+    /// 未决冲突块 id（升序）
+    pub unresolved_chunks: Vec<u32>,
+    pub has_conflicts: bool,
+    /// 有显式决策的块数
+    pub decided_count: u32,
+}
+
+// ---------------------------------------------------------------------------
 // session/close、$/cancel
 // ---------------------------------------------------------------------------
 
@@ -1543,6 +1861,7 @@ mod tests {
             dir_background_scan: true,
             dir_filters: true,
             dir_operate: true,
+            three_way_merge: Some(true),
         };
         let s = serde_json::to_string(&c).unwrap();
         assert!(s.contains("linesRead"));
@@ -1668,5 +1987,154 @@ mod tests {
         assert!(s.contains("\"side\":\"left\""));
         let back: TextManualAlignSpec = serde_json::from_str(&s).unwrap();
         assert_eq!(back, spec);
+    }
+
+    // ------------------------------------------------------------------
+    // P7：text/merge3/* 载荷（只加不改；旧载荷不受影响）
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn merge_open_params_minimal_payload() {
+        // 最小载荷（无 options）可解析；序列化不含 options 字段
+        let old = r#"{"sessionId":"m1","base":"b.l","left":"l.l","right":"r.l"}"#;
+        let v: MergeOpenParams = serde_json::from_str(old).unwrap();
+        assert!(v.options.is_none());
+        let s = serde_json::to_string(&v).unwrap();
+        assert_eq!(s, old, "最小载荷字节级不变");
+    }
+
+    #[test]
+    fn merge_options_spec_defaults_and_roundtrip() {
+        let v: Merge3OptionsSpec = serde_json::from_str("{}").unwrap();
+        assert_eq!(v, Merge3OptionsSpec::default());
+        let s = serde_json::to_string(&v).unwrap();
+        assert_eq!(s, "{}", "全缺省 options 序列化为空对象");
+        let spec: Merge3OptionsSpec = serde_json::from_str(
+            r#"{"conflictWindow":3,"favor":"right","ignoreUnimportant":true,"conflictDefault":"leftThenRight"}"#,
+        )
+        .unwrap();
+        assert_eq!(spec.conflict_window, Some(3));
+        assert_eq!(spec.favor, Some(MergeFavorSide::Right));
+        assert_eq!(spec.conflict_default, Some(MergeConflictDefault::LeftThenRight));
+        let s = serde_json::to_string(&spec).unwrap();
+        let back: Merge3OptionsSpec = serde_json::from_str(&s).unwrap();
+        assert_eq!(back, spec);
+    }
+
+    #[test]
+    fn merge_chunk_dto_optional_fields_omitted() {
+        let chunk = MergeChunkDto {
+            id: 0,
+            origin: MergeChunkOrigin::Stable,
+            base: LineRange::new(0, 2),
+            left: LineRange::new(0, 2),
+            right: LineRange::new(0, 2),
+            conflict_kind: None,
+            conflict_rows: None,
+            conflict_unimportant: None,
+            base_lines: Vec::new(),
+            left_lines: vec!["a".into(), "b".into()],
+            right_lines: Vec::new(),
+            decided: false,
+            decision: None,
+            auto_resolved: false,
+            unresolved: false,
+            output_lines: vec!["a".into(), "b".into()],
+        };
+        let s = serde_json::to_string(&chunk).unwrap();
+        assert!(!s.contains("conflictKind") && !s.contains("baseLines") && !s.contains("rightLines"), "{s}");
+        assert!(!s.contains("decision"), "None 决策不序列化: {s}");
+        let back: MergeChunkDto = serde_json::from_str(&s).unwrap();
+        assert_eq!(back, chunk);
+    }
+
+    #[test]
+    fn merge_conflict_chunk_roundtrip() {
+        let chunk = MergeChunkDto {
+            id: 3,
+            origin: MergeChunkOrigin::Conflict,
+            base: LineRange::new(1, 2),
+            left: LineRange::new(1, 2),
+            right: LineRange::new(1, 2),
+            conflict_kind: Some(MergeConflictKind::ModifyModify),
+            conflict_rows: Some(vec![
+                MergeConflictRowDto { left: Some(1), right: Some(1), unimportant: false },
+                MergeConflictRowDto { left: Some(2), right: None, unimportant: false },
+            ]),
+            conflict_unimportant: Some(false),
+            base_lines: vec!["b".into()],
+            left_lines: vec!["L".into()],
+            right_lines: vec!["R".into()],
+            decided: true,
+            decision: Some(MergeDecisionKind::Left),
+            auto_resolved: false,
+            unresolved: false,
+            output_lines: vec!["L".into()],
+        };
+        let s = serde_json::to_string(&chunk).unwrap();
+        assert!(s.contains("\"origin\":\"conflict\""));
+        assert!(s.contains("\"conflictKind\":\"modifyModify\""));
+        assert!(s.contains("\"decision\":\"left\""));
+        assert!(s.contains("\"unimportant\":false"));
+        let back: MergeChunkDto = serde_json::from_str(&s).unwrap();
+        assert_eq!(back, chunk);
+    }
+
+    #[test]
+    fn merge_decide_payload_manual_and_idempotent_shape() {
+        let params: MergeDecideParams = serde_json::from_str(
+            r#"{"sessionId":"m1","decisions":[{"chunkId":1,"action":"manual","text":"手动\n编辑"},{"chunkId":2,"action":"leftThenRight"}]}"#,
+        )
+        .unwrap();
+        assert_eq!(params.decisions.len(), 2);
+        assert_eq!(params.decisions[0].action, MergeDecisionKind::Manual);
+        assert_eq!(params.decisions[0].text.as_deref(), Some("手动\n编辑"));
+        // 非 Manual 决策省略 text
+        let s = serde_json::to_string(&params.decisions[1]).unwrap();
+        assert!(!s.contains("text"), "非 Manual 决策省略 text: {s}");
+        // decide 载荷 roundtrip（幂等提交 = 同一载荷重复解析一致）
+        let full = serde_json::to_string(&params).unwrap();
+        let back: MergeDecideParams = serde_json::from_str(&full).unwrap();
+        assert_eq!(back, params);
+    }
+
+    #[test]
+    fn merge_output_result_shape() {
+        let r: MergeOutputResult = serde_json::from_str(
+            r#"{"sessionId":"m1","text":"a\nb\n","conflictCount":1,"unresolvedChunks":[2],"hasConflicts":true,"decidedCount":0}"#,
+        )
+        .unwrap();
+        assert!(r.has_conflicts);
+        assert_eq!(r.unresolved_chunks, vec![2]);
+        let params: MergeOutputParams = serde_json::from_str(r#"{"sessionId":"m1","mode":"marker","markerStyle":"diff3"}"#).unwrap();
+        assert_eq!(params.mode, Some(MergeOutputMode::Marker));
+        assert_eq!(params.marker_style, Some(MergeMarkerStyle::Diff3));
+        let minimal: MergeOutputParams = serde_json::from_str(r#"{"sessionId":"m1"}"#).unwrap();
+        assert_eq!(minimal.mode, None, "缺省 Plain 模式");
+    }
+
+    #[test]
+    fn engine_capabilities_old_payload_without_three_way_merge() {
+        // P2/P3 旧载荷（无 threeWayMerge）可解析；缺省 true（可选能力位约定）
+        let old = r#"{"dirCompare":true,"textCompare":true,"inlineDiff":false,"cancel":true,"deltaBatching":true,"maxDeltaBatchRows":512,"dirBackgroundScan":true,"dirFilters":true,"dirOperate":true}"#;
+        let v: EngineCapabilities = serde_json::from_str(old).unwrap();
+        assert_eq!(v.three_way_merge, Some(true));
+        assert_eq!(v.lines_read, Some(true));
+        // 新引擎序列化携带 threeWayMerge
+        let c = EngineCapabilities {
+            dir_compare: true,
+            text_compare: true,
+            inline_diff: true,
+            cancel: true,
+            delta_batching: true,
+            max_delta_batch_rows: 512,
+            lines_read: Some(true),
+            dir_background_scan: true,
+            dir_filters: true,
+            dir_operate: true,
+            three_way_merge: Some(true),
+        };
+        let s = serde_json::to_string(&c).unwrap();
+        assert!(s.contains("threeWayMerge"));
     }
 }

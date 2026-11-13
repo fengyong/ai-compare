@@ -19,6 +19,11 @@ path = "golden/golden_test.rs"
 name = "cli_matrix"
 path = "cli/cli_matrix_test.rs"
 
+# P7 三向合并：diff3 golden 矩阵 + GNU diff3 -m / git merge-file 活体对拍（docs/04 §P7）
+[[test]]
+name = "merge3_matrix"
+path = "merge3_matrix/merge3_test.rs"
+
 [[test]]
 name = "protocol_replay"
 path = "protocol_fixtures/replay_test.rs"

@@ -13,7 +13,8 @@
         "inlineDiff": true,
         "linesRead": true,
         "maxDeltaBatchRows": 512,
-        "textCompare": true
+        "textCompare": true,
+        "threeWayMerge": true
       },
       "engine": {
         "name": "ai-engine",
