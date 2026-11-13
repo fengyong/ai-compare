@@ -18,14 +18,14 @@
   - [x] 引擎线：Rust workspace 五 crate + ai-engine stdio + aic CLI（119 测试、clippy 零警、Myers 300 轮 oracle 对拍、`aic diff`≡`diff -u`、38 个 ts-rs 类型）
   - [x] UI 线：Tauri2+React 壳 + 目录/文本视图 + 协议客户端（44 测试、浏览器端到端冒烟）
   - [x] 集成验收：UI 切 generated 类型、引擎路径修正（workspace 根 target）、`pnpm e2e:engine` 真实引擎全链路全绿（initialize→dir/open→delta 断言→text/sections→shutdown）；顺带修复 dirRowCache 删除未清 id 索引 bug；51 UI 测试 / build / lint / cargo check 全绿
-- [ ] **M2 MVP ✅ 完成（2026-11-14 02:1x 联合验收通过）**：P1+P2+P4 三线并行交付
+- [x] **M2 MVP ✅ 完成（02:1x 联合验收 + 03:5x P5 交付，P0 需求全量覆盖）**：五线交付（P1/P2/P4/P3/P5）
   - [x] P1 diff 核心（91 测试、四算法、重要性双键、增量重 diff、对拍矩阵）
   - [x] P2 目录引擎（惰性扫描、BC 过滤器全集、zip CRC、SQLite 缓存、同步状态机、10 万项 PB-03 1.54s 达标）
-  - [x] P4 UI 壳会话（134 测试、主页/多窗口/持久化/快捷键/重连）
-  - [x] 联合验收：workspace 259 测试全绿 + clippy 零警 + golden 重固化 + 新二进制 e2e + UI build 全绿
-- [ ] **M3 V1.0（进行中）**：并行启动 P3（CLI 全集+文本 RPC 接线+P1 协议映射）+ P5（文本比较视图完备化）
-- [ ] M2 MVP（P0 需求）
-- [ ] M3 V1.0（P0+P1）
+  - [x] P4 UI 壳会话（主页/多窗口/持久化/快捷键/重连）
+  - [x] P3 CLI 全集+文本 RPC+P1 协议映射（318 引擎测试、git difftool 冒烟、协议向后兼容逐字节锚定）
+  - [x] P5 文本视图完备化（214 UI 测试、可编辑/折叠/高亮/查找/编码/概览条）——**MVP 用户故事全量闭环**
+- [x] **M3 前半（P3/P5）✅ 验收完成（03:5x）**
+- [ ] **M3 V1.0（进行中）**：并行启动 P6（文件夹比较视图+文件操作）+ P7（三向文本合并引擎+视图）
 - [ ] M4 V2.0（含 Pro 级功能）
 
 ## 当前阶段与断点
