@@ -42,8 +42,8 @@
 | 2026-11-13 21:3x | Agent「P0 引擎线」→ Rust workspace + 引擎 crates + aic CLI + 测试 | ✅ 完成并验收：119/119 测试、clippy 零警、退出码矩阵 0/1/2、`aic diff` 与 `diff -u` hunks 等价（主会话复验 + 提交）；Myers 经 300 轮 DP-oracle 对拍；PB-04 冒烟 1 万行 0.8ms |
 | 2026-11-13 22:5x | Agent「M1 集成」→ UI 切真实引擎 + generated 类型合入 + e2e:engine 脚本 | ⚠️ 23:04 因 provider 5h 配额中断于半程；主会话接手完成全部剩余工作并验收（a0801ca） |
 | 2026-11-13 23:59 | 看护定时任务重建（旧任务因模型切换失效，新任务同节奏每 20 分钟） | active |
-| 2026-11-13 23:36 | Agent「P1 diff 核心完备化」（engine/ai-core，算法矩阵/重要性/增量重diff） | 运行中（00:20 巡检存活） |
-| 2026-11-13 23:36 | Agent「P2 目录引擎完备化」（ai-dir/ai-vfs/protocol/cli，惰性扫描/过滤器/缓存/同步状态机） | 运行中（00:20 巡检活跃，已再生 ui/src/protocol/generated/ 类型——合法权限内） |
+| 2026-11-13 23:36 | Agent「P1 diff 核心完备化」（engine/ai-core，算法矩阵/重要性/增量重diff） | ✅ 完成并验收（01:1x）：ai-core 91/91 测试、clippy 零警、对拍 19/21 与 difflib+git 逐 hunk 一致（2 歧义用例性质校验+编辑量守恒）、PB-05 20 万行 standard 24.9ms；提交（仅 P1 文件）；遗留——协议 DTO 映射（Replace/ImportanceUpdate/双键/手动对齐）待 P2/P5 排期 |
+| 2026-11-13 23:36 | Agent「P2 目录引擎完备化」（ai-dir/ai-vfs/protocol/cli，惰性扫描/过滤器/缓存/同步状态机） | 运行中（01:0x 活跃：session.rs 重构） |
 | 2026-11-13 23:36 | Agent「P4 UI 壳与会话体系」（ui/，主页/多窗口/会话持久化/ViewRegistry） | ✅ 完成并验收（含一次并发中断+SendMessage 原地续跑）：134/134 测试（+83）、build/lint/e2e:engine 全绿、浏览器冒烟全流程通过（00:47 主会话复验）；遗留项见 ui/README P4 边界 |
 
 ### M2 断点（下一步，P1/P2/P4 并行）
@@ -88,3 +88,4 @@
 - 2026-11-14 00:41：**第 2 次巡检**：P1/P2 存活（P1 长构建循环中、P2 活跃）；P4 已 SendMessage 原地续跑成功（上下文保留，从冒烟断点继续，任务书含协议类型对齐自检）；三线均运行中
 - 2026-11-14 00:47：**P4 完成并验收提交**（7d5df90）：主会话复验 134/134 测试（+83）、build/lint/e2e 全绿；亮点——四层作用域合并、.bak 回滚演练测试、多窗口拖出合并、断线重连状态机；P4 曾并发中断→SendMessage 原地续跑自愈（看护机制首次完整闭环）
 - 2026-11-14 01:00：**第 3 次巡检**：P1/P2 存活（P1 活跃、P2 跑重构脚本调整 ai-dir session.rs 统计口径——同步状态机数据层推进中）；不干预
+- 2026-11-14 01:1x：**P1 完成并验收提交**：ai-core 39→91 测试全绿、clippy 零警；算法矩阵（Patience 手写 LIS+锚点回退 Myers、Histogram 经 imara-diff 直通 Token 序列）、重要性双键聚合、手动对齐/隔离/偏斜容差、编辑增量重 diff（窗口锚定+边界吸收）、真超时降级+DMP 清理；对拍生成器带 difflib×git 互校防呆；workspace 全绿待 P2 接线后统一复验（P1 报告的协调事项 #1）；已按文件权限只提交 P1 scope，P2 中间态保持未提交
