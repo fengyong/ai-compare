@@ -26,6 +26,11 @@ pub struct HandlerCtx {
     pub sessions: SessionMap,
     pub vfs: Arc<dyn ai_vfs::VfsProvider>,
     pub max_batch_rows: usize,
+    /// P10：文件格式注册表（内置 + 会话期 formats/save|load 的自定义格式）。
+    /// 进程内权威态；持久化由 UI 设置层负责（session-defaults.json / formats.json）
+    pub formats: Arc<Mutex<ai_core::FormatRegistry>>,
+    /// P10：规则集（global/kind/session 三层 + 格式绑定）
+    pub rules: Arc<Mutex<ai_core::RuleSet>>,
 }
 
 impl HandlerCtx {
@@ -34,6 +39,8 @@ impl HandlerCtx {
             sessions: Arc::new(Mutex::new(HashMap::new())),
             vfs: Arc::new(ai_vfs::LocalFs::new()),
             max_batch_rows,
+            formats: Arc::new(Mutex::new(ai_core::FormatRegistry::builtin())),
+            rules: Arc::new(Mutex::new(ai_core::RuleSet::default())),
         }
     }
 }
@@ -78,6 +85,11 @@ pub async fn dispatch(
         ai_protocol::method::HEX_BYTES => hex_bytes(params, ctx).await,
         ai_protocol::method::TEXT_PATCH_APPLY => patch_apply(params, ctx).await,
         ai_protocol::method::DIR_EXECUTE => dir_execute(params, ctx, cancel).await,
+        ai_protocol::method::FORMATS_LIST => formats_list(params, ctx).await,
+        ai_protocol::method::FORMATS_SAVE => formats_save(params, ctx).await,
+        ai_protocol::method::FORMATS_LOAD => formats_load(params, ctx).await,
+        ai_protocol::method::RULES_GET => rules_get(params, ctx).await,
+        ai_protocol::method::RULES_SET => rules_set(params, ctx).await,
         ai_protocol::method::SESSION_CLOSE => session_close(params, ctx).await,
         other => Err(RpcErrorObject {
             code: codes::METHOD_NOT_FOUND,
@@ -113,6 +125,8 @@ fn initialize() -> Result<Handled, RpcErrorObject> {
             patch_apply: Some(true),
             // P6 提案合入：dir/execute 文件操作执行
             dir_execute: Some(true),
+            // P10：文件格式与规则体系（formats/*、rules/*、text/open rules、dir formatAware）
+            format_rules: Some(true),
             dir_background_scan: true,
             dir_filters: true,
             dir_operate: true,
@@ -187,6 +201,12 @@ async fn dir_open_sync(
 
     let rows = ai_dir::rows_from_arena(&scan_result.arena);
     let row_count = u32::try_from(rows.len()).unwrap_or(u32::MAX);
+    // P10：formatAware = 文本 vs 二进制按格式表 + 内容嗅探判定（首批 delta 注解）
+    let annotations = if params.format_aware == Some(true) {
+        annotate_file_kinds(ctx, &rows, &left, &right).await
+    } else {
+        HashMap::new()
+    };
     let batches = batch::batch_rows(rows, ctx.max_batch_rows);
     let rev = batches.len() as u64;
 
@@ -207,9 +227,10 @@ async fn dir_open_sync(
     let mut notifications = Vec::with_capacity(batches.len());
     for (i, b) in batches.into_iter().enumerate() {
         let delta = batch::make_delta(&params.session_id, i as u64 + 1, &b, scan_result.stats);
-        notifications.push(ai_protocol::RpcServerNotification::new(
-            ai_protocol::method::DIR_DELTA,
+        notifications.push(format_aware_delta_notification(
+            &params.session_id,
             &delta,
+            &annotations,
         ));
     }
     Ok(Handled::WithNotifications {
@@ -263,6 +284,13 @@ async fn dir_open_model(
     // 后台推进（惰性时启动 worker；非惰性已覆盖目标深度 -> 无 worker）
     model.start_background();
 
+    // P10：formatAware 首批注解（后台 pump 推进的 delta 不注解——fileKind
+    // 为可选注解字段，UI 未收到时按原语义渲染）
+    let annotations = if params.format_aware == Some(true) {
+        annotate_file_kinds(ctx, &first.upserts, &left, &right).await
+    } else {
+        HashMap::new()
+    };
     let batches = batch::batch_rows(first.upserts.clone(), ctx.max_batch_rows);
     let row_count = u32::try_from(first.upserts.len()).unwrap_or(u32::MAX);
     let scan_state = if model.phase() == ai_protocol::ProgressPhase::Running {
@@ -298,15 +326,85 @@ async fn dir_open_model(
             Some(first.progress),
             if i == 0 { first.removals.clone() } else { Vec::new() },
         );
-        notifications.push(ai_protocol::RpcServerNotification::new(
-            ai_protocol::method::DIR_DELTA,
+        notifications.push(format_aware_delta_notification(
+            &params.session_id,
             &delta,
+            &annotations,
         ));
     }
     Ok(Handled::WithNotifications {
         response: serde_json::to_value(&response).expect("dir/open 结果可序列化"),
         notifications,
     })
+}
+
+// ---------------------------------------------------------------------------
+// P10：dir/open 格式感知（文本 vs 二进制按格式表 + 内容嗅探）
+// ---------------------------------------------------------------------------
+
+/// 嗅探读取上限（字节）
+const FORMAT_SNIFF_HEAD_BYTES: usize = 8192;
+/// 单次 open 的嗅探行上限（防全量扫描开销；超出部分不注解）
+const MAX_FORMAT_SNIFF_ROWS: usize = 512;
+
+/// 为首批 delta 行对计算 fileKind 注解（两侧俱在的文件行；左侧文件嗅探）。
+/// DirRow 结构保持 P9 形态——注解在通知序列化后的 Value 上注入 `fileKind`。
+async fn annotate_file_kinds(
+    ctx: &HandlerCtx,
+    rows: &[ai_protocol::DirRow],
+    left_root: &VfsPath,
+    _right_root: &VfsPath,
+) -> HashMap<String, ai_protocol::DetectedFileKind> {
+    let mut out: HashMap<String, ai_protocol::DetectedFileKind> = HashMap::new();
+    if rows.is_empty() {
+        return out;
+    }
+    let reg = ctx.formats.lock().await;
+    for row in rows.iter().take(MAX_FORMAT_SNIFF_ROWS) {
+        if row.kind != ai_protocol::EntryKind::File {
+            continue;
+        }
+        let (Some(_l), Some(_r)) = (&row.left, &row.right) else {
+            continue;
+        };
+        let path = left_root.join(&row.id);
+        let head = match ctx.vfs.read_range(&path, 0, FORMAT_SNIFF_HEAD_BYTES).await {
+            Ok(h) => h,
+            Err(_) => continue, // 读取失败不注解（UI 按缺省语义渲染）
+        };
+        let kind = match reg.classify_file(&row.name, &head) {
+            ai_core::FileClass::Binary => ai_protocol::DetectedFileKind::Binary,
+            ai_core::FileClass::Text { .. } => ai_protocol::DetectedFileKind::Text,
+        };
+        out.insert(row.id.clone(), kind);
+    }
+    out
+}
+
+/// 构造 dir/delta 通知（无注解时与既有字节完全一致；有注解时在
+/// upserts[i].fileKind 注入 "text"/"binary"）
+fn format_aware_delta_notification(
+    _session_id: &str,
+    delta: &ai_protocol::DirDelta,
+    annotations: &HashMap<String, ai_protocol::DetectedFileKind>,
+) -> ai_protocol::RpcServerNotification {
+    let mut value = serde_json::to_value(delta).expect("dir/delta 可序列化");
+    if !annotations.is_empty() {
+        if let Some(upserts) = value.get_mut("upserts").and_then(|u| u.as_array_mut()) {
+            for row in upserts {
+                let id = row.get("id").and_then(|i| i.as_str()).map(String::from);
+                if let Some(id) = id {
+                    if let (Some(kind), Some(obj)) = (annotations.get(&id), row.as_object_mut()) {
+                        obj.insert(
+                            "fileKind".to_string(),
+                            serde_json::to_value(kind).unwrap_or(serde_json::Value::Null),
+                        );
+                    }
+                }
+            }
+        }
+    }
+    ai_protocol::RpcServerNotification::new(ai_protocol::method::DIR_DELTA, value)
 }
 
 /// dir/expand：展开子树（前台优先），增量直接推送
@@ -500,6 +598,27 @@ async fn text_open(
     let mut config = ai_core::DiffConfig { base: mapping::text_options_from_dto(&opts_dto), ..ai_core::DiffConfig::default() };
     if let Some(spec) = &params.importance {
         config.importance = mapping::importance_from_dto(spec);
+    }
+    // P10：会话规则应用链（rules → ImportanceOptions + 语法折叠 line_classify 钩子）。
+    // unimportantElements 非空时按左侧文件名（缺省右）检测文件格式，
+    // 取其语法做重要性键折叠（骨架不变；格式未命中 → 不折叠）
+    if let Some(spec) = &params.rules {
+        let (imp, elements) = mapping::rules_spec_to_core(spec);
+        config.importance = imp;
+        if let Some(elements) = elements.filter(|e| !e.is_empty()) {
+            let reg = ctx.formats.lock().await;
+            let fname = left_path
+                .file_name()
+                .or_else(|| right_path.file_name())
+                .unwrap_or_default();
+            if let Some(fmt) = reg.detect(fname, &[]) {
+                let effective = ai_core::EffectiveRules {
+                    compare: ai_core::CompareRules::default(),
+                    unimportant_elements: elements,
+                };
+                config.base.rules = ai_core::RulesOptions::resolve(&effective, Some(fmt));
+            }
+        }
     }
     if let Some(spec) = &params.manual {
         config.manual = mapping::manual_from_dto(spec);
@@ -1553,6 +1672,163 @@ fn delta_notifications(
             )
         })
         .collect()
+}
+
+// ---------------------------------------------------------------------------
+// P10：formats/list|save|load、rules/get|set（FR-FMT-001 / FR-SES-006）
+// ---------------------------------------------------------------------------
+
+/// formats/list：全量格式列表（内置 + 会话期自定义，按生效顺序）
+async fn formats_list(
+    _params: Option<serde_json::Value>,
+    ctx: &HandlerCtx,
+) -> Result<Handled, RpcErrorObject> {
+    let reg = ctx.formats.lock().await;
+    let formats: Vec<ai_protocol::FileFormatSpec> =
+        reg.formats.iter().map(mapping::format_to_spec).collect();
+    let builtin_count = u32::try_from(
+        reg.formats.iter().filter(|f| f.id.starts_with("builtin-")).count(),
+    )
+    .unwrap_or(u32::MAX);
+    let response = ai_protocol::FormatsListResult { formats, builtin_count };
+    Ok(Handled::Value(serde_json::to_value(&response).expect("formats/list 结果可序列化")))
+}
+
+/// formats/save：按 id 覆盖/追加重注册表（引擎会话期态；持久化由 UI 负责）
+async fn formats_save(
+    params: Option<serde_json::Value>,
+    ctx: &HandlerCtx,
+) -> Result<Handled, RpcErrorObject> {
+    let params: ai_protocol::FormatsSaveParams = parse_params(params)?;
+    let saved = params.formats.len() as u32;
+    let mut reg = ctx.formats.lock().await;
+    for f in &params.formats {
+        reg.upsert(mapping::format_from_spec(f));
+    }
+    let formats: Vec<ai_protocol::FileFormatSpec> =
+        reg.formats.iter().map(mapping::format_to_spec).collect();
+    drop(reg);
+    let response = ai_protocol::FormatsSaveResult { saved, formats };
+    Ok(Handled::Value(serde_json::to_value(&response).expect("formats/save 结果可序列化")))
+}
+
+/// formats/load：从文件加载格式集（.bcpack / JSON；版本 > 1 拒绝）
+async fn formats_load(
+    params: Option<serde_json::Value>,
+    ctx: &HandlerCtx,
+) -> Result<Handled, RpcErrorObject> {
+    let params: ai_protocol::FormatsLoadParams = parse_params(params)?;
+    let path = VfsPath::parse(&params.path).map_err(|e| mapping::vfs_error_to_rpc(&e))?;
+    let bytes = ctx
+        .vfs
+        .read_file_bytes(&path)
+        .await
+        .map_err(|e| mapping::vfs_error_to_rpc(&e))?;
+    let text = String::from_utf8(bytes).map_err(|_| {
+        ai_protocol::error_object(codes::INVALID_ENCODING, "格式集文件不是合法 UTF-8")
+    })?;
+    let pack: ai_protocol::FormatPackSpec = serde_json::from_str(&text)
+        .map_err(|e| bad_params(format!("格式集解析失败: {e}")))?;
+    if pack.version > 1 {
+        return Err(bad_params(format!("格式集版本不支持: {}", pack.version)));
+    }
+    let mut loaded = 0u32;
+    let mut reg = ctx.formats.lock().await;
+    for f in &pack.formats {
+        if reg.upsert(mapping::format_from_spec(f)) {
+            loaded += 1;
+        }
+    }
+    let formats: Vec<ai_protocol::FileFormatSpec> =
+        reg.formats.iter().map(mapping::format_to_spec).collect();
+    drop(reg);
+    let response = ai_protocol::FormatsLoadResult { loaded, formats };
+    Ok(Handled::Value(serde_json::to_value(&response).expect("formats/load 结果可序列化")))
+}
+
+/// rules/get：三层原始层 + 生效解析（Global → Kind → Session → FormatBinding）
+async fn rules_get(
+    params: Option<serde_json::Value>,
+    ctx: &HandlerCtx,
+) -> Result<Handled, RpcErrorObject> {
+    let params: ai_protocol::RulesGetParams = parse_params(params)?;
+    let set = ctx.rules.lock().await;
+    let effective = set.resolve(params.kind.as_deref(), params.session_id.as_deref(), None);
+    let response = ai_protocol::RulesGetResult {
+        effective: mapping::effective_rules_to_spec(&effective),
+        global: mapping::rule_layer_to_spec(&set.global),
+        kind: params
+            .kind
+            .as_deref()
+            .and_then(|k| set.type_defaults.get(k))
+            .map(mapping::rule_layer_to_spec),
+        session: params
+            .session_id
+            .as_deref()
+            .and_then(|s| set.sessions.get(s))
+            .map(mapping::rule_layer_to_spec),
+        format_bindings: set
+            .format_bindings
+            .iter()
+            .map(|b| ai_protocol::RuleFormatBindingSpec {
+                format_id: b.format_id.clone(),
+                unimportant_elements: b.unimportant_elements.clone(),
+            })
+            .collect(),
+    };
+    Ok(Handled::Value(serde_json::to_value(&response).expect("rules/get 结果可序列化")))
+}
+
+/// rules/set：写一层（global/kind/session）；可选全量替换格式绑定
+async fn rules_set(
+    params: Option<serde_json::Value>,
+    ctx: &HandlerCtx,
+) -> Result<Handled, RpcErrorObject> {
+    let params: ai_protocol::RulesSetParams = parse_params(params)?;
+    let target = match params.scope {
+        ai_protocol::RuleScope::Global => ai_core::RuleTarget::Global,
+        ai_protocol::RuleScope::Kind => ai_core::RuleTarget::TypeDefault(
+            params.kind.clone().filter(|k| !k.is_empty()).ok_or_else(|| bad_params("scope=kind 需要 kind"))?,
+        ),
+        ai_protocol::RuleScope::Session => ai_core::RuleTarget::Session(
+            params
+                .session_id
+                .clone()
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| bad_params("scope=session 需要 sessionId"))?,
+        ),
+    };
+    {
+        let mut set = ctx.rules.lock().await;
+        set.set_layer(target, mapping::rule_layer_from_spec(&params.layer));
+        if params.clear_format_bindings {
+            set.format_bindings.clear();
+        } else if !params.format_bindings.is_empty() {
+            set.format_bindings = params
+                .format_bindings
+                .iter()
+                .map(|b| ai_core::RuleFormatBinding {
+                    format_id: b.format_id.clone(),
+                    unimportant_elements: b.unimportant_elements.clone(),
+                })
+                .collect();
+        }
+    }
+    rules_effective_response(params.kind.as_deref(), params.session_id.as_deref(), ctx).await
+}
+
+/// rules/set 应答：写入后按（kind/sessionId）重新解析的生效规则
+async fn rules_effective_response(
+    kind: Option<&str>,
+    session_id: Option<&str>,
+    ctx: &HandlerCtx,
+) -> Result<Handled, RpcErrorObject> {
+    let set = ctx.rules.lock().await;
+    let effective = set.resolve(kind, session_id, None);
+    let response = ai_protocol::RulesSetResult {
+        effective: mapping::effective_rules_to_spec(&effective),
+    };
+    Ok(Handled::Value(serde_json::to_value(&response).expect("rules/set 结果可序列化")))
 }
 
 // ---------------------------------------------------------------------------
@@ -2939,5 +3215,334 @@ mod p9_tests {
             }
         }
         assert!(saw_b && saw_sub, "重扫 delta 应含新文件与新目录");
+    }
+}
+
+#[cfg(test)]
+mod p10_tests {
+    use super::*;
+    use crate::server::Outbound;
+    use serde_json::json;
+
+    fn ctx() -> HandlerCtx {
+        HandlerCtx::new(512)
+    }
+
+    fn chan() -> (
+        tokio::sync::mpsc::UnboundedSender<Outbound>,
+        tokio::sync::mpsc::UnboundedReceiver<Outbound>,
+    ) {
+        tokio::sync::mpsc::unbounded_channel()
+    }
+
+    async fn value_of(r: Result<Handled, RpcErrorObject>) -> serde_json::Value {
+        match r.expect("应答") {
+            Handled::Value(v) => v,
+            _ => panic!("形态"),
+        }
+    }
+
+    // ---- formats/list|save|load ----
+
+    #[tokio::test]
+    async fn formats_list_returns_builtin_table() {
+        let c = ctx();
+        let v = value_of(formats_list(None, &c).await).await;
+        let formats = v["formats"].as_array().unwrap();
+        assert!(formats.len() >= 12, "内置 ≥12 语言，实际 {}", formats.len());
+        assert_eq!(v["builtinCount"], formats.len() as u64);
+        let ids: Vec<&str> = formats.iter().map(|f| f["id"].as_str().unwrap()).collect();
+        assert!(ids.contains(&"builtin-cpp") && ids.contains(&"builtin-python"));
+        // 掩码与语法元素随定义返回
+        let cpp = formats.iter().find(|f| f["id"] == "builtin-cpp").unwrap();
+        let masks: Vec<&str> = cpp["masks"].as_array().unwrap().iter().map(|m| m.as_str().unwrap()).collect();
+        assert!(masks.contains(&"*.cpp"));
+        let grammar = cpp["grammar"].as_array().unwrap();
+        assert!(grammar.iter().any(|e| e["name"] == "注释"), "C 格式带注释元素");
+    }
+
+    #[tokio::test]
+    async fn formats_save_upserts_and_list_reflects() {
+        let c = ctx();
+        let params = json!({"formats":[{"id":"fmt-team","enabled":true,"masks":["*.team"],"description":"团队格式","viewKind":"text","grammar":[{"name":"注释","items":[{"kind":"delimited","start":"#","toEol":true}]}]}]});
+        let v = value_of(formats_save(Some(params), &c).await).await;
+        assert_eq!(v["saved"], 1);
+        let ids: Vec<&str> = v["formats"].as_array().unwrap().iter().map(|f| f["id"].as_str().unwrap()).collect();
+        assert!(ids.contains(&"fmt-team"), "保存后列表含自定义格式");
+        // 再存同 id = 覆盖（saved 仍计 1，列表不重复）
+        let params2 = json!({"formats":[{"id":"fmt-team","enabled":true,"masks":["*.team2"],"description":"v2","viewKind":"text"}]});
+        let v2 = value_of(formats_save(Some(params2), &c).await).await;
+        assert_eq!(v2["saved"], 1);
+        let count = v2["formats"].as_array().unwrap().iter().filter(|f| f["id"] == "fmt-team").count();
+        assert_eq!(count, 1, "按 id 覆盖不重复");
+    }
+
+    #[tokio::test]
+    async fn formats_load_bcpack_and_version_guard() {
+        let c = ctx();
+        let dir = tempfile::tempdir().unwrap();
+        let pack_path = dir.path().join("team.bcpack");
+        std::fs::write(
+            &pack_path,
+            r#"{"version":1,"kind":"ai-compare-format-pack","formats":[{"id":"fmt-loaded","enabled":true,"masks":["*.ldd"],"description":"载入","viewKind":"text"}]}"#,
+        )
+        .unwrap();
+        let params = json!({"path": pack_path.to_string_lossy()});
+        let v = value_of(formats_load(Some(params), &c).await).await;
+        assert_eq!(v["loaded"], 1);
+        let ids: Vec<&str> = v["formats"].as_array().unwrap().iter().map(|f| f["id"].as_str().unwrap()).collect();
+        assert!(ids.contains(&"fmt-loaded"));
+
+        // 版本 > 1 拒绝
+        let bad = dir.path().join("future.bcpack");
+        std::fs::write(&bad, r#"{"version":2,"formats":[]}"#).unwrap();
+        let err = formats_load(Some(json!({"path": bad.to_string_lossy()})), &c).await;
+        assert!(err.is_err(), "未来版本拒绝");
+    }
+
+    // ---- rules/get|set（三层作用域） ----
+
+    #[tokio::test]
+    async fn rules_set_get_layer_scopes() {
+        let c = ctx();
+        // 全局层
+        let g = json!({"scope":"global","layer":{"compare":{"caseUnimportant":true},"unimportantElements":["注释"]}});
+        let v = value_of(rules_set(Some(g), &c).await).await;
+        assert_eq!(v["effective"]["compare"]["caseUnimportant"], true);
+        assert_eq!(v["effective"]["unimportantElements"], json!(["注释"]));
+        // kind 层覆盖 compare（整体覆盖语义）
+        let k = json!({"scope":"kind","kind":"text-compare","layer":{"compare":{"caseUnimportant":false}}});
+        let v = value_of(rules_set(Some(k), &c).await).await;
+        assert_eq!(v["effective"]["compare"]["caseUnimportant"], false, "kind 层覆盖全局");
+        assert_eq!(v["effective"]["unimportantElements"], json!(["注释"]), "元素集 None 回落全局");
+        // session 层再覆盖元素集
+        let s = json!({"scope":"session","sessionId":"sess-1","layer":{"unimportantElements":["字符串"]}});
+        let _ = value_of(rules_set(Some(s), &c).await).await;
+        let get = json!({"kind":"text-compare","sessionId":"sess-1"});
+        let v = value_of(rules_get(Some(get), &c).await).await;
+        assert_eq!(v["session"]["unimportantElements"], json!(["字符串"]), "session 层回显");
+        assert_eq!(v["effective"]["unimportantElements"], json!(["字符串"]), "会话层覆盖");
+        assert_eq!(v["effective"]["compare"]["caseUnimportant"], false, "compare 来自 kind 层");
+        // 不带 sessionId 的解析不含会话层
+        let v2 = value_of(rules_get(Some(json!({"kind":"text-compare"})), &c).await).await;
+        assert_eq!(v2["effective"]["unimportantElements"], json!(["注释"]));
+    }
+
+    #[tokio::test]
+    async fn rules_set_target_validation() {
+        let c = ctx();
+        assert!(rules_set(Some(json!({"scope":"kind","layer":{}})), &c).await.is_err(), "kind 缺 kind");
+        assert!(rules_set(Some(json!({"scope":"session","layer":{}})), &c).await.is_err(), "session 缺 sessionId");
+        assert!(rules_set(Some(json!({"scope":"global","layer":{}})), &c).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn rules_set_format_bindings_replace() {
+        let c = ctx();
+        let b = json!({"scope":"global","layer":{},"formatBindings":[{"formatId":"builtin-cpp","unimportantElements":["注释"]}],"clearFormatBindings":false});
+        let _ = value_of(rules_set(Some(b), &c).await).await;
+        let v = value_of(rules_get(Some(json!({})), &c).await).await;
+        assert_eq!(v["formatBindings"][0]["formatId"], "builtin-cpp");
+        // 全量替换
+        let b2 = json!({"scope":"global","layer":{},"formatBindings":[{"formatId":"builtin-json","unimportantElements":["注释"]}],"clearFormatBindings":false});
+        let _ = value_of(rules_set(Some(b2), &c).await).await;
+        let v = value_of(rules_get(Some(json!({})), &c).await).await;
+        let ids: Vec<&str> = v["formatBindings"].as_array().unwrap().iter().map(|x| x["formatId"].as_str().unwrap()).collect();
+        assert_eq!(ids, vec!["builtin-json"], "绑定全量替换");
+        // clear
+        let b3 = json!({"scope":"global","layer":{},"clearFormatBindings":true});
+        let _ = value_of(rules_set(Some(b3), &c).await).await;
+        let v = value_of(rules_get(Some(json!({})), &c).await).await;
+        assert!(v.get("formatBindings").is_none(), "清空后绑定省略（skip empty）");
+    }
+
+    // ---- text/open 会话规则应用链 ----
+
+    /// 语料：仅注释行不同的 C 文件对（两侧不同文件名，避免同路径覆盖）
+    async fn open_c_pair_with_rules(c: &HandlerCtx, rules: serde_json::Value) -> serde_json::Value {
+        let dir = tempfile::tempdir().unwrap();
+        let l = dir.path().join("main.c");
+        let r = dir.path().join("main2.c");
+        std::fs::write(&l, b"int a;\n// old note\nint b;\n").unwrap();
+        std::fs::write(&r, b"int a;\n// new note\nint b;\n").unwrap();
+        let params = json!({
+            "sessionId": "t-rules",
+            "left": l.to_string_lossy(),
+            "right": r.to_string_lossy(),
+            "rules": rules,
+        });
+        let (tx, _rx) = chan();
+        let r = text_open(Some(params), c).await;
+        drop(dir);
+        value_of(r).await
+    }
+
+    #[tokio::test]
+    async fn text_open_rules_comment_lines_unimportant() {
+        let c = ctx();
+        // 注释元素规则（引擎按左侧 .c 文件名检测 builtin-cpp 语法）
+        let v = open_c_pair_with_rules(&c, json!({"unimportantElements":["注释"]})).await;
+        assert_eq!(v["sectionCount"], 3, "骨架：Equal + Change + Equal");
+        let (tx, _rx) = chan();
+        let v2 = value_of(text_sections(Some(json!({"sessionId":"t-rules","offset":0,"count":100})), &c, tx).await).await;
+        let secs = v2["sections"].as_array().unwrap();
+        assert_eq!(secs[1]["important"], "unimportant", "注释行差异不重要（语法折叠）");
+        // raw 骨架不受影响：中间段仍为 change
+        assert_eq!(secs[1]["kind"], "change");
+    }
+
+    #[tokio::test]
+    async fn text_open_rules_case_flag() {
+        let c = ctx();
+        let dir = tempfile::tempdir().unwrap();
+        let l = dir.path().join("v1.txt");
+        let r = dir.path().join("v2.txt");
+        std::fs::write(&l, b"Value = 1\n").unwrap();
+        std::fs::write(&r, b"value = 1\n").unwrap();
+        let params = json!({
+            "sessionId": "t-case",
+            "left": l.to_string_lossy(),
+            "right": r.to_string_lossy(),
+            "rules": {"caseUnimportant": true},
+        });
+        value_of(text_open(Some(params), &c).await).await;
+        let (tx, _rx) = chan();
+        let v = value_of(text_sections(Some(json!({"sessionId":"t-case","offset":0,"count":100})), &c, tx).await).await;
+        assert_eq!(v["sections"][0]["important"], "unimportant", "大小写不重要经 rules 链生效");
+    }
+
+    #[tokio::test]
+    async fn text_open_without_rules_stays_important() {
+        let c = ctx();
+        let v = open_c_pair_with_rules(&c, json!({})).await;
+        assert_eq!(v["sectionCount"], 3);
+        let (tx, _rx) = chan();
+        let v2 = value_of(text_sections(Some(json!({"sessionId":"t-rules","offset":0,"count":100})), &c, tx).await).await;
+        assert_eq!(v2["sections"][1]["important"], "important", "无规则 = 注释差异重要（行为不变）");
+    }
+
+    // ---- dir/open formatAware ----
+
+    /// 语料：同名文本对 + 同名二进制对（内容相同 → Same，仍可注解 fileKind）
+    async fn make_kind_trees() -> (tempfile::TempDir, String, String) {
+        let dir = tempfile::tempdir().unwrap();
+        let l = dir.path().join("L");
+        let r = dir.path().join("R");
+        std::fs::create_dir_all(&l).unwrap();
+        std::fs::create_dir_all(&r).unwrap();
+        std::fs::write(l.join("code.txt"), b"hello\n").unwrap();
+        std::fs::write(r.join("code.txt"), b"hello\n").unwrap();
+        std::fs::write(l.join("blob.bin"), b"abc\0def").unwrap();
+        std::fs::write(r.join("blob.bin"), b"abc\0def").unwrap();
+        (dir, l.to_string_lossy().to_string(), r.to_string_lossy().to_string())
+    }
+
+    async fn dir_open_collect(id: &str, l: &str, r: &str, format_aware: bool) -> (serde_json::Value, Vec<serde_json::Value>) {
+        let c = ctx();
+        let (tx, mut rx) = chan();
+        let mut params = json!({"sessionId": id, "left": l, "right": r});
+        if format_aware {
+            params["formatAware"] = json!(true);
+        }
+        let handled = dir_open(Some(params), &c, &ai_dir::CancelFlag::new(), tx).await.unwrap();
+        let (response, notifications) = match handled {
+            Handled::Value(v) => (v, Vec::new()),
+            Handled::WithNotifications { response, notifications } => (response, notifications),
+        };
+        let mut deltas: Vec<serde_json::Value> = notifications
+            .iter()
+            .filter(|n| n.method == ai_protocol::method::DIR_DELTA)
+            .map(|n| n.params.clone())
+            .collect();
+        // 同路径下 pump（若有）也经 tx 推送
+        while let Ok(msg) = rx.try_recv() {
+            if let Outbound::Notification(n) = msg {
+                if n.method == ai_protocol::method::DIR_DELTA {
+                    deltas.push(n.params);
+                }
+            }
+        }
+        (response, deltas)
+    }
+
+    #[tokio::test]
+    async fn dir_open_format_aware_annotates_file_kind() {
+        let (_dir, l, r) = make_kind_trees().await;
+        let (resp, deltas) = dir_open_collect("d-anno", &l, &r, true).await;
+        assert_eq!(resp["rowCount"], 2);
+        assert_eq!(deltas.len(), 1);
+        let upserts = deltas[0]["upserts"].as_array().unwrap();
+        let kinds: std::collections::HashMap<String, &str> = upserts
+            .iter()
+            .map(|u| (u["id"].as_str().unwrap().to_string(), u["fileKind"].as_str().unwrap()))
+            .collect();
+        assert_eq!(kinds["code.txt"], "text");
+        assert_eq!(kinds["blob.bin"], "binary", "NUL 字节判二进制");
+    }
+
+    #[tokio::test]
+    async fn dir_open_without_format_aware_keeps_payload_shape() {
+        let (_dir, l, r) = make_kind_trees().await;
+        let (resp, deltas) = dir_open_collect("d-plain", &l, &r, false).await;
+        assert_eq!(resp["rowCount"], 2);
+        for d in &deltas {
+            for u in d["upserts"].as_array().unwrap() {
+                assert!(u.get("fileKind").is_none(), "未开启 formatAware 时载荷无 fileKind（P9 字节兼容）");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn dir_open_format_aware_model_path_annotates() {
+        let (_dir, l, r) = make_kind_trees().await;
+        let c = ctx();
+        let (tx, mut rx) = chan();
+        let params = json!({
+            "sessionId": "d-model",
+            "left": l,
+            "right": r,
+            "lazyScan": true,
+            "formatAware": true,
+        });
+        let handled = dir_open(Some(params), &c, &ai_dir::CancelFlag::new(), tx).await.unwrap();
+        assert!(matches!(handled, Handled::WithNotifications { .. }));
+        let mut kinds = std::collections::HashMap::new();
+        // 首批 delta 随应答通知返回（含注解）；后台 pump 增量经 tx
+        if let Handled::WithNotifications { notifications, .. } = &handled {
+            for n in notifications {
+                if n.method == ai_protocol::method::DIR_DELTA {
+                    for u in n.params["upserts"].as_array().unwrap() {
+                        if let Some(k) = u.get("fileKind").and_then(|k| k.as_str()) {
+                            kinds.insert(u["id"].as_str().unwrap().to_string(), k.to_string());
+                        }
+                    }
+                }
+            }
+        }
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while kinds.len() < 2 && std::time::Instant::now() < deadline {
+            let msg = tokio::time::timeout(std::time::Duration::from_millis(200), rx.recv()).await;
+            match msg {
+                Ok(Some(Outbound::Notification(n))) => {
+                    if n.method == ai_protocol::method::DIR_DELTA {
+                        for u in n.params["upserts"].as_array().unwrap() {
+                            if let Some(k) = u.get("fileKind").and_then(|k| k.as_str()) {
+                                kinds.insert(u["id"].as_str().unwrap().to_string(), k.to_string());
+                            }
+                        }
+                    }
+                }
+                Ok(Some(_)) => {}
+                _ => {}
+            }
+        }
+        assert_eq!(kinds.get("code.txt").map(String::as_str), Some("text"));
+        assert_eq!(kinds.get("blob.bin").map(String::as_str), Some("binary"));
+    }
+
+    #[tokio::test]
+    async fn initialize_reports_format_rules_capability() {
+        let v = value_of(initialize()).await;
+        assert_eq!(v["capabilities"]["formatRules"], true);
     }
 }

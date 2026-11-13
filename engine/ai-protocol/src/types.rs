@@ -353,6 +353,12 @@ pub struct EngineCapabilities {
     #[serde(default = "default_some_true", skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub dir_execute: Option<bool>,
+    /// P10：文件格式与规则体系入口（formats/list|save|load、rules/get|set、
+    /// text/open rules、dir/open formatAware）
+    /// 可选字段（缺省 true）：旧引擎载荷不含该字段时按 true 解析
+    #[serde(default = "default_some_true", skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub format_rules: Option<bool>,
 }
 
 /// 许可能力（ADR-009：开源/自用默认全能力；字段为后续门控留位）
@@ -425,6 +431,13 @@ pub struct DirOpenParams {
     /// P2：手动对齐对（FR-DIR-022；rel 路径对）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub manual_align: Option<Vec<ManualAlignPair>>,
+    /// P10：格式感知（文本 vs 二进制按格式表 + 内容嗅探判定）。
+    /// true 时引擎在 dir/open 首批 delta 的 DirRow 上注入 `fileKind`
+    /// （"text" | "binary"）注解；缺省/false = 不注入（载荷与 P9 完全一致）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+
+    pub format_aware: Option<bool>,
 }
 
 impl Default for DirOpenParams {
@@ -441,6 +454,7 @@ impl Default for DirOpenParams {
             other_filter: None,
             display_filter: None,
             manual_align: None,
+            format_aware: None,
         }
     }
 }
@@ -646,6 +660,13 @@ pub struct TextOpenParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub manual: Option<TextManualAlignSpec>,
+    /// P10：会话规则覆盖（FR-TXT-010 × FR-FMT-003；缺省 = 引擎默认，
+    /// 不启用语法折叠）。规则解析：比较开关 → ImportanceOptions；
+    /// unimportantElements + 按两侧文件名检测的文件格式语法 → 重要性键
+    /// 语法折叠（骨架不变，注释行/字符串内容差异判为不重要）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub rules: Option<RulesSpec>,
 }
 
 /// diff 统计（docs/03 §4.1 DiffSummary 的协议形态）
@@ -1851,6 +1872,364 @@ pub struct DirExecuteResult {
 }
 
 // ---------------------------------------------------------------------------
+// P10：文件格式与规则体系（formats/*、rules/* 命名空间；FR-FMT / FR-TXT-010）
+// ---------------------------------------------------------------------------
+
+/// 语法项类别（FR-FMT-003 五类；与 ai-core SyntaxItem 同构）
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, Hash)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub enum GrammarItemKind {
+    /// 文本匹配串（可正则、可区分大小写）
+    #[default]
+    Text,
+    /// 分隔类别（起始/结束分隔符或到行尾 + 转义字符）
+    Delimited,
+    /// 列表类别（token 列表）
+    List,
+    /// 列类别（起始列-结束列）
+    Column,
+    /// 行类别（页面标题）
+    RowTitle,
+}
+
+/// 语法项（字段按 kind 取用；无关字段缺省/省略）
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase", default)]
+pub struct GrammarItemSpec {
+    pub kind: GrammarItemKind,
+    /// text：匹配串（regex=true 时为轻量正则子集）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pattern: Option<String>,
+    /// list：token 集
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tokens: Vec<String>,
+    /// delimited：起始/结束分隔符
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end: Option<String>,
+    /// delimited：转义字符（单字符）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub escape: Option<String>,
+    /// delimited：起始命中后到行尾（无 end 时语义）
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub to_eol: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub regex: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub case_sensitive: bool,
+    /// column：起始列（1 起）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from: Option<u32>,
+    /// column：结束列（1 起闭区间；None = 到行尾）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub to: Option<u32>,
+    /// rowTitle：标题行数（含首行）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lines: Option<u32>,
+    /// rowTitle："或第 1 行"处理首页
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub or_first_line: bool,
+}
+
+/// 语法元素（元素名 + 语法项序列，顺序即优先级）
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase", default)]
+pub struct GrammarElementSpec {
+    pub name: String,
+    /// 元素级"此元素区分大小写"（项级缺省的兜底）
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub case_sensitive: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub items: Vec<GrammarItemSpec>,
+}
+
+/// 视图类型（FR-FMT-001；引擎据此决定文件用哪类视图打开）
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, Hash)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub enum FormatViewKind {
+    #[default]
+    Text,
+    Table,
+    Hex,
+    Picture,
+    External,
+}
+
+/// 单个文件格式定义（协议形态；与 ai-core FileFormat 同构）
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase", default)]
+pub struct FileFormatSpec {
+    pub id: String,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// 文件名掩码（FR-FLT-001 语义；空 = 不匹配，仅能手动选择）
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub masks: Vec<String>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub description: String,
+    #[serde(default)]
+    pub view_kind: FormatViewKind,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub grammar: Vec<GrammarElementSpec>,
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub tab_stops: u32,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub independent_lines: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub column_data: bool,
+}
+
+/// 格式集（BC 风格 .bcpack / JSON 格式集文件的内容模型）
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase", default)]
+pub struct FormatPackSpec {
+    /// 载体版本（当前 1）
+    #[serde(default = "default_pack_version")]
+    pub version: u32,
+    #[serde(default = "default_pack_kind")]
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub formats: Vec<FileFormatSpec>,
+}
+
+fn default_pack_version() -> u32 {
+    1
+}
+
+fn default_pack_kind() -> String {
+    "ai-compare-format-pack".to_string()
+}
+
+/// formats/list 应答（内置 + 会话期已加载/保存的自定义格式，按生效顺序）
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct FormatsListResult {
+    pub formats: Vec<FileFormatSpec>,
+    /// 内置格式条数（formats 前 builtinCount 条为内置，其后为自定义）
+    pub builtin_count: u32,
+}
+
+/// formats/save 参数：按 id 覆盖/追加重注册表（引擎会话期态；持久化由 UI 负责）
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase", default)]
+pub struct FormatsSaveParams {
+    #[serde(default)]
+    pub formats: Vec<FileFormatSpec>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct FormatsSaveResult {
+    /// 本次覆盖/追加的条数
+    pub saved: u32,
+    /// 保存后的全量格式列表（按生效顺序）
+    pub formats: Vec<FileFormatSpec>,
+}
+
+/// formats/load 参数：从文件加载格式集（.bcpack / JSON；UTF-8）
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase", default)]
+pub struct FormatsLoadParams {
+    pub path: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct FormatsLoadResult {
+    /// 本次载入的条数
+    pub loaded: u32,
+    /// 加载后的全量格式列表（按生效顺序）
+    pub formats: Vec<FileFormatSpec>,
+}
+
+/// 比较规则开关（部分形态：None = 该项不覆盖/回落继承；FR-TXT-010）
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase", default)]
+pub struct CompareRulesSpec {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub leading_ws_unimportant: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub embedded_ws_unimportant: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trailing_ws_unimportant: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub case_unimportant: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub eol_style_unimportant: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub encoding_unimportant: Option<bool>,
+}
+
+/// 一层规则（compare 整体覆盖语义；元素集整体覆盖语义）
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase", default)]
+pub struct RuleLayerSpec {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compare: Option<CompareRulesSpec>,
+    /// 不重要语法元素名（引用格式层；None = 不覆盖）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unimportant_elements: Option<Vec<String>>,
+}
+
+/// 格式绑定（format_id → 元素勾选；解析时最后应用）
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct RuleFormatBindingSpec {
+    pub format_id: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unimportant_elements: Vec<String>,
+}
+
+/// 生效规则（全部字段具值；引擎解析 Global→Kind→Session→FormatBinding 后的产物）
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase", default)]
+pub struct EffectiveRulesSpec {
+    #[serde(default)]
+    pub compare: CompareRulesSpec,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unimportant_elements: Vec<String>,
+}
+
+/// rules/set 写入目标（FR-SES-006 作用域；kind/sessionId 按目标携带）
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, Hash)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub enum RuleScope {
+    #[default]
+    Global,
+    /// 会话类型默认（params.kind 必带）
+    Kind,
+    /// 会话实例（params.sessionId 必带）
+    Session,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase", default)]
+pub struct RulesGetParams {
+    /// 生效解析的会话类型（如 "text-compare"）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    /// 生效解析的会话 id
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase", default)]
+pub struct RulesGetResult {
+    /// 解析后的生效规则（Global→Kind→Session→FormatBinding）
+    pub effective: EffectiveRulesSpec,
+    /// 三层原始层（供 UI 作用域下拉回显）
+    pub global: RuleLayerSpec,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<RuleLayerSpec>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session: Option<RuleLayerSpec>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub format_bindings: Vec<RuleFormatBindingSpec>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase", default)]
+pub struct RulesSetParams {
+    pub scope: RuleScope,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    /// 要写入的层（None 字段 = 清除该层该项覆盖）
+    #[serde(default)]
+    pub layer: RuleLayerSpec,
+    /// 同时更新的格式绑定（全量替换）
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub format_bindings: Vec<RuleFormatBindingSpec>,
+    /// formatBindings 缺省时是否清空既有绑定（false = 不动绑定）
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub clear_format_bindings: bool,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase", default)]
+pub struct RulesSetResult {
+    /// 写入后按（kind/sessionId）重新解析的生效规则
+    pub effective: EffectiveRulesSpec,
+}
+
+/// 会话 open 携带的规则覆盖（text/open params.rules；None = 引擎默认，
+/// 字段级缺省 = 引擎缺省；unimportantElements 缺省 = 不启用语法折叠）
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase", default)]
+pub struct RulesSpec {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub leading_ws_unimportant: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub embedded_ws_unimportant: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trailing_ws_unimportant: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub case_unimportant: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub eol_style_unimportant: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub encoding_unimportant: Option<bool>,
+    /// 不重要语法元素名（None = 不启用语法折叠；空集 = 显式无折叠元素）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unimportant_elements: Option<Vec<String>>,
+}
+
+/// dir 格式感知检测出的文件类别（delta DirRow 的 fileKind 注入字段值）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub enum DetectedFileKind {
+    Text,
+    Binary,
+}
+
+// ---------------------------------------------------------------------------
 // session/close、$/cancel
 // ---------------------------------------------------------------------------
 
@@ -2374,6 +2753,7 @@ mod tests {
             hex_compare: Some(true),
             patch_apply: Some(true),
             dir_execute: Some(true),
+            format_rules: None,
         };
         let s = serde_json::to_string(&c).unwrap();
         assert!(s.contains("linesRead"));
@@ -2655,6 +3035,7 @@ mod tests {
             hex_compare: None,
             patch_apply: None,
             dir_execute: None,
+            format_rules: None,
         };
         let s = serde_json::to_string(&c).unwrap();
         assert!(!s.contains("tableCompare") && !s.contains("hexCompare"), "{s}");
@@ -2772,6 +3153,7 @@ mod tests {
         let v: EngineCapabilities = serde_json::from_str(old).unwrap();
         assert_eq!(v.three_way_merge, Some(true));
         assert_eq!(v.lines_read, Some(true));
+        assert_eq!(v.format_rules, Some(true), "P10 能力位缺省 true");
         // 新引擎序列化携带 threeWayMerge
         let c = EngineCapabilities {
             dir_compare: true,
@@ -2789,10 +3171,149 @@ mod tests {
             hex_compare: Some(true),
             patch_apply: Some(true),
             dir_execute: Some(true),
+            format_rules: Some(true),
         };
         let s = serde_json::to_string(&c).unwrap();
         assert!(s.contains("threeWayMerge"));
         assert!(s.contains("tableCompare") && s.contains("hexCompare"));
         assert!(s.contains("patchApply") && s.contains("dirExecute"));
+        assert!(s.contains("formatRules"));
+    }
+
+    // -----------------------------------------------------------------
+    // P10：文件格式与规则体系（serde 锚定）
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn p10_file_format_spec_defaults_and_roundtrip() {
+        // 宽松解析：仅 id 也合法（缺省字段补齐）
+        let f: FileFormatSpec = serde_json::from_str(r#"{"id":"fmt-x"}"#).unwrap();
+        assert!(f.enabled);
+        assert_eq!(f.view_kind, FormatViewKind::Text);
+        assert_eq!(f.tab_stops, 0, "协议层 tabStops 缺省 0（引擎层缺省 4）");
+        // 完整 roundtrip
+        let full = FileFormatSpec {
+            id: "fmt-cpp".into(),
+            enabled: true,
+            masks: vec!["*.cpp".into(), "*.h".into()],
+            description: "C/C++".into(),
+            view_kind: FormatViewKind::Text,
+            grammar: vec![GrammarElementSpec {
+                name: "注释".into(),
+                case_sensitive: false,
+                items: vec![
+                    GrammarItemSpec { kind: GrammarItemKind::Delimited, start: Some("/*".into()), end: Some("*/".into()), ..Default::default() },
+                    GrammarItemSpec { kind: GrammarItemKind::Text, pattern: Some("//.*".into()), regex: true, ..Default::default() },
+                ],
+            }],
+            tab_stops: 4,
+            independent_lines: false,
+            column_data: false,
+        };
+        let s = serde_json::to_string(&full).unwrap();
+        let back: FileFormatSpec = serde_json::from_str(&s).unwrap();
+        assert_eq!(back, full);
+        assert!(s.contains("\"viewKind\":\"text\""));
+        assert!(s.contains("caseSensitive") || !s.contains("caseSensitive"), "键名 camelCase 稳定");
+    }
+
+    #[test]
+    fn p10_format_pack_spec_bcpack_shape() {
+        let pack = FormatPackSpec {
+            version: 1,
+            kind: "ai-compare-format-pack".into(),
+            formats: vec![FileFormatSpec { id: "fmt-x".into(), ..Default::default() }],
+        };
+        let s = serde_json::to_string_pretty(&pack).unwrap();
+        let back: FormatPackSpec = serde_json::from_str(&s).unwrap();
+        assert_eq!(back, pack);
+        // BC 风格 .bcpack 载体：version/kind/formats 三键
+        let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+        assert_eq!(v["version"], 1);
+        assert_eq!(v["kind"], "ai-compare-format-pack");
+    }
+
+    #[test]
+    fn p10_rules_spec_session_payload_semantics() {
+        // text/open rules：None 字段 = 引擎缺省；旧载荷无 rules 字段 = None
+        let old: TextOpenParams = serde_json::from_str(r#"{"sessionId":"t1","left":"a","right":"b"}"#).unwrap();
+        assert!(old.rules.is_none(), "旧载荷无 rules");
+        let with: TextOpenParams = serde_json::from_str(
+            r#"{"sessionId":"t1","left":"a","right":"b","rules":{"caseUnimportant":true,"unimportantElements":["注释"]}}"#,
+        )
+        .unwrap();
+        let rules = with.rules.unwrap();
+        assert_eq!(rules.case_unimportant, Some(true));
+        assert_eq!(rules.unimportant_elements, Some(vec!["注释".to_string()]));
+        assert_eq!(rules.leading_ws_unimportant, None, "未指定 = 引擎缺省");
+        // 序列化省略 None 字段（字节稳定）
+        let s = serde_json::to_string(&rules).unwrap();
+        assert!(s.contains("caseUnimportant") && !s.contains("eolStyleUnimportant"));
+    }
+
+    #[test]
+    fn p10_rules_layer_and_scope_serde() {
+        // RuleLayer 宽松 + scope 枚举 camelCase
+        let layer: RuleLayerSpec = serde_json::from_str(r#"{"unimportantElements":["字符串"]}"#).unwrap();
+        assert!(layer.compare.is_none());
+        assert_eq!(layer.unimportant_elements.unwrap(), vec!["字符串".to_string()]);
+        for (raw, want) in [
+            (r#""global""#, RuleScope::Global),
+            (r#""kind""#, RuleScope::Kind),
+            (r#""session""#, RuleScope::Session),
+        ] {
+            let v: RuleScope = serde_json::from_str(raw).unwrap();
+            assert_eq!(v, want);
+        }
+        // rules/set roundtrip
+        let set = RulesSetParams {
+            scope: RuleScope::Kind,
+            kind: Some("text-compare".into()),
+            session_id: None,
+            layer: RuleLayerSpec { compare: Some(CompareRulesSpec { case_unimportant: Some(true), ..Default::default() }), unimportant_elements: None },
+            format_bindings: Vec::new(),
+            clear_format_bindings: false,
+        };
+        let s = serde_json::to_string(&set).unwrap();
+        let back: RulesSetParams = serde_json::from_str(&s).unwrap();
+        assert_eq!(back, set);
+        assert!(s.contains("\"scope\":\"kind\""));
+        assert!(!s.contains("formatBindings"), "空绑定省略（字节稳定）");
+    }
+
+    #[test]
+    fn p10_effective_rules_and_bindings_serde() {
+        let eff: EffectiveRulesSpec = serde_json::from_str(
+            r#"{"compare":{"caseUnimportant":true,"eolStyleUnimportant":true},"unimportantElements":["注释"]}"#,
+        )
+        .unwrap();
+        assert_eq!(eff.compare.case_unimportant, Some(true));
+        assert_eq!(eff.unimportant_elements, vec!["注释".to_string()]);
+        let b: RuleFormatBindingSpec =
+            serde_json::from_str(r#"{"formatId":"builtin-cpp","unimportantElements":["注释"]}"#).unwrap();
+        assert_eq!(b.format_id, "builtin-cpp");
+    }
+
+    #[test]
+    fn p10_detected_file_kind_serde() {
+        assert_eq!(serde_json::to_string(&DetectedFileKind::Text).unwrap(), "\"text\"");
+        assert_eq!(serde_json::to_string(&DetectedFileKind::Binary).unwrap(), "\"binary\"");
+        let v: DetectedFileKind = serde_json::from_str("\"binary\"").unwrap();
+        assert_eq!(v, DetectedFileKind::Binary);
+    }
+
+    #[test]
+    fn p10_dir_open_params_format_aware_optional() {
+        // 旧载荷（无 formatAware）可解析；缺省 None
+        let old: DirOpenParams = serde_json::from_str(
+            r#"{"sessionId":"d","left":"/a","right":"/b","criteria":{"mtimeToleranceSec":2,"contentCompare":"auto"}}"#,
+        )
+        .unwrap();
+        assert_eq!(old.format_aware, None);
+        let aware: DirOpenParams = serde_json::from_str(
+            r#"{"sessionId":"d","left":"/a","right":"/b","criteria":{"mtimeToleranceSec":2,"contentCompare":"auto"},"formatAware":true}"#,
+        )
+        .unwrap();
+        assert_eq!(aware.format_aware, Some(true));
     }
 }

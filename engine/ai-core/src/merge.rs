@@ -534,8 +534,8 @@ fn build_conflict_detail(
                     let r_pos = if p < ins as usize { Some(rs + ri as u32 + p as u32) } else { None };
                     let unimportant = match (l_pos, r_pos) {
                         (Some(a), Some(b)) => {
-                            importance_key(left.line(a as usize), &opts.diff, &opts.importance)
-                                == importance_key(right.line(b as usize), &opts.diff, &opts.importance)
+                            importance_key(left.line(a as usize), &opts.diff, &opts.importance, Some(a as usize))
+                                == importance_key(right.line(b as usize), &opts.diff, &opts.importance, Some(b as usize))
                         }
                         _ => false,
                     };
@@ -559,8 +559,8 @@ fn build_conflict_detail(
     // 不重要冲突：左右切片 importance 键序列整体相等
     let unimportant = le - ls == re - rs
         && (ls..le).zip(rs..re).all(|(a, b)| {
-            importance_key(left.line(a as usize), &opts.diff, &opts.importance)
-                == importance_key(right.line(b as usize), &opts.diff, &opts.importance)
+            importance_key(left.line(a as usize), &opts.diff, &opts.importance, Some(a as usize))
+                == importance_key(right.line(b as usize), &opts.diff, &opts.importance, Some(b as usize))
         });
 
     ConflictDetail { kind, rows, unimportant }

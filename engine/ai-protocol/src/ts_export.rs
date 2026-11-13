@@ -150,6 +150,29 @@ pub fn export_all_to_ui() -> Result<usize, Box<dyn std::error::Error>> {
     DirOperateResult::export()?;
     ProgressPhase::export()?;
     DirProgressEvent::export()?;
+    // P10 新增（formats/rules + 能力位 + 会话 rules 载荷）
+    GrammarItemKind::export()?;
+    GrammarItemSpec::export()?;
+    GrammarElementSpec::export()?;
+    FormatViewKind::export()?;
+    FileFormatSpec::export()?;
+    FormatPackSpec::export()?;
+    FormatsListResult::export()?;
+    FormatsSaveParams::export()?;
+    FormatsSaveResult::export()?;
+    FormatsLoadParams::export()?;
+    FormatsLoadResult::export()?;
+    CompareRulesSpec::export()?;
+    RuleLayerSpec::export()?;
+    RuleFormatBindingSpec::export()?;
+    EffectiveRulesSpec::export()?;
+    RuleScope::export()?;
+    RulesGetParams::export()?;
+    RulesGetResult::export()?;
+    RulesSetParams::export()?;
+    RulesSetResult::export()?;
+    RulesSpec::export()?;
+    DetectedFileKind::export()?;
     crate::error::RpcErrorObject::export()?;
 
     // 2. 拷贝到 UI 侧
@@ -177,12 +200,14 @@ mod tests {
     #[test]
     fn export_ts_bindings() {
         let n = export_all_to_ui().expect("TS 导出失败");
-        assert!(n >= 109, "应导出全部协议类型（P9 起含 table/hex/patch/dir execute 全家），实际 {n}");
+        assert!(n >= 130, "应导出全部协议类型（P10 起含 formats/rules 全家），实际 {n}");
         let ui_dir = ui_generated_dir();
         assert!(ui_dir.join("DirDelta.ts").exists(), "DirDelta.ts 应存在");
         assert!(ui_dir.join("Section.ts").exists(), "Section.ts 应存在");
         assert!(ui_dir.join("DirExecuteResult.ts").exists(), "DirExecuteResult.ts 应存在");
         assert!(ui_dir.join("TableRowDto.ts").exists(), "TableRowDto.ts 应存在");
         assert!(ui_dir.join("HexLineDto.ts").exists(), "HexLineDto.ts 应存在");
+        assert!(ui_dir.join("FileFormatSpec.ts").exists(), "FileFormatSpec.ts 应存在");
+        assert!(ui_dir.join("RulesGetResult.ts").exists(), "RulesGetResult.ts 应存在");
     }
 }

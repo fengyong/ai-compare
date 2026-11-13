@@ -61,4 +61,10 @@ patchApply?: boolean,
  * P6 提案合入：dir/execute 文件操作执行（dryRun + 执行 + rescan delta）
  * 可选字段（缺省 true）：旧引擎载荷不含该字段时按 true 解析
  */
-dirExecute?: boolean, };
+dirExecute?: boolean, 
+/**
+ * P10：文件格式与规则体系入口（formats/list|save|load、rules/get|set、
+ * text/open rules、dir/open formatAware）
+ * 可选字段（缺省 true）：旧引擎载荷不含该字段时按 true 解析
+ */
+formatRules?: boolean, };

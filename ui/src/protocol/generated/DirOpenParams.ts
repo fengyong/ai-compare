@@ -46,4 +46,10 @@ displayFilter: DisplayFilterSpec | null,
 /**
  * P2：手动对齐对（FR-DIR-022；rel 路径对）
  */
-manualAlign: Array<ManualAlignPair> | null, };
+manualAlign: Array<ManualAlignPair> | null, 
+/**
+ * P10：格式感知（文本 vs 二进制按格式表 + 内容嗅探判定）。
+ * true 时引擎在 dir/open 首批 delta 的 DirRow 上注入 `fileKind`
+ * （"text" | "binary"）注解；缺省/false = 不注入（载荷与 P9 完全一致）
+ */
+formatAware?: boolean, };

@@ -80,6 +80,16 @@ pub mod method {
     pub const TEXT_PATCH_APPLY: &str = "text/patch/apply";
     /// 文件操作执行（P6 提案合入：dryRun + 执行 + rescan delta）
     pub const DIR_EXECUTE: &str = "dir/execute";
+    /// 文件格式：全量列表（P10，内置 + 会话期自定义，按生效顺序）
+    pub const FORMATS_LIST: &str = "formats/list";
+    /// 文件格式：按 id 覆盖/追加（P10；引擎会话期态，持久化由 UI 负责）
+    pub const FORMATS_SAVE: &str = "formats/save";
+    /// 文件格式：从文件加载格式集（.bcpack / JSON，P10）
+    pub const FORMATS_LOAD: &str = "formats/load";
+    /// 规则：读取三层 + 生效解析（P10，FR-SES-006 作用域）
+    pub const RULES_GET: &str = "rules/get";
+    /// 规则：写入一层（P10，global/kind/session 三目标）
+    pub const RULES_SET: &str = "rules/set";
     /// 关闭会话（释放引擎侧模型）
     pub const SESSION_CLOSE: &str = "session/close";
     /// 取消请求（UI -> 引擎通知，LSP 风格）
