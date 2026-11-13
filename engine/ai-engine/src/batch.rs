@@ -42,13 +42,25 @@ pub fn make_delta(
     batch: &Batch,
     stats: DirStats,
 ) -> DirDelta {
+    make_delta_with_progress(session_id, rev, batch, stats, None, Vec::new())
+}
+
+/// 组装 dir/delta 通知载荷（带进度与移除集；P2 惰性扫描路径）
+pub fn make_delta_with_progress(
+    session_id: &str,
+    rev: u64,
+    batch: &Batch,
+    stats: DirStats,
+    progress: Option<ai_protocol::ScanProgress>,
+    removals: Vec<String>,
+) -> DirDelta {
     DirDelta {
         session_id: session_id.to_string(),
         rev,
         upserts: batch.upserts.clone(),
-        removals: Vec::new(),
+        removals,
         stats,
-        progress: None,
+        progress,
         batch: BatchInfo { index: batch.index, has_more: batch.has_more },
     }
 }
@@ -67,6 +79,8 @@ mod tests {
             right: None,
             status: DirEntryStatus::RightOnly,
             has_children: false,
+            hidden: false,
+            suppressed: false,
         }
     }
 

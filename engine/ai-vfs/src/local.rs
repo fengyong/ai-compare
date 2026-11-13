@@ -8,7 +8,8 @@ use std::path::{Path, PathBuf};
 use async_trait::async_trait;
 
 use crate::{
-    stat_from_metadata, EntryKind, VfsCaps, VfsDirEntry, VfsError, VfsPath, VfsProvider, StatInfo,
+    dos_attr, stat_from_metadata, EntryKind, VfsCaps, VfsDirEntry, VfsError, VfsPath, VfsProvider,
+    StatInfo,
 };
 
 /// 本地只读 Provider
@@ -47,6 +48,16 @@ impl LocalFs {
             _ => VfsError::Io(err),
         }
     }
+
+    /// 附加平台近似属性：`.` 前缀文件视为 DOS hidden（FR-DIR-041 Unix 近似）
+    fn apply_name_attrs(&self, path: &VfsPath, mut stat: StatInfo) -> StatInfo {
+        if let Some(name) = path.file_name() {
+            if name.starts_with('.') {
+                stat.dos_attrs |= dos_attr::HIDDEN;
+            }
+        }
+        stat
+    }
 }
 
 fn is_not_found(err: &std::io::Error) -> bool {
@@ -69,7 +80,7 @@ impl VfsProvider for LocalFs {
         let meta = tokio::fs::symlink_metadata(&fs_path)
             .await
             .map_err(|e| self.map_io(path, e))?;
-        Ok(stat_from_metadata(&meta))
+        Ok(self.apply_name_attrs(path, stat_from_metadata(&meta)))
     }
 
     async fn list_dir(&self, path: &VfsPath) -> Result<Vec<VfsDirEntry>, VfsError> {
@@ -95,7 +106,9 @@ impl VfsProvider for LocalFs {
             let stat = if ft.is_symlink() {
                 match tokio::fs::symlink_metadata(entry.path()).await {
                     Ok(m) => stat_from_metadata(&m),
-                    Err(e) if is_not_found(&e) => StatInfo { size: 0, mtime_ms: 0, kind },
+                    Err(e) if is_not_found(&e) => {
+                        StatInfo::minimal(0, 0, kind)
+                    }
                     Err(e) => return Err(VfsError::Io(e)),
                 }
             } else {
@@ -104,10 +117,12 @@ impl VfsProvider for LocalFs {
                     Err(e) => return Err(VfsError::Io(e)),
                 }
             };
-            out.push(VfsDirEntry {
-                name: entry.file_name().to_string_lossy().into_owned(),
-                stat: StatInfo { kind, ..stat },
-            });
+            let mut stat = StatInfo { kind, ..stat };
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.starts_with('.') {
+                stat.dos_attrs |= dos_attr::HIDDEN;
+            }
+            out.push(VfsDirEntry { name, stat });
         }
         Ok(out)
     }

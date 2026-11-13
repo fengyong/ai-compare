@@ -1,7 +1,9 @@
-//! `aic` 的纯逻辑层：unified diff 渲染与 quick 判定（可单测）。
+//! `aic` 的纯逻辑层：unified diff 渲染、目录递归 diff 渲染与 quick 判定（可单测）。
 
 use ai_core::sections::SectionKind;
 use ai_core::{DiffOutput, LineTable};
+use ai_dir::DirNode;
+use ai_protocol::{DirEntryStatus, EntryKind};
 
 /// 退出码（docs/04 P0：0 相同 / 1 不同 / 2 错误；P3 细分 11/12/13/14）
 pub const EXIT_SAME: u8 = 0;
@@ -169,6 +171,41 @@ pub fn render_unified(
     text
 }
 
+/// 目录递归 diff 渲染（`diff -rq` 风格；无差异返回空串）：
+/// - `Files <l>/<x> and <r>/<x> differ`
+/// - `Only in <side>: <path>`（目录差异子树逐行；目录聚合状态驱动）
+pub fn render_dir_diff(left_label: &str, right_label: &str, arena: &[DirNode]) -> String {
+    let mut out = String::new();
+    for n in arena.iter().skip(1) {
+        match n.status {
+            DirEntryStatus::ContentDiff | DirEntryStatus::QuickDiff => {
+                out.push_str(&format!(
+                    "Files {left_label}/{} and {right_label}/{} differ\n",
+                    n.rel_path, n.rel_path
+                ));
+            }
+            DirEntryStatus::DirDiff => {
+                // 目录聚合差异：内容差异在子行逐条输出（此处不打印目录行本身，
+                // 与 diff -r 的"进入子目录"语义一致）
+            }
+            DirEntryStatus::LeftOnly => {
+                out.push_str(&format!("Only in {left_label}: {}\n", display_rel(n)));
+            }
+            DirEntryStatus::RightOnly => {
+                out.push_str(&format!("Only in {right_label}: {}\n", display_rel(n)));
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// 孤立项显示路径（孤儿子树整体归到该侧）
+fn display_rel(n: &DirNode) -> String {
+    let slash = if n.kind == EntryKind::Dir { "/" } else { "" };
+    format!("{}{}", n.rel_path, slash)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -257,5 +294,59 @@ mod tests {
         assert_eq!(EXIT_SAME, 0);
         assert_eq!(EXIT_DIFF, 1);
         assert_eq!(EXIT_ERROR, 2);
+    }
+}
+
+#[cfg(test)]
+mod dir_diff_tests {
+    use super::*;
+    use ai_protocol::SideInfo;
+
+    fn node(rel: &str, name: &str, kind: EntryKind, status: DirEntryStatus) -> DirNode {
+        DirNode {
+            rel_path: rel.into(),
+            name: name.into(),
+            kind,
+            left: Some(SideInfo::base(1, 1)),
+            right: Some(SideInfo::base(1, 1)),
+            status,
+            parent: None,
+            children: Vec::new(),
+            expanded: false,
+            aligned_with: None,
+        }
+    }
+
+    #[test]
+    fn dir_diff_rendering() {
+        let arena = vec![
+            DirNode {
+                rel_path: String::new(),
+                name: String::new(),
+                kind: EntryKind::Dir,
+                left: None,
+                right: None,
+                status: DirEntryStatus::DirSame,
+                parent: None,
+                children: Vec::new(),
+                expanded: true,
+                aligned_with: None,
+            },
+            node("a.txt", "a.txt", EntryKind::File, DirEntryStatus::ContentDiff),
+            node("same.txt", "same.txt", EntryKind::File, DirEntryStatus::Same),
+            node("sub", "sub", EntryKind::Dir, DirEntryStatus::DirDiff),
+            node("only_l.txt", "only_l.txt", EntryKind::File, DirEntryStatus::LeftOnly),
+            node("only_r", "only_r", EntryKind::Dir, DirEntryStatus::RightOnly),
+        ];
+        let text = render_dir_diff("L", "R", &arena);
+        assert_eq!(
+            text,
+            "Files L/a.txt and R/a.txt differ\n\
+             Only in L: only_l.txt\n\
+             Only in R: only_r/\n"
+        );
+        // 无差异 -> 空串
+        let clean = [node("x", "x", EntryKind::File, DirEntryStatus::Same)];
+        assert_eq!(render_dir_diff("L", "R", &[node("", "", EntryKind::Dir, DirEntryStatus::DirSame), clean[0].clone()]), "");
     }
 }

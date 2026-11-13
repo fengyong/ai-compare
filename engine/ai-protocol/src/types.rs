@@ -127,7 +127,10 @@ pub enum EntryKind {
 }
 
 /// 单侧条目元数据（size/mtime；mtime 为 epoch 毫秒）
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// P2 新增字段均为可选：仅在对应判据开启（compare_attributes / unix_meta）
+/// 时由引擎填充，旧载荷保持字节级兼容。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 #[serde(rename_all = "camelCase")]
@@ -136,6 +139,28 @@ pub struct SideInfo {
     pub size: u64,
     #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub mtime_ms: u64,
+    /// DOS 属性字母串（如 "rh"：只读+隐藏；compare_attributes 开启时填充）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attribute: Option<String>,
+    /// Unix 权限位（st_mode 低 12 位；unix_meta 开启时填充）
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unix_mode: Option<u32>,
+    /// Unix 所有者 id（unix_meta 开启时填充）
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uid: Option<u32>,
+    /// Unix 组 id（unix_meta 开启时填充）
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gid: Option<u32>,
+}
+
+impl SideInfo {
+    /// 基础元数据（size + mtime；扩展字段置空）
+    pub fn base(size: u64, mtime_ms: u64) -> Self {
+        SideInfo { size, mtime_ms, attribute: None, unix_mode: None, uid: None, gid: None }
+    }
 }
 
 /// 目录比较判据（P0：size + mtime 秒容差 + 内容比较模式；P2 扩展 DST/属性等）
@@ -148,6 +173,28 @@ pub struct CompareCriteria {
     pub mtime_tolerance_sec: u32,
     /// 快速测试不一致时是否做内容比较
     pub content_compare: ContentCompareMode,
+    /// 忽略正好 1 小时（±3600s）的 mtime 差异（FR-DIR-010 夏令时；BC 默认开启）
+    #[serde(default = "default_true")]
+    pub ignore_dst_hour: bool,
+    /// 忽略整小时倍数的 mtime 差异（FR-DIR-010 时区差异；默认关）
+    #[serde(default)]
+    pub ignore_tz_hour: bool,
+    /// 比较文件名大小写：大小写不同的对齐对判异（FR-DIR-010；默认开）
+    #[serde(default = "default_true")]
+    pub compare_case: bool,
+    /// 比较 DOS 属性位（FR-DIR-010；默认关——复制文件即改存档位）
+    #[serde(default)]
+    pub compare_attributes: bool,
+    /// 参与比较的属性字母集（如 "rhs"）；None = 全部已知位参与
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attribute_letters: Option<String>,
+    /// 比较 Unix 元数据（权限位/uid/gid）（FR-DIR-010；默认关，可配置开关）
+    #[serde(default)]
+    pub unix_meta: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl Default for CompareCriteria {
@@ -155,6 +202,12 @@ impl Default for CompareCriteria {
         CompareCriteria {
             mtime_tolerance_sec: 2,
             content_compare: ContentCompareMode::Auto,
+            ignore_dst_hour: true,
+            ignore_tz_hour: false,
+            compare_case: true,
+            compare_attributes: false,
+            attribute_letters: None,
+            unix_meta: false,
         }
     }
 }
@@ -256,6 +309,15 @@ pub struct EngineCapabilities {
     pub delta_batching: bool,
     /// 分批的单批最大行数
     pub max_delta_batch_rows: u32,
+    /// P2：dir/open 惰性 + 后台扫描（lazyScan 参数与 dir/progress 通知）
+    #[serde(default = "default_true")]
+    pub dir_background_scan: bool,
+    /// P2：dir/filter（三类过滤器引擎侧求值）
+    #[serde(default = "default_true")]
+    pub dir_filters: bool,
+    /// P2：dir/operate（同步状态机 operate 计划）
+    #[serde(default = "default_true")]
+    pub dir_operate: bool,
 }
 
 /// 许可能力（ADR-009：开源/自用默认全能力；字段为后续门控留位）
@@ -308,6 +370,26 @@ pub struct DirOpenParams {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub depth: Option<u32>,
     pub criteria: CompareCriteria,
+    /// P2（ADR-004）：惰性 + 后台扫描。true = dir/open 立即应答顶层（可滚动），
+    /// 后台 tokio 任务继续全量扫描并推进 dir/delta / dir/progress；
+    /// false/缺省 = P0 行为（同步扫完再应答，scanState=completed）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lazy_scan: Option<bool>,
+    /// P2：平铺模式（FR-DIR-021 忽略文件夹结构）：按文件名跨目录对齐
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flat: Option<bool>,
+    /// P2：文件/目录名称过滤器（FR-DIR-031，引擎侧求值）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name_filter: Option<NameFilterSpec>,
+    /// P2：其他过滤器（FR-DIR-032：日期/大小/内容/属性/Unix 类型）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub other_filter: Option<OtherFilterSpec>,
+    /// P2：显示过滤器（FR-DIR-033：只影响显示不影响状态判定）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_filter: Option<DisplayFilterSpec>,
+    /// P2：手动对齐对（FR-DIR-022；rel 路径对）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub manual_align: Option<Vec<ManualAlignPair>>,
 }
 
 impl Default for DirOpenParams {
@@ -318,6 +400,12 @@ impl Default for DirOpenParams {
             right: String::new(),
             depth: Some(1),
             criteria: CompareCriteria::default(),
+            lazy_scan: None,
+            flat: None,
+            name_filter: None,
+            other_filter: None,
+            display_filter: None,
+            manual_align: None,
         }
     }
 }
@@ -335,7 +423,7 @@ pub struct DirOpenResult {
     pub scan_state: ScanState,
 }
 
-/// 目录行状态（docs/03 §4.2 CellStatus 的 P0 子集）
+/// 目录行状态（docs/03 §4.2 CellStatus 的 P0 子集 + P2 聚合状态）
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
@@ -351,8 +439,10 @@ pub enum DirEntryStatus {
     LeftOnly,
     /// 仅右侧存在（orphan）
     RightOnly,
-    /// 目录且两侧均存在（P0 占位：未做子树聚合，P2 由聚合状态替换）
+    /// 目录且两侧均存在：未展开（children 未知）或已聚合且全部子项相同
     DirSame,
+    /// P2 聚合状态（FR-DIR-002）：两侧目录已扫描且至少一个子项存在差异/孤立项
+    DirDiff,
     /// 扫描中/未知（协议稳定预留）
     Unknown,
 }
@@ -363,7 +453,7 @@ pub enum DirEntryStatus {
 #[cfg_attr(feature = "ts", ts(export))]
 #[serde(rename_all = "camelCase")]
 pub struct DirRow {
-    /// 稳定行 id（相对路径，POSIX 风格；根的子项无前缀）
+    /// 稳定行 id（相对路径，POSIX 风格；根的子项无前缀；平铺模式带 # 序号消歧）
     pub id: String,
     pub name: String,
     pub kind: EntryKind,
@@ -374,6 +464,12 @@ pub struct DirRow {
     pub status: DirEntryStatus,
     /// 有子节点的目录为 true（展开由后续 dir/expand 提供，P0 预留）
     pub has_children: bool,
+    /// P2：被显示过滤器隐藏（不影响比较结果；FR-DIR-033）
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub hidden: bool,
+    /// P2：抑制过滤器生效时被隐藏行以 suppressed 标记显示（FR-DIR-035 青绿色语义）
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub suppressed: bool,
 }
 
 /// 各状态计数（状态栏 / 信息对话框数据源）
@@ -389,6 +485,14 @@ pub struct DirStats {
     pub left_only: u32,
     pub right_only: u32,
     pub dir_same: u32,
+    /// P2：聚合出差异的目录数（0 时省略，旧载荷字节级兼容）
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub dir_diff: u32,
+}
+
+/// serde skip_serializing_if 辅助：u32 为 0 时不输出（协议向后兼容）
+pub fn is_zero_u32(v: &u32) -> bool {
+    *v == 0
 }
 
 /// 扫描进度
@@ -644,6 +748,379 @@ pub struct CancelParams {
     pub id: RequestId,
 }
 
+// ---------------------------------------------------------------------------
+// P2：三类过滤器（FR-DIR-030~036 / FR-FLT-001~002，引擎侧求值）
+// ---------------------------------------------------------------------------
+
+/// 名称过滤器（FR-DIR-031：四列表；掩码语义见 FR-FLT-001/002）
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase", default)]
+pub struct NameFilterSpec {
+    /// 包含文件掩码（每项可为分号分隔的多模式）
+    #[serde(default)]
+    pub include_files: Vec<String>,
+    #[serde(default)]
+    pub exclude_files: Vec<String>,
+    #[serde(default)]
+    pub include_dirs: Vec<String>,
+    #[serde(default)]
+    pub exclude_dirs: Vec<String>,
+    /// 掩码大小写敏感（BC 名称过滤器默认不敏感）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub case_sensitive: Option<bool>,
+}
+
+/// 其他过滤器（FR-DIR-032：按非名称条件排除文件）
+///
+/// 语义：文件须满足**所有**出现的条件才保留；未出现的条件不约束。
+/// 目录行不受其他过滤器直接影响（由子内容聚合）。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase", default)]
+pub struct OtherFilterSpec {
+    /// 仅保留修改时间 >= 该值（epoch ms）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_mtime_ms: Option<u64>,
+    /// 仅保留修改时间 <= 该值（epoch ms）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_mtime_ms: Option<u64>,
+    /// 仅保留大小 >= 该值（字节）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_size: Option<u64>,
+    /// 仅保留大小 <= 该值（字节）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_size: Option<u64>,
+    /// 仅保留内容包含该串的文件（UTF-8 前缀读）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contains: Option<String>,
+    /// 仅保留内容不包含该串的文件
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub not_contains: Option<String>,
+    /// DOS 属性字母集：须已设置全部字母（如 "r"）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attrs_include: Option<String>,
+    /// DOS 属性字母集：须未设置任一字母
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attrs_exclude: Option<String>,
+    /// Unix 文件类型字母集：须包含其中之一（b/c/l/p/r/s）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unix_types_include: Option<String>,
+    /// Unix 文件类型字母集：排除命中的类型
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unix_types_exclude: Option<String>,
+    /// 排除受保护的操作系统文件（BC 默认 true；非 Windows 平台近似为跳过无读权限文件）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exclude_protected_os_files: Option<bool>,
+}
+
+/// 显示过滤器（FR-DIR-033：按比较状态显示/隐藏行；**只影响显示不影响状态判定**）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase", default)]
+pub struct DisplayFilterSpec {
+    #[serde(default = "default_true")]
+    pub show_same: bool,
+    /// 内容比较判定不同
+    #[serde(default = "default_true")]
+    pub show_content_diff: bool,
+    /// 左侧较新（mtime 判异且左 > 右）
+    #[serde(default = "default_true")]
+    pub show_left_newer: bool,
+    #[serde(default = "default_true")]
+    pub show_right_newer: bool,
+    #[serde(default = "default_true")]
+    pub show_left_only: bool,
+    #[serde(default = "default_true")]
+    pub show_right_only: bool,
+    /// 目录聚合差异（DirDiff）
+    #[serde(default = "default_true")]
+    pub show_dir_diff: bool,
+}
+
+impl Default for DisplayFilterSpec {
+    fn default() -> Self {
+        DisplayFilterSpec {
+            show_same: true,
+            show_content_diff: true,
+            show_left_newer: true,
+            show_right_newer: true,
+            show_left_only: true,
+            show_right_only: true,
+            show_dir_diff: true,
+        }
+    }
+}
+
+/// 手动对齐对（FR-DIR-022；两侧 rel 路径）
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct ManualAlignPair {
+    pub left: String,
+    pub right: String,
+}
+
+// ---------------------------------------------------------------------------
+// P2：dir/expand、dir/filter、dir/align、dir/operate、dir/progress
+// ---------------------------------------------------------------------------
+
+/// dir/expand 参数：展开目录子树（ADR-004 前台优先路径）
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase", default)]
+pub struct DirExpandParams {
+    pub session_id: String,
+    /// 目录行 id（rel 路径；空串 = 根）
+    pub path: String,
+    /// 展开层级（1 = 直接子项，缺省 1）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub depth: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct DirExpandResult {
+    pub session_id: String,
+    pub rev: u64,
+    /// 本次展开新增可见行数
+    pub new_rows: u32,
+    pub stats: DirStats,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub progress: Option<ScanProgress>,
+}
+
+/// dir/filter 参数：设置/更新三类过滤器（名称与其他过滤变更触发重扫）
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase", default)]
+pub struct DirFilterParams {
+    pub session_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name_filter: Option<NameFilterSpec>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub other_filter: Option<OtherFilterSpec>,
+    /// 显示过滤器（只影响显示不影响状态判定）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_filter: Option<DisplayFilterSpec>,
+    /// 抑制过滤器（FR-DIR-035）：true 时被隐藏行以 suppressed 标记可见
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suppress: Option<bool>,
+    /// 平铺模式切换（FR-DIR-021）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flat: Option<bool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct DirFilterResult {
+    pub session_id: String,
+    pub rev: u64,
+    /// 过滤后可见行数
+    pub visible_rows: u32,
+    /// 被过滤器隐藏的行数
+    pub hidden_rows: u32,
+    pub stats: DirStats,
+}
+
+/// dir/align 参数：手动对齐（FR-DIR-022）/ 解除对齐
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase", default)]
+pub struct DirAlignParams {
+    pub session_id: String,
+    /// 对齐：左 rel 路径（与 right 同时出现）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub left: Option<String>,
+    /// 对齐：右 rel 路径
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub right: Option<String>,
+    /// 解除对齐：涉及该 rel 路径的全部配对
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unalign: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct DirAlignResult {
+    pub session_id: String,
+    pub rev: u64,
+    /// 状态被重判/更新的行数
+    pub updated_rows: u32,
+    pub stats: DirStats,
+}
+
+/// 同步预设（SYNC-002 状态机；5 预设）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub enum SyncPreset {
+    /// 镜像 左→右：右侧与左侧完全一致（含删除右侧多余项）
+    MirrorLeftToRight,
+    /// 镜像 右→左
+    MirrorRightToLeft,
+    /// 更新 左→右：仅把左侧较新/左侧孤有项复制到右，不删除
+    UpdateLeftToRight,
+    /// 更新 右→左
+    UpdateRightToLeft,
+    /// 双向更新：两侧各自较新的项复制到对面，孤立项保留
+    UpdateBoth,
+}
+
+/// operate 计划动作（仅生成计划，不执行；执行属 P6/P8 文件操作引擎）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub enum PlannedOpKind {
+    CopyLeftToRight,
+    CopyRightToLeft,
+    DeleteLeft,
+    DeleteRight,
+    /// 时间戳同步（把对侧 mtime 写到本侧）
+    TouchLeft,
+    TouchRight,
+}
+
+/// 自定义规则匹配侧（"哪侧较新"条件）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub enum RuleSide {
+    Left,
+    Right,
+}
+
+/// 自定义规则动作（含 Skip 跳过）
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub enum RuleAction {
+    CopyLeftToRight,
+    CopyRightToLeft,
+    DeleteLeft,
+    DeleteRight,
+    TouchLeft,
+    TouchRight,
+    #[default]
+    Skip,
+}
+
+impl From<RuleAction> for Option<PlannedOpKind> {
+    fn from(a: RuleAction) -> Self {
+        match a {
+            RuleAction::CopyLeftToRight => Some(PlannedOpKind::CopyLeftToRight),
+            RuleAction::CopyRightToLeft => Some(PlannedOpKind::CopyRightToLeft),
+            RuleAction::DeleteLeft => Some(PlannedOpKind::DeleteLeft),
+            RuleAction::DeleteRight => Some(PlannedOpKind::DeleteRight),
+            RuleAction::TouchLeft => Some(PlannedOpKind::TouchLeft),
+            RuleAction::TouchRight => Some(PlannedOpKind::TouchRight),
+            RuleAction::Skip => None,
+        }
+    }
+}
+
+/// 自定义同步规则（DMRG-003 状态机数据层）：按顺序首条命中生效
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase", default)]
+pub struct SyncRule {
+    /// 名称掩码（FR-FLT 语义；None = 匹配任意名称）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name_mask: Option<String>,
+    /// 匹配指定行状态；None = 任意状态
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<DirEntryStatus>,
+    /// 要求某侧较新（按 mtime；None = 不约束）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub newer: Option<RuleSide>,
+    pub action: RuleAction,
+}
+
+/// dir/operate 参数：生成同步操作计划（不执行）
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase", default)]
+pub struct DirOperateParams {
+    pub session_id: String,
+    /// 预设（与 rules 二选一；都未给 = 空计划）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preset: Option<SyncPreset>,
+    /// 自定义规则（按序首条命中生效；无命中 = 跳过）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rules: Option<Vec<SyncRule>>,
+    /// 选中行 id 集合（None/空 = 全部行）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paths: Option<Vec<String>>,
+}
+
+/// 一条计划操作（path 为 rel 路径；执行器按会话根拼接）
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct PlannedOperation {
+    pub op: PlannedOpKind,
+    /// 目标 rel 路径（复制动作的源侧同路径存在）
+    pub path: String,
+    /// 触发原因（预设名 / 规则序号 + 命中条件摘要）
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct DirOperateResult {
+    pub session_id: String,
+    pub plan: Vec<PlannedOperation>,
+    pub total: u32,
+}
+
+/// dir/progress 阶段（惰性后台扫描生命周期）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub enum ProgressPhase {
+    Running,
+    Completed,
+    Cancelled,
+}
+
+/// dir/progress 通知载荷（引擎 -> UI；ADR-004 进度事件）
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct DirProgressEvent {
+    pub session_id: String,
+    pub phase: ProgressPhase,
+    /// 已判定条目数（快速测试完成）
+    pub scanned: u32,
+    /// 总量估算（后台扫描期随展开修正；完成后等于实际总数）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_estimate: Option<u32>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -677,9 +1154,11 @@ mod tests {
             name: "a.txt".into(),
             kind: EntryKind::File,
             left: None,
-            right: Some(SideInfo { size: 3, mtime_ms: 1 }),
+            right: Some(SideInfo::base(3, 1)),
             status: DirEntryStatus::RightOnly,
             has_children: false,
+            hidden: false,
+            suppressed: false,
         };
         let v = serde_json::to_value(&row).unwrap();
         assert!(v.get("left").is_none());
@@ -691,6 +1170,51 @@ mod tests {
         let v: CompareCriteria = serde_json::from_str("{}").unwrap();
         assert_eq!(v, CompareCriteria::default());
         assert_eq!(v.mtime_tolerance_sec, 2);
+    }
+
+    #[test]
+    fn compare_criteria_p0_payload_still_parses_and_serializes_same() {
+        // P0 旧载荷（仅两字段）必须可解析；序列化保持旧字段集
+        let old = r#"{"mtimeToleranceSec":2,"contentCompare":"auto"}"#;
+        let v: CompareCriteria = serde_json::from_str(old).unwrap();
+        assert!(v.ignore_dst_hour, "ignoreDstHour 缺省 = true（BC 默认）");
+        assert!(!v.ignore_tz_hour);
+        assert!(v.compare_case);
+        assert!(!v.compare_attributes);
+        assert!(v.attribute_letters.is_none());
+        assert!(!v.unix_meta);
+        // 序列化新增布尔字段始终输出（P0 客户端按未知字段忽略）——属性字母 None 时省略
+        let s = serde_json::to_string(&v).unwrap();
+        assert!(s.contains("ignoreDstHour"));
+        assert!(!s.contains("attributeLetters"));
+    }
+
+    #[test]
+    fn dir_row_hidden_suppressed_default_absent() {
+        let old = r#"{"id":"a","name":"a","kind":"file","status":"same","hasChildren":false}"#;
+        let row: DirRow = serde_json::from_str(old).unwrap();
+        assert!(!row.hidden);
+        assert!(!row.suppressed);
+        let s = serde_json::to_string(&row).unwrap();
+        assert!(!s.contains("hidden"), "false 的 hidden 不应出现在 JSON");
+    }
+
+    #[test]
+    fn dir_stats_dir_diff_omitted_when_zero() {
+        let s = serde_json::to_string(&DirStats::default()).unwrap();
+        assert!(!s.contains("dirDiff"));
+        let st = DirStats { dir_diff: 3, ..Default::default() };
+        let s = serde_json::to_string(&st).unwrap();
+        assert!(s.contains("dirDiff"));
+    }
+
+    #[test]
+    fn side_info_new_fields_absent_when_none() {
+        let si = SideInfo::base(10, 20);
+        let s = serde_json::to_string(&si).unwrap();
+        assert_eq!(s, r#"{"size":10,"mtimeMs":20}"#, "P0 载荷字节级兼容");
+        let old: SideInfo = serde_json::from_str(r#"{"size":1,"mtimeMs":2}"#).unwrap();
+        assert_eq!(old, SideInfo::base(1, 2));
     }
 
     #[test]

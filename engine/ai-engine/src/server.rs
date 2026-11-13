@@ -13,9 +13,12 @@ use crate::log;
 use crate::ServerOptions;
 
 /// 目录比较会话数据
-#[derive(Debug, Clone)]
+#[derive(Clone, Default)]
 pub struct DirSessionData {
-    pub scan: ai_dir::DirScanResult,
+    /// P2 会话模型（lazyScan/过滤器/平铺/对齐路径）
+    pub model: Option<Arc<ai_dir::DirModel>>,
+    /// P0 同步扫描结果（旧载荷路径）
+    pub scan: Option<ai_dir::DirScanResult>,
 }
 
 /// 文本比较会话数据
@@ -25,7 +28,7 @@ pub struct TextSessionData {
     pub summary: ai_protocol::DiffSummary,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum Session {
     Dir(DirSessionData),
     Text(TextSessionData),
@@ -240,7 +243,7 @@ async fn process_request(
 ) {
     let id = req.id.clone();
     let key = id.cancel_key();
-    let result = dispatch(&req.method, req.params.clone(), &ctx, &ai_dir::CancelFlag(cancel_flag)).await;
+    let result = dispatch(&req.method, req.params.clone(), &ctx, &ai_dir::CancelFlag(cancel_flag), tx.clone()).await;
     cancels.unregister(&key);
     match result {
         Ok(Handled::Value(v)) => {

@@ -2,11 +2,14 @@
 //!
 //! 用法：
 //! ```text
-//! aic diff <left> <right> [-U N] [--color auto|always|never]
-//! aic quick <left> <right> [--mode size|crc|binary]
+//! aic diff <left> <right> [-U N] [--color auto|always|never]   文本 unified diff；
+//!                                                              两侧为目录时递归输出（diff -r 风格）
+//! aic quick <left> <right> [--mode size|crc|binary|rules]      快速比较（文件或目录）
 //! ```
 //!
-//! 退出码（docs/04 P0）：0 相同 / 1 不同 / 2 错误。
+//! 退出码（docs/04 P0/P3）：0 相同 / 1 不同 / 2 错误。
+//! `--mode rules`：基于规则的目录比较（P2 以二进制判等占位，规则接口 P10 接入
+//! —— docs/04 P2 依赖注记）。
 
 use std::io::{IsTerminal, Write as _};
 use std::process::ExitCode;
@@ -119,6 +122,19 @@ async fn run_diff(
     let vfs = LocalFs::new();
     let left_path = VfsPath::parse(left_s).map_err(|e| DiffOutcome::Error(e.to_string()))?;
     let right_path = VfsPath::parse(right_s).map_err(|e| DiffOutcome::Error(e.to_string()))?;
+
+    // 目录递归输出（P2：aic diff 对接目录引擎，diff -r 风格摘要）
+    {
+        let ls = vfs.stat(&left_path).await.map_err(|e| DiffOutcome::Error(e.to_string()))?;
+        let rs = vfs.stat(&right_path).await.map_err(|e| DiffOutcome::Error(e.to_string()))?;
+        if ls.kind == ai_vfs::EntryKind::Dir && rs.kind == ai_vfs::EntryKind::Dir {
+            return run_dir_diff(&vfs, &left_path, &right_path, left_s, right_s).await;
+        }
+        if ls.kind == ai_vfs::EntryKind::Dir || rs.kind == ai_vfs::EntryKind::Dir {
+            return Err(DiffOutcome::Error("目录只能与目录比较".into()));
+        }
+    }
+
     let left_text = vfs
         .read_file_text(&left_path)
         .await
@@ -144,6 +160,43 @@ async fn run_diff(
     Err(DiffOutcome::Different)
 }
 
+/// 目录递归 diff：ai-dir 全量扫描 -> `diff -rq` 风格摘要输出（对接 P2 引擎能力）。
+/// 判据：内容比较 Always + 容差 0（与 `diff -r` 的内容语义一致，不按 mtime 判同）。
+async fn run_dir_diff(
+    vfs: &LocalFs,
+    left: &VfsPath,
+    right: &VfsPath,
+    left_s: &str,
+    right_s: &str,
+) -> Result<(), DiffOutcome> {
+    let result = ai_dir::scan(
+        vfs,
+        left,
+        right,
+        &ai_dir::DirScanOptions {
+            depth: None,
+            criteria: CompareCriteria {
+                mtime_tolerance_sec: 0,
+                content_compare: ai_protocol::ContentCompareMode::Always,
+                ..Default::default()
+            },
+        },
+        &ai_dir::ByNameAligner,
+        &ai_dir::CancelFlag::new(),
+    )
+    .await
+    .map_err(|e| DiffOutcome::Error(e.to_string()))?;
+    let text = aic::render_dir_diff(left_s, right_s, &result.arena);
+    if text.is_empty() {
+        return Ok(());
+    }
+    let stdout = std::io::stdout();
+    let mut lock = stdout.lock();
+    let _ = lock.write_all(text.as_bytes());
+    let _ = lock.flush();
+    Err(DiffOutcome::Different)
+}
+
 enum DiffOutcome {
     Different,
     Error(String),
@@ -158,6 +211,8 @@ enum QuickMode {
     Size,
     Crc,
     Binary,
+    /// 基于规则的比较（P2 以二进制判等占位；规则接口 P10 接入）
+    Rules,
 }
 
 impl QuickMode {
@@ -166,6 +221,7 @@ impl QuickMode {
             "size" => Some(QuickMode::Size),
             "crc" => Some(QuickMode::Crc),
             "binary" => Some(QuickMode::Binary),
+            "rules" => Some(QuickMode::Rules),
             _ => None,
         }
     }
@@ -174,6 +230,7 @@ impl QuickMode {
             QuickMode::Size => "size",
             QuickMode::Crc => "crc",
             QuickMode::Binary => "binary",
+            QuickMode::Rules => "rules",
         }
     }
 }
@@ -189,7 +246,7 @@ fn cmd_quick(args: &[String]) -> ExitCode {
                 i += 1;
                 match args.get(i).map(String::as_str).and_then(QuickMode::parse) {
                     Some(m) => mode = m,
-                    None => return arg_error("--mode 仅支持 size|crc|binary"),
+                    None => return arg_error("--mode 仅支持 size|crc|binary|rules"),
                 }
             }
             _ if a.starts_with('-') => return arg_error(&format!("未知参数: {a}")),
@@ -238,10 +295,13 @@ async fn run_quick(left_s: &str, right_s: &str, mode: QuickMode) -> Result<bool,
             QuickMode::Size => CompareCriteria {
                 mtime_tolerance_sec: u32::MAX,
                 content_compare: ai_protocol::ContentCompareMode::Never,
+                ..Default::default()
             },
-            QuickMode::Crc | QuickMode::Binary => CompareCriteria {
+            // crc/binary/rules：目录判等走内容比较（rules 在 P10 前以二进制占位）
+            QuickMode::Crc | QuickMode::Binary | QuickMode::Rules => CompareCriteria {
                 mtime_tolerance_sec: 0,
                 content_compare: ai_protocol::ContentCompareMode::Always,
+                ..Default::default()
             },
         };
         let result = ai_dir::scan(
@@ -278,7 +338,8 @@ async fn run_quick(left_s: &str, right_s: &str, mode: QuickMode) -> Result<bool,
                         .await
                         .map_err(|e| e.to_string())?
             }
-            QuickMode::Binary => {
+            // rules（P10 前以二进制占位，docs/04 P2 依赖注记）
+            QuickMode::Binary | QuickMode::Rules => {
                 ls.size == rs.size
                     && ai_dir::content_same(&vfs, &left, &right, ai_dir::ContentHashMode::Binary)
                         .await

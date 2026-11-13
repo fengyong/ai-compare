@@ -14,9 +14,14 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use async_trait::async_trait;
 use thiserror::Error;
 
+pub mod crc32;
 pub mod local;
+pub mod zip;
 
+pub use crc32::{crc32, crc32_update};
+pub use crc32::INITIAL as CRC32_INITIAL;
 pub use local::LocalFs;
+pub use zip::{ZipEntry, ZipFs};
 
 /// VFS 错误（引擎上层映射为协议领域错误码）
 #[derive(Debug, Error)]
@@ -47,12 +52,91 @@ pub enum EntryKind {
     Symlink,
 }
 
+/// DOS 属性位（FR-DIR-010 属性比较；经典 DOS 位分配）
+pub mod dos_attr {
+    pub const READONLY: u8 = 0x01;
+    pub const HIDDEN: u8 = 0x02;
+    pub const SYSTEM: u8 = 0x04;
+    pub const ARCHIVE: u8 = 0x20;
+
+    /// 位 -> BC 属性字母（FR-DIR-041：r 只读、h 隐藏、s 系统、a 存档）
+    pub fn letter(bit: u8) -> char {
+        match bit {
+            READONLY => 'r',
+            HIDDEN => 'h',
+            SYSTEM => 's',
+            ARCHIVE => 'a',
+            _ => '?',
+        }
+    }
+
+    /// 属性位串 -> 位掩码（未知字母忽略）
+    pub fn from_letters(letters: &str) -> u8 {
+        let mut m = 0u8;
+        for c in letters.chars() {
+            match c {
+                'r' | 'R' => m |= READONLY,
+                'h' | 'H' => m |= HIDDEN,
+                's' | 'S' => m |= SYSTEM,
+                'a' | 'A' => m |= ARCHIVE,
+                _ => {}
+            }
+        }
+        m
+    }
+
+    /// 位掩码 -> 属性字母串（稳定顺序 r/h/s/a）
+    pub fn to_letters(mask: u8) -> String {
+        let mut s = String::new();
+        for bit in [READONLY, HIDDEN, SYSTEM, ARCHIVE] {
+            if mask & bit != 0 {
+                s.push(letter(bit));
+            }
+        }
+        s
+    }
+}
+
+/// Unix 文件类型字母（FR-DIR-032 Unix 类型过滤：b/c/l/p/r/s）
+pub fn unix_type_letter(kind: EntryKind, mode: Option<u32>) -> char {
+    match kind {
+        EntryKind::Symlink => 'l',
+        EntryKind::Dir => 'd',
+        EntryKind::File => match mode {
+            Some(m) => match m & 0o170000 {
+                0o060000 => 'b', // 块设备
+                0o020000 => 'c', // 字符设备
+                0o010000 => 'p', // FIFO
+                0o140000 => 's', // 套接字
+                _ => 'r',        // 普通文件
+            },
+            None => 'r',
+        },
+    }
+}
+
 /// stat 信息（mtime 为 epoch 毫秒；mtime 不可得时为 0）
+///
+/// P2 扩展：Unix 元数据（权限/uid/gid，非 Unix 平台为 None）与
+/// DOS 属性位（Unix 平台近似：无写位 -> r；`.` 前缀 -> h）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StatInfo {
     pub size: u64,
     pub mtime_ms: u64,
     pub kind: EntryKind,
+    /// st_mode（含文件类型位）；不可得为 None
+    pub unix_mode: Option<u32>,
+    pub uid: Option<u32>,
+    pub gid: Option<u32>,
+    /// DOS 属性位掩码（dos_attr 模块位）
+    pub dos_attrs: u8,
+}
+
+impl StatInfo {
+    /// 最小构造（size/mtime/kind；元数据置空）
+    pub fn minimal(size: u64, mtime_ms: u64, kind: EntryKind) -> Self {
+        StatInfo { size, mtime_ms, kind, unix_mode: None, uid: None, gid: None, dos_attrs: 0 }
+    }
 }
 
 /// 目录项（list_dir 返回）
@@ -203,6 +287,13 @@ pub trait VfsProvider: Send + Sync {
             path: path.as_str().to_string(),
         })
     }
+
+    /// 预计算 CRC-32（IEEE）：提供中心目录等预计算元数据的 Provider
+    /// （如 zip）直接返回存储值；默认 None = 需读取内容计算。
+    /// （FR-DIR-011 CRC 比较：zip 内文件免读判定）
+    async fn stored_crc32(&self, _path: &VfsPath) -> Result<Option<u32>, VfsError> {
+        Ok(None)
+    }
 }
 
 const UTF8_BOM: &[u8] = &[0xEF, 0xBB, 0xBF];
@@ -223,10 +314,38 @@ pub(crate) fn stat_from_metadata(meta: &std::fs::Metadata) -> StatInfo {
     } else {
         EntryKind::Symlink
     };
+    stat_with_unix(meta, kind)
+}
+
+#[cfg(unix)]
+fn stat_with_unix(meta: &std::fs::Metadata, kind: EntryKind) -> StatInfo {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    let mode = meta.permissions().mode();
+    let mut dos_attrs = 0u8;
+    if mode & 0o222 == 0 {
+        dos_attrs |= dos_attr::READONLY;
+    }
     StatInfo {
         size: meta.len(),
         mtime_ms: system_time_to_ms(meta.modified()),
         kind,
+        unix_mode: Some(mode),
+        uid: Some(meta.uid()),
+        gid: Some(meta.gid()),
+        dos_attrs,
+    }
+}
+
+#[cfg(not(unix))]
+fn stat_with_unix(meta: &std::fs::Metadata, kind: EntryKind) -> StatInfo {
+    StatInfo {
+        size: meta.len(),
+        mtime_ms: system_time_to_ms(meta.modified()),
+        kind,
+        unix_mode: None,
+        uid: None,
+        gid: None,
+        dos_attrs: 0,
     }
 }
 

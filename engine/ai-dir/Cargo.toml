@@ -4,13 +4,15 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
-description = "ai-compare 目录比较引擎（M03）：两树扫描、按名对齐、size+mtime 快速测试、分块哈希二进制判等、delta 事件流"
+description = "ai-compare 目录比较引擎（M03）：两树扫描、按名对齐、快速测试全集、CRC 内容比较（缓存+zip 预计算）、过滤器求值、惰性+后台扫描、同步 operate 计划"
 
 [dependencies]
 ai-protocol = { workspace = true }
 ai-vfs = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
+# SQLite stat/hash 持久缓存（ADR-004；bundled 免系统依赖，MIT/公有领域许可）
+rusqlite = { version = "0.32", features = ["bundled"] }
 
 [dev-dependencies]
 tempfile = { workspace = true }

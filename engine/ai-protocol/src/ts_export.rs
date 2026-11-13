@@ -60,6 +60,27 @@ pub fn export_all_to_ui() -> Result<usize, Box<dyn std::error::Error>> {
     TextSectionsNotification::export()?;
     SessionCloseParams::export()?;
     CancelParams::export()?;
+    // P2 新增
+    NameFilterSpec::export()?;
+    OtherFilterSpec::export()?;
+    DisplayFilterSpec::export()?;
+    ManualAlignPair::export()?;
+    DirExpandParams::export()?;
+    DirExpandResult::export()?;
+    DirFilterParams::export()?;
+    DirFilterResult::export()?;
+    DirAlignParams::export()?;
+    DirAlignResult::export()?;
+    SyncPreset::export()?;
+    PlannedOpKind::export()?;
+    RuleSide::export()?;
+    RuleAction::export()?;
+    SyncRule::export()?;
+    DirOperateParams::export()?;
+    PlannedOperation::export()?;
+    DirOperateResult::export()?;
+    ProgressPhase::export()?;
+    DirProgressEvent::export()?;
     crate::error::RpcErrorObject::export()?;
 
     // 2. 拷贝到 UI 侧
@@ -87,7 +108,7 @@ mod tests {
     #[test]
     fn export_ts_bindings() {
         let n = export_all_to_ui().expect("TS 导出失败");
-        assert!(n >= 38, "应导出全部协议类型，实际 {n}");
+        assert!(n >= 58, "应导出全部协议类型，实际 {n}");
         let ui_dir = ui_generated_dir();
         assert!(ui_dir.join("DirDelta.ts").exists(), "DirDelta.ts 应存在");
         assert!(ui_dir.join("Section.ts").exists(), "Section.ts 应存在");
