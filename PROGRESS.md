@@ -48,6 +48,8 @@
 | 2026-11-13 23:59 | 看护定时任务重建（旧任务因模型切换失效，新任务同节奏每 20 分钟） | active |
 | 2026-11-13 23:36 | Agent「P1 diff 核心完备化」（engine/ai-core，算法矩阵/重要性/增量重diff） | ✅ 完成并验收（01:1x）：ai-core 91/91 测试、clippy 零警、对拍 19/21 与 difflib+git 逐 hunk 一致（2 歧义用例性质校验+编辑量守恒）、PB-05 20 万行 standard 24.9ms；提交（仅 P1 文件）；遗留——协议 DTO 映射（Replace/ImportanceUpdate/双键/手动对齐）待 P2/P5 排期 |
 | 2026-11-13 23:36 | Agent「P2 目录引擎完备化」（ai-dir/ai-vfs/protocol/cli，惰性扫描/过滤器/缓存/同步状态机） | ✅ 完成并验收（02:1x）：workspace **259 测试**全绿、clippy 零警、golden 重固化仅 3 能力字段差异、新二进制 e2e 通过、PB-03 10 万项 1.54s 达标、PB-10 delta 23.3ms；修复 5 个关键缺陷（含单线程 runtime 死锁红线）；**M2 联合验收通过并提交** |
+| 2026-11-14 02:2x | Agent「M3/P3 CLI 全集+文本 RPC 接线+P1 协议映射」（引擎侧：cli/tests/protocol/ai-engine/ai-core API） | 运行中 |
+| 2026-11-14 02:2x | Agent「M3/P5 文本比较视图完备化」（ui/ 独占：编辑/折叠/语法高亮/查找替换/编码/概览条） | 运行中 |
 | 2026-11-13 23:36 | Agent「P4 UI 壳与会话体系」（ui/，主页/多窗口/会话持久化/ViewRegistry） | ✅ 完成并验收（含一次并发中断+SendMessage 原地续跑）：134/134 测试（+83）、build/lint/e2e:engine 全绿、浏览器冒烟全流程通过（00:47 主会话复验）；遗留项见 ui/README P4 边界 |
 
 ### M3 断点（下一步，P3/P5 并行）
