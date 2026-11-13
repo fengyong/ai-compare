@@ -2,89 +2,101 @@ import { describe, expect, it } from 'vitest';
 import { MockEngine } from './mockEngine';
 import { MockTransport } from './mockTransport';
 import { RpcClient } from '../protocol/client';
-import type { DirDeltaParams } from '../protocol/types';
+import type { DirDelta } from '../protocol/types';
 
-/** 集成级：目录会话 → 子会话打开/关闭 → dir/delta 回传 fileOverride（docs/03 §5.1 最小闭环） */
-describe('MockEngine 子会话回传链路', () => {
-  it('closeText(reportStatus) 后父目录会话收到该行的 fileOverride upsert', async () => {
-    const engine = new MockEngine();
-    const transport = new MockTransport(engine);
-    const client = new RpcClient(transport);
-    await client.ready;
+/**
+ * MockEngine 与真实 ai-engine P0 方法集对齐后的协议面集成测试：
+ * initialize / dir/open（客户端分配 sessionId）→ dir/delta 批次通知 /
+ * text/open → text/lines 分页 / session/close 幂等。
+ *
+ * 注：子会话关闭 → 父目录行 fileOverride 回传属引擎 P1+（真实引擎 P0
+ * 亦未开放该 RPC），原「回传链路」测试随协议面收窄一并移除。
+ */
 
-    const deltas: DirDeltaParams[] = [];
-    client.on('dir/delta', (p) => deltas.push(p as DirDeltaParams));
+const newClient = async () => {
+  const engine = new MockEngine();
+  const client = new RpcClient(new MockTransport(engine));
+  await client.ready;
+  return client;
+};
 
-    const opened = await client.request<{ sessionId: string; rowCount: number }>('dir/open', {
-      left: '/a',
-      right: '/b',
-    });
-    const dirId = opened.sessionId;
+describe('MockEngine P0 协议面', () => {
+  it('dir/open 应答先行，dir/delta 分批推送且 rev 单调递增、批次收尾 hasMore=false', async () => {
+    const client = await newClient();
+    const deltas: DirDelta[] = [];
+    client.on('dir/delta', (p) => deltas.push(p as DirDelta));
 
-    // 等"后台扫描"泵把剩余 delta 推完
+    const opened = await client.request<{ sessionId: string; rowCount: number; scanState: string }>(
+      'dir/open',
+      { sessionId: 'dir-1', left: '/a', right: '/b', depth: null, criteria: { mtimeToleranceSec: 2, contentCompare: 'auto' } }
+    );
+    expect(opened.sessionId).toBe('dir-1');
+    expect(opened.scanState).toBe('completed');
+    expect(opened.rowCount).toBeGreaterThan(0);
+
+    // 后台泵推完剩余批次
     await new Promise((r) => setTimeout(r, 300));
 
-    // 找一个文件行
-    const rowsRes = await client.request<{ rows: Array<{ rowId: number; name: string; kind: string }> }>(
-      'dir/rows',
-      { sessionId: dirId, offset: 0, count: 500 }
-    );
-    const fileRow = rowsRes.rows.find((r) => r.kind === 'file');
-    expect(fileRow).toBeDefined();
+    expect(deltas.length).toBeGreaterThan(0);
+    expect(deltas.every((d) => d.sessionId === 'dir-1')).toBe(true);
+    const revs = deltas.map((d) => Number(d.rev));
+    expect([...revs].sort((a, b) => a - b)).toEqual(revs); // 单调递增
+    expect(deltas[deltas.length - 1].batch.hasMore).toBe(false);
 
-    const child = await client.request<{ kind: string; viewKind: string; left: unknown; right: unknown }>(
-      'dir/openChild',
-      { sessionId: dirId, rowId: fileRow!.rowId }
-    );
-    expect(child.viewKind).toBe('text');
-
-    const textOpened = await client.request<{ sessionId: string }>('text/open', {
-      left: child.left,
-      right: child.right,
-      parent: { sessionId: dirId, rowId: fileRow!.rowId },
-    });
-
-    const closeRes = await client.request<{ reportedStatus: string | null }>('text/close', {
-      sessionId: textOpened.sessionId,
-      reportStatus: true,
-    });
-    expect(closeRes.reportedStatus).toBe('contentDiff');
-
-    // 回传 delta：包含该行的 fileOverride
-    const overrideDelta = deltas.find(
-      (d) =>
-        d.sessionId === dirId &&
-        d.upserts.some((u) => u.row.rowId === fileRow!.rowId && u.row.fileOverride === 'contentDiff')
-    );
-    expect(overrideDelta).toBeDefined();
-
+    // 行结构与 DirRow 生成类型一致；upsert 按行 id 合并后总数 == rowCount
+    const ids = new Set<string>();
+    for (const d of deltas) for (const u of d.upserts) ids.add(u.id);
+    expect(ids.size).toBe(opened.rowCount);
+    const first = deltas[0].upserts[0];
+    expect(typeof first.id).toBe('string');
+    expect(['file', 'dir']).toContain(first.kind);
     await client.close();
   });
 
   it('text/lines 分页返回行内容且 done 正确', async () => {
-    const engine = new MockEngine();
-    const client = new RpcClient(new MockTransport(engine));
-    await client.ready;
-    const text = await client.request<{ sessionId: string; left: { lineCount: number } }>('text/open', {
-      left: { name: 'a.c' },
-      right: { name: 'a.c' },
+    const client = await newClient();
+    const text = await client.request<{ sessionId: string; leftLineCount: number }>('text/open', {
+      sessionId: 'text-1',
+      left: '/a/src/main.c',
+      right: '/b/src/main.c',
+      options: null,
     });
+    expect(text.leftLineCount).toBeGreaterThan(0);
+
     const all: string[] = [];
     let start = 0;
     let done = false;
     while (!done) {
-      const res = await client.request<{ lines: string[]; done: boolean }>('text/lines', {
+      const res = await client.request<{ start: number; lines: string[]; done: boolean }>('text/lines', {
         sessionId: text.sessionId,
         side: 'left',
         start,
-        count: 100,
+        count: 3, // 小页：必然多页，验证 done 语义
       });
+      expect(res.start).toBe(start);
       all.push(...res.lines);
       done = res.done;
       start += res.lines.length;
-      if (start > text.left.lineCount + 100) break;
     }
-    expect(all.length).toBe(text.left.lineCount);
+    expect(all.length).toBe(text.leftLineCount);
+    await client.close();
+  });
+
+  it('session/close 幂等；关闭后访问会话报 SESSION_NOT_FOUND(410)', async () => {
+    const client = await newClient();
+    await client.request('text/open', {
+      sessionId: 'text-2',
+      left: '/a/x.c',
+      right: '/b/x.c',
+      options: null,
+    });
+    expect(await client.request('session/close', { sessionId: 'text-2' })).toBeNull();
+    // 幂等：不存在也成功
+    expect(await client.request('session/close', { sessionId: 'text-2' })).toBeNull();
+
+    await expect(
+      client.request('text/sections', { sessionId: 'text-2', offset: 0, count: 10 })
+    ).rejects.toMatchObject({ code: 410 });
     await client.close();
   });
 });

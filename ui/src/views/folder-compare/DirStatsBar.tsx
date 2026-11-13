@@ -4,7 +4,7 @@ import type { DirStatsSnapshot } from './dirRowCache';
 
 /**
  * 目录比较统计栏（FR-DIR-072 会话信息的 P0 版）：各状态计数 chips + 扫描进度。
- * 同时充当图例（颜色 = 语义）。
+ * 同时充当图例（颜色 = 语义）。计数对齐生成协议 DirStats。
  */
 export function DirStatsBar({ snapshot }: { snapshot: DirStatsSnapshot }) {
   const { stats, scanState, progress } = snapshot;
@@ -20,23 +20,23 @@ export function DirStatsBar({ snapshot }: { snapshot: DirStatsSnapshot }) {
         </span>
         <span className="aic-stat-chip">
           <i className="aic-dot diff" />
-          <b>{formatCount(stats.diff)}</b> {S.folder.stats.diff}
+          <b>{formatCount(stats.contentDiff)}</b> {S.folder.stats.contentDiff}
+        </span>
+        <span className="aic-stat-chip">
+          <i className="aic-dot diff" />
+          <b>{formatCount(stats.quickDiff)}</b> {S.folder.stats.quickDiff}
         </span>
         <span className="aic-stat-chip">
           <i className="aic-dot orphan" />
-          <b>{formatCount(stats.orphanLeft)}</b> {S.folder.stats.orphanLeft}
+          <b>{formatCount(stats.leftOnly)}</b> {S.folder.stats.leftOnly}
         </span>
         <span className="aic-stat-chip">
           <i className="aic-dot orphan" />
-          <b>{formatCount(stats.orphanRight)}</b> {S.folder.stats.orphanRight}
+          <b>{formatCount(stats.rightOnly)}</b> {S.folder.stats.rightOnly}
         </span>
         <span className="aic-stat-chip">
-          <i className="aic-dot error" />
-          <b>{formatCount(stats.error)}</b> {S.folder.stats.error}
-        </span>
-        <span className="aic-stat-chip">
-          <i className="aic-dot unknown" />
-          <b>{formatCount(stats.unknown)}</b> {S.folder.stats.unknown}
+          <i className="aic-dot same" />
+          <b>{formatCount(stats.dirSame)}</b> {S.folder.stats.dirSame}
         </span>
       </div>
       <span className="spacer" />
@@ -49,9 +49,7 @@ export function DirStatsBar({ snapshot }: { snapshot: DirStatsSnapshot }) {
           </span>
         </span>
       )}
-      {scanState === 'done' && <span style={{ color: 'var(--aic-text-dim)' }}>{S.folder.scanDone}</span>}
-      {scanState === 'cancelled' && <span>{S.folder.scanCancelled}</span>}
-      {scanState === 'error' && <span style={{ color: 'var(--aic-danger)' }}>{S.folder.scanError}</span>}
+      {scanState === 'completed' && <span style={{ color: 'var(--aic-text-dim)' }}>{S.folder.scanDone}</span>}
     </>
   );
 }

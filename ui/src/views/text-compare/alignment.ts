@@ -138,7 +138,7 @@ export function mapLineBySections(
         if (s.kind === 'equal') {
           return clamp(oRange.start + (line - mRange.start));
         }
-        // change/conflict：顶对齐 + 偏移 clamp 到对侧区间
+        // change：顶对齐 + 偏移 clamp 到对侧区间
         const offset = Math.min(line - mRange.start, oRange.end - oRange.start - 1);
         return clamp(oRange.start + Math.max(0, offset));
       }
@@ -169,9 +169,9 @@ export function findDiffSectionAtLine(
 }
 
 /**
- * 为全部 change/conflict section 构建行内高亮 span（左右两侧）。
- * 规模护栏见 buildInlineMarks；P0 在文档构建时一次性计算（真实引擎可切换
- * 为 text/inlineDiff 可视区懒取，接口形态已对齐）。
+ * 为全部 change section 构建行内高亮 span（左右两侧）。
+ * 规模护栏见 buildInlineMarks；P0 在文档构建时一次性计算（引擎 text/inlineDiff
+ * 可视区懒取 P1 开放后切换，接口形态已对齐）。
  */
 export function buildAllInlineMarks(
   sections: Section[],
@@ -181,7 +181,7 @@ export function buildAllInlineMarks(
   const left: InlineMark[] = [];
   const right: InlineMark[] = [];
   for (const s of sections) {
-    if (s.kind !== 'change' && s.kind !== 'conflict') continue;
+    if (s.kind !== 'change') continue;
     if (!s.left || !s.right) continue;
     const lineCount = s.left.end - s.left.start;
     const marks = buildInlineMarks(leftLines, rightLines, s.left.start, s.right.start, lineCount);

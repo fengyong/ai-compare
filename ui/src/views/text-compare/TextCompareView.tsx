@@ -25,14 +25,12 @@ export function TextCompareView({ tab }: { tab: Tab }) {
     void (async () => {
       try {
         const opened = await openText({
-          left: text.left,
-          right: text.right,
-          parent:
-            text.parentFolderSessionId !== undefined && text.parentRowId !== undefined
-              ? { sessionId: text.parentFolderSessionId, rowId: text.parentRowId }
-              : undefined,
+          sessionId: text.sessionId,
+          left: text.left.path,
+          right: text.right.path,
+          options: null,
         });
-        const loaded = await loadTextSession(opened);
+        const loaded = await loadTextSession(opened, text.left.path, text.right.path);
         if (!disposed) setSession(loaded);
       } catch (err) {
         if (!disposed) setError(err instanceof Error ? err.message : String(err));
@@ -41,14 +39,14 @@ export function TextCompareView({ tab }: { tab: Tab }) {
     return () => {
       disposed = true;
     };
-  }, [text.sessionId, text.left, text.right, text.parentFolderSessionId, text.parentRowId]);
+  }, [text.sessionId, text.left.path, text.right.path]);
 
   const aligned = useMemo(() => {
     if (!session) return null;
     const docs = buildAlignedDocs(session.sections, session.leftLines, session.rightLines);
     const marks = buildAllInlineMarks(session.sections, session.leftLines, session.rightLines);
     const importance = new Map<number, 'important' | 'unimportant' | 'ignored'>();
-    for (const s of session.sections) importance.set(s.id, s.importance === 'unimportant' ? 'unimportant' : 'important');
+    for (const s of session.sections) importance.set(s.id, s.important === 'unimportant' ? 'unimportant' : 'important');
     return { ...docs, marks, importance };
   }, [session]);
 
@@ -119,20 +117,22 @@ export function TextCompareView({ tab }: { tab: Tab }) {
   return (
     <div className="aic-text">
       <div className="aic-text-toolbar">
-        <span className="fname" title={text.left.path ?? text.left.name}>
+        <span className="fname" title={text.left.path}>
           {text.left.name}
         </span>
         <span className="meta">⇄</span>
-        <span className="fname" title={text.right.path ?? text.right.name}>
+        <span className="fname" title={text.right.path}>
           {text.right.name}
         </span>
         <span className="meta">
-          {session.left.encoding} · {session.left.lineCount.toLocaleString('zh-CN')} {S.text.linesUnit}
+          {session.leftLineCount.toLocaleString('zh-CN')} {S.text.linesUnit} ⇄{' '}
+          {session.rightLineCount.toLocaleString('zh-CN')} {S.text.linesUnit}
         </span>
         <span className="spacer" style={{ flex: 1 }} />
         <span className="meta">
-          {S.text.sectionsLabel} <b>{summary.diffSections}</b> / {S.text.equalSectionsLabel}{' '}
-          <b>{summary.sections - summary.diffSections}</b>
+          {S.text.sectionsLabel}{' '}
+          <b>{summary.insertSections + summary.deleteSections + summary.changeSections}</b> /{' '}
+          {S.text.equalSectionsLabel} <b>{summary.equalSections}</b>
         </span>
         <button className="nav" onClick={() => gotoSection(0)} disabled={diffSections.length === 0}>
           {S.text.firstDiff}

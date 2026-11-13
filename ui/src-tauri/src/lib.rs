@@ -44,14 +44,15 @@ struct EngineStartInfo {
 }
 
 fn dev_engine_path() -> PathBuf {
-    // ui/src-tauri → 仓库根/engine/target/debug（monorepo 布局，docs/03 §7）
+    // ui/src-tauri → 仓库根 target/debug（workspace 根统一输出，docs/03 §7；
+    // 根 Cargo.toml 未设 target-dir，workspace 默认 target/ 在仓库根）
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let exe = if cfg!(windows) {
         format!("{ENGINE_NAME}.exe")
     } else {
         ENGINE_NAME.to_string()
     };
-    manifest_dir.join("..").join("..").join("engine").join("target").join("debug").join(exe)
+    manifest_dir.join("..").join("..").join("target").join("debug").join(exe)
 }
 
 fn resolve_engine_path() -> Result<PathBuf, String> {

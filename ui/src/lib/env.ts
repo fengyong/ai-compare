@@ -12,6 +12,26 @@ export function basename(p: string): string {
   return i >= 0 ? norm.slice(i + 1) : norm;
 }
 
+/** 基目录 + POSIX 风格相对路径（生成协议 DirRow.id）→ 完整路径 */
+export function joinPath(base: string, rel: string): string {
+  return `${base.replace(/[\\/]+$/, '')}/${rel}`;
+}
+
+/** 是否按文本视图打开（P0 的 UI 侧格式探测近似；正式探测属引擎 FormatRegistry，P2） */
+const TEXTUAL_EXTS = new Set([
+  'c', 'h', 'cpp', 'hpp', 'cc', 'hh', 'cs', 'go', 'rs', 'java', 'kt', 'swift',
+  'py', 'rb', 'php', 'pl', 'sh', 'bash', 'zsh', 'fish',
+  'js', 'ts', 'jsx', 'tsx', 'mjs', 'cjs', 'json', 'jsonc', 'json5',
+  'html', 'htm', 'css', 'scss', 'less', 'xml', 'svg', 'yml', 'yaml', 'toml', 'ini', 'cfg',
+  'md', 'markdown', 'txt', 'log', 'sql', 'lua', 'vim', 'proto', 'gradle', 'properties', 'patch', 'diff',
+]);
+
+export function looksTextual(name: string): boolean {
+  const i = name.lastIndexOf('.');
+  if (i < 0) return true; // 无扩展名按文本处理（Makefile、LICENSE 等）
+  return TEXTUAL_EXTS.has(name.slice(i + 1).toLowerCase());
+}
+
 /** 简单字符串哈希（FNV-1a 32 位），演示引擎用它做确定性种子 */
 export function hashString(s: string): number {
   let h = 2166136261 >>> 0;

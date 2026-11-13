@@ -1,6 +1,6 @@
 import { create } from 'zustand';
-import type { DirRow, FileRef } from '../protocol/types';
-import { basename } from '../lib/env';
+import type { DirRow } from '../protocol/types';
+import { basename, joinPath, looksTextual } from '../lib/env';
 import { S } from '../strings';
 import * as engine from '../ipc/engineProcess';
 import { releaseDirCache } from '../views/folder-compare/dirRowCache';
@@ -13,21 +13,26 @@ import { releaseDirCache } from '../views/folder-compare/dirRowCache';
  * 大数据（目录行缓存、文本行）留在各视图的非响应式缓存（见 dirRowCache.ts）。
  */
 
+/** 文本子会话的文件引用（UI 侧视图模型；协议侧为纯路径字符串） */
+export interface FileRef {
+  path: string;
+  name: string;
+}
+
 export interface FolderTabData {
   left: string;
   right: string;
-  /** dir/open 成功后回填；用于子会话回传寻址 */
-  sessionId?: string;
+  /** 客户端分配的引擎会话句柄（生成协议 DirOpenParams.sessionId），标签创建时即确定 */
+  sessionId: string;
 }
 
 export interface TextTabData {
   sessionId: string;
   left: FileRef;
   right: FileRef;
-  /** 父目录会话（差异回传链路，docs/03 §5.1） */
+  /** 父目录标签（差异回传链路 docs/03 §5.1 的 UI 侧关联；引擎侧写回属 P1） */
   parentTabId?: string;
   parentFolderSessionId?: string;
-  parentRowId?: number;
 }
 
 export interface Tab {
@@ -46,7 +51,6 @@ export interface ShellStore {
 
   openFolderTab(left: string, right: string): void;
   openTextChild(parentTabId: string, row: DirRow): Promise<void>;
-  setFolderSession(tabId: string, sessionId: string): void;
   activate(tabId: string): void;
   closeTab(tabId: string): Promise<void>;
   setNotice(msg: string | null): void;
@@ -65,53 +69,52 @@ export const useShell = create<ShellStore>((set, get) => ({
   openFolderTab(left, right) {
     const id = nextTabId('dir');
     const title = `${basename(left)} ⇄ ${basename(right)}`;
-    const tab: Tab = { id, kind: 'folder', title, folder: { left, right } };
+    const tab: Tab = {
+      id,
+      kind: 'folder',
+      title,
+      folder: { left, right, sessionId: engine.newSessionId('dir') },
+    };
     set((st) => ({ tabs: [...st.tabs, tab], activeTabId: id, notice: null }));
   },
 
+  /**
+   * 双击目录行 → 打开文本子会话。
+   *
+   * P0 说明：引擎侧 dir/openChild（FormatRegistry 探测，docs/03 §3.5）与
+   * 父会话差异回传（§5.1）均未开放（P1/P2）；UI 以行 id（相对路径）拼出
+   * 两侧完整路径直接 text/open，视图类型按扩展名近似判定。
+   */
   async openTextChild(parentTabId, row) {
     const parent = get().tabs.find((t) => t.id === parentTabId);
-    const folderSessionId = parent?.folder?.sessionId;
-    if (!folderSessionId) return;
+    const folder = parent?.folder;
+    if (!folder) return;
+    if (!looksTextual(row.name)) {
+      get().setNotice(S.text.unsupportedView);
+      return;
+    }
+    const left = joinPath(folder.left, row.id);
+    const right = joinPath(folder.right, row.id);
     try {
-      // 1) 引擎解析打开方式（FormatRegistry 探测，docs/03 §3.5）
-      const child = await engine.openChild({ sessionId: folderSessionId, rowId: row.rowId });
-      if (child.viewKind !== 'text') {
-        get().setNotice(S.text.unsupportedView);
-        return;
-      }
-      // 2) 创建文本比较子会话（携带父会话引用 → 关闭时引擎回传 fileOverride）
-      const opened = await engine.openText({
-        left: child.left,
-        right: child.right,
-        parent: { sessionId: folderSessionId, rowId: row.rowId },
-      });
+      const sessionId = engine.newSessionId('text');
+      await engine.openText({ sessionId, left, right, options: null });
       const id = nextTabId('text');
       const tab: Tab = {
         id,
         kind: 'text',
         title: `${row.name}（${S.tab.textTitleSuffix}）`,
         text: {
-          sessionId: opened.sessionId,
-          left: child.left,
-          right: child.right,
+          sessionId,
+          left: { path: left, name: row.name },
+          right: { path: right, name: row.name },
           parentTabId,
-          parentFolderSessionId: folderSessionId,
-          parentRowId: row.rowId,
+          parentFolderSessionId: folder.sessionId,
         },
       };
       set((st) => ({ tabs: [...st.tabs, tab], activeTabId: id, notice: null }));
     } catch (err) {
       get().setNotice(`${S.folder.openFail}: ${err instanceof Error ? err.message : String(err)}`);
     }
-  },
-
-  setFolderSession(tabId, sessionId) {
-    set((st) => ({
-      tabs: st.tabs.map((t) =>
-        t.id === tabId && t.folder ? { ...t, folder: { ...t.folder, sessionId } } : t
-      ),
-    }));
   },
 
   activate(tabId) {
@@ -127,16 +130,15 @@ export const useShell = create<ShellStore>((set, get) => ({
     const tab = st0.tabs.find((t) => t.id === tabId);
     if (!tab || tab.kind === 'home') return;
 
-    if (tab.kind === 'text' && tab.text) {
-      // 差异回传：引擎把本次判定写回父目录行（dir/delta upsert 该行），
-      // 目录视图的 delta 订阅收到后自然重新着色（docs/03 §5.1 时序 12~14）。
+    // session/close 幂等（引擎侧不存在也成功）；目录会话额外释放 UI 缓存
+    if (tab.text?.sessionId) {
       try {
-        await engine.closeText({ sessionId: tab.text.sessionId, reportStatus: true });
+        await engine.closeSession({ sessionId: tab.text.sessionId });
       } catch (err) {
-        console.warn('[text/close] 回传失败', err);
+        console.warn('[session/close] 失败', err);
       }
     }
-    if (tab.kind === 'folder' && tab.folder?.sessionId) {
+    if (tab.folder?.sessionId) {
       try {
         await engine.closeSession({ sessionId: tab.folder.sessionId });
       } catch (err) {
