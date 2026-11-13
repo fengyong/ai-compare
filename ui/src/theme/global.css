@@ -1330,3 +1330,319 @@ input:focus {
   color: var(--aic-text-dim);
   font-size: 11px;
 }
+
+/* ==================================================================
+ * P8：文件夹同步 / 文件夹合并视图（FR-SYNC / FR-DMRG）
+ * ================================================================== */
+
+.aic-sync-setup,
+.aic-sync-plan,
+.aic-sync-report,
+.aic-sync-running {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--aic-border);
+  background: var(--aic-bg-panel);
+}
+.aic-sync-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.aic-sync-row label {
+  font-size: 12px;
+  color: var(--aic-text-dim);
+}
+.aic-sync-row .chk {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--aic-text);
+}
+.aic-sync-stats {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.aic-sync-stats .chip,
+.aic-folder-toolbar .chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  background: var(--aic-bg-raised);
+  border: 1px solid var(--aic-border);
+}
+.aic-sync-stats .chip.l2r {
+  border-color: var(--aic-accent);
+  color: var(--aic-accent);
+}
+.aic-sync-stats .chip.r2l {
+  border-color: var(--aic-st-older);
+  color: var(--aic-st-older);
+}
+.aic-sync-stats .chip.warn {
+  border-color: var(--aic-danger);
+  color: var(--aic-danger);
+}
+.aic-sync-empty {
+  padding: 16px;
+  color: var(--aic-text-dim);
+  text-align: center;
+}
+.aic-sync-table {
+  display: flex;
+  flex-direction: column;
+  max-height: 300px;
+  overflow: auto;
+  border: 1px solid var(--aic-border);
+  border-radius: 4px;
+}
+.aic-sync-table.small {
+  max-height: 220px;
+}
+.aic-sync-head,
+.aic-sync-tr {
+  display: grid;
+  grid-template-columns: minmax(140px, 1.2fr) minmax(180px, 2fr) minmax(110px, 0.9fr) minmax(120px, 1.4fr);
+  gap: 8px;
+  padding: 4px 8px;
+  font-size: 12px;
+  align-items: center;
+}
+.aic-sync-table.small .aic-sync-head,
+.aic-sync-table.small .aic-sync-tr {
+  grid-template-columns: minmax(90px, 0.8fr) minmax(180px, 2fr) minmax(120px, 1.4fr);
+}
+.aic-sync-head {
+  position: sticky;
+  top: 0;
+  background: var(--aic-bg-raised);
+  border-bottom: 1px solid var(--aic-border);
+  font-weight: 600;
+  color: var(--aic-text-dim);
+}
+.aic-sync-tr .mono {
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.aic-sync-tr.warn {
+  background: var(--aic-rowbg-diff);
+}
+.aic-sync-tr.warn span:first-child {
+  color: var(--aic-danger);
+}
+.aic-sync-tr.skipped {
+  opacity: 0.6;
+}
+.aic-sync-tr .dir-l2r {
+  color: var(--aic-accent);
+}
+.aic-sync-tr .dir-r2l {
+  color: var(--aic-st-older);
+}
+.aic-sync-tr .reason {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.aic-sync-tr .ov-badge {
+  font-style: normal;
+  font-size: 10px;
+  padding: 0 4px;
+  margin-left: 4px;
+  border-radius: 6px;
+  background: var(--aic-bg-raised);
+  border: 1px solid var(--aic-border);
+  color: var(--aic-text-dim);
+}
+.aic-sync-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.aic-sync-running {
+  flex-direction: row;
+  align-items: center;
+}
+.aic-sync-cards {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.aic-sync-cards .card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-width: 84px;
+  padding: 10px 12px;
+  border: 1px solid var(--aic-border);
+  border-radius: 6px;
+  background: var(--aic-bg-raised);
+  font-size: 11px;
+  color: var(--aic-text-dim);
+}
+.aic-sync-cards .card i {
+  font-style: normal;
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--aic-accent);
+}
+.aic-sync-cards .card.bad i {
+  color: var(--aic-danger);
+}
+.aic-sync-cards .card:nth-child(2) i {
+  color: var(--aic-danger);
+}
+.aic-sync-cards .card:nth-child(3) i {
+  color: var(--aic-st-older);
+}
+
+/* ---- 文件夹合并三栏树（FR-DMRG-001/002） ---- */
+.aic-merge-table {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.aic-merge-head {
+  display: grid;
+  grid-template-columns: minmax(260px, 2.4fr) minmax(130px, 1fr) minmax(130px, 1fr) minmax(130px, 1fr) minmax(230px, 1.6fr);
+  gap: 8px;
+  padding: 4px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--aic-text-dim);
+  border-bottom: 1px solid var(--aic-border);
+  background: var(--aic-bg-raised);
+}
+.aic-merge-head .c {
+  text-align: center;
+}
+.aic-merge-scroll {
+  flex: 1;
+  overflow: auto;
+  min-height: 0;
+}
+.aic-merge-tr {
+  display: grid;
+  grid-template-columns: minmax(260px, 2.4fr) minmax(130px, 1fr) minmax(130px, 1fr) minmax(130px, 1fr) minmax(230px, 1.6fr);
+  gap: 8px;
+  padding: 3px 12px;
+  font-size: 12px;
+  align-items: center;
+  border-bottom: 1px solid color-mix(in srgb, var(--aic-border) 40%, transparent);
+}
+.aic-merge-tr .name {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.aic-merge-tr .cat-badge {
+  font-style: normal;
+  font-size: 10px;
+  color: var(--aic-text-dim);
+  border: 1px solid var(--aic-border);
+  border-radius: 6px;
+  padding: 0 4px;
+  margin-left: 4px;
+  flex: none;
+}
+.aic-merge-tr .dec-badge {
+  font-style: normal;
+  font-size: 10px;
+  color: var(--aic-accent);
+  border: 1px solid var(--aic-accent);
+  border-radius: 6px;
+  padding: 0 4px;
+  flex: none;
+}
+.aic-merge-tr .side {
+  text-align: center;
+  color: var(--aic-text-dim);
+}
+.aic-merge-tr .decisions {
+  display: flex;
+  gap: 4px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+.aic-merge-tr .dec-btn {
+  font-size: 10px;
+  padding: 1px 6px;
+  border: 1px solid var(--aic-border);
+  border-radius: 8px;
+  background: var(--aic-bg-raised);
+  color: var(--aic-text-dim);
+  cursor: pointer;
+}
+.aic-merge-tr .dec-btn.on {
+  border-color: var(--aic-accent);
+  color: var(--aic-accent);
+}
+/* FR-DMRG-002 合并色语义：绿=可自动 / 红=冲突 / 灰=孤立 / 暗=一致 */
+.aic-merge-tr.merge-auto {
+  background: color-mix(in srgb, var(--aic-st-same) 14%, transparent);
+}
+.aic-merge-tr.merge-conflict {
+  background: color-mix(in srgb, var(--aic-st-diff) 16%, transparent);
+}
+.aic-merge-tr.merge-conflict .name {
+  color: var(--aic-st-diff);
+}
+.aic-merge-tr.merge-orphan {
+  background: color-mix(in srgb, var(--aic-st-orphan) 12%, transparent);
+}
+.aic-merge-tr.merge-orphan .name {
+  color: var(--aic-text-dim);
+}
+.aic-merge-tr.merge-same .name {
+  color: var(--aic-text-dim);
+}
+.merge-conflict-text {
+  color: var(--aic-st-diff);
+}
+
+/* 占位对话框（文本合并 P10 占位等） */
+.aic-modal-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 60;
+}
+.aic-modal {
+  width: min(480px, 90vw);
+  background: var(--aic-bg-panel);
+  border: 1px solid var(--aic-border);
+  border-radius: 8px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.aic-modal-title {
+  font-weight: 700;
+}
+.aic-modal-body {
+  font-size: 12px;
+  color: var(--aic-text-dim);
+  line-height: 1.6;
+}
+.aic-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}

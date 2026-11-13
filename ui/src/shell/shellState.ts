@@ -24,6 +24,22 @@ export interface FolderTabData {
   sessionId: string;
 }
 
+/** 文件夹同步标签数据（P8：复用目录会话 + 同步方法/策略） */
+export interface SyncTabData {
+  left: string;
+  right: string;
+  sessionId: string;
+}
+
+/** 文件夹合并标签数据（P8：三路 base/left/right） */
+export interface MergeTabData {
+  base: string;
+  left: string;
+  right: string;
+  /** 客户端分配的合并会话句柄（dir/mergeScan 提案协议） */
+  sessionId: string;
+}
+
 export interface TextTabData {
   sessionId: string;
   left: FileRef;
@@ -45,7 +61,8 @@ export interface SessionLink {
 
 export interface Tab {
   id: string;
-  kind: 'home' | 'folder' | 'text';
+  /** home 主页 / folder 目录比较 / text 文本比较 / sync 文件夹同步 / merge 文件夹合并（P8） */
+  kind: 'home' | 'folder' | 'text' | 'sync' | 'merge';
   title: string;
   /** 固定标签（右键菜单"固定"，FR-WIN-001） */
   pinned?: boolean;
@@ -54,6 +71,8 @@ export interface Tab {
   sessionLink?: SessionLink;
   folder?: FolderTabData;
   text?: TextTabData;
+  sync?: SyncTabData;
+  merge?: MergeTabData;
 }
 
 export interface WindowState {
@@ -94,6 +113,10 @@ export interface WindowsSlice {
 
 export interface TabsSlice {
   openFolderTab(left: string, right: string, opts?: OpenTabOpts): void;
+  /** 文件夹同步标签（P8，FR-SYNC-001：复用目录会话句柄） */
+  openFolderSyncTab(left: string, right: string, opts?: OpenTabOpts): void;
+  /** 文件夹合并标签（P8，FR-DMRG-001：三路 base/left/right） */
+  openFolderMergeTab(base: string, left: string, right: string, opts?: OpenTabOpts): void;
   /** 独立文本比较（主页文本大按钮入口；子会话路径见 openTextChild） */
   openTextTab(leftPath: string, rightPath: string, opts?: OpenTabOpts): Promise<void>;
   /** 双击目录行 → 打开文本子会话（P0 闭环，保持原语义） */

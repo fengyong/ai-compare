@@ -6,6 +6,16 @@ import type {
   DirExecuteResult,
   DirFilterParams,
   DirFilterResult,
+  DirMergeCategory,
+  DirMergeExecuteParams,
+  DirMergeExecuteResult,
+  DirMergePlanParams,
+  DirMergePlanResult,
+  DirMergeRow,
+  DirMergeRowState,
+  DirMergeScanParams,
+  DirMergeScanResult,
+  DirMergeScanStats,
   DirOpenParams,
   DirOpenResult,
   DirOperateParams,
@@ -13,7 +23,12 @@ import type {
   DirRow,
   DirStats,
   DisplayFilterSpec,
+  EntryKind,
   InitializeResult,
+  MergeDecision,
+  MergeOpKind,
+  MergePlannedOp,
+  MergeTarget,
   NameFilterSpec,
   PlannedOperation,
   Section,
@@ -81,6 +96,12 @@ interface MockTextSession {
   summary: DiffSummary;
 }
 
+/** P8：mock 三路合并会话（扫描行快照 + 计划/执行的落盘对象） */
+interface MockMergeSession {
+  id: string;
+  rows: DirMergeRow[];
+}
+
 const MAX_BATCH_ROWS = 512;
 
 const TEXT_EXTS = ['c', 'h', 'txt', 'md', 'json', 'ts', 'rs', 'xml', 'yml'];
@@ -104,6 +125,7 @@ export class MockEngine {
   private sink?: (line: string) => void;
   private readonly dirSessions = new Map<string, MockDirSession>();
   private readonly textSessions = new Map<string, MockTextSession>();
+  private readonly mergeSessions = new Map<string, MockMergeSession>();
   /** dir/filter 差分基线（会话 id -> 上次发出的行 id 集） */
   private readonly lastIds = new Map<string, string[]>();
   private disposed = false;
@@ -174,6 +196,12 @@ export class MockEngine {
         return { result: this.dirOperate(params as DirOperateParams), notifications: [] };
       case 'dir/execute':
         return this.dirExecute(params as { sessionId: string; ops: DirExecuteOp[]; dryRun?: boolean | null });
+      case 'dir/mergeScan':
+        return { result: this.mergeScanP(params as DirMergeScanParams), notifications: [] };
+      case 'dir/mergePlan':
+        return { result: this.mergePlanP(params as DirMergePlanParams), notifications: [] };
+      case 'dir/mergeExecute':
+        return { result: this.mergeExecuteP(params as DirMergeExecuteParams), notifications: [] };;
       case 'text/open':
         return { result: this.textOpen(params as TextOpenParams), notifications: [] };
       case 'text/sections':
@@ -568,6 +596,133 @@ export class MockEngine {
     };
   }
 
+
+  // ---------------- P8：dir/mergeScan / mergePlan / mergeExecute（同形模拟） ----------------
+
+  /**
+   * dir/mergeScan 同形实现：确定性生成 base/left/right 三树演示模型并做
+   * 三方分类（与引擎 merge3way::scan_merge 的分类语义同口径：三方同 /
+   * 单侧改 / 两侧同改 / 冲突 / 删除跟随 / 孤立）。
+   */
+  private mergeScanP(p: DirMergeScanParams): DirMergeScanResult {
+    if (!p || typeof p.sessionId !== 'string' || p.sessionId === '') {
+      throw new InvalidParams('sessionId 不能为空');
+    }
+    if (this.dirSessions.has(p.sessionId)) {
+      throw new RpcErr(CODE.SESSION_EXISTS, `会话已存在: ${p.sessionId}`);
+    }
+    // 重扫描幂等（同 dir/expand upsert 语义）：刷新/StrictMode 双调用安全
+    const rows = buildMergeModel(p.base, p.left, p.right);
+    this.mergeSessions.set(p.sessionId, { id: p.sessionId, rows });
+    return { sessionId: p.sessionId, rows, stats: mergeScanStats(rows) };
+  }
+
+  /** dir/mergePlan 同形实现：与引擎 plan_merge 同口径（决策继承 + 默认决策表） */
+  private mergePlanP(p: DirMergePlanParams): DirMergePlanResult {
+    const m = this.requireMerge(p.sessionId);
+    const ops = mockMergePlan(m.rows, p.target, p.decisions ?? {});
+    const stats = { total: ops.length, copied: 0, deleted: 0, touched: 0, skipped: 0, failed: 0 };
+    for (const op of ops) {
+      if (op.kind === 'takeLeft' || op.kind === 'takeRight') stats.copied++;
+      else if (op.kind === 'deleteTarget') stats.deleted++;
+      else stats.skipped++;
+    }
+    return { sessionId: m.id, target: p.target, ops, stats };
+  }
+
+  /** dir/mergeExecute 同形模拟：对演示模型落盘（覆盖目标侧信息/删除），逐项收集结果 */
+  private mergeExecuteP(p: DirMergeExecuteParams): DirMergeExecuteResult {
+    const m = this.requireMerge(p.sessionId);
+    const byPath = new Map(m.rows.map((r) => [r.relPath, r]));
+    const details: DirMergeExecuteResult['details'] = [];
+    let copied = 0;
+    let deleted = 0;
+    let skipped = 0;
+    let failed = 0;
+    for (const op of p.ops ?? []) {
+      const row = byPath.get(op.path);
+      if (!row) {
+        failed++;
+        details.push({ kind: op.kind, path: op.path, reason: op.reason, status: 'failed', detail: '路径不存在于合并模型' });
+        continue;
+      }
+      if (op.kind === 'keep') {
+        skipped++;
+        details.push({ kind: op.kind, path: op.path, reason: op.reason, status: 'planned', detail: null });
+        continue;
+      }
+      const targetSide: 'left' | 'right' = p.target === 'right' ? 'right' : 'left';
+      const guard = sanitizeOpPath({ kind: op.kind === 'deleteTarget' ? 'delete' : 'copy', path: op.path, side: targetSide });
+      if (guard) {
+        failed++;
+        details.push({ kind: op.kind, path: op.path, reason: op.reason, status: 'failed', detail: guard });
+        continue;
+      }
+      if (op.kind === 'deleteTarget') {
+        if (p.target === 'output') {
+          deleted++;
+          details.push({ kind: op.kind, path: op.path, reason: op.reason, status: 'deleted', detail: null });
+          continue;
+        }
+        if (!row[targetSide]) {
+          skipped++;
+          details.push({ kind: op.kind, path: op.path, reason: op.reason, status: 'skipped', detail: '目标侧不存在' });
+          continue;
+        }
+        row[targetSide] = null;
+        recomputeMergeRow(row);
+        deleted++;
+        details.push({ kind: op.kind, path: op.path, reason: op.reason, status: 'deleted', detail: null });
+        continue;
+      }
+      // takeLeft / takeRight：目标侧被对应源覆盖（output 目标落第三目录，演示模型不持有）
+      if (p.target === 'output') {
+        copied++;
+        details.push({ kind: op.kind, path: op.path, reason: op.reason, status: 'copied', detail: '输出目录（演示模型不持有）' });
+        continue;
+      }
+      const sourceSide: 'left' | 'right' = op.kind === 'takeLeft' ? 'left' : 'right';
+      const src = row[sourceSide];
+      if (!src) {
+        failed++;
+        details.push({ kind: op.kind, path: op.path, reason: op.reason, status: 'failed', detail: `源侧不存在（${sourceSide}）` });
+        continue;
+      }
+      row[targetSide] = { ...src };
+      recomputeMergeRow(row);
+      copied++;
+      details.push({ kind: op.kind, path: op.path, reason: op.reason, status: 'copied', detail: null });
+    }
+    const log: string[] = [
+      `合并目标：${p.target === 'left' ? '左侧' : p.target === 'right' ? '右侧' : '输出文件夹'}`,
+      `合并完成：${(p.ops ?? []).length} 项 — 复制 ${copied} / 删除 ${deleted} / 跳过 ${skipped} / 失败 ${failed}`,
+    ];
+    for (const d of details) {
+      if (d.status === 'failed') log.push(`失败 ${d.path}: ${d.kind} — ${d.detail ?? ''}`);
+    }
+    return {
+      sessionId: m.id,
+      target: p.target,
+      total: (p.ops ?? []).length,
+      copied,
+      deleted,
+      touched: 0,
+      skipped,
+      failed,
+      cancelled: false,
+      details,
+      log,
+    };
+  }
+
+  private requireMerge(id: string): MockMergeSession {
+    const m = this.mergeSessions.get(id);
+    if (!m) {
+      throw new RpcErr(CODE.SESSION_NOT_FOUND, `会话不存在: ${id}`);
+    }
+    return m;
+  }
+
   // ---------------- 文本比较 ----------------
 
   private textOpen(p: TextOpenParams): TextOpenResult {
@@ -668,6 +823,7 @@ export class MockEngine {
   private sessionClose(p: SessionCloseParams): null {
     this.dirSessions.delete(p.sessionId);
     this.textSessions.delete(p.sessionId);
+    this.mergeSessions.delete(p.sessionId);
     this.lastIds.delete(p.sessionId);
     return null;
   }
@@ -855,6 +1011,350 @@ function mockPlanOperations(rows: DirRow[], preset: SyncPreset | null, paths: st
 /** 本文件内通配符别名（dirFilters.wildcardMatch） */
 function wildcard(mask: string, name: string): boolean {
   return wildcardMatch(mask, name, true);
+}
+
+
+// ==================================================================
+// P8：mock 三路合并模型（确定性；分类语义与引擎 merge3way 同口径）
+// ==================================================================
+
+/**
+ * 三方演示树：以 rel 路径为键对齐三侧；形态涵盖全部分类
+ * （三方同/单侧改/两侧同改/冲突/删除跟随/孤立/类型冲突/空目录）。
+ */
+function buildMergeModel(base: string, left: string, right: string): DirMergeRow[] {
+  const rand = mulberry32(hashString(`${base}|${left}|${right}`));
+  const now = Date.now();
+  const day = 24 * 3600 * 1000;
+  type Spec = { name: string; kind: 'file' | 'dir'; content?: string };
+  // (rel, base形态, left形态, right形态)：null=缺失；'same'=与 base 相同内容
+  type Entry = [string, Spec | null, Spec | null, Spec | null];
+  const catalog: Entry[] = [
+    ['README.md', { name: 'README.md', kind: 'file', content: '# demo\nshared\n' }, { name: 'README.md', kind: 'file', content: '# demo\nshared\n' }, { name: 'README.md', kind: 'file', content: '# demo\nshared\n' }],
+    ['version.json', { name: 'version.json', kind: 'file', content: '{"v":1}' }, { name: 'version.json', kind: 'file', content: '{"v":2}' }, { name: 'version.json', kind: 'file', content: '{"v":1}' }],
+    ['config.yml', { name: 'config.yml', kind: 'file', content: 'mode: basic\n' }, { name: 'config.yml', kind: 'file', content: 'mode: basic\n' }, { name: 'config.yml', kind: 'file', content: 'mode: pro\n' }],
+    ['conflict.c', { name: 'conflict.c', kind: 'file', content: 'int a = 0;\n' }, { name: 'conflict.c', kind: 'file', content: 'int a = 1;\n' }, { name: 'conflict.c', kind: 'file', content: 'int a = 2;\n' }],
+    ['both.c', { name: 'both.c', kind: 'file', content: 'int b = 0;\n' }, { name: 'both.c', kind: 'file', content: 'int b = 9;\n' }, { name: 'both.c', kind: 'file', content: 'int b = 9;\n' }],
+    ['deleted-r.txt', { name: 'deleted-r.txt', kind: 'file', content: 'kept\n' }, { name: 'deleted-r.txt', kind: 'file', content: 'kept\n' }, null],
+    ['deleted-mod.txt', { name: 'deleted-mod.txt', kind: 'file', content: 'v0\n' }, { name: 'deleted-mod.txt', kind: 'file', content: 'v1\n' }, null],
+    ['lonly.txt', null, { name: 'lonly.txt', kind: 'file', content: 'left only\n' }, null],
+    ['ronly.txt', null, null, { name: 'ronly.txt', kind: 'file', content: 'right only\n' }],
+    ['both-new.txt', null, { name: 'both-new.txt', kind: 'file', content: 'identical\n' }, { name: 'both-new.txt', kind: 'file', content: 'identical\n' }],
+    ['gone.txt', { name: 'gone.txt', kind: 'file', content: 'deleted both sides\n' }, null, null],
+    ['clash', { name: 'clash', kind: 'file', content: 'file\n' }, { name: 'clash', kind: 'dir' }, { name: 'clash', kind: 'file', content: 'file\n' }],
+    ['src', { name: 'src', kind: 'dir' }, { name: 'src', kind: 'dir' }, { name: 'src', kind: 'dir' }],
+    ['src/main.c', { name: 'main.c', kind: 'file', content: 'void main() {}\n' }, { name: 'src/main.c', kind: 'file', content: 'void main() { /* fixed */ }\n' }, { name: 'src/main.c', kind: 'file', content: 'void main() {}\n' }],
+    ['src/util.c', { name: 'src/util.c', kind: 'file', content: 'util v0\n' }, { name: 'src/util.c', kind: 'file', content: 'util v0\n' }, { name: 'src/util.c', kind: 'file', content: 'util v1\n' }],
+    ['src/orphan-dir', null, { name: 'orphan-dir', kind: 'dir' }, null],
+    ['src/orphan-dir/inner.txt', null, { name: 'inner.txt', kind: 'file', content: 'nested orphan\n' }, null],
+    ['src/empty-orphan', null, { name: 'empty-orphan', kind: 'dir' }, null],
+  ];
+  const mkInfo = (size: number): SideInfo => ({
+    size,
+    // mtime 保留随机相位（不参与分类判定；演示列表展示用）
+    mtimeMs: now - Math.floor(rand() * 30 * day),
+    attribute: null,
+    unixMode: 0,
+    uid: 0,
+    gid: 0,
+  });
+  // size 确定性 = 内容长度（三方同内容 → 同 size；分类判定不引入随机）
+  const infoOf = (spec: Spec | null): { info: SideInfo | null; size: number } => {
+    if (!spec) return { info: null, size: 0 };
+    const size = spec.kind === 'dir' ? 0 : (spec.content?.length ?? 0);
+    return { info: mkInfo(size), size };
+  };
+  const rows: DirMergeRow[] = [];
+  for (const [rel, b, l, r] of catalog) {
+    const name = rel.split('/').pop() ?? rel;
+    // 展示形态：任一侧为目录即按目录行（BC 语义）；file↔dir 同名 = 冲突叶
+    const kind: EntryKind = [b, l, r].some((x) => x?.kind === 'dir') ? 'dir' : 'file';
+    const bi = infoOf(b);
+    const li = infoOf(l);
+    const ri = infoOf(r);
+    const { category, rowState, conflictLeaf } = classifyMockEntry(kind, b, l, r, bi.size, li.size, ri.size);
+    const parent = rel.includes('/') ? rel.slice(0, rel.lastIndexOf('/')) : null;
+    rows.push({
+      relPath: rel,
+      name,
+      kind,
+      base: bi.info,
+      left: li.info,
+      right: ri.info,
+      category,
+      rowState,
+      parent,
+      depth: rel.split('/').length,
+      conflictLeaf,
+    });
+  }
+  // 目录行聚合（自底向上：Conflict > Orphan > Auto > Same）
+  aggregateMockRows(rows);
+  return rows;
+}
+
+/** mock 三方分类（叶级；与 merge3way::classify_file 同口径，演示以内容/size 代替 CRC） */
+function classifyMockEntry(
+  kind: EntryKind,
+  b: { kind?: 'file' | 'dir'; content?: string } | null,
+  l: { kind?: 'file' | 'dir'; content?: string } | null,
+  r: { kind?: 'file' | 'dir'; content?: string } | null,
+  bSize: number,
+  lSize: number,
+  rSize: number,
+): { category: DirMergeCategory; rowState: DirMergeRowState; conflictLeaf: boolean } {
+  // 类型冲突：同名 file↔dir（与引擎 walk 的 clash 同口径）
+  const anyDir = [b, l, r].some((x) => x?.kind === 'dir');
+  const anyFile = [b, l, r].some((x) => x != null && x.kind !== 'dir');
+  if (anyDir && anyFile) {
+    return { category: 'conflict', rowState: 'conflict', conflictLeaf: false };
+  }
+  if (kind === 'dir') {
+    // 目录初始按存在性；聚合后重算（空目录孤立也覆盖）
+    const cat: DirMergeCategory = !b && l && !r ? 'leftOnly' : !b && !l && r ? 'rightOnly' : b && !l && !r ? 'baseOnly' : 'same';
+    return { category: cat, rowState: cat === 'same' ? 'same' : 'orphan', conflictLeaf: false };
+  }
+  const eq = (a: { content?: string } | null, b2: { content?: string } | null, as: number, bs: number): boolean => {
+    if (!a && !b2) return true;
+    if (!a || !b2) return false;
+    if (as !== bs) return false;
+    return (a.content ?? '') === (b2.content ?? '');
+  };
+  const hasB = b != null;
+  const hasL = l != null;
+  const hasR = r != null;
+  let category: DirMergeCategory;
+  if (hasB && hasL && hasR) {
+    const bl = eq(b, l, bSize, lSize);
+    if (bl) {
+      const br = eq(b, r, bSize, rSize);
+      category = br ? 'same' : 'rightChanged';
+    } else {
+      const br = eq(b, r, bSize, rSize);
+      if (br) category = 'leftChanged';
+      else {
+        const lr = eq(l, r, lSize, rSize);
+        category = lr ? 'bothSame' : 'conflict';
+      }
+    }
+  } else if (hasB && hasL) {
+    category = eq(b, l, bSize, lSize) ? 'deletedRight' : 'conflict';
+  } else if (hasB && hasR) {
+    category = eq(b, r, bSize, rSize) ? 'deletedLeft' : 'conflict';
+  } else if (hasL && hasR) {
+    category = eq(l, r, lSize, rSize) ? 'bothSame' : 'conflict';
+  } else if (hasL) {
+    category = 'leftOnly';
+  } else if (hasR) {
+    category = 'rightOnly';
+  } else {
+    category = 'baseOnly';
+  }
+  const rowState: DirMergeRowState =
+    category === 'conflict'
+      ? 'conflict'
+      : category === 'leftOnly' || category === 'rightOnly' || category === 'baseOnly'
+        ? 'orphan'
+        : category === 'same'
+          ? 'same'
+          : 'auto';
+  return { category, rowState, conflictLeaf: category === 'conflict' };
+}
+
+/** mock 目录聚合（Conflict > Orphan > Auto > Same；叠加自身存在性） */
+function aggregateMockRows(rows: DirMergeRow[]): void {
+  const depthOrder = [...rows].sort((a, b) => b.depth - a.depth);
+  const rank = (st: DirMergeRowState): number => (st === 'conflict' ? 0 : st === 'orphan' ? 1 : st === 'auto' ? 2 : 3);
+  const worse = (a: DirMergeRowState, b2: DirMergeRowState): DirMergeRowState => (rank(a) <= rank(b2) ? a : b2);
+  for (const row of depthOrder) {
+    if (row.kind !== 'dir') continue;
+    const children = rows.filter((r) => r.parent === row.relPath);
+    let state: DirMergeRowState = row.rowState;
+    for (const c of children) state = worse(state, c.rowState);
+    row.rowState = state;
+    const catRank = (c: DirMergeCategory): number =>
+      c === 'conflict' ? 0 : c === 'leftOnly' || c === 'rightOnly' || c === 'baseOnly' ? 1 : c === 'same' ? 3 : 2;
+    let cat = row.category;
+    for (const c of children) {
+      if (catRank(c.category) < catRank(cat)) cat = c.category;
+    }
+    row.category = cat;
+    row.conflictLeaf = false;
+  }
+}
+
+function mergeScanStats(rows: DirMergeRow[]): DirMergeScanStats {
+  const stats: DirMergeScanStats = { total: rows.length, files: 0, dirs: 0, same: 0, auto: 0, conflict: 0, orphan: 0 };
+  for (const r of rows) {
+    if (r.kind === 'dir') stats.dirs++;
+    else stats.files++;
+    switch (r.rowState) {
+      case 'same':
+        stats.same++;
+        break;
+      case 'auto':
+        stats.auto++;
+        break;
+      case 'conflict':
+        stats.conflict++;
+        break;
+      case 'orphan':
+        stats.orphan++;
+        break;
+    }
+  }
+  return stats;
+}
+
+/** mock 执行后的行状态重算（演示口径：目标侧对齐源后 = same；单侧 = 孤立） */
+function recomputeMergeRow(row: DirMergeRow): void {
+  if (row.kind === 'dir') {
+    row.category = row.left && row.right ? 'same' : row.left ? 'leftOnly' : row.right ? 'rightOnly' : 'baseOnly';
+    row.rowState = row.category === 'same' ? 'same' : 'orphan';
+    return;
+  }
+  if (row.left && row.right) {
+    const sameContent = row.left.size === row.right.size && row.left.mtimeMs === row.right.mtimeMs;
+    row.category = sameContent ? 'same' : 'conflict';
+  } else if (row.left) {
+    row.category = 'leftOnly';
+  } else if (row.right) {
+    row.category = 'rightOnly';
+  } else {
+    row.category = 'baseOnly';
+  }
+  row.rowState =
+    row.category === 'conflict'
+      ? 'conflict'
+      : row.category === 'same'
+        ? 'same'
+        : row.category === 'leftOnly' || row.category === 'rightOnly' || row.category === 'baseOnly'
+          ? 'orphan'
+          : 'auto';
+  row.conflictLeaf = row.kind === 'file' && row.category === 'conflict';
+}
+
+/**
+ * mock 合并计划（与引擎 merge3way::plan_merge 同口径）：
+ * 有效决策 = 显式决策 > 祖先继承 > Auto；目录决策递归展开；Auto 走默认决策表。
+ */
+function mockMergePlan(rows: DirMergeRow[], target: MergeTarget, decisions: Record<string, MergeDecision>): MergePlannedOp[] {
+  const childrenOf = new Map<string | null, DirMergeRow[]>();
+  for (const r of rows) {
+    const list = childrenOf.get(r.parent) ?? [];
+    list.push(r);
+    childrenOf.set(r.parent, list);
+  }
+  const ops: MergePlannedOp[] = [];
+
+  const effective = (row: DirMergeRow, inherit: MergeDecision | null): MergeDecision => {
+    const own = decisions[row.relPath];
+    return own ?? inherit ?? 'auto';
+  };
+
+  const autoDefault = (row: DirMergeRow, t: MergeTarget): { kind: MergeOpKind; reason: string } => {
+    const cat = row.category;
+    switch (cat) {
+      case 'same':
+        return t === 'output' ? { kind: 'takeLeft', reason: '三方一致（输出取左）' } : { kind: 'keep', reason: '三方一致' };
+      case 'leftChanged':
+        return t === 'left' ? { kind: 'keep', reason: '目标侧即左侧（已含修改）' } : { kind: 'takeLeft', reason: '仅左改 → 取左' };
+      case 'rightChanged':
+        return t === 'right' ? { kind: 'keep', reason: '目标侧即右侧（已含修改）' } : { kind: 'takeRight', reason: '仅右改 → 取右' };
+      case 'bothSame':
+        return t === 'output' ? { kind: 'takeLeft', reason: '两侧同改一致（输出取左，等价取右）' } : { kind: 'keep', reason: '两侧同改一致' };
+      case 'deletedRight':
+        return t === 'right' ? { kind: 'keep', reason: '目标侧已删除' } : t === 'left' ? { kind: 'deleteTarget', reason: '跟随右侧删除' } : { kind: 'keep', reason: '右侧已删除（输出不含该项）' };
+      case 'deletedLeft':
+        return t === 'left' ? { kind: 'keep', reason: '目标侧已删除' } : t === 'right' ? { kind: 'deleteTarget', reason: '跟随左侧删除' } : { kind: 'keep', reason: '左侧已删除（输出不含该项）' };
+      case 'conflict':
+        return { kind: 'keep', reason: '冲突需人工处理' };
+      case 'leftOnly':
+        return t === 'left' ? { kind: 'keep', reason: '目标侧即左侧' } : { kind: 'takeLeft', reason: t === 'output' ? '左孤立并入输出' : '左孤立并入目标' };
+      case 'rightOnly':
+        return t === 'right' ? { kind: 'keep', reason: '目标侧即右侧' } : { kind: 'takeRight', reason: t === 'output' ? '右孤立并入输出' : '右孤立并入目标' };
+      case 'baseOnly':
+        return { kind: 'keep', reason: '两侧均已删除' };
+    }
+  };
+
+  const walk = (row: DirMergeRow, inherit: MergeDecision | null): void => {
+    const eff = effective(row, inherit);
+    if (row.kind === 'dir' && !row.conflictLeaf && row.category !== 'conflict') {
+      // 目录节点（类型冲突叶按文件处理）
+      if (eff === 'skip') {
+        ops.push({ kind: 'keep', path: row.relPath, reason: '决策:跳过（含子树）' });
+        return;
+      }
+      // 空孤立目录并入
+      const kids = childrenOf.get(row.relPath) ?? [];
+      const absentOnTarget =
+        (target === 'right' && row.category === 'leftOnly') ||
+        (target === 'left' && row.category === 'rightOnly') ||
+        (target === 'output' && (row.category === 'leftOnly' || row.category === 'rightOnly'));
+      if (kids.length === 0 && absentOnTarget) {
+        const explicit = eff === 'takeLeft' || eff === 'takeRight' || eff === 'both';
+        const kind: MergeOpKind = eff === 'takeRight' || (!explicit && row.category === 'rightOnly') ? 'takeRight' : 'takeLeft';
+        ops.push({ kind, path: row.relPath, reason: explicit ? '决策:目录并入（空目录）' : '孤立空目录并入' });
+      }
+      const passDown: MergeDecision | null = eff === 'auto' ? null : eff;
+      for (const c of kids) walk(c, passDown);
+      return;
+    }
+    // 文件叶 / 类型冲突叶
+    let kind: MergeOpKind;
+    let reason: string;
+    switch (eff) {
+      case 'skip':
+        kind = 'keep';
+        reason = '决策:跳过';
+        break;
+      case 'takeLeft':
+        if (!row.left) {
+          kind = 'keep';
+          reason = '决策:取左（左侧缺失，保持现状）';
+        } else if (target === 'left') {
+          kind = 'keep';
+          reason = '决策:取左（目标侧即左侧）';
+        } else {
+          kind = 'takeLeft';
+          reason = '决策:取左';
+        }
+        break;
+      case 'takeRight':
+        if (!row.right) {
+          kind = 'keep';
+          reason = '决策:取右（右侧缺失，保持现状）';
+        } else if (target === 'right') {
+          kind = 'keep';
+          reason = '决策:取右（目标侧即右侧）';
+        } else {
+          kind = 'takeRight';
+          reason = '决策:取右';
+        }
+        break;
+      case 'both': {
+        const d = autoDefault(row, target);
+        kind = d.kind;
+        reason = `决策:both（单文件降级默认）· ${d.reason}`;
+        break;
+      }
+      default: {
+        const d = autoDefault(row, target);
+        kind = d.kind;
+        reason = d.reason;
+      }
+    }
+    if (kind === 'keep') {
+      // 显式决策的 Keep 记录入计划（预览可解释）；Auto 的 Keep 不入（对齐引擎口径）
+      if (eff !== 'auto') ops.push({ kind, path: row.relPath, reason });
+      return;
+    }
+    ops.push({ kind, path: row.relPath, reason });
+  };
+
+  for (const root of childrenOf.get(null) ?? []) walk(root, null);
+  return ops;
 }
 
 class RpcErr extends Error {

@@ -214,6 +214,40 @@ pub async fn execute_ops(
     report
 }
 
+/// 执行带独立根对的操作批次（P8 文件夹合并输出侧复用：
+/// 每个 op 携带自己的 (源根, 目标根) 对，进度/取消语义与 [`execute_ops`] 一致）。
+pub async fn execute_ops_with_roots(
+    vfs: &dyn VfsProvider,
+    items: &[(FileOp, VfsPath, VfsPath)],
+    opts: &ExecuteOptions,
+    mut progress: Option<&mut ProgressFn<'_>>,
+    cancel: &CancelFlag,
+) -> ExecuteReport {
+    let total = items.len();
+    let mut report = ExecuteReport { total, dry_run: opts.dry_run, ..Default::default() };
+    for (i, (op, src_root, dst_root)) in items.iter().enumerate() {
+        if let Some(cb) = progress.as_deref_mut() {
+            cb(i + 1, total, op);
+        }
+        if cancel.is_cancelled() {
+            report.cancelled = true;
+            report.skipped.push(OpResult {
+                op: op.clone(),
+                status: OpStatus::Skipped,
+                detail: Some("已取消".into()),
+            });
+            continue;
+        }
+        let result = execute_one(vfs, &(src_root.clone(), dst_root.clone()), op, opts).await;
+        match result.status {
+            OpStatus::Succeeded => report.succeeded.push(result),
+            OpStatus::Failed => report.failed.push(result),
+            OpStatus::Skipped => report.skipped.push(result),
+        }
+    }
+    report
+}
+
 /// 单项执行（校验 + 落盘；dry_run 只校验）
 async fn execute_one(vfs: &dyn VfsProvider, roots: &(VfsPath, VfsPath), op: &FileOp, opts: &ExecuteOptions) -> OpResult {
     let mk = |status: OpStatus, detail: Option<String>| OpResult { op: op.clone(), status, detail };

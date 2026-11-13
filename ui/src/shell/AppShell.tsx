@@ -5,6 +5,8 @@ import { CloseGuardDialog, PromptDialog, SaveAsDialog } from './Dialogs';
 import { SettingsDialog } from './settings/SettingsDialog';
 import { HomeView } from '../views/home/HomeView';
 import { FolderCompareView } from '../views/folder-compare/FolderCompareView';
+import { FolderSyncView } from '../views/folder-sync/FolderSyncView';
+import { FolderMergeView } from '../views/folder-merge/FolderMergeView';
 import { TextCompareView } from '../views/text-compare/TextCompareView';
 import { applyTheme } from '../theme/palette';
 import { sessionService } from '../session/service';
@@ -163,6 +165,8 @@ export function AppShell() {
         {activeTab?.kind === 'text' && activeTab.text && (
           <TextCompareView key={activeTab.id} tab={activeTab} />
         )}
+        {activeTab?.kind === 'sync' && activeTab.sync && <FolderSyncView key={activeTab.id} tab={activeTab} />}
+        {activeTab?.kind === 'merge' && activeTab.merge && <FolderMergeView key={activeTab.id} tab={activeTab} />}
       </div>
 
       {/* 窗口切换条（浏览器内窗口帧；>1 窗口时出现，FR-WIN-002 循环窗口/合并入口） */}

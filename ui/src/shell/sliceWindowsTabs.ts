@@ -99,6 +99,56 @@ export function titleOf(tabId: string | undefined, tabs: Tab[]): string {
 }
 
 export const createTabsSlice: StateCreator<ShellStore, [], [], TabsSlice> = (set, get) => ({
+  /** 文件夹同步标签（P8，FR-SYNC-001）：复用目录会话句柄，视图承载同步方法/策略/计划/报告 */
+  openFolderSyncTab(left, right, opts: OpenTabOpts = {}) {
+    const id = nextTabId('sync');
+    const title = `${S.tab.syncTitleSuffix}：${basename(left)} ⇄ ${basename(right)}`;
+    const tab: Tab = {
+      id,
+      kind: 'sync',
+      title,
+      sync: { left, right, sessionId: engine.newSessionId('dir') },
+      sessionLink: opts.sessionLink,
+    };
+    set((st) => {
+      const targetId = opts.windowId ?? st.activeWindowId;
+      const activate = opts.activate !== false;
+      return {
+        windows: st.windows.map((w) =>
+          w.id === targetId
+            ? { ...w, tabs: [...w.tabs, tab], activeTabId: activate ? id : w.activeTabId, title: activate ? title : w.title }
+            : w
+        ),
+        activeWindowId: opts.windowId ? targetId : st.activeWindowId,
+      };
+    });
+  },
+
+  /** 文件夹合并标签（P8，FR-DMRG-001）：三路 base/left/right */
+  openFolderMergeTab(base, left, right, opts: OpenTabOpts = {}) {
+    const id = nextTabId('merge');
+    const title = `${S.tab.mergeTitleSuffix}：${basename(left)} + ${basename(right)}`;
+    const tab: Tab = {
+      id,
+      kind: 'merge',
+      title,
+      merge: { base, left, right, sessionId: engine.newSessionId('merge') },
+      sessionLink: opts.sessionLink,
+    };
+    set((st) => {
+      const targetId = opts.windowId ?? st.activeWindowId;
+      const activate = opts.activate !== false;
+      return {
+        windows: st.windows.map((w) =>
+          w.id === targetId
+            ? { ...w, tabs: [...w.tabs, tab], activeTabId: activate ? id : w.activeTabId, title: activate ? title : w.title }
+            : w
+        ),
+        activeWindowId: opts.windowId ? targetId : st.activeWindowId,
+      };
+    });
+  },
+
   openFolderTab(left, right, opts: OpenTabOpts = {}) {
     const id = nextTabId('dir');
     const title = `${basename(left)} ⇄ ${basename(right)}`;

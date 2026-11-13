@@ -13,15 +13,18 @@ import {
 } from './model';
 
 describe('session/model', () => {
-  it('六类会话类型齐备且元信息标注阶段', () => {
-    expect(SESSION_KINDS).toHaveLength(6);
+  it('会话类型齐备且元信息标注阶段（P8 起七类）', () => {
+    expect(SESSION_KINDS).toHaveLength(7);
     for (const k of SESSION_KINDS) {
       expect(KIND_META[k].title).toBeTruthy();
       expect(KIND_META[k].phase).toMatch(/^P\d/);
     }
     expect(KIND_META['folder-compare'].implemented).toBe(true);
     expect(KIND_META['table-compare'].implemented).toBe(false);
-    expect(KIND_META['folder-sync'].implemented).toBe(false);
+    // P8：同步/合并视图接入后置为已实现
+    expect(KIND_META['folder-sync'].implemented).toBe(true);
+    expect(KIND_META['folder-merge'].implemented).toBe(true);
+    expect(KIND_META['table-compare'].implemented).toBe(false);
   });
 
   it('isSessionKind 判定', () => {

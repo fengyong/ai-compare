@@ -7,7 +7,7 @@ describe('shell/viewRegistry 视图插件注册表', () => {
     const reg = createDefaultRegistry();
     const list = reg.listByOrder();
     expect(list.map((p) => p.id)).toEqual([
-      'home', 'folder-compare', 'text-compare', 'table-compare', 'hex-compare', 'picture-compare', 'folder-sync',
+      'home', 'folder-compare', 'text-compare', 'folder-sync', 'folder-merge', 'table-compare', 'hex-compare', 'picture-compare',
     ]);
     expect(reg.get('home')?.title).toBe('主页');
   });
@@ -29,9 +29,12 @@ describe('shell/viewRegistry 视图插件注册表', () => {
     expect(reg.get('home')!.capabilities.editable).toBe(false);
   });
 
-  it('implementedKinds 只返回已实现的会话类型', () => {
+  it('implementedKinds 只返回已实现的会话类型（P8 起含同步/合并）', () => {
     const reg = createDefaultRegistry();
-    expect(reg.implementedKinds()).toEqual(['folder-compare', 'text-compare']);
+    expect(reg.implementedKinds()).toEqual(['folder-compare', 'text-compare', 'folder-sync', 'folder-merge']);
+    // P8 同步/合并视图能力声明：同步双窗格、合并三窗格，reports 面开放
+    expect(reg.get('folder-sync')!.capabilities.reports).toBe(true);
+    expect(reg.get('folder-merge')!.capabilities.panes).toBe(3);
   });
 
   it('重复 id 注册抛错；unknown 查询返回 undefined', () => {

@@ -8,6 +8,12 @@ import type {
   DirExpandResult,
   DirFilterParams,
   DirFilterResult,
+  DirMergeExecuteParams,
+  DirMergeExecuteResult,
+  DirMergePlanParams,
+  DirMergePlanResult,
+  DirMergeScanParams,
+  DirMergeScanResult,
   DirOpenParams,
   DirOpenResult,
   DirOperateParams,
@@ -113,7 +119,7 @@ export function getEngineCapabilities(): EngineCapabilities | null {
 }
 
 /** 生成引擎侧会话句柄（客户端分配；前缀便于日志排查） */
-export function newSessionId(kind: 'dir' | 'text'): string {
+export function newSessionId(kind: 'dir' | 'text' | 'merge'): string {
   const rand =
     typeof crypto !== 'undefined' && 'randomUUID' in crypto
       ? crypto.randomUUID().slice(0, 8)
@@ -321,6 +327,28 @@ export async function planOperations(params: DirOperateParams): Promise<DirOpera
 export async function executeOperations(params: DirExecuteParams): Promise<DirExecuteResult> {
   const c = await getEngineClient();
   return c.request<DirExecuteResult>('dir/execute', params, 120_000);
+}
+
+// ==================================================================
+// P8：文件夹三路合并方法集（提案协议，见 protocol/types.ts 第 4 节）
+// ==================================================================
+
+/** dir/mergeScan：base/left/right 三目录扫描对齐 + diff3 分类（mock 同形实现） */
+export async function mergeScan(params: DirMergeScanParams): Promise<DirMergeScanResult> {
+  const c = await getEngineClient();
+  return c.request<DirMergeScanResult>('dir/mergeScan', params, 60_000);
+}
+
+/** dir/mergePlan：合并计划生成（决策继承展开；不执行） */
+export async function mergePlan(params: DirMergePlanParams): Promise<DirMergePlanResult> {
+  const c = await getEngineClient();
+  return c.request<DirMergePlanResult>('dir/mergePlan', params, 60_000);
+}
+
+/** dir/mergeExecute：合并计划执行（部分成功语义 + 日志行） */
+export async function mergeExecute(params: DirMergeExecuteParams): Promise<DirMergeExecuteResult> {
+  const c = await getEngineClient();
+  return c.request<DirMergeExecuteResult>('dir/mergeExecute', params, 120_000);
 }
 
 export async function openText(params: TextOpenParams): Promise<TextOpenResult> {
