@@ -19,4 +19,16 @@ deltaBatching: boolean,
 /**
  * 分批的单批最大行数
  */
-maxDeltaBatchRows: number, };
+maxDeltaBatchRows: number, 
+/**
+ * P2：dir/open 惰性 + 后台扫描（lazyScan 参数与 dir/progress 通知）
+ */
+dirBackgroundScan: boolean, 
+/**
+ * P2：dir/filter（三类过滤器引擎侧求值）
+ */
+dirFilters: boolean, 
+/**
+ * P2：dir/operate（同步状态机 operate 计划）
+ */
+dirOperate: boolean, };

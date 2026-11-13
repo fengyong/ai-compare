@@ -12,4 +12,28 @@ mtimeToleranceSec: number,
 /**
  * 快速测试不一致时是否做内容比较
  */
-contentCompare: ContentCompareMode, };
+contentCompare: ContentCompareMode, 
+/**
+ * 忽略正好 1 小时（±3600s）的 mtime 差异（FR-DIR-010 夏令时；BC 默认开启）
+ */
+ignoreDstHour: boolean, 
+/**
+ * 忽略整小时倍数的 mtime 差异（FR-DIR-010 时区差异；默认关）
+ */
+ignoreTzHour: boolean, 
+/**
+ * 比较文件名大小写：大小写不同的对齐对判异（FR-DIR-010；默认开）
+ */
+compareCase: boolean, 
+/**
+ * 比较 DOS 属性位（FR-DIR-010；默认关——复制文件即改存档位）
+ */
+compareAttributes: boolean, 
+/**
+ * 参与比较的属性字母集（如 "rhs"）；None = 全部已知位参与
+ */
+attributeLetters: string | null, 
+/**
+ * 比较 Unix 元数据（权限位/uid/gid）（FR-DIR-010；默认关，可配置开关）
+ */
+unixMeta: boolean, };

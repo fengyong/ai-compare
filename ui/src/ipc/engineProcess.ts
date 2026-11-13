@@ -18,6 +18,7 @@ import { isTauriRuntime } from '../lib/env';
 import { MockEngine } from './mockEngine';
 import { MockTransport } from './mockTransport';
 import { TauriEngineTransport } from './tauriTransport';
+import { ReconnectPolicy, isMethodNotFound, type ResyncOutcome, type TrackedSession } from './reconnect';
 
 /**
  * 引擎连接单例：连接选择（Tauri 真实引擎 / 演示引擎）、状态广播、按会话的 delta 订阅、
@@ -27,6 +28,12 @@ import { TauriEngineTransport } from './tauriTransport';
  * - 浏览器 dev（无 Tauri）：直接使用内置演示引擎（mock），状态栏明确标识"演示模式"；
  * - Tauri 内 engine_start 失败（典型：未构建 target/debug/ai-engine）：进入 degraded，
  *   顶部横幅给出构建指引，可一键重试或切换演示引擎。
+ *
+ * P4 增强（rev 同步 / 断线重连，docs/03 §2.3 会话 rev 模型）：
+ * - 崩溃检测：transport close（进程退出/stdio 断）触发 ReconnectPolicy；
+ * - 自动重启一次（MAX_AUTO_RESTARTS=1）后重新 initialize；
+ * - 会话恢复：先试 session/resync（P2 引擎若提供），-32601/410/超时 →
+ *   降级路径 = UI 侧全量重放（分配新 sessionId 并广播 resync 事件，视图重开重建 delta）。
  *
  * 会话寻址：sessionId 由客户端分配（docs/03 §2.3.2 / ai-protocol DirOpenParams），
  * newSessionId() 统一生成。
@@ -38,6 +45,8 @@ export interface EngineStateSnapshot {
   status: EngineStatus;
   /** 引擎标识（名称+版本）或降级原因说明 */
   message: string;
+  /** 横幅状态机（正常/重连中/恢复会话中/失败；mock 与初次连接也归一） */
+  phase: 'ok' | 'reconnecting' | 'resyncing' | 'degraded' | 'failed' | 'mock';
 }
 
 interface DirDeltaSubscription {
@@ -50,7 +59,11 @@ let forcedMock = false;
 let sessionSeq = 0;
 const listeners = new Set<() => void>();
 const deltaSubs = new Map<string, Set<DirDeltaSubscription>>();
-let snapshot: EngineStateSnapshot = { status: 'connecting', message: '正在连接引擎…' };
+const resyncListeners = new Set<(outcome: ResyncOutcome) => void>();
+/** 已跟踪会话（崩溃后按序恢复；sessionId → 打开参数） */
+const trackedSessions = new Map<string, TrackedSession>();
+const reconnectPolicy = new ReconnectPolicy();
+let snapshot: EngineStateSnapshot = { status: 'connecting', message: '正在连接引擎…', phase: 'ok' };
 
 function setSnapshot(next: EngineStateSnapshot): void {
   snapshot = next;
@@ -64,6 +77,22 @@ export function subscribeEngineState(fn: () => void): () => void {
 
 export function getEngineState(): EngineStateSnapshot {
   return snapshot;
+}
+
+/** 订阅会话恢复事件（replay 模式下视图经 rebindSession 重开；resync 模式句柄不变） */
+export function subscribeResync(fn: (outcome: ResyncOutcome) => void): () => void {
+  resyncListeners.add(fn);
+  return () => resyncListeners.delete(fn);
+}
+
+/** 登记需要崩溃恢复的会话（视图 open 成功后调用） */
+export function trackSession(sessionId: string, kind: 'dir' | 'text', params: Record<string, unknown>): void {
+  trackedSessions.set(sessionId, { kind, params });
+}
+
+/** 注销（标签关闭/会话删除后调用） */
+export function untrackSession(sessionId: string): void {
+  trackedSessions.delete(sessionId);
 }
 
 /** 生成引擎侧会话句柄（客户端分配；前缀便于日志排查） */
@@ -88,15 +117,16 @@ export function getEngineClient(): Promise<RpcClient> {
 }
 
 async function doConnect(): Promise<RpcClient> {
-  setSnapshot({ status: 'connecting', message: '正在连接引擎…' });
+  setSnapshot({
+    status: 'connecting',
+    message: snapshot.phase === 'reconnecting' ? '引擎连接中断，正在自动重启…' : '正在连接引擎…',
+    phase: snapshot.phase === 'reconnecting' ? 'reconnecting' : 'ok',
+  });
   if (isTauriRuntime() && !forcedMock) {
     try {
       const transport = new TauriEngineTransport();
       const c = new RpcClient(transport, {
-        onTransportClose: (reason) => {
-          client = null;
-          setSnapshot({ status: 'degraded', message: `引擎连接断开${reason ? `：${reason}` : ''}` });
-        },
+        onTransportClose: (reason) => handleTransportCrash(reason),
       });
       const info: InitializeResult = await c.ready;
       client = c;
@@ -104,18 +134,80 @@ async function doConnect(): Promise<RpcClient> {
       setSnapshot({
         status: 'ready',
         message: `${info.engine.name} ${info.engine.version}（协议 v${info.protocolVersion}）`,
+        phase: 'ok',
       });
+      // 重连成功：恢复已跟踪会话（先试 resync，失败走全量重放降级）
+      if (reconnectPolicy.getPhase() === 'reconnecting') {
+        reconnectPolicy.onConnected();
+        await resyncTrackedSessions(c);
+      }
       return c;
     } catch (err) {
       // 典型场景：target/debug/ai-engine 未构建。给出可见的降级横幅与指引。
-      setSnapshot({
-        status: 'degraded',
-        message: err instanceof Error ? err.message : String(err),
-      });
+      const message = err instanceof Error ? err.message : String(err);
+      if (reconnectPolicy.getPhase() === 'reconnecting') {
+        reconnectPolicy.onFailed();
+        setSnapshot({ status: 'degraded', message: `自动重启失败：${message}`, phase: 'failed' });
+      } else {
+        setSnapshot({ status: 'degraded', message, phase: 'degraded' });
+      }
       throw err;
     }
   }
   return connectMock();
+}
+
+/**
+ * 引擎进程退出/stdio 断（崩溃检测入口）：
+ * 自动重启一次 → initialize → 会话恢复；超出次数则失败横幅（可手动重试）。
+ */
+function handleTransportCrash(reason?: string): void {
+  client = null;
+  connectPromise = null;
+  if (forcedMock || !isTauriRuntime()) {
+    setSnapshot({ status: 'connecting', message: '演示引擎已关闭', phase: 'ok' });
+    return;
+  }
+  reconnectPolicy.onDisconnect();
+  if (reconnectPolicy.canAutoRestart()) {
+    reconnectPolicy.beginRestart();
+    setSnapshot({ status: 'connecting', message: '引擎连接中断，正在自动重启…', phase: 'reconnecting' });
+    void getEngineClient().catch(() => {
+      // 失败已在 doConnect 内落横幅（failed）
+    });
+  } else {
+    reconnectPolicy.onFailed();
+    setSnapshot({
+      status: 'degraded',
+      message: `引擎连接断开${reason ? `：${reason}` : ''}（自动重启已达上限）`,
+      phase: 'failed',
+    });
+  }
+}
+
+/**
+ * 会话恢复：先试引擎侧 session/resync（P2 若提供，rev 续传），
+ * -32601（未实现）/410（会话不存在）/超时 → 降级：分配新句柄并广播，
+ * 视图经 rebindSession 重开会话（UI 侧全量重放 delta）。
+ */
+async function resyncTrackedSessions(c: RpcClient): Promise<void> {
+  const entries = [...trackedSessions.entries()];
+  for (const [sessionId, tracked] of entries) {
+    try {
+      await c.request('session/resync', { sessionId, rev: 0 }, 4_000);
+      const outcome: ResyncOutcome = { oldSessionId: sessionId, newSessionId: sessionId, kind: tracked.kind, mode: 'resync' };
+      for (const fn of resyncListeners) fn(outcome);
+    } catch (err) {
+      if (isMethodNotFound(err)) {
+        console.info('[resync] 引擎未提供 session/resync（P2），走 UI 全量重放降级');
+      }
+      const newId = newSessionId(tracked.kind);
+      trackedSessions.delete(sessionId);
+      const outcome: ResyncOutcome = { oldSessionId: sessionId, newSessionId: newId, kind: tracked.kind, mode: 'replay' };
+      for (const fn of resyncListeners) fn(outcome);
+    }
+  }
+  reconnectPolicy.onResynced();
 }
 
 function connectMock(): RpcClient {
@@ -123,12 +215,13 @@ function connectMock(): RpcClient {
   const c = new RpcClient(new MockTransport(engine), {
     onTransportClose: () => {
       client = null;
-      setSnapshot({ status: 'connecting', message: '演示引擎已关闭' });
+      setSnapshot({ status: 'connecting', message: '演示引擎已关闭', phase: 'ok' });
     },
   });
   client = c;
   wireNotifications(c);
-  setSnapshot({ status: 'mock', message: '演示引擎（内置模拟数据，非真实 ai-engine）' });
+  reconnectPolicy.settled('ok');
+  setSnapshot({ status: 'mock', message: '演示引擎（内置模拟数据，非真实 ai-engine）', phase: 'mock' });
   return c;
 }
 
@@ -145,11 +238,12 @@ function wireNotifications(c: RpcClient): void {
 /** 顶部横幅"重试"：清空连接并重新协商 */
 export function retryEngine(): void {
   forcedMock = false;
+  reconnectPolicy.manualRetry();
   const old = client;
   client = null;
   connectPromise = null;
   void old?.close();
-  setSnapshot({ status: 'connecting', message: '正在连接引擎…' });
+  setSnapshot({ status: 'connecting', message: '正在连接引擎…', phase: 'reconnecting' });
 }
 
 /** 降级为演示引擎（横幅按钮）：重载页面后以 mock 重建所有会话视图 */

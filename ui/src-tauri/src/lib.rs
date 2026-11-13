@@ -24,6 +24,8 @@ const ENGINE_NAME: &str = "ai-engine";
 const EVENT_STDOUT: &str = "engine-stdout";
 const EVENT_STDERR: &str = "engine-stderr";
 const EVENT_EXIT: &str = "engine-exit";
+/// 便携模式标记文件（可执行文件旁存在任一即启用相对路径存储，FR-SET-001）
+const PORTABLE_MARKERS: [&str; 2] = ["portable.ini", "ai-compare.ini"];
 
 struct EngineProc {
     child: Child,
@@ -214,11 +216,141 @@ fn engine_stop(state: State<'_, EngineState>) -> Result<(), String> {
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// 设置文件存取（SET-001 / ADR-005）：设置目录 + 便携模式 + 原子写 + .bak
+// 语义对齐 ui/src/session/storage.ts 的 AtomicWritePlan（前端纯函数层单测）。
+// Tauri 壳只做字节级文件 IO，不做任何 JSON 解析（对齐 ADR-003 壳=管道的边界）。
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize)]
+struct AppDirsInfo {
+    /// 设置根目录（便携模式 = exe 目录）
+    base_dir: String,
+    exe_dir: String,
+    portable: bool,
+}
+
+fn exe_dir() -> Result<PathBuf, String> {
+    std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(PathBuf::from))
+        .ok_or_else(|| "无法定位可执行文件目录".to_string())
+}
+
+fn default_base_dir() -> PathBuf {
+    // macOS: ~/Library/Application Support/ai-compare；Windows: %APPDATA%/ai-compare；
+    // 其余（Linux）: ~/.config/ai-compare（SRS 2.6 平台口径）
+    if let Ok(appdata) = std::env::var("APPDATA") {
+        return PathBuf::from(appdata).join("ai-compare");
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        if cfg!(target_os = "macos") {
+            return PathBuf::from(home)
+                .join("Library")
+                .join("Application Support")
+                .join("ai-compare");
+        }
+        return PathBuf::from(home).join(".config").join("ai-compare");
+    }
+    PathBuf::from(".")
+}
+
+/// 设置目录探测：exe 旁 portable.ini / ai-compare.ini → 便携模式（base = exe 目录）
+#[tauri::command]
+fn settings_app_dirs() -> Result<AppDirsInfo, String> {
+    let exe_dir = exe_dir()?;
+    let portable = PORTABLE_MARKERS
+        .iter()
+        .any(|name| exe_dir.join(name).is_file());
+    let base_dir = if portable {
+        exe_dir.clone()
+    } else {
+        default_base_dir()
+    };
+    std::fs::create_dir_all(&base_dir).map_err(|e| format!("创建设置目录失败: {e}"))?;
+    Ok(AppDirsInfo {
+        base_dir: base_dir.display().to_string(),
+        exe_dir: exe_dir.display().to_string(),
+        portable,
+    })
+}
+
+/// 读取设置文件（不存在 → found=false；不做解析，损坏交给前端恢复层）
+#[tauri::command]
+fn settings_read(path: String) -> Result<SettingsReadResult, String> {
+    match std::fs::read_to_string(&path) {
+        Ok(contents) => Ok(SettingsReadResult {
+            found: true,
+            contents: Some(contents),
+        }),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            Ok(SettingsReadResult { found: false, contents: None })
+        }
+        Err(e) => Err(format!("读取设置文件失败（{path}）: {e}")),
+    }
+}
+
+#[derive(Serialize)]
+struct SettingsReadResult {
+    found: bool,
+    contents: Option<String>,
+}
+
+/// 原子写设置文件：写临时文件 → 旧内容备份为 `<name>.bak` → rename 原子替换。
+/// 失败路径上目标与 .bak 均保持旧值（rename 为原子操作）。
+#[tauri::command]
+fn settings_write(path: String, contents: String) -> Result<(), String> {
+    let path_buf = PathBuf::from(&path);
+    let parent = path_buf
+        .parent()
+        .map(PathBuf::from)
+        .ok_or_else(|| format!("设置路径缺少父目录: {path}"))?;
+    std::fs::create_dir_all(&parent).map_err(|e| format!("创建设置目录失败: {e}"))?;
+
+    let file_name = path_buf
+        .file_name()
+        .ok_or_else(|| format!("设置路径非法: {path}"))?
+        .to_os_string();
+    let tmp = parent.join(format!(
+        "{}.tmp-{}",
+        file_name.to_string_lossy(),
+        std::process::id()
+    ));
+    std::fs::write(&tmp, contents.as_bytes())
+        .map_err(|e| format!("写临时文件失败（{}）: {e}", tmp.display()))?;
+
+    if path_buf.is_file() {
+        let bak = parent.join(format!("{}.bak", file_name.to_string_lossy()));
+        std::fs::rename(&path_buf, &bak).map_err(|e| format!("备份 .bak 失败: {e}"))?;
+    }
+    std::fs::rename(&tmp, &path_buf).map_err(|e| {
+        // rename 失败：临时文件清理；目标/备份保持旧值
+        let _ = std::fs::remove_file(&tmp);
+        format!("原子替换失败（{}）: {e}", path_buf.display())
+    })
+}
+
+/// 删除设置文件（及其 .bak）
+#[tauri::command]
+fn settings_delete(path: String) -> Result<(), String> {
+    let _ = std::fs::remove_file(&path);
+    let _ = std::fs::remove_file(format!("{path}.bak"));
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .manage(EngineState::default())
-        .invoke_handler(tauri::generate_handler![engine_start, engine_send, engine_stop])
+        .invoke_handler(tauri::generate_handler![
+            engine_start,
+            engine_send,
+            engine_stop,
+            settings_app_dirs,
+            settings_read,
+            settings_write,
+            settings_delete
+        ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app_handle, event| {

@@ -27,6 +27,7 @@ const zeroStats = (): DirStats => ({
   leftOnly: 0,
   rightOnly: 0,
   dirSame: 0,
+  dirDiff: 0,
 });
 
 export class DirRowCache {

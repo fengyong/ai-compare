@@ -1,6 +1,6 @@
 # ai-compare UI（Tauri 2 + React 18 + TypeScript）
 
-ai-compare 的前端与桌面壳。架构对齐 `docs/03-架构设计文档.md`（UI 层 = M30 应用壳 / M31 视图插件 / M32 对齐文本视图 / M33 虚拟列表 / M34 通用服务），当前为 **P0 Walking Skeleton** 交付（见 `docs/04-开发计划.md` §3）。
+ai-compare 的前端与桌面壳。架构对齐 `docs/03-架构设计文档.md`（UI 层 = M30 应用壳 / M31 视图插件 / M32 对齐文本视图 / M33 虚拟列表 / M34 通用服务），当前交付 **P0 Walking Skeleton + P4 UI 壳与会话体系**（见 `docs/04-开发计划.md` §3）。
 
 ## 启动方式
 
@@ -47,18 +47,31 @@ pnpm tauri build  # 桌面安装包（需要 Rust 工具链）
 ```
 ui/
 ├── src/
-│   ├── shell/            # M30 应用壳：标签栏 / 视图路由 / zustand store / 状态栏
+│   ├── shell/            # M30 应用壳：多窗口/标签栏 / 视图路由 / zustand slice / 状态栏
+│   │   ├── store.ts          # slice 组合（windows/tabs/sessions/ui，见 shellState.ts）
+│   │   ├── viewRegistry.ts   # M31 视图插件注册表 + ViewCtx 注入
+│   │   ├── commands.ts       # 命令注册表（菜单/工具栏/快捷键统一来源）
+│   │   ├── shortcuts.ts      # 键位解析/匹配/冲突检测（默认 BC 键位表附录 G）
+│   │   ├── shortcutEngine.ts # 全局 keydown → 命令引擎（重绑定 + 冲突确认）
+│   │   ├── ContextMenu.tsx / Dialogs.tsx  # 右键菜单 / 关闭确认·另存·重命名对话框
+│   │   └── settings/         # 设置对话框：分页导航 + schema 驱动表单 + 作用域联动
 │   ├── views/            # M31 视图
-│   │   ├── home/             # 主页占位（双路径 + 开始比较）
+│   │   ├── home/             # 主页：六类类型大按钮 / 会话树面板 / 最近列表 / 拖放启动
 │   │   ├── folder-compare/   # 目录比较：虚拟滚动表 + 窗口取数缓存 + 状态着色 + 统计
 │   │   └── text-compare/     # 文本比较：CM6 对齐层 / 行级+行内着色 / 同步滚动 / 导航
-│   ├── components/       # M32/M33 共享组件（随视图增长迁入）
-│   ├── protocol/         # 协议层：types.ts（手写，将来以 generated/ 为准）+ JSON-RPC 客户端
-│   │   └── generated/        # 引擎线 ts-rs 生成类型的目标目录（占位）
-│   ├── ipc/              # Tauri stdio 透传 + 内置演示引擎 + 连接管理（优雅降级）
+│   ├── session/          # M06 会话层（UI 侧）：模型/作用域合并/存取层/会话服务
+│   │   ├── model.ts          # sessions.json 等 4 文档的类型化模型 + 容错解析
+│   │   ├── scopes.ts         # 四层作用域合并（global→kind→parent→session）+ 写回
+│   │   ├── storage.ts        # 原子写计划/.bak 回滚/MRU 纯函数（单测口径）
+│   │   ├── storageAdapter.ts # IO 后端：memory / browser(localStorage) / tauri(原子写)
+│   │   └── service.ts        # SessionService：CRUD/锁定/MRU/作用域写回/恢复报告
+│   ├── protocol/         # 协议层：types.ts（UI 本地辅助）+ JSON-RPC 客户端
+│   │   └── generated/        # 引擎线 ts-rs 生成类型（P2 已扩展判据/过滤器/属性）
+│   ├── ipc/              # Tauri stdio 透传 + 内置演示引擎 + 连接管理
+│   │   └── reconnect.ts      # 断线重连状态机（崩溃→自动重启一次→resync/全量重放）
 │   ├── lib/              # 纯函数工具（行内 diff 核心 / 环境探测 / 格式化）
 │   └── theme/            # 色板集中管理（palette.ts，BC 颜色语义）+ 全局样式
-├── src-tauri/            # Tauri 2 Rust 壳：窗口 + ai-engine spawn/stdio 透传
+├── src-tauri/            # Tauri 2 Rust 壳：窗口 + 引擎 spawn/stdio + 设置文件原子写
 └── package.json
 ```
 
@@ -79,12 +92,15 @@ cd ui && pnpm e2e:engine          # 退出码 0=通过（含 tempdir 场景与�
 
 - 界面语言中文优先，字符串集中在 `src/strings.ts`（为 i18n 留口）。
 - 暗色主题优先，颜色 token 集中在 `src/theme/palette.ts`（语义对齐 docs/01 附录 C：黑=相同、灰=未知/较旧、紫=孤立、红=不同/较新、蓝=不重要、青绿=被过滤、黄=未扫描）。
-- 状态管理：React 内置 + zustand（仅标签/会话等轻量 UI 状态）；大数据（目录行窗口、文本行）在视图级非响应式缓存。
+- 状态管理：React 内置 + zustand slice（窗口/标签/会话等轻量 UI 状态）；大数据（目录行窗口、文本行）在视图级非响应式缓存。
+- 会话/设置持久化（SET-001）：`sessions.json` / `session-defaults.json` / `settings.json` / `state.json` 四文档；桌面存平台设置目录（可执行文件旁 `portable.ini` → 便携模式存程序目录），浏览器 dev 存 localStorage（键 `aic:<文件名>`）；原子写（tmp+rename）+ `.bak` 回滚 + 损坏自动恢复提示，语义以 `src/session/storage.ts` 纯函数为口径（Rust 侧同语义实现）。
 
-## P0 已知边界（后续阶段交付）
+## P4 已知边界（后续阶段交付）
 
-- 目录树展开/排序/过滤/文件操作/选择模型：P2/P6；当前为引擎排好序的平铺列表。
-- 文本编辑、概览条、查找替换、编码切换、语法高亮：P5。
-- `text/inlineDiff` 引擎侧 P0 未开放（能力位上报 false，UI 以客户端词级 diff 兜底）：P1 开放后切引擎懒计算。
-- 断线重连/resync、协议录制回放（引擎 `--record` 已具备）：P4/P5 接入。
-- 主页类型大按钮/会话树/设置界面/命令面板：P4。
+- 原生多窗口（Tauri WebviewWindow + 跨窗口状态同步）：P13；当前"拖出成新窗口/合并窗口"为应用内窗口帧（store 级多窗口完整，浏览器可演示）。
+- 工作区（另存/加载窗口布局，FR-WIN-003）：P13。
+- 视图专属命令（复制到对侧 Ctrl+L/Ctrl+R、空格标记等）已注册占位并注明阶段：P6 文件操作/选择模型接入后替换实现。
+- 会话设置对话框为框架交付（比较/同步/通用三页）；同步页字段为 P8 数据位，DST/属性判据字段为 P2 数据位（置灰标注）。
+- `session/resync` 引擎侧入口 P2 未开放：重连后走 UI 全量重放降级（重新 dir/open、rebindSession 重建缓存）；P2 开放后自动切换 resync 模式。
+- 拖放启动在浏览器内依赖 text/plain 或 webkitGetAsEntry 相对路径；桌面端真实文件绝对路径的 onDragDropEvent 接线属 P13 Shell。
+- 目录树展开/排序/过滤/文件操作/选择模型：P2/P6；文本编辑/查找/编码：P5。

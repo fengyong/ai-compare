@@ -2,5 +2,24 @@
 
 /**
  * 单侧条目元数据（size/mtime；mtime 为 epoch 毫秒）
+ *
+ * P2 新增字段均为可选：仅在对应判据开启（compare_attributes / unix_meta）
+ * 时由引擎填充，旧载荷保持字节级兼容。
  */
-export type SideInfo = { size: number, mtimeMs: number, };
+export type SideInfo = { size: number, mtimeMs: number, 
+/**
+ * DOS 属性字母串（如 "rh"：只读+隐藏；compare_attributes 开启时填充）
+ */
+attribute: string | null, 
+/**
+ * Unix 权限位（st_mode 低 12 位；unix_meta 开启时填充）
+ */
+unixMode: number, 
+/**
+ * Unix 所有者 id（unix_meta 开启时填充）
+ */
+uid: number, 
+/**
+ * Unix 组 id（unix_meta 开启时填充）
+ */
+gid: number, };

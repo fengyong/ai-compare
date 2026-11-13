@@ -3,7 +3,7 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import { DEFAULT_DIR_CRITERIA, type DirRow } from '../../protocol/types';
 import type { Tab } from '../../shell/store';
 import { useShell } from '../../shell/store';
-import { openFolder } from '../../ipc/engineProcess';
+import { openFolder, trackSession } from '../../ipc/engineProcess';
 import { formatSize, formatTime } from '../../lib/env';
 import { S } from '../../strings';
 import { ensureDirCacheAttached } from './dirRowCache';
@@ -44,10 +44,32 @@ export function FolderCompareView({ tab }: { tab: Tab }) {
           right: folder.right,
           depth: 1,
           criteria: DEFAULT_DIR_CRITERIA,
+          // P2 新参数保持 P0 行为（同步扫描、无过滤器、树形对齐）
+          lazyScan: null,
+          flat: null,
+          nameFilter: null,
+          otherFilter: null,
+          displayFilter: null,
+          manualAlign: null,
         })
       )
       .then(() => {
-        if (!disposed) setReady(true);
+        if (!disposed) {
+          trackSession(cache.sessionId, 'dir', {
+            left: folder.left,
+            right: folder.right,
+            depth: 1,
+            criteria: DEFAULT_DIR_CRITERIA,
+            lazyScan: null,
+            flat: null,
+            nameFilter: null,
+            otherFilter: null,
+            displayFilter: null,
+            manualAlign: null,
+          });
+          setReady(true);
+          setError(null);
+        }
       })
       .catch((err: unknown) => {
         if (!disposed) setError(err instanceof Error ? err.message : String(err));

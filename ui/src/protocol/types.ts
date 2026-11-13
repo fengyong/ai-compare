@@ -73,10 +73,19 @@ export type ShutdownResult = null;
 /** session/close 应答：null（引擎 handlers.rs 对齐） */
 export type SessionCloseResult = null;
 
-/** 目录会话默认判据（与引擎 CompareCriteria::default 对齐：2s 容差 + auto 内容复核） */
+/**
+ * 目录会话默认判据（与引擎 CompareCriteria::default 对齐：2s 容差 + auto 内容复核；
+ * P2 扩展字段取引擎默认值：忽略 DST 整小时差、比较大小写、不比较属性/Unix 元数据）
+ */
 export const DEFAULT_DIR_CRITERIA: CompareCriteria = {
   mtimeToleranceSec: 2,
   contentCompare: 'auto',
+  ignoreDstHour: true,
+  ignoreTzHour: false,
+  compareCase: true,
+  compareAttributes: false,
+  attributeLetters: null,
+  unixMeta: false,
 };
 
 /**
