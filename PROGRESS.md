@@ -122,3 +122,4 @@
 - 2026-11-14 05:1x：**P8 完成并 scope 验收提交**：同步策略调度（SyncStrategy 四项可配 + run_sync 端到端 SyncReport）+ 文件夹三路合并数据层（align3/scan_merge/plan_merge，MergeRowState 自底向上聚合）+ 同步视图（预设→策略→预览→逐项改写→执行→报告导出）+ 三栏合并视图（决策继承展开/冲突进度/执行）；主会话修 3 处 trivial clippy 告警；**协议积压清单移交 P9/下波**（dir/operate 策略字段、dir/sync、dir/mergeScan|Plan|Execute、dirMerge 能力位、DirExecuteOp 切 re-export）
 - 2026-11-14 05:4x：**P9 完成并波次联合验收提交**：表格引擎（RFC4180/列对齐两轮匹配/单元格 diff）+ hex 引擎（Full/Fast/None 三模式+分页视窗）+ patch 应用引擎（git 头容错/fuzz/CRLF）+ **dir/execute 接线（P6 积压清偿）**；workspace **603/0 全绿**（+183）；对拍 csv 18/18、xxd 6/6、git apply 11/11 结论一致；累计引擎 603 + UI 319 = **922 测试**
 - 2026-11-14 05:5x：**M3 第三波双线启动**：P10（文件格式与规则体系：引擎注册表/检测/规则应用链 + 协议权 + 设置 UI 两新页，strings.ts 归 P10）、P6b（文件夹视图遗留小批：批量重命名/编辑菜单命令/空格标记/快速比较/复制路径/基文件夹导航——ui/views/folder-compare 独占）；与 P10 零交集设计；P11（报告/脚本处理器）排队下一波
+- 2026-11-14 05:20：**P10/P6b 首巡**：双线活跃（文档消化段）；不干预
