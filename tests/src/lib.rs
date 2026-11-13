@@ -231,3 +231,127 @@ pub fn req(id: i64, method: &str, params: serde_json::Value) -> serde_json::Valu
 pub fn note(method: &str, params: serde_json::Value) -> serde_json::Value {
     serde_json::json!({"jsonrpc": "2.0", "method": method, "params": params})
 }
+
+
+// ---------------------------------------------------------------------------
+// P2 大规模语料：确定性伪随机树（PB-03/PB-10 基准与大规模冒烟用）
+// ---------------------------------------------------------------------------
+
+/// xorshift64* 确定性伪随机数（无外部依赖；种子相同 -> 树完全一致）
+pub struct Rng(u64);
+
+impl Rng {
+    pub fn new(seed: u64) -> Self {
+        Rng(seed.max(1))
+    }
+    pub fn next_u64(&mut self) -> u64 {
+        let mut x = self.0;
+        x ^= x >> 12;
+        x ^= x << 25;
+        x ^= x >> 27;
+        self.0 = x;
+        x.wrapping_mul(0x2545_F491_4F6C_DD1D)
+    }
+    /// [0, n) 均匀
+    pub fn below(&mut self, n: u64) -> u64 {
+        self.next_u64() % n.max(1)
+    }
+}
+
+/// 大规模语料描述
+pub struct BigCorpus {
+    pub _dir: tempfile::TempDir,
+    pub left: std::path::PathBuf,
+    pub right: std::path::PathBuf,
+    /// 实际写入的文件数（两侧合计）
+    pub files_written: u64,
+}
+
+/// 生成确定性伪随机双树（约 `n_files` 个文件 / 每 64 文件一个目录，
+/// 目录树三层）。差异分布（按 seed 确定性）：
+/// - ~10% 两侧内容不同（同尺寸改一字节 / 尺寸不同各半）；
+/// - ~5% 仅左侧、~5% 仅右侧（孤儿）；
+/// - 其余两侧相同。
+///
+/// 返回值含 TempDir（调用方保持存活）。
+pub fn build_big_corpus(n_files: u64, seed: u64) -> BigCorpus {
+    use std::io::Write as _;
+    let dir = tempfile::tempdir().expect("tempdir");
+    let left = dir.path().join("left");
+    let right = dir.path().join("right");
+    std::fs::create_dir_all(&left).unwrap();
+    std::fs::create_dir_all(&right).unwrap();
+    let mut rng = Rng::new(seed);
+    let mut written = 0u64;
+    let files_per_dir = 64u64;
+    let n_dirs = n_files.div_ceil(files_per_dir);
+
+    // 预生成目录路径（三层：d0/<0..32>/sub<0..2>）
+    let mut dir_paths: Vec<String> = Vec::with_capacity(n_dirs as usize);
+    for i in 0..n_dirs {
+        let top = i % 48;
+        let mid = (i / 48) % 32;
+        let leaf = i % 3;
+        dir_paths.push(format!("d{top}/m{mid}/l{leaf}"));
+    }
+    for d in &dir_paths {
+        std::fs::create_dir_all(left.join(d)).unwrap();
+        std::fs::create_dir_all(right.join(d)).unwrap();
+    }
+
+    let mut buf: Vec<u8> = Vec::with_capacity(2048);
+    for i in 0..n_files {
+        let d = &dir_paths[(i % n_dirs) as usize];
+        let name = format!("f{:06}.bin", i);
+        // 内容 128..2048 字节，模式由 seed 决定
+        let size = 128 + rng.below(1920) as usize;
+        let pattern = rng.next_u64();
+        buf.clear();
+        let mut cursor = pattern;
+        for _ in 0..size {
+            cursor = cursor.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            buf.push((cursor >> 33) as u8);
+        }
+        let roll = rng.below(100);
+        let lp = left.join(d).join(&name);
+        let rp = right.join(d).join(&name);
+        if roll < 5 {
+            // 仅左侧
+            let mut f = std::fs::File::create(&lp).unwrap();
+            let _ = f.write_all(&buf);
+            written += 1;
+        } else if roll < 10 {
+            // 仅右侧
+            let mut f = std::fs::File::create(&rp).unwrap();
+            let _ = f.write_all(&buf);
+            written += 1;
+        } else if roll < 15 {
+            // 同尺寸不同内容（右侧一字节差异）
+            let mut rb = buf.clone();
+            let last = rb.len() - 1;
+            rb[last] ^= 0xff;
+            let mut f = std::fs::File::create(&lp).unwrap();
+            let _ = f.write_all(&buf);
+            let mut f = std::fs::File::create(&rp).unwrap();
+            let _ = f.write_all(&rb);
+            written += 2;
+        } else if roll < 20 {
+            // 尺寸不同
+            let mut rb = buf.clone();
+            rb.truncate(rb.len() / 2 + 1);
+            let mut f = std::fs::File::create(&lp).unwrap();
+            let _ = f.write_all(&buf);
+            let mut f = std::fs::File::create(&rp).unwrap();
+            let _ = f.write_all(&rb);
+            written += 2;
+        } else {
+            // 两侧相同
+            let mut f = std::fs::File::create(&lp).unwrap();
+            let _ = f.write_all(&buf);
+            let mut f = std::fs::File::create(&rp).unwrap();
+            let _ = f.write_all(&buf);
+            written += 2;
+        }
+    }
+    BigCorpus { _dir: dir, left, right, files_written: written }
+}

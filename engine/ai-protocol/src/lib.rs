@@ -40,6 +40,16 @@ pub mod method {
     pub const DIR_OPEN: &str = "dir/open";
     /// 目录增量事件推送（引擎 -> UI 通知）
     pub const DIR_DELTA: &str = "dir/delta";
+    /// 展开目录子树（P2，ADR-004 前台优先）
+    pub const DIR_EXPAND: &str = "dir/expand";
+    /// 设置/更新三类过滤器（P2）
+    pub const DIR_FILTER: &str = "dir/filter";
+    /// 手动对齐 / 解除对齐（P2）
+    pub const DIR_ALIGN: &str = "dir/align";
+    /// 生成同步操作计划（P2 数据层，不执行）
+    pub const DIR_OPERATE: &str = "dir/operate";
+    /// 后台扫描进度通知（引擎 -> UI，P2）
+    pub const DIR_PROGRESS: &str = "dir/progress";
     /// 打开文本比较会话
     pub const TEXT_OPEN: &str = "text/open";
     /// 窗口化取 diff section

@@ -6,7 +6,10 @@
       "capabilities": {
         "cancel": true,
         "deltaBatching": true,
+        "dirBackgroundScan": true,
         "dirCompare": true,
+        "dirFilters": true,
+        "dirOperate": true,
         "inlineDiff": false,
         "maxDeltaBatchRows": 512,
         "textCompare": true

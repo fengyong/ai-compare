@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 publish = false
-description = "ai-compare 集成测试：golden 快照 + 协议录制回放（docs/04 P0 交付物 ⑧）"
+description = "ai-compare 集成测试：golden 快照 + 协议录制回放 + P1 算法对拍矩阵 + PB 基准（docs/04 P0/P1/P2 交付物）"
 
 [lib]
 path = "src/lib.rs"
@@ -22,6 +22,10 @@ path = "protocol_fixtures/replay_test.rs"
 name = "algodiff_crosscheck"
 path = "algodiff_matrix/crosscheck_test.rs"
 
+[[test]]
+name = "pb_bench"
+path = "pb_bench.rs"
+
 [dependencies]
 serde_json = { workspace = true }
 tempfile = { workspace = true }
@@ -29,3 +33,6 @@ tempfile = { workspace = true }
 [dev-dependencies]
 ai-protocol = { workspace = true }
 ai-core = { workspace = true }
+ai-dir = { workspace = true }
+ai-vfs = { workspace = true }
+tokio = { workspace = true }

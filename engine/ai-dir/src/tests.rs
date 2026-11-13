@@ -24,7 +24,7 @@ async fn make_tree(files: &[(&str, &[u8])]) -> (tempfile::TempDir, VfsPath) {
 }
 
 fn criteria(tol: u32, mode: ContentCompareMode) -> CompareCriteria {
-    CompareCriteria { mtime_tolerance_sec: tol, content_compare: mode }
+    CompareCriteria { mtime_tolerance_sec: tol, content_compare: mode, ..Default::default() }
 }
 
 async fn scan_tops(left: &VfsPath, right: &VfsPath, crit: CompareCriteria) -> crate::DirScanResult {
@@ -190,7 +190,7 @@ async fn cancel_flag_stops_scan() {
 fn by_name_aligner_covers_all() {
     let mk = |name: &str, size: u64| ai_vfs::VfsDirEntry {
         name: name.to_string(),
-        stat: ai_vfs::StatInfo { size, mtime_ms: 0, kind: ai_vfs::EntryKind::File },
+        stat: ai_vfs::StatInfo::minimal(size, 0, ai_vfs::EntryKind::File),
     };
     let left = vec![mk("a", 1), mk("b", 2), mk("d", 4)];
     let right = vec![mk("b", 2), mk("c", 3), mk("d", 5)];
