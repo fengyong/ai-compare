@@ -52,8 +52,8 @@
 | 2026-11-14 02:2x | Agent「M3/P5 文本比较视图完备化」（ui/ 独占：编辑/折叠/语法高亮/查找替换/编码/概览条） | ✅ 完成并验收（03:5x）：214/214 测试（+80）、build/lint/e2e 全绿、冒烟 8 场景实录（编辑→重 diff→撤销→折叠→查找替换 481 命中→概览条跳转→会话缓存存活）；冒烟期自修 3 真实缺陷；提交 5fb8090 |
 | 2026-11-14 04:0x | Agent「M3/P6 文件夹视图与文件操作」（ui/ 独占 + ai-vfs 写 API + ai-dir 执行层） | ✅ 完成并验收（04:1x）：ai-vfs 21 + ai-dir 79 测试、UI 265（+51）、e2e 过、冒烟 8 场景含镜像落盘 53 项；**主会话全量验证时遇 P7 中间态瞬态失败（2 失败/5 警告），隔离按 crate 复验 P6 scope 全绿后精确提交**；交接——`dir/execute` RPC 提案（DTO 已同形实现于 UI+mock）待下波引擎接线；已代 P7 重固化 golden（threeWayMerge 能力位） |
 | 2026-11-14 04:0x | Agent「M3/P7 三向合并引擎」（ai-core merge3 + ai-protocol 本波协议权 + ai-engine + aic merge + diff3/git 对拍） | ✅ 完成并波次联合验收通过（04:3x）：workspace **420/0 全绿**、clippy 零警、e2e 过；**git merge-file 对拍 28/28 逐字节一致（100%）**，GNU diff3 18/28（差异归类：GNU -A bracketed 语义 vs git 语义，以 git 一致为准）；重要性开关冲突缩小行为有测试；提交入库 |
-| 2026-11-14 04:3x | Agent「M3/P8 同步与文件夹合并」（ai-dir 同步执行+文件夹合并数据层 + ui/ 独占视图） | 运行中 |
-| 2026-11-14 04:3x | Agent「M3/P9 表格/十六进制引擎」（ai-core 表格列模型+hex 字节视图模型 + ai-protocol 本波协议权 + ai-engine + cli） | 运行中 |
+| 2026-11-14 04:3x | Agent「M3/P8 同步与文件夹合并」（ai-dir 同步执行+文件夹合并数据层 + ui/ 独占视图） | ✅ 完成并 scope 验收（05:1x）：ai-dir 123 测试（+44：策略 8+run_sync 5+merge3way 31）、UI 319（+54）、e2e 过、冒烟实录（只读右拦 14 项写操作/冲突决策 1/3→计划→执行 8 复制全成功）；主会话顺手修 3 处 trivial 告警后提交；协议积压清单（dir/operate 策略字段、dir/sync、dir/mergeScan|Plan|Execute、dirMerge 能力位）已移交 P9/下波 |
+| 2026-11-14 04:3x | Agent「M3/P9 表格/十六进制引擎」（ai-core 表格列模型+hex 字节视图模型 + ai-protocol 本波协议权 + ai-engine + cli） | 运行中（05:1x 活跃） |
 | 2026-11-13 23:36 | Agent「P4 UI 壳与会话体系」（ui/，主页/多窗口/会话持久化/ViewRegistry） | ✅ 完成并验收（含一次并发中断+SendMessage 原地续跑）：134/134 测试（+83）、build/lint/e2e:engine 全绿、浏览器冒烟全流程通过（00:47 主会话复验）；遗留项见 ui/README P4 边界 |
 
 ### M3 断点（下一步，P3/P5 并行）
@@ -117,3 +117,4 @@
 - 2026-11-14 04:20+：**P8/P9 首巡**：双线均活跃（文档消化段）；不干预
 - 2026-11-14 04:40：**第 2 次巡检**：双线高度活跃（P8 3s 前、P9 9s 前各有模型活动，进入实现段）；不干预
 - 2026-11-14 05:00：**第 3 次巡检**：双线活跃（实现段推进中）；不干预
+- 2026-11-14 05:1x：**P8 完成并 scope 验收提交**：同步策略调度（SyncStrategy 四项可配 + run_sync 端到端 SyncReport）+ 文件夹三路合并数据层（align3/scan_merge/plan_merge，MergeRowState 自底向上聚合）+ 同步视图（预设→策略→预览→逐项改写→执行→报告导出）+ 三栏合并视图（决策继承展开/冲突进度/执行）；主会话修 3 处 trivial clippy 告警；**协议积压清单移交 P9/下波**（dir/operate 策略字段、dir/sync、dir/mergeScan|Plan|Execute、dirMerge 能力位、DirExecuteOp 切 re-export）
