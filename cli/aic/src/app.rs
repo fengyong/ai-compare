@@ -37,6 +37,9 @@ pub fn run_cli(args: &[String]) -> ExitCode {
         Some("diff") => cmd_diff(&args[1..]),
         Some("merge") => cmd_merge(&args[1..]),
         Some("quick") => cmd_quick(&args[1..]),
+        Some("table") => cmd_table(&args[1..]),
+        Some("hex") => cmd_hex(&args[1..]),
+        Some("patch") => cmd_patch(&args[1..]),
         Some("--help") | Some("-h") | Some("help") => {
             print_usage();
             EXIT_SAME.into()
@@ -678,6 +681,436 @@ async fn run_quick(
             ls.size
         );
         Ok(verdict)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// aic table（P9 表格比较；FR-TBL 引擎侧 CLI 面）
+// ---------------------------------------------------------------------------
+
+pub fn cmd_table(args: &[String]) -> ExitCode {
+    let mut positional: Vec<&String> = Vec::new();
+    let mut opts = ai_core::table::TableDiffOptions::default();
+    let mut i = 0usize;
+    while i < args.len() {
+        let a = args[i].as_str();
+        let next = |i: &mut usize| -> Option<String> {
+            *i += 1;
+            args.get(*i).cloned()
+        };
+        match a {
+            "--key" => match next(&mut i) {
+                Some(spec) => {
+                    for part in spec.split(',') {
+                        match part.trim().parse::<usize>() {
+                            Ok(c) => opts.key_columns.push(c),
+                            Err(_) => return arg_error(&format!("--key 列下标非法: {part}")),
+                        }
+                    }
+                }
+                None => return arg_error("--key 需要逗号分隔的列下标"),
+            },
+            _ if a.starts_with("--key=") => {
+                for part in a["--key=".len()..].split(',') {
+                    match part.trim().parse::<usize>() {
+                        Ok(c) => opts.key_columns.push(c),
+                        Err(_) => return arg_error(&format!("--key 列下标非法: {part}")),
+                    }
+                }
+            }
+            "--delimiter" => match next(&mut i).and_then(|v| v.chars().next()) {
+                Some(c) => opts.parse.delimiter = c,
+                None => return arg_error("--delimiter 需要单字符参数"),
+            },
+            _ if a.starts_with("--delimiter=") => {
+                match a["--delimiter=".len()..].chars().next() {
+                    Some(c) => opts.parse.delimiter = c,
+                    None => return arg_error("--delimiter 需要单字符参数"),
+                }
+            }
+            "--tab" | "--tsv" => opts.parse.delimiter = '\t',
+            "--no-header" => opts.parse.has_header = false,
+            "--align" => match next(&mut i).as_deref() {
+                Some("none") => opts.column_align = ai_core::table::ColumnAlign::None,
+                Some("names-left" | "left") => opts.column_align = ai_core::table::ColumnAlign::ByLeftName,
+                Some("names-right" | "right") => opts.column_align = ai_core::table::ColumnAlign::ByRightName,
+                _ => return arg_error("--align 仅支持 none|names-left|names-right"),
+            },
+            "--rows" => match next(&mut i).as_deref() {
+                Some("none" | "unaligned") => opts.row_align = ai_core::table::RowAlign::Unaligned,
+                Some("standard") => opts.row_align = ai_core::table::RowAlign::Standard,
+                _ => return arg_error("--rows 仅支持 none|standard"),
+            },
+            "--skew" => match next(&mut i).and_then(|v| v.parse::<u32>().ok()) {
+                Some(n) => opts.skew_tolerance = n,
+                None => return arg_error("--skew 需要数字参数"),
+            },
+            // -iu：大小写 + 空白三类不重要（FR-TXT-010 语义复用）
+            "-iu" | "--ignore-unimportant" => {
+                opts.importance.case_unimportant = true;
+                opts.importance.whitespace = ai_core::options::WhitespaceMode::IgnoreAmount;
+            }
+            "-w" | "--ignore-whitespace" => opts.importance.whitespace = ai_core::options::WhitespaceMode::IgnoreAll,
+            "--ignore-case" | "-i" => opts.importance.case_unimportant = true,
+            _ if a.starts_with('-') => return arg_error(&format!("未知参数: {a}")),
+            _ => positional.push(&args[i]),
+        }
+        i += 1;
+    }
+    if positional.len() != 2 {
+        return arg_error("table 需要恰好两个路径参数: <left> <right>");
+    }
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("tokio 运行时");
+    match rt.block_on(run_table(positional[0], positional[1], &opts)) {
+        Ok(()) => EXIT_SAME.into(),
+        Err(TableOutcome::Different) => EXIT_DIFF.into(),
+        Err(TableOutcome::Error(msg)) => {
+            eprintln!("aic table: {msg}");
+            EXIT_ERROR.into()
+        }
+    }
+}
+
+enum TableOutcome {
+    Different,
+    Error(String),
+}
+
+async fn run_table(left_s: &str, right_s: &str, opts: &ai_core::table::TableDiffOptions) -> Result<(), TableOutcome> {
+    let vfs = LocalFs::new();
+    let left_path = VfsPath::parse(left_s).map_err(|e| TableOutcome::Error(e.to_string()))?;
+    let right_path = VfsPath::parse(right_s).map_err(|e| TableOutcome::Error(e.to_string()))?;
+    let left_text = vfs.read_file_text(&left_path).await.map_err(|e| TableOutcome::Error(e.to_string()))?;
+    let right_text = vfs.read_file_text(&right_path).await.map_err(|e| TableOutcome::Error(e.to_string()))?;
+
+    let model = ai_core::table::diff_tables(&left_text, &right_text, opts)
+        .map_err(|e| TableOutcome::Error(e.to_string()))?;
+
+    use std::io::Write as _;
+    let stdout = std::io::stdout();
+    let mut lock = stdout.lock();
+    let s = &model.summary;
+    if s.changed_rows == 0 && s.added_rows == 0 && s.removed_rows == 0 {
+        return Ok(()); // 相同：无输出，退出码 0
+    }
+    // 摘要头 + TSV 差异行
+    let _ = writeln!(
+        lock,
+        "# same={}\tchanged={}\tadded={}\tremoved={}\tunimportant={}",
+        s.same_rows, s.changed_rows, s.added_rows, s.removed_rows, s.unimportant_rows
+    );
+    let cell_mark = |st: ai_core::table::CellDiffStatus| match st {
+        ai_core::table::CellDiffStatus::Same => '=',
+        ai_core::table::CellDiffStatus::UnimportantDiff => '~',
+        ai_core::table::CellDiffStatus::ImportantDiff => '!',
+        ai_core::table::CellDiffStatus::LeftOnly => '<',
+        ai_core::table::CellDiffStatus::RightOnly => '>',
+    };
+    for row in &model.rows {
+        let cells: Vec<String> = row
+            .cells
+            .iter()
+            .map(|c| {
+                let l = c.left.clone().unwrap_or_default();
+                let r = c.right.clone().unwrap_or_default();
+                format!("{}{}|{}", cell_mark(c.status), escape_cell(&l), escape_cell(&r))
+            })
+            .collect();
+        let _ = writeln!(
+            lock,
+            "{}\t{}\t{}\t{}",
+            row.kind.as_str(),
+            row.left.map(|v| v.to_string()).unwrap_or_else(|| "-".into()),
+            row.right.map(|v| v.to_string()).unwrap_or_else(|| "-".into()),
+            cells.join("\t")
+        );
+    }
+    let _ = lock.flush();
+    Err(TableOutcome::Different)
+}
+
+fn escape_cell(v: &str) -> String {
+    v.replace('\\', "\\\\").replace('\t', "\\t").replace('\n', "\\n").replace('\r', "\\r")
+}
+
+// ---------------------------------------------------------------------------
+// aic hex（P9 十六进制比较；FR-HEX 引擎侧 CLI 面）
+// ---------------------------------------------------------------------------
+
+pub fn cmd_hex(args: &[String]) -> ExitCode {
+    let mut positional: Vec<&String> = Vec::new();
+    let mut opts = ai_core::hex::HexOptions::default();
+    let mut i = 0usize;
+    while i < args.len() {
+        let a = args[i].as_str();
+        let next = |i: &mut usize| -> Option<String> {
+            *i += 1;
+            args.get(*i).cloned()
+        };
+        match a {
+            "--chunk" => match next(&mut i).and_then(|v| v.parse::<usize>().ok()) {
+                Some(n) if n > 0 => opts.chunk_size = n,
+                _ => return arg_error("--chunk 需要正整数参数"),
+            },
+            _ if a.starts_with("--chunk=") => match a["--chunk=".len()..].parse::<usize>() {
+                Ok(n) if n > 0 => opts.chunk_size = n,
+                _ => return arg_error("--chunk 需要正整数参数"),
+            },
+            "--align" => match next(&mut i).as_deref() {
+                Some("full") => opts.align_mode = ai_core::hex::HexAlignMode::Full,
+                Some("fast") => opts.align_mode = ai_core::hex::HexAlignMode::Fast,
+                Some("none") => opts.align_mode = ai_core::hex::HexAlignMode::None,
+                _ => return arg_error("--align 仅支持 full|fast|none"),
+            },
+            _ if a.starts_with('-') => return arg_error(&format!("未知参数: {a}")),
+            _ => positional.push(&args[i]),
+        }
+        i += 1;
+    }
+    if positional.len() != 2 {
+        return arg_error("hex 需要恰好两个路径参数: <left> <right>");
+    }
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("tokio 运行时");
+    match rt.block_on(run_hex(positional[0], positional[1], &opts)) {
+        Ok(()) => EXIT_SAME.into(),
+        Err(HexOutcome::Different) => EXIT_DIFF.into(),
+        Err(HexOutcome::Error(msg)) => {
+            eprintln!("aic hex: {msg}");
+            EXIT_ERROR.into()
+        }
+    }
+}
+
+enum HexOutcome {
+    Different,
+    Error(String),
+}
+
+async fn run_hex(left_s: &str, right_s: &str, opts: &ai_core::hex::HexOptions) -> Result<(), HexOutcome> {
+    let vfs = LocalFs::new();
+    let left_path = VfsPath::parse(left_s).map_err(|e| HexOutcome::Error(e.to_string()))?;
+    let right_path = VfsPath::parse(right_s).map_err(|e| HexOutcome::Error(e.to_string()))?;
+    let left = vfs.read_file_bytes(&left_path).await.map_err(|e| HexOutcome::Error(e.to_string()))?;
+    let right = vfs.read_file_bytes(&right_path).await.map_err(|e| HexOutcome::Error(e.to_string()))?;
+
+    let model = ai_core::hex::diff_bytes(&left, &right, opts);
+    use std::io::Write as _;
+    let stdout = std::io::stdout();
+    let mut lock = stdout.lock();
+    if model.blocks.iter().all(|b| b.kind == ai_core::hex::HexBlockKind::Same) {
+        return Ok(());
+    }
+    let sum = &model.summary;
+    let _ = writeln!(
+        lock,
+        "# same={}B\tchanged={}B\tinserted={}B\tdeleted={}B\tblocks={}",
+        sum.same_bytes, sum.changed_bytes, sum.inserted_bytes, sum.deleted_bytes, model.blocks.len()
+    );
+    let kind = |b: ai_core::hex::HexBlockKind| match b {
+        ai_core::hex::HexBlockKind::Same => "same",
+        ai_core::hex::HexBlockKind::Changed => "changed",
+        ai_core::hex::HexBlockKind::Inserted => "inserted",
+        ai_core::hex::HexBlockKind::Deleted => "deleted",
+    };
+    for b in &model.blocks {
+        let _ = match (b.left, b.right) {
+            (Some(l), Some(r)) => writeln!(
+                lock,
+                "{}\tleft[0x{:x}..0x{:x})\tright[0x{:x}..0x{:x})\t{}B",
+                kind(b.kind), l.offset, l.offset + l.len, r.offset, r.offset + r.len, l.len
+            ),
+            (Some(l), None) => writeln!(lock, "{}\tleft[0x{:x}..0x{:x})\t{}B", kind(b.kind), l.offset, l.offset + l.len, l.len),
+            (None, Some(r)) => writeln!(lock, "{}\tright[0x{:x}..0x{:x})\t{}B", kind(b.kind), r.offset, r.offset + r.len, r.len),
+            (None, None) => Ok(()),
+        };
+    }
+    // 首个差异区域的十六进制行预览（每侧至多 4 行）
+    for b in model.blocks.iter().filter(|b| b.kind != ai_core::hex::HexBlockKind::Same).take(1) {
+        if let Some(l) = b.left {
+            let _ = writeln!(lock, "-- left preview @0x{:x}", l.offset);
+            let off = (l.offset as usize / ai_core::hex::HEX_LINE_BYTES) * ai_core::hex::HEX_LINE_BYTES;
+            for line in ai_core::hex::render_hex_lines(&left, (off / ai_core::hex::HEX_LINE_BYTES) as u64, 4) {
+                let _ = writeln!(lock, "{}  {}  {}", line.addr, line.hex, line.ascii);
+            }
+        }
+        if let Some(r) = b.right {
+            let _ = writeln!(lock, "-- right preview @0x{:x}", r.offset);
+            let off = (r.offset as usize / ai_core::hex::HEX_LINE_BYTES) * ai_core::hex::HEX_LINE_BYTES;
+            for line in ai_core::hex::render_hex_lines(&right, (off / ai_core::hex::HEX_LINE_BYTES) as u64, 4) {
+                let _ = writeln!(lock, "{}  {}  {}", line.addr, line.hex, line.ascii);
+            }
+        }
+    }
+    let _ = lock.flush();
+    Err(HexOutcome::Different)
+}
+
+// ---------------------------------------------------------------------------
+// aic patch apply（P9 补丁应用；FR-PATCH-011 CLI 面）
+// ---------------------------------------------------------------------------
+
+pub fn cmd_patch(args: &[String]) -> ExitCode {
+    let Some(sub) = args.first().map(String::as_str) else {
+        print_usage();
+        return EXIT_ERROR.into();
+    };
+    if sub != "apply" {
+        eprintln!("aic patch: 未知子命令: {sub}（仅支持 apply）");
+        print_usage();
+        return EXIT_ERROR.into();
+    }
+    let mut positional: Vec<&String> = Vec::new();
+    let mut input: Option<String> = None;
+    let mut output: Option<String> = None;
+    let mut dir: Option<String> = None;
+    let mut opts = ai_core::patch::PatchApplyOptions::default();
+    let mut i = 1usize;
+    while i < args.len() {
+        let a = args[i].as_str();
+        let next = |i: &mut usize| -> Option<String> {
+            *i += 1;
+            args.get(*i).cloned()
+        };
+        match a {
+            "--input" | "-i" => match next(&mut i) {
+                Some(v) => input = Some(v),
+                None => return arg_error("--input 需要目标文件参数"),
+            },
+            _ if a.starts_with("--input=") => input = Some(a["--input=".len()..].to_string()),
+            "-o" | "--output" => match next(&mut i) {
+                Some(v) => output = Some(v),
+                None => return arg_error("-o 需要输出路径参数"),
+            },
+            _ if a.starts_with("--output=") => output = Some(a["--output=".len()..].to_string()),
+            "--dir" | "--root" => match next(&mut i) {
+                Some(v) => dir = Some(v),
+                None => return arg_error("--dir 需要目标根目录参数"),
+            },
+            _ if a.starts_with("--dir=") => dir = Some(a["--dir=".len()..].to_string()),
+            "--dry-run" => opts.dry_run = true,
+            "--fuzz" => match next(&mut i).and_then(|v| v.parse::<u32>().ok()) {
+                Some(n) => opts.fuzz = n,
+                None => return arg_error("--fuzz 需要数字参数（0 = 仅精确匹配）"),
+            },
+            "--no-crlf-tolerance" => opts.crlf_tolerant = false,
+            _ if a.starts_with('-') => return arg_error(&format!("未知参数: {a}")),
+            _ => positional.push(&args[i]),
+        }
+        i += 1;
+    }
+    let Some(patch_path) = positional.first() else {
+        return arg_error("patch apply 需要 <target.patch> 参数");
+    };
+    let patch_text = match std::fs::read_to_string(patch_path) {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("aic patch: 读补丁失败 {patch_path}: {e}");
+            return EXIT_ERROR.into();
+        }
+    };
+
+    use std::io::Write as _;
+    if let Some(input_path) = &input {
+        // 单文件模式：补丁须恰含一个文件目标
+        let parsed = match ai_core::patch::parse_patch(&patch_text) {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("aic patch: {e}");
+                return EXIT_ERROR.into();
+            }
+        };
+        if parsed.files.len() != 1 {
+            eprintln!(
+                "aic patch: 补丁含 {} 个文件目标——单文件模式请用 --input 配单文件补丁，多文件用 --dir",
+                parsed.files.len()
+            );
+            return EXIT_ERROR.into();
+        }
+        let orig = match std::fs::read_to_string(input_path) {
+            Ok(t) => t,
+            Err(e) => {
+                eprintln!("aic patch: 读目标失败 {input_path}: {e}");
+                return EXIT_ERROR.into();
+            }
+        };
+        let file = &parsed.files[0];
+        if file.binary {
+            eprintln!("aic patch: 二进制文件跳过（补丁标注 Binary/GIT binary patch）: {}", file.label());
+            return EXIT_ERROR.into();
+        }
+        return match ai_core::patch::apply_file(&orig, file, &opts) {
+            Ok(ai_core::patch::ApplyOutcome::Applied { text, fuzz_used, offset }) => {
+                if opts.dry_run {
+                    eprintln!("aic patch: DRY OK（fuzz={fuzz_used}, offset={offset}）");
+                    EXIT_SAME.into()
+                } else {
+                    match output.as_deref() {
+                        Some(out) => {
+                            if let Err(e) = std::fs::write(out, text.as_bytes()) {
+                                eprintln!("aic patch: 写输出失败 {out}: {e}");
+                                EXIT_ERROR.into()
+                            } else {
+                                EXIT_SAME.into()
+                            }
+                        }
+                        None => {
+                            let stdout = std::io::stdout();
+                            let mut lock = stdout.lock();
+                            let _ = lock.write_all(text.as_bytes());
+                            let _ = lock.flush();
+                            EXIT_SAME.into()
+                        }
+                    }
+                }
+            }
+            Ok(ai_core::patch::ApplyOutcome::NoOp) => {
+                eprintln!("aic patch: 无内容 hunk（纯元数据变更）");
+                EXIT_SAME.into()
+            }
+            Err(msg) => {
+                eprintln!("aic patch: 应用失败: {msg}");
+                EXIT_DIFF.into()
+            }
+        };
+    }
+    // 多文件模式（--dir）
+    let Some(root) = &dir else {
+        return arg_error("patch apply 需要 --input <file>（单文件）或 --dir <root>（多文件）");
+    };
+    match ai_core::patch::apply_patch(&ai_core::patch::StdFs, std::path::Path::new(root), &patch_text, &opts) {
+        Ok(report) => {
+            use std::io::Write as _;
+            let stdout = std::io::stdout();
+            let mut lock = stdout.lock();
+            for r in &report.results {
+                let status = match r.status {
+                    ai_core::patch::FileApplyStatus::Applied => "applied",
+                    ai_core::patch::FileApplyStatus::AlreadyApplied => "alreadyApplied",
+                    ai_core::patch::FileApplyStatus::SkippedBinary => "skippedBinary",
+                    ai_core::patch::FileApplyStatus::NoOp => "noOp",
+                    ai_core::patch::FileApplyStatus::Failed => "FAILED",
+                };
+                let _ = writeln!(lock, "{}\t{}\tfuzz={}\toffset={}\t{}", status, r.path, r.fuzz_used, r.offset_applied, r.detail.clone().unwrap_or_default());
+            }
+            let _ = lock.flush();
+            if report.all_applied() {
+                EXIT_SAME.into()
+            } else {
+                EXIT_DIFF.into()
+            }
+        }
+        Err(e) => {
+            eprintln!("aic patch: {e}");
+            EXIT_ERROR.into()
+        }
     }
 }
 

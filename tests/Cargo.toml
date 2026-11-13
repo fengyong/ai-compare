@@ -32,6 +32,26 @@ path = "protocol_fixtures/replay_test.rs"
 name = "algodiff_crosscheck"
 path = "algodiff_matrix/crosscheck_test.rs"
 
+# P9 表格对拍：Python csv oracle 解析一致 + diff 语义 golden（docs/04 §P9）
+[[test]]
+name = "table_matrix"
+path = "table_matrix/table_test.rs"
+
+# P9 十六进制对拍：xxd 自洽 + 分块/对齐 golden + CLI 面行为
+[[test]]
+name = "hex_matrix"
+path = "hex_matrix/hex_test.rs"
+
+# P9 补丁对拍：git apply --check 一致 + 自产补丁 roundtrip（docs/04 §P9）
+[[test]]
+name = "patch_matrix"
+path = "patch_matrix/patch_test.rs"
+
+# P9 RPC 端到端（真实引擎二进制）：table/hex/patch/dir execute 全链路
+[[test]]
+name = "p9_e2e"
+path = "p9_e2e/p9_rpc_test.rs"
+
 [[test]]
 name = "pb_bench"
 path = "pb_bench.rs"

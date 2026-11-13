@@ -68,6 +68,18 @@ pub mod method {
     pub const TEXT_MERGE3_DECIDE: &str = "text/merge3/decide";
     /// 三向合并：合成输出（含未决冲突清单，P7）
     pub const TEXT_MERGE3_OUTPUT: &str = "text/merge3/output";
+    /// 表格比较：打开会话（P9，FR-TBL 引擎侧）
+    pub const TABLE_OPEN: &str = "table/open";
+    /// 表格比较：diff 行清单分批取回（P9）
+    pub const TABLE_SECTIONS: &str = "table/sections";
+    /// 十六进制比较：打开会话（P9，FR-HEX 引擎侧）
+    pub const HEX_OPEN: &str = "hex/open";
+    /// 十六进制比较：十六进制行分页取数（P9，docs/03 §2.3.2 大内容约定）
+    pub const HEX_BYTES: &str = "hex/bytes";
+    /// 补丁应用（P9，FR-PATCH-011：输入补丁文本 + 目标规格 -> 结果报告）
+    pub const TEXT_PATCH_APPLY: &str = "text/patch/apply";
+    /// 文件操作执行（P6 提案合入：dryRun + 执行 + rescan delta）
+    pub const DIR_EXECUTE: &str = "dir/execute";
     /// 关闭会话（释放引擎侧模型）
     pub const SESSION_CLOSE: &str = "session/close";
     /// 取消请求（UI -> 引擎通知，LSP 风格）

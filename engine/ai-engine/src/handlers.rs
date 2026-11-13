@@ -72,6 +72,12 @@ pub async fn dispatch(
         ai_protocol::method::TEXT_MERGE3_SECTIONS => merge3_sections(params, ctx).await,
         ai_protocol::method::TEXT_MERGE3_DECIDE => merge3_decide(params, ctx).await,
         ai_protocol::method::TEXT_MERGE3_OUTPUT => merge3_output(params, ctx).await,
+        ai_protocol::method::TABLE_OPEN => table_open(params, ctx).await,
+        ai_protocol::method::TABLE_SECTIONS => table_sections(params, ctx).await,
+        ai_protocol::method::HEX_OPEN => hex_open(params, ctx).await,
+        ai_protocol::method::HEX_BYTES => hex_bytes(params, ctx).await,
+        ai_protocol::method::TEXT_PATCH_APPLY => patch_apply(params, ctx).await,
+        ai_protocol::method::DIR_EXECUTE => dir_execute(params, ctx, cancel).await,
         ai_protocol::method::SESSION_CLOSE => session_close(params, ctx).await,
         other => Err(RpcErrorObject {
             code: codes::METHOD_NOT_FOUND,
@@ -101,6 +107,12 @@ fn initialize() -> Result<Handled, RpcErrorObject> {
             lines_read: Some(true),
             // P7：三向文本合并入口开放（text/merge3/*）
             three_way_merge: Some(true),
+            // P9：表格 / 十六进制 / 补丁应用入口开放（table/*、hex/*、text/patch/apply）
+            table_compare: Some(true),
+            hex_compare: Some(true),
+            patch_apply: Some(true),
+            // P6 提案合入：dir/execute 文件操作执行
+            dir_execute: Some(true),
             dir_background_scan: true,
             dir_filters: true,
             dir_operate: true,
@@ -182,7 +194,7 @@ async fn dir_open_sync(
         let mut sessions = ctx.sessions.lock().await;
         sessions.insert(
             params.session_id.clone(),
-            Session::Dir(DirSessionData { model: None, scan: Some(scan_result.clone()) }),
+            Session::Dir(DirSessionData { model: None, scan: Some(scan_result.clone()), roots: Some((left.clone(), right.clone())) }),
         );
     }
 
@@ -263,7 +275,7 @@ async fn dir_open_model(
         let mut sessions = ctx.sessions.lock().await;
         sessions.insert(
             params.session_id.clone(),
-            Session::Dir(DirSessionData { model: Some(model.clone()), scan: None }),
+            Session::Dir(DirSessionData { model: Some(model.clone()), scan: None, roots: Some((left.clone(), right.clone())) }),
         );
     }
 
@@ -427,8 +439,9 @@ async fn dir_model(
         Session::Dir(data) => data.model.clone().ok_or_else(|| {
             bad_params("该会话未启用 P2 会话模型（lazyScan/过滤器/平铺/对齐任一即可启用）")
         }),
-        Session::Text(_) => Err(bad_params(format!("会话不是目录会话: {id}"))),
-        Session::Merge(_) => Err(bad_params(format!("会话不是目录会话: {id}"))),
+        Session::Text(_) | Session::Merge(_) | Session::Table(_) | Session::Hex(_) => {
+            Err(bad_params(format!("会话不是目录会话: {id}")))
+        }
     }
 }
 
@@ -540,8 +553,9 @@ async fn with_text_session<T>(
     let session = sessions.get_mut(id).ok_or_else(|| session_not_found(id))?;
     match session {
         Session::Text(data) => f(data),
-        Session::Dir(_) => Err(bad_params(format!("会话不是文本会话: {id}"))),
-        Session::Merge(_) => Err(bad_params(format!("会话不是文本会话: {id}"))),
+        Session::Dir(_) | Session::Merge(_) | Session::Table(_) | Session::Hex(_) => {
+            Err(bad_params(format!("会话不是文本会话: {id}")))
+        }
     }
 }
 
@@ -1073,6 +1087,472 @@ async fn merge3_output(
     })
     .await?;
     Ok(Handled::Value(serde_json::to_value(&result).expect("merge3/output 结果可序列化")))
+}
+
+// ---------------------------------------------------------------------------
+// P9：table/open|sections（表格比较）与 hex/open|bytes（十六进制比较）
+// ---------------------------------------------------------------------------
+
+/// table/open：读两侧 CSV/TSV -> 解析（RFC4180）-> 列对齐 + 行对齐 + 单元格 diff
+/// -> 存会话 -> 应答比较列模型与统计。行清单经 table/sections 分批取回。
+async fn table_open(
+    params: Option<serde_json::Value>,
+    ctx: &HandlerCtx,
+) -> Result<Handled, RpcErrorObject> {
+    let params: ai_protocol::TableOpenParams = parse_params(params)?;
+    if params.session_id.is_empty() {
+        return Err(bad_params("sessionId 不能为空"));
+    }
+    let left_path = VfsPath::parse(&params.left).map_err(|e| mapping::vfs_error_to_rpc(&e))?;
+    let right_path = VfsPath::parse(&params.right).map_err(|e| mapping::vfs_error_to_rpc(&e))?;
+    let left_text = ctx.vfs.read_file_text(&left_path).await.map_err(|e| mapping::vfs_error_to_rpc(&e))?;
+    let right_text = ctx.vfs.read_file_text(&right_path).await.map_err(|e| mapping::vfs_error_to_rpc(&e))?;
+
+    let opts = table_options_from_dto(params.options.as_ref());
+    let left = ai_core::table::parse_table(&left_text, &opts.parse)
+        .map_err(|e| ai_protocol::error_object(codes::INVALID_PARAMS, format!("左侧表格解析失败: {e}")))?;
+    let right = ai_core::table::parse_table(&right_text, &opts.parse)
+        .map_err(|e| ai_protocol::error_object(codes::INVALID_PARAMS, format!("右侧表格解析失败: {e}")))?;
+    let model = ai_core::table::diff_table_data(&left, &right, &opts);
+
+    let row_count = u32::try_from(model.rows.len()).unwrap_or(u32::MAX);
+    let (left_row_count, right_row_count) = (
+        u32::try_from(left.row_count()).unwrap_or(u32::MAX),
+        u32::try_from(right.row_count()).unwrap_or(u32::MAX),
+    );
+    let columns = model.columns.iter().map(mapping::table_column_to_dto).collect();
+    let summary = mapping::table_summary_to_dto(&model.summary);
+
+    {
+        let mut sessions = ctx.sessions.lock().await;
+        if sessions.contains_key(&params.session_id) {
+            return Err(RpcErrorObject {
+                code: codes::SESSION_EXISTS,
+                message: format!("会话已存在: {}", params.session_id),
+                data: Some(json!({ "sessionId": params.session_id })),
+            });
+        }
+        sessions.insert(
+            params.session_id.clone(),
+            Session::Table(crate::server::TableSessionData { left, right, model, options: opts }),
+        );
+    }
+
+    let result = ai_protocol::TableOpenResult {
+        session_id: params.session_id,
+        row_count,
+        left_row_count,
+        right_row_count,
+        columns,
+        summary,
+    };
+    Ok(Handled::Value(serde_json::to_value(&result).expect("table/open 结果可序列化")))
+}
+
+/// ai_protocol TableOptionsSpec -> ai_core TableDiffOptions（缺省 = 引擎默认）
+fn table_options_from_dto(spec: Option<&ai_protocol::TableOptionsSpec>) -> ai_core::table::TableDiffOptions {
+    let mut opts = ai_core::table::TableDiffOptions::default();
+    let Some(spec) = spec else { return opts };
+    if let Some(d) = &spec.delimiter {
+        if let Some(c) = d.chars().next() {
+            opts.parse.delimiter = c;
+        }
+    }
+    if let Some(h) = spec.has_header {
+        opts.parse.has_header = h;
+    }
+    if let Some(keys) = &spec.key_columns {
+        opts.key_columns = keys.iter().map(|&k| k as usize).collect();
+    }
+    if let Some(a) = spec.column_align {
+        opts.column_align = match a {
+            ai_protocol::TableColumnAlign::None => ai_core::table::ColumnAlign::None,
+            ai_protocol::TableColumnAlign::ByLeftName => ai_core::table::ColumnAlign::ByLeftName,
+            ai_protocol::TableColumnAlign::ByRightName => ai_core::table::ColumnAlign::ByRightName,
+        };
+    }
+    if let Some(a) = spec.row_align {
+        opts.row_align = match a {
+            ai_protocol::TableRowAlign::Unaligned => ai_core::table::RowAlign::Unaligned,
+            ai_protocol::TableRowAlign::Standard => ai_core::table::RowAlign::Standard,
+        };
+    }
+    if let Some(sk) = spec.skew_tolerance {
+        opts.skew_tolerance = sk;
+    }
+    if spec.case_unimportant.is_some() || spec.whitespace.is_some() || spec.numeric_tolerance.is_some() {
+        let mut imp = ai_core::table::TableImportance::default();
+        if let Some(c) = spec.case_unimportant {
+            imp.case_unimportant = c;
+        }
+        if let Some(w) = spec.whitespace {
+            imp.whitespace = match w {
+                ai_protocol::WhitespaceMode::Significant => ai_core::options::WhitespaceMode::Significant,
+                ai_protocol::WhitespaceMode::IgnoreAmount => ai_core::options::WhitespaceMode::IgnoreAmount,
+                ai_protocol::WhitespaceMode::IgnoreAll => ai_core::options::WhitespaceMode::IgnoreAll,
+            };
+        }
+        imp.numeric_tolerance = spec.numeric_tolerance;
+        opts.importance = imp;
+    }
+    opts
+}
+
+/// table/sections：diff 行清单分批窗口
+async fn table_sections(
+    params: Option<serde_json::Value>,
+    ctx: &HandlerCtx,
+) -> Result<Handled, RpcErrorObject> {
+    let params: ai_protocol::TableSectionsParams = parse_params(params)?;
+    let result = with_table_session(&ctx.sessions, &params.session_id, |data| {
+        let total = u32::try_from(data.model.rows.len()).unwrap_or(u32::MAX);
+        let start = params.offset.min(total) as usize;
+        let end = start.saturating_add(params.count as usize).min(data.model.rows.len());
+        let rows: Vec<ai_protocol::TableRowDto> = data.model.rows[start..end]
+            .iter()
+            .map(mapping::table_row_to_dto)
+            .collect();
+        let has_more = end < data.model.rows.len();
+        Ok(ai_protocol::TableSectionsResult {
+            session_id: params.session_id.clone(),
+            offset: params.offset,
+            total,
+            has_more,
+            rows,
+        })
+    })
+    .await?;
+    Ok(Handled::Value(serde_json::to_value(&result).expect("table/sections 结果可序列化")))
+}
+
+/// 取表格会话（可变访问；会话表锁内不做重活/不做 await）
+async fn with_table_session<T>(
+    sessions: &SessionMap,
+    id: &str,
+    f: impl FnOnce(&mut crate::server::TableSessionData) -> Result<T, RpcErrorObject>,
+) -> Result<T, RpcErrorObject> {
+    let mut sessions = sessions.lock().await;
+    let session = sessions.get_mut(id).ok_or_else(|| session_not_found(id))?;
+    match session {
+        Session::Table(data) => f(data),
+        _ => Err(bad_params(format!("会话不是表格会话: {id}"))),
+    }
+}
+
+/// hex/open：读两侧字节流 -> 分块哈希粗对齐 + 精对齐 -> 块模型 + 每字节状态图
+/// -> 存会话 -> 应答统计。十六进制行经 hex/bytes 分页取数。
+async fn hex_open(
+    params: Option<serde_json::Value>,
+    ctx: &HandlerCtx,
+) -> Result<Handled, RpcErrorObject> {
+    let params: ai_protocol::HexOpenParams = parse_params(params)?;
+    if params.session_id.is_empty() {
+        return Err(bad_params("sessionId 不能为空"));
+    }
+    let left_path = VfsPath::parse(&params.left).map_err(|e| mapping::vfs_error_to_rpc(&e))?;
+    let right_path = VfsPath::parse(&params.right).map_err(|e| mapping::vfs_error_to_rpc(&e))?;
+    let left = ctx.vfs.read_file_bytes(&left_path).await.map_err(|e| mapping::vfs_error_to_rpc(&e))?;
+    let right = ctx.vfs.read_file_bytes(&right_path).await.map_err(|e| mapping::vfs_error_to_rpc(&e))?;
+
+    let mut opts = ai_core::hex::HexOptions::default();
+    if let Some(spec) = &params.options {
+        if let Some(c) = spec.chunk_size {
+            opts.chunk_size = c.max(1) as usize;
+        }
+        if let Some(m) = spec.align_mode {
+            opts.align_mode = match m {
+                ai_protocol::HexAlignMode::Full => ai_core::hex::HexAlignMode::Full,
+                ai_protocol::HexAlignMode::Fast => ai_core::hex::HexAlignMode::Fast,
+                ai_protocol::HexAlignMode::None => ai_core::hex::HexAlignMode::None,
+            };
+        }
+    }
+    let model = ai_core::hex::diff_bytes(&left, &right, &opts);
+    let (status_left, status_right) = ai_core::hex::status_maps(&model);
+    let block_count = u32::try_from(model.blocks.len()).unwrap_or(u32::MAX);
+    let summary = ai_protocol::HexSummary {
+        same_bytes: model.summary.same_bytes,
+        changed_bytes: model.summary.changed_bytes,
+        inserted_bytes: model.summary.inserted_bytes,
+        deleted_bytes: model.summary.deleted_bytes,
+    };
+    let left_size = model.left_len;
+    let right_size = model.right_len;
+
+    {
+        let mut sessions = ctx.sessions.lock().await;
+        if sessions.contains_key(&params.session_id) {
+            return Err(RpcErrorObject {
+                code: codes::SESSION_EXISTS,
+                message: format!("会话已存在: {}", params.session_id),
+                data: Some(json!({ "sessionId": params.session_id })),
+            });
+        }
+        sessions.insert(
+            params.session_id.clone(),
+            Session::Hex(crate::server::HexSessionData {
+                status_left,
+                status_right,
+                options: opts,
+                model,
+                left,
+                right,
+            }),
+        );
+    }
+
+    let result = ai_protocol::HexOpenResult {
+        session_id: params.session_id,
+        left_size,
+        right_size,
+        block_count,
+        summary,
+    };
+    Ok(Handled::Value(serde_json::to_value(&result).expect("hex/open 结果可序列化")))
+}
+
+/// 取十六进制会话（可变访问）
+async fn with_hex_session<T>(
+    sessions: &SessionMap,
+    id: &str,
+    f: impl FnOnce(&mut crate::server::HexSessionData) -> Result<T, RpcErrorObject>,
+) -> Result<T, RpcErrorObject> {
+    let mut sessions = sessions.lock().await;
+    let session = sessions.get_mut(id).ok_or_else(|| session_not_found(id))?;
+    match session {
+        Session::Hex(data) => f(data),
+        _ => Err(bad_params(format!("会话不是十六进制会话: {id}"))),
+    }
+}
+
+/// hex/bytes：十六进制行分页（16 字节/行；offset 对齐行首；含逐字节状态串）
+async fn hex_bytes(
+    params: Option<serde_json::Value>,
+    ctx: &HandlerCtx,
+) -> Result<Handled, RpcErrorObject> {
+    let params: ai_protocol::HexBytesParams = parse_params(params)?;
+    const PAGE_BYTES: usize = 4096; // 单页上限 256 行
+    const ROW: u64 = ai_core::hex::HEX_LINE_BYTES as u64;
+    let result = with_hex_session(&ctx.sessions, &params.session_id, |data| {
+        let (bytes, status): (&Vec<u8>, &Vec<ai_core::hex::HexByteStatus>) = match params.side {
+            ai_protocol::DiffSide::Left => (&data.left, &data.status_left),
+            ai_protocol::DiffSide::Right => (&data.right, &data.status_right),
+        };
+        let size = bytes.len() as u64;
+        // offset 向下对齐行首；越界钳制到表尾行
+        let row_index = (params.offset / ROW).min(size.div_ceil(ROW).saturating_sub(1));
+        let start = row_index * ROW;
+        let max_len = (size - start) as usize;
+        let want = (params.length.max(1) as usize).min(PAGE_BYTES).min(max_len);
+        let want = want.div_ceil(ai_core::hex::HEX_LINE_BYTES) * ai_core::hex::HEX_LINE_BYTES;
+        let end = (start as usize + want).min(bytes.len());
+        let lines: Vec<ai_protocol::HexLineDto> = ai_core::hex::render_hex_lines(bytes, row_index, (end - start as usize).div_ceil(ai_core::hex::HEX_LINE_BYTES))
+            .into_iter()
+            .map(|l| {
+                let b0 = l.addr as usize;
+                let b1 = (b0 + ai_core::hex::HEX_LINE_BYTES).min(bytes.len());
+                let status: String = bytes[b0..b1]
+                    .iter()
+                    .zip(&status[b0..b1])
+                    .map(|(_, s)| match s {
+                        ai_core::hex::HexByteStatus::Same => '=',
+                        ai_core::hex::HexByteStatus::Changed => 'x',
+                        ai_core::hex::HexByteStatus::Inserted => '+',
+                        ai_core::hex::HexByteStatus::Deleted => '-',
+                    })
+                    .collect();
+                ai_protocol::HexLineDto { addr: l.addr, hex: l.hex, ascii: l.ascii, status }
+            })
+            .collect();
+        let done = end >= bytes.len();
+        Ok(ai_protocol::HexBytesResult {
+            session_id: params.session_id.clone(),
+            side: params.side,
+            offset: start,
+            lines,
+            done,
+        })
+    })
+    .await?;
+    Ok(Handled::Value(serde_json::to_value(&result).expect("hex/bytes 结果可序列化")))
+}
+
+// ---------------------------------------------------------------------------
+// P9：text/patch/apply（补丁应用；无会话一次性）
+// ---------------------------------------------------------------------------
+
+/// text/patch/apply：输入补丁文本 + 目标根目录 -> 解析 + 应用 -> 结果报告。
+/// dry_run 只校验；二进制文件跳过并报告；模糊/CRLF 语义见 ai-core patch 模块。
+async fn patch_apply(
+    params: Option<serde_json::Value>,
+    ctx: &HandlerCtx,
+) -> Result<Handled, RpcErrorObject> {
+    let params: ai_protocol::PatchApplyParams = parse_params(params)?;
+    let _ = &ctx;
+    if params.root.is_empty() {
+        return Err(bad_params("root 不能为空（补丁相对路径的目标根目录）"));
+    }
+    let opts = ai_core::patch::PatchApplyOptions {
+        dry_run: params.dry_run.unwrap_or(false),
+        fuzz: params.fuzz.unwrap_or(3),
+        crlf_tolerant: params.crlf_tolerant.unwrap_or(true),
+        ignore_whitespace: false,
+    };
+    let report = ai_core::patch::apply_patch(
+        &ai_core::patch::StdFs,
+        std::path::Path::new(&params.root),
+        &params.patch,
+        &opts,
+    )
+    .map_err(|e| ai_protocol::error_object(codes::INVALID_PARAMS, format!("补丁解析失败: {e}")))?;
+    let result = mapping::patch_report_to_dto(&report);
+    Ok(Handled::Value(serde_json::to_value(&result).expect("text/patch/apply 结果可序列化")))
+}
+
+// ---------------------------------------------------------------------------
+// P6 提案合入：dir/execute（文件操作执行 + rescan delta）
+// ---------------------------------------------------------------------------
+
+/// dir/execute：执行文件操作批次（dryRun 只校验）；
+/// 非 dry_run 且会话为目录会话时执行后 rescan 并推送 dir/delta（P6 提案语义）。
+async fn dir_execute(
+    params: Option<serde_json::Value>,
+    ctx: &HandlerCtx,
+    cancel: &ai_dir::CancelFlag,
+) -> Result<Handled, RpcErrorObject> {
+    let params: ai_protocol::DirExecuteParams = parse_params(params)?;
+    let session_id = params.session_id.clone();
+    let dry_run = params.dry_run.unwrap_or(false);
+
+    // 会话 + 根路径（dir/open 打开时记录）
+    let (roots, model, scan) = {
+        let sessions = ctx.sessions.lock().await;
+        let session = sessions.get(&session_id).ok_or_else(|| session_not_found(&session_id))?;
+        match session {
+            Session::Dir(data) => (
+                data.roots.clone().ok_or_else(|| bad_params("会话缺少根路径（非目录打开路径）"))?,
+                data.model.clone(),
+                data.scan.clone(),
+            ),
+            _ => return Err(bad_params(format!("会话不是目录会话: {session_id}"))),
+        }
+    };
+
+    // DTO -> ai-dir FileOp（同构映射）
+    let mut ops = Vec::with_capacity(params.ops.len());
+    for (i, op) in params.ops.iter().enumerate() {
+        match mapping::dir_execute_op_from_dto(op) {
+            Ok(f) => ops.push(f),
+            Err(msg) => {
+                return Err(bad_params(format!("ops[{i}]: {msg}")));
+            }
+        }
+    }
+
+    let report = ai_dir::execute::execute_ops(
+        ctx.vfs.as_ref(),
+        &roots,
+        &ops,
+        &ai_dir::ExecuteOptions { dry_run },
+        None,
+        cancel,
+    )
+    .await;
+
+    let result = ai_protocol::DirExecuteResult {
+        session_id: session_id.clone(),
+        total: u32::try_from(report.total).unwrap_or(u32::MAX),
+        succeeded: report
+            .succeeded
+            .iter()
+            .map(|r| mapping::dir_execute_result_to_dto(r, ai_protocol::DirExecuteOpStatus::Succeeded))
+            .collect(),
+        failed: report
+            .failed
+            .iter()
+            .map(|r| mapping::dir_execute_result_to_dto(r, ai_protocol::DirExecuteOpStatus::Failed))
+            .collect(),
+        skipped: report
+            .skipped
+            .iter()
+            .map(|r| mapping::dir_execute_result_to_dto(r, ai_protocol::DirExecuteOpStatus::Skipped))
+            .collect(),
+        dry_run: report.dry_run,
+        cancelled: report.cancelled,
+    };
+
+    // 非 dry_run：rescan 推 delta（模型会话走 update_filters(None,None) 触发重扫；
+    // P0 同步会话重新全量扫描替换会话数据并推完整 upsert 批次）
+    let mut notifications = Vec::new();
+    if !dry_run {
+        if let Some(model) = &model {
+            model.update_filters(None, None).await.map_err(|e| mapping::dir_scan_error_to_rpc(&e))?;
+            if let Some(d) = model.take_delta().await {
+                notifications = delta_notifications(&session_id, &d, ctx.max_batch_rows);
+            }
+        } else if let Some(old_scan) = &scan {
+            // P0 同步路径：以默认判据重扫（旧路径无会话判据记录；delta 行 id 稳定，
+            // UI 按 upsert/removals 幂等追平）
+            let rescanned = ai_dir::scan(
+                ctx.vfs.as_ref(),
+                &roots.0,
+                &roots.1,
+                &ai_dir::DirScanOptions::default(),
+                &ai_dir::ByNameAligner,
+                cancel,
+            )
+            .await
+            .map_err(|e| mapping::dir_scan_error_to_rpc(&e))?;
+            let rows = ai_dir::rows_from_arena(&rescanned.arena);
+            let batches = batch::batch_rows(rows, ctx.max_batch_rows);
+            for (i, b) in batches.into_iter().enumerate() {
+                notifications.push(ai_protocol::RpcServerNotification::new(
+                    ai_protocol::method::DIR_DELTA,
+                    batch::make_delta(&session_id, i as u64 + 1, &b, rescanned.stats),
+                ));
+            }
+            let mut sessions = ctx.sessions.lock().await;
+            if let Some(Session::Dir(data)) = sessions.get_mut(&session_id) {
+                data.scan = Some(rescanned);
+            }
+            let _ = old_scan;
+        }
+    }
+
+    if notifications.is_empty() {
+        Ok(Handled::Value(serde_json::to_value(&result).expect("dir/execute 结果可序列化")))
+    } else {
+        Ok(Handled::WithNotifications {
+            response: serde_json::to_value(&result).expect("dir/execute 结果可序列化"),
+            notifications,
+        })
+    }
+}
+
+/// 一份 delta 数据切批为通知（removals 只随首批；同 push_delta 的返回版）
+fn delta_notifications(
+    session_id: &str,
+    d: &ai_dir::DirDeltaData,
+    max_batch: usize,
+) -> Vec<ai_protocol::RpcServerNotification> {
+    let batches = batch::batch_rows(d.upserts.clone(), max_batch);
+    batches
+        .into_iter()
+        .enumerate()
+        .map(|(i, b)| {
+            ai_protocol::RpcServerNotification::new(
+                ai_protocol::method::DIR_DELTA,
+                batch::make_delta_with_progress(
+                    session_id,
+                    d.rev,
+                    &b,
+                    d.stats,
+                    Some(d.progress),
+                    if i == 0 { d.removals.clone() } else { Vec::new() },
+                ),
+            )
+        })
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -1974,5 +2454,490 @@ mod p7_tests {
         let v = match r { Handled::Value(v) => v, _ => panic!("形态") };
         assert_eq!(v["text"], "h\nL1\nb\nL2\nt\nR3\n");
         assert_eq!(v["hasConflicts"], true, "plain 模式未决冲突仍列入清单");
+    }
+}
+
+#[cfg(test)]
+mod p9_tests {
+    use super::*;
+    use crate::server::Outbound;
+    use serde_json::json;
+
+    fn ctx() -> HandlerCtx {
+        HandlerCtx::new(512)
+    }
+
+    fn chan() -> (
+        tokio::sync::mpsc::UnboundedSender<Outbound>,
+        tokio::sync::mpsc::UnboundedReceiver<Outbound>,
+    ) {
+        tokio::sync::mpsc::unbounded_channel()
+    }
+
+    /// 表格语料：键列 + 两处单元格差异 + 右侧新增行
+    async fn open_table(c: &HandlerCtx, id: &str) {
+        let dir = tempfile::tempdir().unwrap();
+        let l = dir.path().join("l.csv");
+        let r = dir.path().join("r.csv");
+        std::fs::write(&l, "id,name,qty\n1,Alpha,10\n2,Beta,20\n3,Gamma,30\n").unwrap();
+        std::fs::write(&r, "id,name,qty\n1,Alpha,10\n2,BETA,20\n3,Gamma,35\n4,Delta,40\n").unwrap();
+        let (tx, _rx) = chan();
+        let _ = dispatch(
+            "table/open",
+            Some(json!({
+                "sessionId": id, "left": l.to_string_lossy(), "right": r.to_string_lossy(),
+                "options": {"keyColumns": [0]}
+            })),
+            c, &ai_dir::CancelFlag::new(), tx,
+        )
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn table_open_sections_and_capability() {
+        let c = ctx();
+        let (tx, _rx) = chan();
+        let init = dispatch("initialize", Some(json!({"clientInfo": {"name": "t"}, "protocolVersion": "1.0"})), &c, &ai_dir::CancelFlag::new(), tx).await.unwrap();
+        let v = match init { Handled::Value(v) => v, _ => panic!("形态") };
+        assert_eq!(v["capabilities"]["tableCompare"], true, "P9 能力位 tableCompare");
+        assert_eq!(v["capabilities"]["hexCompare"], true);
+        assert_eq!(v["capabilities"]["patchApply"], true);
+        assert_eq!(v["capabilities"]["dirExecute"], true);
+
+        open_table(&c, "tb1").await;
+        let got = dispatch(
+            "table/sections",
+            Some(json!({"sessionId": "tb1", "offset": 0, "count": 10})),
+            &c, &ai_dir::CancelFlag::new(), chan().0,
+        )
+        .await
+        .unwrap();
+        let v = match got { Handled::Value(v) => v, _ => panic!("形态") };
+        assert_eq!(v["total"], 4, "same + changed×2 + added: {v}");
+        let rows = v["rows"].as_array().unwrap();
+        assert_eq!(rows[0]["kind"], "same");
+        assert_eq!(rows[1]["kind"], "changed");
+        assert_eq!(rows[1]["important"], true, "BETA 与 Beta 大小写默认重要");
+        assert_eq!(rows[1]["cells"][1]["status"], "importantDiff");
+        assert_eq!(rows[3]["kind"], "added");
+        assert_eq!(rows[3]["left"], serde_json::Value::Null, "Added 行省略 left");
+        // 会话不存在 -> 410
+        let e = dispatch(
+            "table/sections",
+            Some(json!({"sessionId": "ghost", "offset": 0, "count": 1})),
+            &c, &ai_dir::CancelFlag::new(), chan().0,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(e.code, codes::SESSION_NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn table_importance_option_marks_unimportant() {
+        let c = ctx();
+        let dir = tempfile::tempdir().unwrap();
+        let l = dir.path().join("l.csv");
+        let r = dir.path().join("r.csv");
+        std::fs::write(&l, "id,note\n1,Abc\n").unwrap();
+        std::fs::write(&r, "id,note\n1,abc \n").unwrap();
+        let (tx, _rx) = chan();
+        let _ = dispatch(
+            "table/open",
+            Some(json!({
+                "sessionId": "tb2", "left": l.to_string_lossy(), "right": r.to_string_lossy(),
+                "options": {"keyColumns": [0], "caseUnimportant": true, "whitespace": "ignoreAll"}
+            })),
+            &c, &ai_dir::CancelFlag::new(), tx,
+        )
+        .await
+        .unwrap();
+        let got = dispatch(
+            "table/sections",
+            Some(json!({"sessionId": "tb2", "offset": 0, "count": 10})),
+            &c, &ai_dir::CancelFlag::new(), chan().0,
+        )
+        .await
+        .unwrap();
+        let v = match got { Handled::Value(v) => v, _ => panic!("形态") };
+        let rows = v["rows"].as_array().unwrap();
+        assert_eq!(rows[0]["kind"], "changed");
+        assert_eq!(rows[0]["important"], false, "仅不重要差异 -> 蓝点行: {v}");
+        assert_eq!(rows[0]["cells"][1]["status"], "unimportantDiff");
+    }
+
+    /// hex 语料：前 8 字节同、后 4 字节变化、右侧多 2 字节
+    async fn open_hex(c: &HandlerCtx, id: &str) -> (tempfile::TempDir, String, String) {
+        let dir = tempfile::tempdir().unwrap();
+        let l = dir.path().join("l.bin");
+        let r = dir.path().join("r.bin");
+        std::fs::write(&l, [0x00, 0x01, 0x02, 0x03, 0xAA, 0xBB, 0xCC, 0xDD]).unwrap();
+        std::fs::write(&r, [0x00, 0x01, 0x02, 0x03, 0xAA, 0xBB, 0xEE, 0xFF, 0x11, 0x22]).unwrap();
+        let (tx, _rx) = chan();
+        let _ = dispatch(
+            "hex/open",
+            Some(json!({"sessionId": id, "left": l.to_string_lossy(), "right": r.to_string_lossy()})),
+            c, &ai_dir::CancelFlag::new(), tx,
+        )
+        .await
+        .unwrap();
+        (dir, l.to_string_lossy().into_owned(), r.to_string_lossy().into_owned())
+    }
+
+    #[tokio::test]
+    async fn hex_open_and_bytes_paging() {
+        let c = ctx();
+        let (_d, _l, _r) = open_hex(&c, "h1").await;
+        let got = dispatch(
+            "hex/bytes",
+            Some(json!({"sessionId": "h1", "side": "left", "offset": 0, "length": 16})),
+            &c, &ai_dir::CancelFlag::new(), chan().0,
+        )
+        .await
+        .unwrap();
+        let v = match got { Handled::Value(v) => v, _ => panic!("形态") };
+        let lines = v["lines"].as_array().unwrap();
+        assert_eq!(lines.len(), 1, "8 字节 -> 1 行: {v}");
+        assert_eq!(lines[0]["addr"], 0);
+        assert_eq!(lines[0]["hex"], "00 01 02 03 aa bb cc dd");
+        assert_eq!(lines[0]["ascii"], "........", "全部字节均非可打印 ASCII");
+        // Full 模式字节级 Myers 最优对齐：CC↔EE 变化（x），DD 删除（-），
+        // FF/11/22 插入（+）——D=4 < 逐字节替换 D=6
+        assert_eq!(lines[0]["status"], "======x-", "左 8 字节：6 同 + 1 变化 + 1 删除");
+        // 右侧：6 同 + 3 插入 + 1 变化（Myers 最优对齐的另一等价解）
+        let got = dispatch(
+            "hex/bytes",
+            Some(json!({"sessionId": "h1", "side": "right", "offset": 0, "length": 16})),
+            &c, &ai_dir::CancelFlag::new(), chan().0,
+        )
+        .await
+        .unwrap();
+        let v = match got { Handled::Value(v) => v, _ => panic!("形态") };
+        let lines = v["lines"].as_array().unwrap();
+        assert_eq!(lines[0]["status"], "======+++x", "{v}");
+        assert_eq!(lines[0]["hex"], "00 01 02 03 aa bb ee ff 11 22");
+        // done 标记
+        assert_eq!(v["done"], true);
+        // 越界 offset 钳制
+        let got = dispatch(
+            "hex/bytes",
+            Some(json!({"sessionId": "h1", "side": "left", "offset": 999, "length": 16})),
+            &c, &ai_dir::CancelFlag::new(), chan().0,
+        )
+        .await
+        .unwrap();
+        let v = match got { Handled::Value(v) => v, _ => panic!("形态") };
+        assert_eq!(v["lines"].as_array().unwrap().len(), 1, "钳制到最后行");
+        // 会话不存在 -> 410
+        let e = dispatch(
+            "hex/bytes",
+            Some(json!({"sessionId": "ghost", "side": "left", "offset": 0, "length": 16})),
+            &c, &ai_dir::CancelFlag::new(), chan().0,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(e.code, codes::SESSION_NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn patch_apply_rpc_roundtrip() {
+        let c = ctx();
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("work");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("t.txt"), "1\n2\n3\n").unwrap();
+        let patch = "--- a/t.txt\n+++ b/t.txt\n@@ -1,3 +1,3 @@\n 1\n-2\n+TWO\n 3\n";
+        let (tx, _rx) = chan();
+        // dry run：不落盘
+        let got = dispatch(
+            "text/patch/apply",
+            Some(json!({"patch": patch, "root": root.to_string_lossy(), "dryRun": true})),
+            &c, &ai_dir::CancelFlag::new(), tx,
+        )
+        .await
+        .unwrap();
+        let v = match got { Handled::Value(v) => v, _ => panic!("形态") };
+        assert_eq!(v["dryRun"], true);
+        assert_eq!(v["applied"], 1);
+        assert_eq!(v["allApplied"], true);
+        assert_eq!(std::fs::read_to_string(root.join("t.txt")).unwrap(), "1\n2\n3\n", "dry run 未写盘");
+        // 实际应用
+        let (tx, _rx) = chan();
+        let got = dispatch(
+            "text/patch/apply",
+            Some(json!({"patch": patch, "root": root.to_string_lossy()})),
+            &c, &ai_dir::CancelFlag::new(), tx,
+        )
+        .await
+        .unwrap();
+        let v = match got { Handled::Value(v) => v, _ => panic!("形态") };
+        assert_eq!(v["applied"], 1);
+        assert_eq!(std::fs::read_to_string(root.join("t.txt")).unwrap(), "1\nTWO\n3\n");
+        // 重放：已应用 -> failed（git apply 同语义）
+        let (tx, _rx) = chan();
+        let got = dispatch(
+            "text/patch/apply",
+            Some(json!({"patch": patch, "root": root.to_string_lossy()})),
+            &c, &ai_dir::CancelFlag::new(), tx,
+        )
+        .await
+        .unwrap();
+        let v = match got { Handled::Value(v) => v, _ => panic!("形态") };
+        assert_eq!(v["failed"], 1);
+        assert_eq!(v["results"][0]["status"], "alreadyApplied");
+    }
+
+    #[tokio::test]
+    async fn patch_apply_binary_skip_reported() {
+        let c = ctx();
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::write(root.join("img.png"), b"\x89PNG\r\n").unwrap();
+        let patch = "diff --git a/img.png b/img.png\nindex aaa..bbb 100644\nBinary files a/img.png and b/img.png differ\n";
+        let (tx, _rx) = chan();
+        let got = dispatch(
+            "text/patch/apply",
+            Some(json!({"patch": patch, "root": root.to_string_lossy()})),
+            &c, &ai_dir::CancelFlag::new(), tx,
+        )
+        .await
+        .unwrap();
+        let v = match got { Handled::Value(v) => v, _ => panic!("形态") };
+        assert_eq!(v["results"][0]["status"], "skippedBinary");
+        assert_eq!(v["failed"], 0, "二进制跳过不算失败");
+    }
+
+    /// 目录树：dryRun + 执行 + rescan delta（P6 提案端到端）
+    async fn make_dir_session(c: &HandlerCtx, id: &str) -> (tempfile::TempDir, String, String) {
+        let dir = tempfile::tempdir().unwrap();
+        let l = dir.path().join("L");
+        let r = dir.path().join("R");
+        std::fs::create_dir_all(&l).unwrap();
+        std::fs::create_dir_all(&r).unwrap();
+        std::fs::write(l.join("same.txt"), b"1").unwrap();
+        std::fs::write(r.join("same.txt"), b"1").unwrap();
+        std::fs::write(l.join("lonly.txt"), b"L").unwrap();
+        std::fs::write(r.join("ronly.txt"), b"R").unwrap();
+        std::fs::write(l.join("stale.txt"), b"old").unwrap();
+        std::fs::write(r.join("stale.txt"), b"old").unwrap();
+        let (tx, _rx) = chan();
+        let _ = dispatch(
+            "dir/open",
+            Some(json!({
+                "sessionId": id, "left": l.to_string_lossy(), "right": r.to_string_lossy(),
+                "depth": 1,
+                "criteria": {"mtimeToleranceSec": 0, "contentCompare": "always"},
+                "lazyScan": true
+            })),
+            c, &ai_dir::CancelFlag::new(), tx,
+        )
+        .await
+        .unwrap();
+        (dir, l.to_string_lossy().into_owned(), r.to_string_lossy().into_owned())
+    }
+
+    #[tokio::test]
+    async fn dir_execute_dry_run_then_execute_with_rescan_delta() {
+        let c = ctx();
+        let (_d, _left, right) = make_dir_session(&c, "d9").await;
+
+        // 1. dryRun：复制 lonly.txt + 删除 ronly.txt + 删除 stale.txt —— 只校验不落盘
+        let (tx, mut rx) = chan();
+        let got = dispatch(
+            "dir/execute",
+            Some(json!({
+                "sessionId": "d9",
+                "ops": [
+                    {"kind": "copy", "path": "lonly.txt", "side": "left"},
+                    {"kind": "delete", "path": "ronly.txt", "side": "right"},
+                    {"kind": "delete", "path": "stale.txt", "side": "both"}
+                ],
+                "dryRun": true
+            })),
+            &c, &ai_dir::CancelFlag::new(), tx,
+        )
+        .await;
+        // side:"both" 非法（DiffSide 只有 left/right）-> 参数错误
+        assert!(got.is_err(), "非法 side 应拒绝");
+        let _ = rx.try_recv();
+
+        // 2. dryRun：合法操作
+        let (tx, _rx) = chan();
+        let got = dispatch(
+            "dir/execute",
+            Some(json!({
+                "sessionId": "d9",
+                "ops": [
+                    {"kind": "copy", "path": "lonly.txt", "side": "left"},
+                    {"kind": "delete", "path": "ronly.txt", "side": "right"},
+                    {"kind": "touch", "path": "stale.txt", "side": "left", "mtimeMs": 0}
+                ],
+                "dryRun": true
+            })),
+            &c, &ai_dir::CancelFlag::new(), tx,
+        )
+        .await
+        .unwrap();
+        let v = match got { Handled::Value(v) => v, _ => panic!("形态") };
+        assert_eq!(v["dryRun"], true);
+        assert_eq!(v["total"], 3);
+        assert_eq!(v["succeeded"].as_array().unwrap().len(), 3);
+        assert_eq!(v["failed"].as_array().unwrap().len(), 0);
+        // 文件系统未变
+        assert!(!std::path::Path::new(&right).join("lonly.txt").exists(), "dry run 不落盘");
+        assert!(std::path::Path::new(&right).join("ronly.txt").exists());
+
+        // 3. 实际执行：应答 + dir/delta 通知（rescan 推送）
+        let (tx, mut rx) = chan();
+        let got = dispatch(
+            "dir/execute",
+            Some(json!({
+                "sessionId": "d9",
+                "ops": [
+                    {"kind": "copy", "path": "lonly.txt", "side": "left"},
+                    {"kind": "delete", "path": "ronly.txt", "side": "right"}
+                ],
+                "dryRun": false
+            })),
+            &c, &ai_dir::CancelFlag::new(), tx,
+        )
+        .await
+        .unwrap();
+        let (response, notifications) = match got {
+            Handled::WithNotifications { response, notifications } => (response, notifications),
+            _ => panic!("执行后应有 rescan delta 通知"),
+        };
+        assert_eq!(response["succeeded"].as_array().unwrap().len(), 2);
+        assert_eq!(response["dryRun"], false);
+        // 落盘验证
+        assert!(std::path::Path::new(&right).join("lonly.txt").exists(), "复制已落盘");
+        assert!(!std::path::Path::new(&right).join("ronly.txt").exists(), "删除已落盘");
+        // delta 通知：rescan 全量重建（removals + upserts）
+        assert!(!notifications.is_empty(), "应推送 dir/delta");
+        let mut saw_removals = false;
+        let mut saw_upsert_lonly = false;
+        for n in &notifications {
+            let payload = &n.params;
+            if !payload["removals"].as_array().unwrap_or(&Vec::new()).is_empty() {
+                saw_removals = true;
+            }
+            for row in payload["upserts"].as_array().unwrap_or(&Vec::new()) {
+                if row["id"] == "lonly.txt" && row["status"] == "same" {
+                    saw_upsert_lonly = true;
+                }
+            }
+        }
+        assert!(saw_removals, "rescan delta 含旧行 removals");
+        assert!(saw_upsert_lonly, "rescan delta 含复制后的 same 行: {notifications:?}");
+        // 通知已按序入队（本 handler 走 WithNotifications，server 会在应答后发送）
+        while let Ok(_msg) = rx.try_recv() {}
+
+        // 4. rename + mkdir + 部分失败：ghost 文件失败不中断其余操作
+        let (tx, _rx) = chan();
+        let got = dispatch(
+            "dir/execute",
+            Some(json!({
+                "sessionId": "d9",
+                "ops": [
+                    {"kind": "mkdir", "path": "newdir", "side": "right"},
+                    {"kind": "copy", "path": "ghost.txt", "side": "left"},
+                    {"kind": "rename", "path": "lonly.txt", "side": "right", "newName": "renamed.txt"}
+                ],
+                "dryRun": false
+            })),
+            &c, &ai_dir::CancelFlag::new(), tx,
+        )
+        .await
+        .unwrap();
+        let (v, _notes) = match got {
+            Handled::Value(v) => (v, Vec::new()),
+            Handled::WithNotifications { response, notifications } => (response, notifications),
+        };
+        assert_eq!(v["failed"].as_array().unwrap().len(), 1, "ghost 失败: {v}");
+        assert_eq!(v["succeeded"].as_array().unwrap().len(), 2, "部分成功语义");
+        assert!(std::path::Path::new(&right).join("newdir").exists());
+        assert!(std::path::Path::new(&right).join("renamed.txt").exists());
+
+        // 5. rename 缺 newName -> 参数错误
+        let (tx, _rx) = chan();
+        let err = dispatch(
+            "dir/execute",
+            Some(json!({
+                "sessionId": "d9",
+                "ops": [{"kind": "rename", "path": "lonly.txt", "side": "right"}],
+                "dryRun": false
+            })),
+            &c, &ai_dir::CancelFlag::new(), tx,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.code, codes::INVALID_PARAMS);
+
+        // 6. 非目录会话 -> 参数错误
+        let (tx, _rx) = chan();
+        let err = dispatch(
+            "dir/execute",
+            Some(json!({"sessionId": "no-such-session", "ops": [], "dryRun": true})),
+            &c, &ai_dir::CancelFlag::new(), tx,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.code, codes::SESSION_NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn dir_execute_sync_session_rescans_via_scan() {
+        // P0 同步路径会话（无模型）：执行后走全量重扫推 delta
+        let c = ctx();
+        let dir = tempfile::tempdir().unwrap();
+        let l = dir.path().join("L");
+        let r = dir.path().join("R");
+        std::fs::create_dir_all(&l).unwrap();
+        std::fs::create_dir_all(&r).unwrap();
+        std::fs::write(l.join("a.txt"), b"1").unwrap();
+        std::fs::write(r.join("a.txt"), b"1").unwrap();
+        let (tx, _rx) = chan();
+        let _ = dispatch(
+            "dir/open",
+            Some(json!({
+                "sessionId": "d10", "left": l.to_string_lossy(), "right": r.to_string_lossy(),
+                "depth": 1,
+                "criteria": {"mtimeToleranceSec": 0, "contentCompare": "always"}
+            })),
+            &c, &ai_dir::CancelFlag::new(), tx,
+        )
+        .await
+        .unwrap();
+        std::fs::write(l.join("b.txt"), b"2").unwrap();
+        let (tx, _rx) = chan();
+        let got = dispatch(
+            "dir/execute",
+            Some(json!({
+                "sessionId": "d10",
+                "ops": [{"kind": "mkdir", "path": "sub", "side": "left"}],
+                "dryRun": false
+            })),
+            &c, &ai_dir::CancelFlag::new(), tx,
+        )
+        .await
+        .unwrap();
+        let (response, notifications) = match got {
+            Handled::WithNotifications { response, notifications } => (response, notifications),
+            _ => panic!("同步会话执行后应推 rescan delta"),
+        };
+        assert_eq!(response["succeeded"].as_array().unwrap().len(), 1);
+        let mut saw_b = false;
+        let mut saw_sub = false;
+        for n in &notifications {
+            for row in n.params["upserts"].as_array().unwrap_or(&Vec::new()) {
+                if row["id"] == "b.txt" {
+                    saw_b = true;
+                }
+                if row["id"] == "sub" {
+                    saw_sub = true;
+                }
+            }
+        }
+        assert!(saw_b && saw_sub, "重扫 delta 应含新文件与新目录");
     }
 }

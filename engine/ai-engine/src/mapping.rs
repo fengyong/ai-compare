@@ -396,6 +396,198 @@ fn chunk_output_lines(
     }
 }
 
+// ---------------------------------------------------------------------------
+// P9：table/hex/patch/dir-execute DTO 映射
+// ---------------------------------------------------------------------------
+
+/// ai-core 比较列 -> 协议 TableColumnInfo
+pub fn table_column_to_dto(c: &ai_core::table::ComparisonColumn) -> ai_protocol::TableColumnInfo {
+    ai_protocol::TableColumnInfo {
+        name: c.name.clone(),
+        ty: match c.ty {
+            ai_core::table::ColumnType::Text => ai_protocol::TableColumnType::Text,
+            ai_core::table::ColumnType::Number => ai_protocol::TableColumnType::Number,
+            ai_core::table::ColumnType::Date => ai_protocol::TableColumnType::Date,
+        },
+        left: c.left.map(|i| i as u32),
+        right: c.right.map(|i| i as u32),
+    }
+}
+
+/// ai-core 统计 -> 协议 TableSummary
+pub fn table_summary_to_dto(s: &ai_core::table::TableDiffSummary) -> ai_protocol::TableSummary {
+    ai_protocol::TableSummary {
+        same_rows: s.same_rows,
+        changed_rows: s.changed_rows,
+        added_rows: s.added_rows,
+        removed_rows: s.removed_rows,
+        unimportant_rows: s.unimportant_rows,
+    }
+}
+
+/// ai-core diff 行 -> 协议 TableRowDto
+pub fn table_row_to_dto(r: &ai_core::table::TableDiffRow) -> ai_protocol::TableRowDto {
+    ai_protocol::TableRowDto {
+        kind: match r.kind {
+            ai_core::table::TableRowKind::Same => ai_protocol::TableRowKind::Same,
+            ai_core::table::TableRowKind::Changed => ai_protocol::TableRowKind::Changed,
+            ai_core::table::TableRowKind::Added => ai_protocol::TableRowKind::Added,
+            ai_core::table::TableRowKind::Removed => ai_protocol::TableRowKind::Removed,
+        },
+        left: r.left,
+        right: r.right,
+        important: r.important,
+        cells: r
+            .cells
+            .iter()
+            .map(|c| ai_protocol::TableCellDto {
+                left: c.left.clone(),
+                right: c.right.clone(),
+                status: match c.status {
+                    ai_core::table::CellDiffStatus::Same => ai_protocol::TableCellStatus::Same,
+                    ai_core::table::CellDiffStatus::UnimportantDiff => ai_protocol::TableCellStatus::UnimportantDiff,
+                    ai_core::table::CellDiffStatus::ImportantDiff => ai_protocol::TableCellStatus::ImportantDiff,
+                    ai_core::table::CellDiffStatus::LeftOnly => ai_protocol::TableCellStatus::LeftOnly,
+                    ai_core::table::CellDiffStatus::RightOnly => ai_protocol::TableCellStatus::RightOnly,
+                },
+            })
+            .collect(),
+    }
+}
+
+/// ai-core 补丁报告 -> 协议 PatchApplyResult
+pub fn patch_report_to_dto(r: &ai_core::patch::PatchApplyReport) -> ai_protocol::PatchApplyResult {
+    let results: Vec<ai_protocol::PatchFileResultDto> = r
+        .results
+        .iter()
+        .map(|f| ai_protocol::PatchFileResultDto {
+            path: f.path.clone(),
+            status: match f.status {
+                ai_core::patch::FileApplyStatus::Applied => ai_protocol::PatchFileStatus::Applied,
+                ai_core::patch::FileApplyStatus::AlreadyApplied => ai_protocol::PatchFileStatus::AlreadyApplied,
+                ai_core::patch::FileApplyStatus::SkippedBinary => ai_protocol::PatchFileStatus::SkippedBinary,
+                ai_core::patch::FileApplyStatus::NoOp => ai_protocol::PatchFileStatus::NoOp,
+                ai_core::patch::FileApplyStatus::Failed => ai_protocol::PatchFileStatus::Failed,
+            },
+            fuzz_used: f.fuzz_used,
+            offset_applied: f.offset_applied,
+            detail: f.detail.clone(),
+        })
+        .collect();
+    let applied = r.results.iter().filter(|f| matches!(f.status, ai_core::patch::FileApplyStatus::Applied)).count();
+    let failed = r.results.iter().filter(|f| matches!(f.status, ai_core::patch::FileApplyStatus::Failed | ai_core::patch::FileApplyStatus::AlreadyApplied)).count();
+    ai_protocol::PatchApplyResult {
+        total: u32::try_from(r.total).unwrap_or(u32::MAX),
+        applied: u32::try_from(applied).unwrap_or(u32::MAX),
+        failed: u32::try_from(failed).unwrap_or(u32::MAX),
+        dry_run: r.dry_run,
+        all_applied: r.all_applied(),
+        results,
+    }
+}
+
+/// 协议 DirExecuteOp -> ai-dir FileOp（同构映射；copy/move 缺省目标 = 对侧）
+pub fn dir_execute_op_from_dto(op: &ai_protocol::DirExecuteOp) -> Result<ai_dir::FileOp, String> {
+    use ai_dir::execute::Side;
+    let side_of = |s: ai_protocol::DiffSide| match s {
+        ai_protocol::DiffSide::Left => Side::Left,
+        ai_protocol::DiffSide::Right => Side::Right,
+    };
+    let side = side_of(op.side);
+    let opposite = match side {
+        Side::Left => Side::Right,
+        Side::Right => Side::Left,
+    };
+    let target = op.target_side.map(side_of).unwrap_or(opposite);
+    match op.kind {
+        ai_protocol::DirExecuteOpKind::Copy => Ok(ai_dir::FileOp::Copy { path: op.path.clone(), from: side, to: target }),
+        ai_protocol::DirExecuteOpKind::Move => Ok(ai_dir::FileOp::Move { path: op.path.clone(), from: side, to: target }),
+        ai_protocol::DirExecuteOpKind::Rename => Ok(ai_dir::FileOp::Rename {
+            path: op.path.clone(),
+            side,
+            new_name: op.new_name.clone().ok_or("rename 操作需要 newName 字段")?,
+        }),
+        ai_protocol::DirExecuteOpKind::Delete => Ok(ai_dir::FileOp::Delete { path: op.path.clone(), side }),
+        ai_protocol::DirExecuteOpKind::Touch => Ok(ai_dir::FileOp::Touch { path: op.path.clone(), side, mtime_ms: op.mtime_ms.unwrap_or(0) }),
+        ai_protocol::DirExecuteOpKind::Mkdir => Ok(ai_dir::FileOp::Mkdir { path: op.path.clone(), side }),
+    }
+}
+
+/// ai-dir FileOp -> 协议 DirExecuteOp（逆映射；目标侧缺省为对侧时不输出）
+pub fn dir_execute_op_to_dto(op: &ai_dir::FileOp) -> ai_protocol::DirExecuteOp {
+    use ai_dir::execute::Side;
+    let side_dto = |s: Side| match s {
+        Side::Left => ai_protocol::DiffSide::Left,
+        Side::Right => ai_protocol::DiffSide::Right,
+    };
+    let opposite_of = |s: Side| match s {
+        Side::Left => Side::Right,
+        Side::Right => Side::Left,
+    };
+    match op {
+        ai_dir::FileOp::Copy { path, from, to } => ai_protocol::DirExecuteOp {
+            kind: ai_protocol::DirExecuteOpKind::Copy,
+            path: path.clone(),
+            side: side_dto(*from),
+            target_side: (*to != opposite_of(*from)).then(|| side_dto(*to)),
+            new_name: None,
+            mtime_ms: None,
+        },
+        ai_dir::FileOp::Move { path, from, to } => ai_protocol::DirExecuteOp {
+            kind: ai_protocol::DirExecuteOpKind::Move,
+            path: path.clone(),
+            side: side_dto(*from),
+            target_side: (*to != opposite_of(*from)).then(|| side_dto(*to)),
+            new_name: None,
+            mtime_ms: None,
+        },
+        ai_dir::FileOp::Rename { path, side, new_name } => ai_protocol::DirExecuteOp {
+            kind: ai_protocol::DirExecuteOpKind::Rename,
+            path: path.clone(),
+            side: side_dto(*side),
+            target_side: None,
+            new_name: Some(new_name.clone()),
+            mtime_ms: None,
+        },
+        ai_dir::FileOp::Delete { path, side } => ai_protocol::DirExecuteOp {
+            kind: ai_protocol::DirExecuteOpKind::Delete,
+            path: path.clone(),
+            side: side_dto(*side),
+            target_side: None,
+            new_name: None,
+            mtime_ms: None,
+        },
+        ai_dir::FileOp::Touch { path, side, mtime_ms } => ai_protocol::DirExecuteOp {
+            kind: ai_protocol::DirExecuteOpKind::Touch,
+            path: path.clone(),
+            side: side_dto(*side),
+            target_side: None,
+            new_name: None,
+            mtime_ms: (*mtime_ms != 0).then_some(*mtime_ms),
+        },
+        ai_dir::FileOp::Mkdir { path, side } => ai_protocol::DirExecuteOp {
+            kind: ai_protocol::DirExecuteOpKind::Mkdir,
+            path: path.clone(),
+            side: side_dto(*side),
+            target_side: None,
+            new_name: None,
+            mtime_ms: None,
+        },
+    }
+}
+
+/// ai-dir OpResult -> 协议 DirExecuteOpResult（状态由调用方按清单归属标注）
+pub fn dir_execute_result_to_dto(
+    r: &ai_dir::execute::OpResult,
+    status: ai_protocol::DirExecuteOpStatus,
+) -> ai_protocol::DirExecuteOpResult {
+    ai_protocol::DirExecuteOpResult {
+        op: dir_execute_op_to_dto(&r.op),
+        status,
+        detail: r.detail.clone(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -96,6 +96,39 @@ pub fn export_all_to_ui() -> Result<usize, Box<dyn std::error::Error>> {
     MergeOutputMode::export()?;
     MergeOutputParams::export()?;
     MergeOutputResult::export()?;
+    // P9 新增（table/hex/patch + dir/execute）
+    TableColumnAlign::export()?;
+    TableRowAlign::export()?;
+    TableOptionsSpec::export()?;
+    TableOpenParams::export()?;
+    TableColumnType::export()?;
+    TableColumnInfo::export()?;
+    TableSummary::export()?;
+    TableOpenResult::export()?;
+    TableSectionsParams::export()?;
+    TableRowKind::export()?;
+    TableCellStatus::export()?;
+    TableCellDto::export()?;
+    TableRowDto::export()?;
+    TableSectionsResult::export()?;
+    HexAlignMode::export()?;
+    HexOptionsSpec::export()?;
+    HexOpenParams::export()?;
+    HexSummary::export()?;
+    HexOpenResult::export()?;
+    HexBytesParams::export()?;
+    HexLineDto::export()?;
+    HexBytesResult::export()?;
+    PatchApplyParams::export()?;
+    PatchFileStatus::export()?;
+    PatchFileResultDto::export()?;
+    PatchApplyResult::export()?;
+    DirExecuteOpKind::export()?;
+    DirExecuteOp::export()?;
+    DirExecuteParams::export()?;
+    DirExecuteOpStatus::export()?;
+    DirExecuteOpResult::export()?;
+    DirExecuteResult::export()?;
     // P2 新增
     NameFilterSpec::export()?;
     OtherFilterSpec::export()?;
@@ -144,9 +177,12 @@ mod tests {
     #[test]
     fn export_ts_bindings() {
         let n = export_all_to_ui().expect("TS 导出失败");
-        assert!(n >= 77, "应导出全部协议类型（P7 起含 text/merge3 全家），实际 {n}");
+        assert!(n >= 109, "应导出全部协议类型（P9 起含 table/hex/patch/dir execute 全家），实际 {n}");
         let ui_dir = ui_generated_dir();
         assert!(ui_dir.join("DirDelta.ts").exists(), "DirDelta.ts 应存在");
         assert!(ui_dir.join("Section.ts").exists(), "Section.ts 应存在");
+        assert!(ui_dir.join("DirExecuteResult.ts").exists(), "DirExecuteResult.ts 应存在");
+        assert!(ui_dir.join("TableRowDto.ts").exists(), "TableRowDto.ts 应存在");
+        assert!(ui_dir.join("HexLineDto.ts").exists(), "HexLineDto.ts 应存在");
     }
 }
