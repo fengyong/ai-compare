@@ -23,7 +23,15 @@ export interface InlinePair {
 export interface InlineDiffOptions {
   /** LCS DP 单元格上限（n*m），超过则整行降级为单个不匹配 pair */
   maxCells?: number;
+  /** DMP 语义清理（P5 UI 开关；与引擎 ai-core SemanticCleanup::Dmp 简化语义对齐） */
+  dmpCleanup?: boolean;
 }
+
+/**
+ * DMP 语义清理的合并阈值：相邻编辑区间被 ≤ 该字符数的等值段分隔时合并
+ * （引擎 ai-core DMP_SEMANTIC_EDIT_COST 简化对应）。
+ */
+export const DMP_SEMANTIC_EDIT_COST = 4;
 
 interface Token {
   text: string;
@@ -159,7 +167,48 @@ export function wordDiff(left: string, right: string, opts: InlineDiffOptions = 
     prevJ = mj + 1;
   }
 
-  return pairs;
+  return opts.dmpCleanup ? dmpCleanupPairs(pairs) : pairs;
+}
+
+/**
+ * DMP 语义清理（P5 UI 后处理开关；引擎 ai-core SemanticCleanup::Dmp 简化语义）：
+ * 被 ≤ DMP_SEMANTIC_EDIT_COST 字符的等值段分隔的相邻编辑区间合并为一个编辑块，
+ * 使高亮边界符合"语义整体"直觉（如 `a = 1` 与 `a = 2 + 1` 中相邻小改动连片）。
+ */
+export function dmpCleanupPairs(pairs: InlinePair[]): InlinePair[] {
+  const out: InlinePair[] = [];
+  const copyOf = (p: InlinePair): InlinePair => ({
+    ...p,
+    left: p.left ? { ...p.left } : undefined,
+    right: p.right ? { ...p.right } : undefined,
+  });
+  for (const p of pairs) {
+    if (p.equal) {
+      out.push(copyOf(p));
+      continue;
+    }
+    // 编辑块：回看 [编辑A, 短等值段] → 合并为一个编辑块（吸收等值间隔）
+    if (out.length >= 2) {
+      const eq = out[out.length - 1];
+      const prevEdit = out[out.length - 2];
+      const gapLen = eq.left ? eq.left.end - eq.left.start : eq.right ? eq.right.end - eq.right.start : Infinity;
+      if (
+        eq.equal &&
+        !prevEdit.equal &&
+        gapLen <= DMP_SEMANTIC_EDIT_COST &&
+        prevEdit.left &&
+        p.left
+      ) {
+        prevEdit.left.end = p.left.end;
+        if (prevEdit.right && p.right) prevEdit.right.end = p.right.end;
+        else if (p.right) prevEdit.right = p.right;
+        out.pop(); // 吸收中间等值段
+        continue;
+      }
+    }
+    out.push(copyOf(p));
+  }
+  return out;
 }
 
 /** 行内高亮 span（某侧某行的字符区间，equal 区间不产出） */
@@ -168,6 +217,31 @@ export interface InlineMark {
   line: number;
   from: number;
   to: number;
+}
+
+/** 同行内相邻高亮 span 合并（DMP 清理：等值间隔 ≤ 阈值时吸收为一块） */
+export function mergeDmpMarks(marks: InlineMark[]): InlineMark[] {
+  if (marks.length === 0) return marks;
+  const byLine = new Map<number, InlineMark[]>();
+  for (const m of marks) {
+    const arr = byLine.get(m.line);
+    if (arr) arr.push(m);
+    else byLine.set(m.line, [m]);
+  }
+  const out: InlineMark[] = [];
+  for (const arr of byLine.values()) {
+    arr.sort((x, y) => x.from - y.from);
+    let cur: InlineMark | null = null;
+    for (const m of arr) {
+      if (cur && m.from - cur.to <= DMP_SEMANTIC_EDIT_COST) {
+        cur.to = Math.max(cur.to, m.to);
+      } else {
+        cur = { ...m };
+        out.push(cur);
+      }
+    }
+  }
+  return out;
 }
 
 /**
@@ -181,7 +255,7 @@ export function buildInlineMarks(
   leftStart: number,
   rightStart: number,
   lineCount: number,
-  limits: { maxSectionLines?: number; maxLineChars?: number; maxCells?: number } = {}
+  limits: { maxSectionLines?: number; maxLineChars?: number; maxCells?: number; dmpCleanup?: boolean } = {}
 ): { left: InlineMark[]; right: InlineMark[] } {
   const maxSectionLines = limits.maxSectionLines ?? 400;
   const maxLineChars = limits.maxLineChars ?? 1000;
@@ -204,5 +278,7 @@ export function buildInlineMarks(
       }
     }
   }
-  return { left: leftMarks, right: rightMarks };
+  return limits.dmpCleanup
+    ? { left: mergeDmpMarks(leftMarks), right: mergeDmpMarks(rightMarks) }
+    : { left: leftMarks, right: rightMarks };
 }

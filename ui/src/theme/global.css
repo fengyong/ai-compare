@@ -510,6 +510,19 @@ input:focus {
   background: var(--aic-inline-mark);
   border-radius: 2px;
 }
+.cm-aic-line-current {
+  box-shadow: inset 2px 0 0 var(--aic-accent);
+  background-image: linear-gradient(rgba(91, 140, 255, 0.06), rgba(91, 140, 255, 0.06));
+}
+.cm-aic-find-match {
+  background: rgba(229, 192, 123, 0.28);
+  border-radius: 2px;
+}
+.cm-aic-find-current {
+  background: rgba(229, 192, 123, 0.55);
+  outline: 1px solid var(--aic-status-unscanned);
+  border-radius: 2px;
+}
 .cm-aic-status-gutter {
   width: 14px;
 }
@@ -953,4 +966,175 @@ input:focus {
   text-overflow: ellipsis;
   white-space: nowrap;
   cursor: pointer;
+}
+
+/* ---------------- P5：文本比较视图完备化（概览条 / 查找 / 差异列表 / 编码） ---------------- */
+
+.aic-text-toolbar2 {
+  gap: 8px;
+  padding: 3px 12px;
+}
+.aic-text-toolbar .nav.on {
+  border-color: var(--aic-accent);
+  background: var(--aic-accent-soft);
+}
+.aic-text-toolbar .sep {
+  opacity: 0.4;
+}
+.aic-dirty-chip {
+  color: var(--aic-status-unscanned);
+  font-size: 10px;
+}
+.aic-mini-select {
+  font: inherit;
+  color: var(--aic-text);
+  background: var(--aic-bg);
+  border: 1px solid var(--aic-border);
+  border-radius: 4px;
+  padding: 1px 4px;
+  margin-left: 6px;
+  outline: none;
+}
+
+/* 概览条（mini-map 色带） */
+.aic-overview {
+  width: 26px;
+  flex: none;
+  border-left: 1px solid var(--aic-border);
+  background: var(--aic-bg-panel);
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+}
+.aic-overview canvas {
+  display: block;
+}
+
+/* 查找替换面板（FIND-001） */
+.aic-find-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--aic-border);
+  background: var(--aic-bg-panel);
+  flex: none;
+}
+.aic-find-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.aic-find-input {
+  flex: 1;
+  max-width: 460px;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+.aic-find-count {
+  color: var(--aic-text-dim);
+  font-size: 12px;
+  min-width: 64px;
+  text-align: center;
+}
+.aic-find-error {
+  color: var(--aic-danger);
+  font-size: 12px;
+}
+.aic-find-toggle {
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 12px;
+  color: var(--aic-text-dim);
+}
+.aic-find-toggle.on {
+  color: var(--aic-text);
+  border-color: var(--aic-accent);
+  background: var(--aic-accent-soft);
+}
+.aic-find-opts select {
+  font: inherit;
+  color: var(--aic-text);
+  background: var(--aic-bg);
+  border: 1px solid var(--aic-border);
+  border-radius: 4px;
+  padding: 2px 6px;
+}
+.aic-find-side {
+  margin-left: 8px;
+}
+.aic-find-hint {
+  margin-left: auto;
+  font-size: 11px;
+}
+
+/* 差异列表（导航同步高亮） */
+.aic-diff-list {
+  width: 240px;
+  flex: none;
+  border-left: 1px solid var(--aic-border);
+  background: var(--aic-bg-panel);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.aic-diff-list-head {
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--aic-text-dim);
+  border-bottom: 1px solid var(--aic-border);
+  flex: none;
+}
+.aic-diff-list-body {
+  flex: 1;
+  overflow: auto;
+  padding: 4px;
+}
+.aic-diff-list-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  padding: 3px 8px;
+  font-size: 12px;
+  color: var(--aic-text);
+}
+.aic-diff-list-row:hover {
+  background: var(--aic-bg-raised);
+}
+.aic-diff-list-row.current {
+  background: var(--aic-accent-soft);
+}
+.aic-diff-list-row .glyph {
+  width: 16px;
+  text-align: center;
+  flex: none;
+  font-weight: 700;
+}
+.aic-diff-list-row .glyph.change {
+  color: var(--aic-gutter-important);
+}
+.aic-diff-list-row .glyph.insert {
+  color: #4caf78;
+}
+.aic-diff-list-row .glyph.delete {
+  color: var(--aic-st-orphan);
+}
+.aic-diff-list-row .glyph.insig {
+  color: var(--aic-gutter-unimportant);
+}
+.aic-diff-list-row .ranges {
+  flex: 1;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.aic-diff-list-row .idx {
+  color: var(--aic-text-dim);
+  font-size: 11px;
 }

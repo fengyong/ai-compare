@@ -31,6 +31,7 @@ export type { DirEntryStatus } from './generated/DirEntryStatus';
 export type { DirOpenParams } from './generated/DirOpenParams';
 export type { DirOpenResult } from './generated/DirOpenResult';
 export type { DirRow } from './generated/DirRow';
+export type { DiffSide } from './generated/DiffSide';
 export type { DirStats } from './generated/DirStats';
 export type { EngineCapabilities } from './generated/EngineCapabilities';
 export type { EngineInfo } from './generated/EngineInfo';
@@ -38,6 +39,9 @@ export type { EntryKind } from './generated/EntryKind';
 export type { Importance } from './generated/Importance';
 export type { InitializeParams } from './generated/InitializeParams';
 export type { InitializeResult } from './generated/InitializeResult';
+export type { InlineLineDiffDto } from './generated/InlineLineDiffDto';
+export type { InlineSpanDto } from './generated/InlineSpanDto';
+export type { InlineSpanKind } from './generated/InlineSpanKind';
 export type { InlineState } from './generated/InlineState';
 export type { LicenseCapabilities } from './generated/LicenseCapabilities';
 export type { LineAlignAlgo } from './generated/LineAlignAlgo';
@@ -51,6 +55,10 @@ export type { SectionKind } from './generated/SectionKind';
 export type { SessionCloseParams } from './generated/SessionCloseParams';
 export type { SideInfo } from './generated/SideInfo';
 export type { TextDiffOptions } from './generated/TextDiffOptions';
+export type { TextInlineDiffParams } from './generated/TextInlineDiffParams';
+export type { TextInlineDiffResult } from './generated/TextInlineDiffResult';
+export type { TextLinesParams } from './generated/TextLinesParams';
+export type { TextLinesResult } from './generated/TextLinesResult';
 export type { TextOpenParams } from './generated/TextOpenParams';
 export type { TextOpenResult } from './generated/TextOpenResult';
 export type { TextSectionsNotification } from './generated/TextSectionsNotification';
@@ -62,10 +70,11 @@ export type { WhitespaceMode } from './generated/WhitespaceMode';
  * 2. UI 侧本地辅助类型
  * ============================================================ */
 
+import type { DiffSide } from './generated/DiffSide';
 import type { CompareCriteria } from './generated/CompareCriteria';
 
-/** 比较侧（docs/03 §4.1 Side；生成侧当前无独立类型，UI/测试多处使用） */
-export type Side = 'left' | 'right';
+/** 比较侧（docs/03 §4.1 Side）；生成类型已有 DiffSide，此为向后兼容别名 */
+export type Side = DiffSide;
 
 /** shutdown 请求不携带参数；结果为 null（docs/03 §2.3.3 app/ 命名空间） */
 export type ShutdownResult = null;
@@ -89,24 +98,16 @@ export const DEFAULT_DIR_CRITERIA: CompareCriteria = {
 };
 
 /**
- * text/lines 请求参数（docs/03 §2.3.2 大内容：行数据按需分页）。
+ * text/lines 与 text/inlineDiff 已切换为 P3 生成类型（上方 re-export，
+ * 生成文件：TextLinesParams/Result、TextInlineDiffParams/Result、
+ * InlineSpanDto/InlineSpanKind/InlineLineDiffDto）。
  *
- * ⚠️ 引擎 P0 尚未开放该 RPC 入口（ai-engine 方法集仅 initialize /
- * dir/open / text/open / text/sections / session/close / shutdown），
- * P1 开放后以生成类型替换。当前唯一实现方为内置演示引擎（mockEngine），
- * 真实引擎路径下 UI 以 Tauri 兜底通道读取文件（textSession.ts）。
+ * 对齐要点（P3 磁盘现状，2026-11-14）：
+ * - text/lines {sessionId, side, start, count} → {side, start, lines, done}；
+ * - text/inlineDiff {sessionId, sectionId}（按 section 懒计算）→
+ *   {sessionId, sectionId, kind, state, lines:[{leftLine, rightLine, spans, truncated}]}，
+ *   leftLine/rightLine 为该侧绝对行号；spans 三类非 equal 参与高亮。
+ * - Side 别名继续暴露（== DiffSide），历史 UI/测试代码无需改动。
  */
-export interface TextLinesParams {
-  sessionId: string;
-  side: Side;
-  start: number;
-  count: number;
-}
-
-/** text/lines 应答（同上：mock 实现，P1 由引擎生成类型替换） */
-export interface TextLinesResult {
-  side: Side;
-  start: number;
-  lines: string[];
-  done: boolean;
-}
+/** DMP 语义清理开关（UI 侧后处理；引擎 ai-core SemanticCleanup::None/Dmp 语义对齐） */
+export type SemanticCleanup = 'none' | 'dmp';

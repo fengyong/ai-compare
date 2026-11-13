@@ -1,4 +1,5 @@
 import type { DiffSummary, Section, TextOpenResult } from '../../protocol/types';
+import { summarizeSections } from '../../lib/lineDiffCore';
 import * as engine from '../../ipc/engineProcess';
 
 /**
@@ -54,6 +55,32 @@ export async function loadTextSession(
     rightLineCount: opened.rightLineCount,
     sections,
     summary: opened.summary,
+    leftLines,
+    rightLines,
+  };
+}
+
+/**
+ * 复用已存在的引擎会话加载（openText 报 411 SESSION_EXISTS 时）：
+ * React StrictMode 重挂载 / 标签切换回前台会以同一 sessionId 二次 openText，
+ * 引擎侧会话仍在，直接拉取 sections/行内容；统计由 sections 口径重建。
+ */
+export async function loadTextSessionReuse(
+  sessionId: string,
+  leftPath: string,
+  rightPath: string
+): Promise<LoadedTextSession> {
+  const [sections, leftLines, rightLines] = await Promise.all([
+    loadAllSections(sessionId),
+    engine.loadSideLines(sessionId, 'left', Number.MAX_SAFE_INTEGER, leftPath),
+    engine.loadSideLines(sessionId, 'right', Number.MAX_SAFE_INTEGER, rightPath),
+  ]);
+  return {
+    sessionId,
+    leftLineCount: leftLines.length,
+    rightLineCount: rightLines.length,
+    sections,
+    summary: summarizeSections(sections),
     leftLines,
     rightLines,
   };

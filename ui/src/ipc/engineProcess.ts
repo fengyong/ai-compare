@@ -4,9 +4,12 @@ import type {
   DirDelta,
   DirOpenParams,
   DirOpenResult,
+  EngineCapabilities,
   InitializeResult,
   SessionCloseParams,
   SessionCloseResult,
+  TextInlineDiffParams,
+  TextInlineDiffResult,
   TextLinesParams,
   TextLinesResult,
   TextOpenParams,
@@ -56,6 +59,7 @@ interface DirDeltaSubscription {
 let client: RpcClient | null = null;
 let connectPromise: Promise<RpcClient> | null = null;
 let forcedMock = false;
+let engineCapabilities: EngineCapabilities | null = null;
 let sessionSeq = 0;
 const listeners = new Set<() => void>();
 const deltaSubs = new Map<string, Set<DirDeltaSubscription>>();
@@ -95,6 +99,11 @@ export function untrackSession(sessionId: string): void {
   trackedSessions.delete(sessionId);
 }
 
+/** 当前引擎能力集（initialize 协商结果；未连接时为 null，调用方按不支持降级） */
+export function getEngineCapabilities(): EngineCapabilities | null {
+  return engineCapabilities;
+}
+
 /** 生成引擎侧会话句柄（客户端分配；前缀便于日志排查） */
 export function newSessionId(kind: 'dir' | 'text'): string {
   const rand =
@@ -130,6 +139,7 @@ async function doConnect(): Promise<RpcClient> {
       });
       const info: InitializeResult = await c.ready;
       client = c;
+      engineCapabilities = info.capabilities;
       wireNotifications(c);
       setSnapshot({
         status: 'ready',
@@ -164,6 +174,7 @@ async function doConnect(): Promise<RpcClient> {
 function handleTransportCrash(reason?: string): void {
   client = null;
   connectPromise = null;
+  engineCapabilities = null;
   if (forcedMock || !isTauriRuntime()) {
     setSnapshot({ status: 'connecting', message: '演示引擎已关闭', phase: 'ok' });
     return;
@@ -219,6 +230,9 @@ function connectMock(): RpcClient {
     },
   });
   client = c;
+  void c.ready.then((info) => {
+    engineCapabilities = info.capabilities;
+  });
   wireNotifications(c);
   reconnectPolicy.settled('ok');
   setSnapshot({ status: 'mock', message: '演示引擎（内置模拟数据，非真实 ai-engine）', phase: 'mock' });
@@ -334,6 +348,32 @@ export async function loadSideLines(
 async function readLinesViaTauri(path: string): Promise<string[]> {
   const res = await invoke<{ text: string }>('read_text_file', { path });
   return splitLines(res.text);
+}
+
+// ==================================================================
+// 行内差异：text/inlineDiff（能力位判断 + 客户端词级兜底，P5；P3 协议面对齐）
+// ==================================================================
+
+/**
+ * 按 section 请求行内差异（P3 生成协议 TextInlineDiffParams/Result：
+ * {sessionId, sectionId} → 绝对行号 + InlineSpanDto 成对区间）。
+ *
+ * 能力位策略（任务书交付 7）：
+ * - initialize.capabilities.inlineDiff=true → 走 RPC（mock 已同形实现；
+ *   P3 真实引擎已置位，自动生效）；
+ * - 能力位为 false 或 RPC 报错（-32601/410 等）→ 返回 null，调用方回落
+ *   客户端词级 LCS（lib/inlineDiffCore，同形兜底）。
+ */
+export async function requestInlineDiff(params: TextInlineDiffParams): Promise<TextInlineDiffResult | null> {
+  const caps = getEngineCapabilities();
+  if (!caps?.inlineDiff) return null;
+  const c = await getEngineClient();
+  try {
+    return await c.request<TextInlineDiffResult>('text/inlineDiff', params, 30_000);
+  } catch {
+    // 引擎声明了能力但入口未就绪/请求失败：降级客户端计算
+    return null;
+  }
 }
 
 /** 与引擎 LineTable::from_text 同口径：行文本不含行尾符；结尾换行不产生空行 */

@@ -82,6 +82,60 @@ describe('MockEngine P0 协议面', () => {
     await client.close();
   });
 
+  it('text/inlineDiff（P3 生成协议形）：按 section 懒计算，绝对行号 + 成对区间 + truncated', async () => {
+    const client = await newClient();
+    const opened = await client.request<{ sessionId: string; sectionCount: number }>('text/open', {
+      sessionId: 'text-inline',
+      left: '/a/main.c',
+      right: '/b/main.c',
+      options: null,
+    });
+    // 找一个 change section
+    const secs = await client.request<{ sections: Array<{ id: number; kind: string; left: { start: number; end: number } | null; right: { start: number; end: number } | null }> }>(
+      'text/sections',
+      { sessionId: opened.sessionId, offset: 0, count: 10_000 }
+    );
+    const change = secs.sections.find((s) => s.kind === 'change' && s.left && s.right);
+    expect(change).toBeTruthy();
+    const res = await client.request<{
+      sessionId: string;
+      sectionId: number;
+      kind: string;
+      state: string;
+      lines: Array<{ leftLine: number; rightLine: number; spans: Array<{ left: unknown; right: unknown; kind: string }>; truncated: boolean }>;
+    }>('text/inlineDiff', { sessionId: opened.sessionId, sectionId: change!.id });
+    expect(res.sessionId).toBe(opened.sessionId);
+    expect(res.sectionId).toBe(change!.id);
+    expect(res.kind).toBe('change');
+    expect(['full', 'partial']).toContain(res.state);
+    expect(res.lines.length).toBeGreaterThan(0);
+    // 绝对行号落在 section 区间内
+    const first = res.lines[0];
+    expect(first.leftLine).toBeGreaterThanOrEqual(change!.left!.start);
+    expect(first.leftLine).toBeLessThan(change!.left!.end);
+    expect(first.rightLine).toBeGreaterThanOrEqual(change!.right!.start);
+    expect(first.rightLine).toBeLessThan(change!.right!.end);
+    // 非 equal span 成对（replace 双侧 / insert 仅右 / delete 仅左）
+    for (const span of first.spans) {
+      expect(['replace', 'insert', 'delete']).toContain(span.kind);
+      if (span.kind === 'replace') {
+        expect(span.left).toBeTruthy();
+        expect(span.right).toBeTruthy();
+      } else if (span.kind === 'insert') {
+        expect(span.left).toBeNull();
+        expect(span.right).toBeTruthy();
+      } else {
+        expect(span.left).toBeTruthy();
+        expect(span.right).toBeNull();
+      }
+    }
+    // 未知 section → INVALID_PARAMS
+    await expect(
+      client.request('text/inlineDiff', { sessionId: opened.sessionId, sectionId: 999_999 })
+    ).rejects.toMatchObject({ code: -32602 });
+    await client.close();
+  });
+
   it('session/close 幂等；关闭后访问会话报 SESSION_NOT_FOUND(410)', async () => {
     const client = await newClient();
     await client.request('text/open', {

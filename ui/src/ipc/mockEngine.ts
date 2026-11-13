@@ -16,9 +16,13 @@ import type {
   TextLinesResult,
   TextOpenParams,
   TextOpenResult,
+  TextInlineDiffParams,
+  TextInlineDiffResult,
   TextSectionsParams,
   TextSectionsResult,
 } from '../protocol/types';
+import type { InlineSpanDto } from '../protocol/generated/InlineSpanDto';
+import { wordDiff } from '../lib/inlineDiffCore';
 import { hashString, mulberry32 } from '../lib/env';
 
 /**
@@ -34,8 +38,10 @@ import { hashString, mulberry32 } from '../lib/env';
  * 方法集与真实 ai-engine 的 P0 子集严格对齐（handlers.rs）：initialize /
  * dir/open（应答后按批推 dir/delta）/ text/open / text/sections /
  * session/close / shutdown；错误码同 error.rs（-32601 方法不存在、411 会话已存在、
- * 410 会话不存在）。唯一扩展是 `text/lines`（docs/03 §2.3.2 大内容分页，
- * 引擎 P1 开放；浏览器演示模式下 UI 无 Tauri 兜底通道，由 mock 供数）。
+ * 410 会话不存在）。mock 扩展（引擎入口开放前的同形先行）：
+ * `text/lines`（P3 生成类型 TextLinesParams/Result）与
+ * `text/inlineDiff`（P3 生成类型 TextInlineDiffParams/Result：按 section
+ * 懒计算，绝对行号 + InlineSpanDto 成对区间）。能力位 inlineDiff=true、linesRead=true。
  */
 
 interface MockDirSession {
@@ -141,6 +147,8 @@ export class MockEngine {
         return { result: this.textSections(params as TextSectionsParams), notifications: [] };
       case 'text/lines':
         return { result: this.textLines(params as TextLinesParams), notifications: [] };
+      case 'text/inlineDiff':
+        return { result: this.textInlineDiff(params as TextInlineDiffParams), notifications: [] };
       case 'session/close':
         return { result: this.sessionClose(params as SessionCloseParams), notifications: [] };
       case 'shutdown': {
@@ -162,7 +170,9 @@ export class MockEngine {
       capabilities: {
         dirCompare: true,
         textCompare: true,
-        inlineDiff: false,
+        // mock 实现了 text/inlineDiff（P3 生成协议同形演示面）
+        inlineDiff: true,
+        linesRead: true,
         cancel: true,
         deltaBatching: true,
         maxDeltaBatchRows: MAX_BATCH_ROWS,
@@ -263,6 +273,52 @@ export class MockEngine {
     const start = Math.max(0, Math.min(p.start, all.length));
     const end = Math.min(start + Math.max(0, p.count), all.length);
     return { side: p.side, start, lines: all.slice(start, end), done: end >= all.length };
+  }
+
+  /**
+   * text/inlineDiff（P3 生成协议同形实现）：按 section 懒计算行内差异。
+   * 复用客户端 wordDiff 词级 LCS，产出 InlineSpanDto（绝对行号 + 成对区间）；
+   * 超长行（>1000 字符，与引擎 DEFAULT_INLINE_MAX_LINE_CHARS 对齐）返回
+   * spans 空 + truncated=true（Partial 状态语义）。
+   */
+  private textInlineDiff(p: TextInlineDiffParams): TextInlineDiffResult {
+    const s = this.requireText(p.sessionId);
+    const section = s.sections.find((sec) => sec.id === p.sectionId);
+    if (!section || !section.left || !section.right) {
+      throw new InvalidParams(`section 不存在或非双侧替换段: ${p.sectionId}`);
+    }
+    const lineCount = Math.min(section.left.end - section.left.start, section.right.end - section.right.start);
+    const lines = [];
+    let anyTruncated = false;
+    for (let k = 0; k < lineCount; k++) {
+      const li = section.left.start + k;
+      const ri = section.right.start + k;
+      const l = s.leftLines[li] ?? '';
+      const r = s.rightLines[ri] ?? '';
+      if (l.length > 1000 || r.length > 1000) {
+        lines.push({ leftLine: li, rightLine: ri, spans: [], truncated: true });
+        anyTruncated = true;
+        continue;
+      }
+      const pairs = wordDiff(l, r);
+      const spans: InlineSpanDto[] = [];
+      for (const pair of pairs) {
+        if (pair.equal) continue;
+        spans.push({
+          left: pair.left ?? null,
+          right: pair.right ?? null,
+          kind: pair.left && pair.right ? 'replace' : pair.right ? 'insert' : 'delete',
+        });
+      }
+      lines.push({ leftLine: li, rightLine: ri, spans, truncated: false });
+    }
+    return {
+      sessionId: s.id,
+      sectionId: p.sectionId,
+      kind: section.kind,
+      state: anyTruncated ? 'partial' : 'full',
+      lines,
+    };
   }
 
   private sessionClose(p: SessionCloseParams): null {
@@ -432,17 +488,38 @@ interface GenTextPairResult {
   sections: Section[];
 }
 
-function contentLine(n: number): string {
-  return `    int value_${n} = ${n} * ${1 + (n % 7)};  /* total = ${n % 100} */`;
+function contentLine(n: number, ext: string): string {
+  const k = 1 + (n % 7);
+  switch (ext) {
+    case 'json':
+    case 'jsonc':
+      return `  "key_${n}": ${n * k},`;
+    case 'md':
+    case 'markdown':
+      return n % 5 === 0 ? `## Section ${n}` : `Body text ${n} with \`code_${n}\` and *emph*.`;
+    case 'py':
+    case 'pyi':
+      return `def func_${n}():  # total ${n % 100}\n    return ${n} * ${k}`;
+    case 'rs':
+      return `    let value_${n}: i32 = ${n} * ${k};`;
+    case 'yml':
+      return `  key_${n}: ${n * k}`;
+    default:
+      return `    int value_${n} = ${n} * ${k};  /* total = ${n % 100} */`;
+  }
 }
 
+/** 行内变化：把行中最后一个数字改写（确定性 rand），保持行结构不变 */
 function mutateLine(line: string, rand: () => number): string {
-  return line
-    .replace(/= (\d+) \* (\d+);/, (_m, a: string, b: string) => `= ${a} * ${Number(b) + 1};`)
-    .replace(/total = (\d+)( \*\/)?$/, (_m, _old: string, tail: string | undefined) => `total = ${Math.floor(rand() * 100)}${tail ?? ''}`);
+  const m = line.match(/(\d+)(?!\d)/g);
+  if (!m || m.length === 0) return line;
+  const last = m[m.length - 1];
+  const idx = line.lastIndexOf(last);
+  return line.slice(0, idx) + String(Math.floor(rand() * 100)) + line.slice(idx + last.length);
 }
 
 function genTextPair(seed: string): GenTextPairResult {
+  const ext = seed.includes('.') ? seed.split('.').pop()!.toLowerCase() : '';
   const rand = mulberry32(hashString(`text:${seed}`));
   const target = 600 + Math.floor(rand() * 800);
   const leftLines: string[] = [];
@@ -457,7 +534,7 @@ function genTextPair(seed: string): GenTextPairResult {
     const sr = ri;
     if (kind === 'equal') {
       for (let k = 0; k < n; k++) {
-        const t = contentLine(li);
+        const t = contentLine(li, ext);
         leftLines.push(t);
         rightLines.push(t);
         li++;
@@ -466,7 +543,7 @@ function genTextPair(seed: string): GenTextPairResult {
       sections.push({ id: secId++, kind, left: { start: sl, end: li }, right: { start: sr, end: ri }, important: 'important', inline: 'notComputed' });
     } else if (kind === 'change') {
       for (let k = 0; k < n; k++) {
-        const t = contentLine(li);
+        const t = contentLine(li, ext);
         leftLines.push(t);
         rightLines.push(mutateLine(t, rand));
         li++;
@@ -475,13 +552,13 @@ function genTextPair(seed: string): GenTextPairResult {
       sections.push({ id: secId++, kind, left: { start: sl, end: li }, right: { start: sr, end: ri }, important: 'important', inline: 'notComputed' });
     } else if (kind === 'insert') {
       for (let k = 0; k < n; k++) {
-        rightLines.push(`+ ${contentLine(ri).trim()}  (右侧新增)`);
+        rightLines.push(`+ ${contentLine(ri, ext).trim()}  (右侧新增)`);
         ri++;
       }
       sections.push({ id: secId++, kind, left: null, right: { start: sr, end: ri }, important: 'important', inline: 'notComputed' });
     } else {
       for (let k = 0; k < n; k++) {
-        leftLines.push(`- ${contentLine(li).trim()}  (左侧独有)`);
+        leftLines.push(`- ${contentLine(li, ext).trim()}  (左侧独有)`);
         li++;
       }
       sections.push({ id: secId++, kind, left: { start: sl, end: li }, right: null, important: 'important', inline: 'notComputed' });
