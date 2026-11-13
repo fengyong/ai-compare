@@ -13,8 +13,8 @@ import type { Section } from '../../protocol/types';
 const sec = (s: Partial<Section> & { id: number; kind: Section['kind'] }): Section => ({
   left: null,
   right: null,
-  importance: 'important',
-  inline: 'none',
+  important: 'important',
+  inline: 'notComputed',
   ...s,
 });
 

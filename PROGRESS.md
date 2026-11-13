@@ -16,8 +16,9 @@
 - [x] M0.3 架构设计 + 开发计划：`docs/03-架构设计文档.md`（1033 行，10 条 ADR）、`docs/04-开发计划.md`（584 行，P0~P17 阶段）✅ 已验收
 - [ ] **M1 Walking Skeleton（进行中，对应 docs/04 P0 阶段）**：端到端最小闭环（选两个本地文件夹 → 目录比较 → 双击文本文件 → 行级+行内 diff → 展示）
   - [x] UI 线：Tauri 2 + React 壳 + 目录视图 + 文本视图（CM6）+ 双击开子会话 ✅（44/44 测试、build 零错误、浏览器端到端冒烟通过，含差异回传着色；提交 1297af9）
-  - [ ] 引擎线：Rust workspace（ai-protocol/ai-core/ai-vfs/ai-dir/ai-engine）+ aic CLI + golden 测试（agent 运行中）
-  - [ ] 集成验收：引擎+UI 真实对接（UI 当前用内置演示引擎 mock，transport 已就绪；引擎完成后切换）、`aic diff` 与 `diff -u` 对拍、PB-04 冒烟基准
+  - [x] 引擎线：Rust workspace（ai-protocol/ai-core/ai-vfs/ai-dir/ai-engine）+ aic CLI + golden/replay 测试 ✅（119/119 测试、clippy 零警、Myers 300 轮 oracle 对拍、`aic diff`≡`diff -u`、退出码 0/1/2、38 个 ts-rs 类型已生成到 ui/src/protocol/generated/）
+  - [ ] 集成验收：UI 切真实引擎 + e2e:engine 脚本（agent 运行中；完成后 M1 闭环）
+  - [ ] 集成后决策：Cargo.lock 已改为提交（二进制工程惯例）；引擎遗留项（inlineDiff RPC 入口未开放=能力位上报 false、目录 binary 模式走哈希等）记入 P1/P2 处理
 - [ ] M2 MVP（P0 需求）
 - [ ] M3 V1.0（P0+P1）
 - [ ] M4 V2.0（含 Pro 级功能）
@@ -37,7 +38,8 @@
 | 时间 | 任务 | 状态 |
 | --- | --- | --- |
 | 2026-11-13 21:1x | Agent「架构设计与开发计划」→ docs/03 + docs/04 | ✅ 完成 |
-| 2026-11-13 21:3x | Agent「P0 引擎线」→ Rust workspace + 引擎 crates + aic CLI + 测试 | 运行中（22:24 巡检活跃） |
+| 2026-11-13 21:3x | Agent「P0 引擎线」→ Rust workspace + 引擎 crates + aic CLI + 测试 | ✅ 完成并验收：119/119 测试、clippy 零警、退出码矩阵 0/1/2、`aic diff` 与 `diff -u` hunks 等价（主会话复验 + 提交）；Myers 经 300 轮 DP-oracle 对拍；PB-04 冒烟 1 万行 0.8ms |
+| 2026-11-13 22:5x | Agent「M1 集成」→ UI 切真实引擎 + generated 类型合入 + e2e:engine 脚本 | 运行中 |
 | 2026-11-13 21:3x | Agent「P0 UI 线」→ Tauri2+React 壳 + 目录/文本视图 | ✅ 完成并验收：44/44 测试、build 零错误、cargo check 过、浏览器端到端冒烟通过（22:31 主会话复验 + 提交 1297af9） |
 | 2026-11-13 21:44 | 后台：rustup default stable 修复工具链 | ❌ 失败：与原安装任务并发竞争 downloads 目录（教训：勿并行跑两个 rustup） |
 | 2026-11-13 21:52 | 后台：原 rustup 安装任务仍在下载 stable 工具链（40MB/~200MB） | ⛔ 已主动终止：官方源仅 1.3MB/min，预估还需 1.5h+ |
@@ -66,3 +68,5 @@
 - 2026-11-13 22:24：**第 3 次看护巡检**：双线活跃（引擎 13s 前 / UI 19s 前有进展）；引擎 .rs 增至 25 个（ai-dir/ai-engine 应已开写），UI node_modules 已装、dev server 已在 5173 端口可访问；尚无 target/ 构建产物（引擎线处于写码→编译转换段）；无中断，不干预
 - 2026-11-13 22:31：**UI 线完成并验收提交**（1297af9）：主会话复跑 pnpm test（44/44）+ build（零错误）核实；亮点——mock 引擎降级、delta 订阅挂缓存层修复回传丢失 bug、wordDiff LCS+gap 分组最小化高亮；遗留——待引擎二进制联调、PB-04 帧率基准属后续阶段。引擎线继续运行中
 - 2026-11-13 22:44：**第 4 次看护巡检**：引擎线活跃（10s 前有进展），engine/cli/tests 共 113 文件，target/debug 已有 21 项构建产物（编译/测试循环中）；无中断，不干预
+- 2026-11-13 22:5x：**引擎线完成并验收提交**（145c61e，83 文件）：主会话复验 119/119 测试、clippy 零警、退出码 0/1/2、`aic diff`≡`diff -u`（hunks 逐字节一致）；Cargo.lock 改为提交；启动集成 agent（UI 切真实引擎 + e2e:engine）
+- 2026-11-13 23:04：**第 5 次看护巡检**：集成 agent 活跃（5s 前，读文档/类型比对早期）；已过 23:00 进入预算充裕期，集成完成后按计划并行 P1/P2/P4；无中断，不干预

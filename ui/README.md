@@ -17,8 +17,8 @@ pnpm dev          # http://localhost:5173
 ### 2. 桌面应用（依赖引擎 sidecar）
 
 ```bash
-# 前置：先构建引擎二进制（引擎线交付后可用）
-cargo build -p ai-engine          # 产物：engine/target/debug/ai-engine
+# 前置：先构建引擎二进制
+cargo build -p ai-engine          # 产物：<仓库根>/target/debug/ai-engine（workspace 根 target）
 
 cd ui
 pnpm tauri dev                    # Tauri 壳 spawn ai-engine --stdio，NDJSON JSON-RPC
@@ -27,7 +27,7 @@ pnpm tauri dev                    # Tauri 壳 spawn ai-engine --stdio，NDJSON J
 引擎二进制查找顺序（见 `src-tauri/src/lib.rs`）：
 
 1. 环境变量 `AI_ENGINE_PATH`（或 dev 模式传入参数）；
-2. dev 约定路径 `<仓库根>/engine/target/debug/ai-engine`；
+2. dev 约定路径 `<仓库根>/target/debug/ai-engine`；
 3. release：与 UI 可执行文件同目录。
 
 引擎缺失时应用会显示降级横幅：可重试，或一键切换内置演示引擎（数据为模拟，非真实文件系统）。
@@ -66,7 +66,14 @@ ui/
 
 - 消息模型见 `src/protocol/types.ts`（对齐 docs/03 §2.3 / §4.1 / §4.2）；引擎线会以 ts-rs 生成同构类型到 `src/protocol/generated/`，**届时以生成类型为准**。
 - 客户端 `src/protocol/client.ts`：initialize 握手、超时 + `$/cancel`、通知分发、写入串行化；传输层 `src/ipc/tauriTransport.ts`（Tauri command/事件透传，Tauri 仅作字节管道，ADR-003）。
-- P0 方法集：`initialize`、`dir/open`、`dir/delta`(通知)、`dir/rows`、`dir/openChild`、`text/open`、`text/sections`、`text/lines`、`text/inlineDiff`（预留）、`text/close`、`session/close`、`shutdown`。
+- P0 方法集（与真实引擎 handlers.rs 对齐）：`initialize`、`dir/open`、`dir/delta`(通知)、`text/open`、`text/sections`、`text/lines`(mock 扩展，引擎 P1)、`session/close`、`shutdown`。
+
+### 3. 真实引擎端到端验收（M1 闭环门禁）
+
+```bash
+cargo build -p ai-engine          # 仓库根执行；或 AI_ENGINE_PATH 指定二进制
+cd ui && pnpm e2e:engine          # 退出码 0=通过（含 tempdir 场景与状态断言）
+```
 
 ## 约定
 
@@ -78,5 +85,6 @@ ui/
 
 - 目录树展开/排序/过滤/文件操作/选择模型：P2/P6；当前为引擎排好序的平铺列表。
 - 文本编辑、概览条、查找替换、编码切换、语法高亮：P5。
-- 引擎未联调项：`text/inlineDiff` 懒计算（当前客户端本地词级 diff 兜底）、断线重连/resync、协议录制回放。
+- `text/inlineDiff` 引擎侧 P0 未开放（能力位上报 false，UI 以客户端词级 diff 兜底）：P1 开放后切引擎懒计算。
+- 断线重连/resync、协议录制回放（引擎 `--record` 已具备）：P4/P5 接入。
 - 主页类型大按钮/会话树/设置界面/命令面板：P4。

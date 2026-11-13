@@ -12,6 +12,8 @@ export default tseslint.config(
       'src-tauri/gen/**',
       // ts-rs 生成的协议类型目录：以引擎侧生成为准，不做人工 lint
       'src/protocol/generated/**',
+      // Node 运维脚本（引擎端到端验收等）：运行于 Node 环境，非应用源码
+      'scripts/**',
     ],
   },
   js.configs.recommended,
