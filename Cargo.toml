@@ -1,0 +1,40 @@
+[workspace]
+resolver = "2"
+# 引擎层 crates（架构文档 03 §3.1）+ CLI + 集成测试包
+# 显式列出（不用 glob：避免 engine/ 下出现非 crate 目录时解析失败）
+members = [
+    "engine/ai-protocol",
+    "engine/ai-core",
+    "engine/ai-vfs",
+    "engine/ai-dir",
+    "engine/ai-engine",
+    "cli/aic",
+    "tests",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+rust-version = "1.80"
+
+[workspace.dependencies]
+# 内部 crates（ai-engine 为 bin 包，按路径直接构建，不经 workspace 依赖引用）
+ai-protocol = { path = "engine/ai-protocol" }
+ai-core = { path = "engine/ai-core" }
+ai-vfs = { path = "engine/ai-vfs" }
+ai-dir = { path = "engine/ai-dir" }
+
+# 外部依赖（全部 MIT/Apache-2.0 兼容许可，禁止 GPL 链接依赖，见 deny.toml）
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-util", "io-std", "sync", "time", "fs"] }
+async-trait = "0.1"
+thiserror = "2"
+tempfile = "3"
+# ts-rs：协议类型 -> TypeScript 导出（docs/03 §3.1.12 M23 生成管线）
+# 成员 crate 以 optional 引用（feature "ts"）；no-serde-warn 静默无法解析的 serde 属性提示
+ts-rs = { version = "10", features = ["serde-compat", "no-serde-warnings"] }
+
+[profile.release]
+lto = "thin"

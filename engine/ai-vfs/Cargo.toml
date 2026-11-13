@@ -1,0 +1,15 @@
+[package]
+name = "ai-vfs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "ai-compare 虚拟文件系统抽象（M04）：VfsProvider trait + 本地只读实现（P0）"
+
+[dependencies]
+async-trait = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

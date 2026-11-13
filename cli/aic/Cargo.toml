@@ -1,0 +1,25 @@
+[package]
+name = "aic"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "ai-compare CLI（aic）：diff / quick（进程内链接引擎库，docs/03 §2.1 同一契约两种宿主）"
+
+[[bin]]
+name = "aic"
+path = "src/main.rs"
+
+[lib]
+name = "aic"
+path = "src/lib.rs"
+
+[dependencies]
+ai-core = { workspace = true }
+ai-vfs = { workspace = true }
+ai-dir = { workspace = true }
+ai-protocol = { workspace = true }
+tokio = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

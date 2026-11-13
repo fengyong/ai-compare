@@ -3,7 +3,9 @@
 
 # Rust
 target/
-Cargo.lock
+
+# ts-rs 原始导出（拷贝到 ui/src/protocol/generated/ 后即冗余，见 ai-protocol/src/ts_export.rs）
+engine/ai-protocol/bindings/
 
 # Node
 node_modules/
