@@ -12,6 +12,9 @@ thiserror = { workspace = true }
 # Histogram 对齐算法（git 同源实现，Apache-2.0；docs/04 P1 交付物 ①）
 imara-diff = "0.2.0"
 
+[dev-dependencies]
+tempfile = { workspace = true }
+
 [[bench]]
 name = "pb04_diff_smoke"
 harness = false

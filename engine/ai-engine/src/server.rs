@@ -19,6 +19,9 @@ pub struct DirSessionData {
     pub model: Option<Arc<ai_dir::DirModel>>,
     /// P0 同步扫描结果（旧载荷路径）
     pub scan: Option<ai_dir::DirScanResult>,
+    /// P9：两侧根路径（dir/execute 执行文件操作用；DirModel.roots 私有，
+    /// 由 dir/open 打开时记录）
+    pub roots: Option<(ai_vfs::VfsPath, ai_vfs::VfsPath)>,
 }
 
 /// 文本比较会话数据
@@ -62,11 +65,44 @@ pub struct MergeSessionData {
     pub rev: u64,
 }
 
+/// 表格比较会话数据（P9，table/open|sections）
+///
+/// 模型不可变（打开时一次求出）；行内容按需分页。
+#[derive(Debug, Clone)]
+pub struct TableSessionData {
+    /// 两侧解析后的表格数据（sections 行内容数据源）
+    pub left: ai_core::table::TableData,
+    pub right: ai_core::table::TableData,
+    /// diff 模型（比较列 + diff 行序列 + 统计）
+    pub model: ai_core::table::TableDiffModel,
+    /// 打开会话时生效的选项
+    pub options: ai_core::table::TableDiffOptions,
+}
+
+/// 十六进制比较会话数据（P9，hex/open|bytes）
+///
+/// 字节流驻内存 + 视窗分页查询（大文件策略：UI 虚拟网格按需拉取，
+/// docs/03 §2.3.2 大内容约定）。
+#[derive(Debug, Clone)]
+pub struct HexSessionData {
+    pub left: Vec<u8>,
+    pub right: Vec<u8>,
+    /// diff 模型（块序列 + 统计）
+    pub model: ai_core::hex::HexDiffModel,
+    /// 每字节状态图（same/changed/inserted/deleted；hex/bytes 着色数据源）
+    pub status_left: Vec<ai_core::hex::HexByteStatus>,
+    pub status_right: Vec<ai_core::hex::HexByteStatus>,
+    /// 打开会话时生效的选项
+    pub options: ai_core::hex::HexOptions,
+}
+
 #[derive(Clone)]
 pub enum Session {
     Dir(DirSessionData),
     Text(TextSessionData),
     Merge(MergeSessionData),
+    Table(TableSessionData),
+    Hex(HexSessionData),
 }
 
 pub type SessionMapInner = HashMap<String, Session>;

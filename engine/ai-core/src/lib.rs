@@ -26,6 +26,7 @@
 use std::borrow::Cow;
 
 pub mod histogram;
+pub mod hex;
 pub mod incremental;
 pub mod inline;
 pub mod keys;
@@ -34,10 +35,12 @@ pub mod manual;
 pub mod merge;
 pub mod myers;
 pub mod options;
+pub mod patch;
 pub mod patience;
 pub mod pipeline;
 pub mod progressive;
 pub mod sections;
+pub mod table;
 
 pub use inline::{
     inline_diff_line, inline_diff_section, CharSpan, InlineLineDiff, InlineLineResult, InlineSpan,

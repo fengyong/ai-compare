@@ -333,6 +333,26 @@ pub struct EngineCapabilities {
     #[serde(default = "default_some_true", skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub three_way_merge: Option<bool>,
+    /// P9：表格比较入口（table/open|sections）
+    /// 可选字段（缺省 true）：旧引擎载荷不含该字段时按 true 解析
+    #[serde(default = "default_some_true", skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub table_compare: Option<bool>,
+    /// P9：十六进制比较入口（hex/open|bytes 分页）
+    /// 可选字段（缺省 true）：旧引擎载荷不含该字段时按 true 解析
+    #[serde(default = "default_some_true", skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub hex_compare: Option<bool>,
+    /// P9：补丁应用入口（text/patch/apply）
+    /// 可选字段（缺省 true）：旧引擎载荷不含该字段时按 true 解析
+    #[serde(default = "default_some_true", skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub patch_apply: Option<bool>,
+    /// P6 提案合入：dir/execute 文件操作执行（dryRun + 执行 + rescan delta）
+    /// 可选字段（缺省 true）：旧引擎载荷不含该字段时按 true 解析
+    #[serde(default = "default_some_true", skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub dir_execute: Option<bool>,
 }
 
 /// 许可能力（ADR-009：开源/自用默认全能力；字段为后续门控留位）
@@ -1343,6 +1363,494 @@ pub struct MergeOutputResult {
 }
 
 // ---------------------------------------------------------------------------
+// P9：table/open、table/sections（表格比较，FR-TBL 引擎侧）
+// ---------------------------------------------------------------------------
+
+/// 列对齐模式（FR-TBL-003）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub enum TableColumnAlign {
+    /// 未对齐（两侧文件顺序）
+    #[default]
+    None,
+    /// 按左侧名称对齐
+    ByLeftName,
+    /// 按右侧名称对齐
+    ByRightName,
+}
+
+/// 行对齐算法（FR-TBL-004 子集；键列出现时恒走键匹配）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub enum TableRowAlign {
+    /// 不对齐：按行号位置配对
+    #[default]
+    Unaligned,
+    /// 标准（Myers O(ND) 行键对齐）
+    Standard,
+}
+
+/// table/open 选项（全部可选；缺省与 ai-core `TableDiffOptions::default` 一致）
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase", default)]
+pub struct TableOptionsSpec {
+    /// 列分隔符（取首字符；"\\t" = TSV；缺省 ','）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delimiter: Option<String>,
+    /// 首行为表头（缺省 true）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub has_header: Option<bool>,
+    /// 键列集（0 起物理列下标；空 = 无键）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key_columns: Option<Vec<u32>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub column_align: Option<TableColumnAlign>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub row_align: Option<TableRowAlign>,
+    /// 偏斜容差（缺省 5；0 = 不允许偏斜补配）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skew_tolerance: Option<u32>,
+    /// 大小写不重要（FR-TBL-003 文本列）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub case_unimportant: Option<bool>,
+    /// 空白语义（FR-TBL-003 空白三类；缺省 Significant）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub whitespace: Option<WhitespaceMode>,
+    /// 数值容差（P10 预留；数值列两值相差 ≤ 容差判不重要）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub numeric_tolerance: Option<f64>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase", default)]
+pub struct TableOpenParams {
+    pub session_id: String,
+    pub left: String,
+    pub right: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub options: Option<TableOptionsSpec>,
+}
+
+/// 比较列类型（宽松推断）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub enum TableColumnType {
+    Text,
+    Number,
+    Date,
+}
+
+/// 比较列（显示"比较列"而非物理列：FR-TBL-001；单侧列对侧下标为 None）
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct TableColumnInfo {
+    pub name: String,
+    pub ty: TableColumnType,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub left: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub right: Option<u32>,
+}
+
+/// diff 行统计
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct TableSummary {
+    pub same_rows: u32,
+    pub changed_rows: u32,
+    pub added_rows: u32,
+    pub removed_rows: u32,
+    /// 仅有不重要差异的行数（沟槽蓝点）
+    pub unimportant_rows: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct TableOpenResult {
+    pub session_id: String,
+    /// diff 行总数（table/sections 分批取回）
+    pub row_count: u32,
+    pub left_row_count: u32,
+    pub right_row_count: u32,
+    pub columns: Vec<TableColumnInfo>,
+    pub summary: TableSummary,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct TableSectionsParams {
+    pub session_id: String,
+    /// 起始 diff 行下标（0 起）
+    pub offset: u32,
+    /// 取回数量上限
+    pub count: u32,
+}
+
+/// diff 行类别（FR-TBL-001 沟槽点：changed 行看 important 定红/蓝）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub enum TableRowKind {
+    Same,
+    Changed,
+    Added,
+    Removed,
+}
+
+/// 单元格状态（unimportantDiff = 仅不重要方面不同：蓝点数据源）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub enum TableCellStatus {
+    Same,
+    UnimportantDiff,
+    ImportantDiff,
+    /// 仅该列左侧有值（单侧列）
+    LeftOnly,
+    /// 仅右侧有值
+    RightOnly,
+}
+
+/// 单元格 diff（单侧列对侧值为 None）
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct TableCellDto {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub left: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub right: Option<String>,
+    pub status: TableCellStatus,
+}
+
+/// diff 输出行
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct TableRowDto {
+    pub kind: TableRowKind,
+    /// 左侧数据行号（0 起；Added 时省略）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub left: Option<u32>,
+    /// 右侧数据行号（Removed 时省略）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub right: Option<u32>,
+    /// 行整体重要性（红点 = true）
+    pub important: bool,
+    /// 逐比较列单元格 diff
+    pub cells: Vec<TableCellDto>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct TableSectionsResult {
+    pub session_id: String,
+    pub offset: u32,
+    /// diff 行总数
+    pub total: u32,
+    pub has_more: bool,
+    pub rows: Vec<TableRowDto>,
+}
+
+// ---------------------------------------------------------------------------
+// P9：hex/open、hex/bytes（十六进制比较，FR-HEX 引擎侧）
+// ---------------------------------------------------------------------------
+
+/// 对齐模式（FR-HEX-002：完全 / 快速 / 无）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub enum HexAlignMode {
+    /// 完全：插入/删除感知（分块粗对齐 + 区域字节级精对齐）
+    #[default]
+    Full,
+    /// 快速：分块粗对齐 + 块内等位精对齐（大文件友好）
+    Fast,
+    /// 无：逐字节对齐
+    None,
+}
+
+/// hex/open 选项（缺省：chunk 4096 + Full）
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase", default)]
+pub struct HexOptionsSpec {
+    /// 分块大小（字节）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chunk_size: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub align_mode: Option<HexAlignMode>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase", default)]
+pub struct HexOpenParams {
+    pub session_id: String,
+    pub left: String,
+    pub right: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub options: Option<HexOptionsSpec>,
+}
+
+/// 字节统计
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct HexSummary {
+    pub same_bytes: u64,
+    pub changed_bytes: u64,
+    pub inserted_bytes: u64,
+    pub deleted_bytes: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct HexOpenResult {
+    pub session_id: String,
+    pub left_size: u64,
+    pub right_size: u64,
+    /// diff 块数（same/changed/inserted/deleted 块序列）
+    pub block_count: u32,
+    pub summary: HexSummary,
+}
+
+/// hex/bytes 参数：十六进制行分页（16 字节/行；offset 按字节、自动对齐到行首）
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct HexBytesParams {
+    pub session_id: String,
+    pub side: DiffSide,
+    /// 起始字节偏移（向下对齐到 16 字节行首；越界钳制）
+    pub offset: u64,
+    /// 取回字节长度上限（向上对齐到整行；单页上限 4096 字节 = 256 行）
+    pub length: u32,
+}
+
+/// 单行十六进制 + ASCII 侧栏（FR-HEX-001）
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct HexLineDto {
+    /// 行首字节地址
+    pub addr: u64,
+    /// 十六进制列（小写两位空格分隔；末行短于 16 字节不填充）
+    pub hex: String,
+    /// ASCII 列（非可打印 ASCII -> '.'）
+    pub ascii: String,
+    /// 逐字节状态串（与该行字节数等长）：'=' 同 / 'x' 变化 / '+' 插入 / '-' 删除
+    pub status: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct HexBytesResult {
+    pub session_id: String,
+    pub side: DiffSide,
+    /// 实际起始字节偏移（对齐后）
+    pub offset: u64,
+    pub lines: Vec<HexLineDto>,
+    /// true = 本页之后无更多行
+    pub done: bool,
+}
+
+// ---------------------------------------------------------------------------
+// P9：text/patch/apply（补丁应用，FR-PATCH-011）
+// ---------------------------------------------------------------------------
+
+/// text/patch/apply 参数：输入补丁文本 + 目标规格 -> 结果报告（无会话，一次性）
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase", default)]
+pub struct PatchApplyParams {
+    /// unified diff 补丁文本（git 头/时间戳容错）
+    pub patch: String,
+    /// 目标根目录（补丁内相对路径在此目录下解析）
+    pub root: String,
+    /// 试运行：只校验不落盘
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dry_run: Option<bool>,
+    /// 模糊上下文匹配层数（缺省 3；0 = 仅精确）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fuzz: Option<u32>,
+    /// CRLF 容忍（缺省 true；false 时补丁行行尾风格须与目标一致）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub crlf_tolerant: Option<bool>,
+}
+
+/// 单文件应用状态
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub enum PatchFileStatus {
+    Applied,
+    AlreadyApplied,
+    /// 二进制文件跳过（补丁标注 Binary/GIT binary patch 或目标非 UTF-8）
+    SkippedBinary,
+    /// 无内容 hunk（纯元数据变更）
+    NoOp,
+    Failed,
+}
+
+/// 单文件应用结果
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct PatchFileResultDto {
+    pub path: String,
+    pub status: PatchFileStatus,
+    /// 实际使用的模糊层数
+    pub fuzz_used: u32,
+    /// 首个非零位置漂移（hunk 落点较补丁声明的行偏移）
+    pub offset_applied: i64,
+    /// 失败/跳过原因
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct PatchApplyResult {
+    pub total: u32,
+    pub applied: u32,
+    pub failed: u32,
+    pub dry_run: bool,
+    /// true = 全部文件应用成功（二进制跳过/无操作不算失败）
+    pub all_applied: bool,
+    pub results: Vec<PatchFileResultDto>,
+}
+
+// ---------------------------------------------------------------------------
+// P6 提案合入：dir/execute（文件操作执行；与 ui/src/protocol/types.ts §3 提案同构）
+// ---------------------------------------------------------------------------
+
+/// 执行级操作动作（对齐 ai-dir execute::FileOp）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub enum DirExecuteOpKind {
+    Copy,
+    Move,
+    Rename,
+    Delete,
+    Touch,
+    Mkdir,
+}
+
+/// 执行级操作（rel 路径 + 侧；serde 形态与 UI 提案一致）
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct DirExecuteOp {
+    pub kind: DirExecuteOpKind,
+    /// rel 路径（POSIX 风格；rename 为源路径）
+    pub path: String,
+    /// copy/move 的源侧；delete/touch/mkdir/rename 的操作侧
+    pub side: DiffSide,
+    /// copy/move 目标侧（缺省 = 对侧）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_side: Option<DiffSide>,
+    /// rename 新名称（仅 rename）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub new_name: Option<String>,
+    /// touch 目标 mtime（epoch ms；0/缺省 = 取对侧时间戳）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mtime_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase", default)]
+pub struct DirExecuteParams {
+    pub session_id: String,
+    pub ops: Vec<DirExecuteOp>,
+    /// 试运行：只校验不落盘，返回将执行清单（可对拍）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dry_run: Option<bool>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub enum DirExecuteOpStatus {
+    Succeeded,
+    Failed,
+    Skipped,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct DirExecuteOpResult {
+    pub op: DirExecuteOp,
+    pub status: DirExecuteOpStatus,
+    /// 失败原因 / 跳过原因 / dry_run 说明
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+}
+
+/// dir/execute 应答（部分成功语义：成功/失败/跳过三清单，OP-002）；
+/// 非 dry_run 执行后引擎 rescan 目录会话并推送 dir/delta。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct DirExecuteResult {
+    pub session_id: String,
+    pub total: u32,
+    pub succeeded: Vec<DirExecuteOpResult>,
+    pub failed: Vec<DirExecuteOpResult>,
+    pub skipped: Vec<DirExecuteOpResult>,
+    pub dry_run: bool,
+    pub cancelled: bool,
+}
+
+// ---------------------------------------------------------------------------
 // session/close、$/cancel
 // ---------------------------------------------------------------------------
 
@@ -1862,6 +2370,10 @@ mod tests {
             dir_filters: true,
             dir_operate: true,
             three_way_merge: Some(true),
+            table_compare: Some(true),
+            hex_compare: Some(true),
+            patch_apply: Some(true),
+            dir_execute: Some(true),
         };
         let s = serde_json::to_string(&c).unwrap();
         assert!(s.contains("linesRead"));
@@ -2113,6 +2625,146 @@ mod tests {
         assert_eq!(minimal.mode, None, "缺省 Plain 模式");
     }
 
+    // ------------------------------------------------------------------
+    // P9：table/hex/patch/dir execute 载荷（只加不改；旧载荷不受影响）
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn p9_capabilities_old_payload_defaults_true() {
+        // P7 旧载荷（无 P9 能力位）可解析；缺省 true（可选能力位约定）
+        let old = r#"{"dirCompare":true,"textCompare":true,"inlineDiff":false,"cancel":true,"deltaBatching":true,"maxDeltaBatchRows":512,"dirBackgroundScan":true,"dirFilters":true,"dirOperate":true}"#;
+        let v: EngineCapabilities = serde_json::from_str(old).unwrap();
+        assert_eq!(v.table_compare, Some(true));
+        assert_eq!(v.hex_compare, Some(true));
+        assert_eq!(v.patch_apply, Some(true));
+        assert_eq!(v.dir_execute, Some(true));
+        // None 能力位序列化时省略（不出现 null）
+        let mut c = EngineCapabilities {
+            dir_compare: true,
+            text_compare: true,
+            inline_diff: true,
+            cancel: true,
+            delta_batching: true,
+            max_delta_batch_rows: 512,
+            lines_read: Some(true),
+            dir_background_scan: true,
+            dir_filters: true,
+            dir_operate: true,
+            three_way_merge: Some(true),
+            table_compare: None,
+            hex_compare: None,
+            patch_apply: None,
+            dir_execute: None,
+        };
+        let s = serde_json::to_string(&c).unwrap();
+        assert!(!s.contains("tableCompare") && !s.contains("hexCompare"), "{s}");
+        c.table_compare = Some(true);
+        assert!(serde_json::to_string(&c).unwrap().contains("tableCompare"));
+    }
+
+    #[test]
+    fn table_open_params_minimal_and_options_roundtrip() {
+        let old = r#"{"sessionId":"t1","left":"a.csv","right":"b.csv"}"#;
+        let v: TableOpenParams = serde_json::from_str(old).unwrap();
+        assert!(v.options.is_none());
+        let s = serde_json::to_string(&v).unwrap();
+        assert_eq!(s, old, "最小载荷字节级不变");
+        let spec: TableOptionsSpec = serde_json::from_str(
+            r#"{"delimiter":"\t","keyColumns":[0,2],"columnAlign":"byLeftName","rowAlign":"standard","skewTolerance":3,"caseUnimportant":true,"whitespace":"ignoreAmount","numericTolerance":0.5}"#,
+        )
+        .unwrap();
+        assert_eq!(spec.delimiter.as_deref(), Some("\t"));
+        assert_eq!(spec.key_columns, Some(vec![0, 2]));
+        assert_eq!(spec.column_align, Some(TableColumnAlign::ByLeftName));
+        assert_eq!(spec.row_align, Some(TableRowAlign::Standard));
+        assert_eq!(spec.numeric_tolerance, Some(0.5));
+        let back: TableOptionsSpec = serde_json::from_str(&serde_json::to_string(&spec).unwrap()).unwrap();
+        assert_eq!(back, spec);
+    }
+
+    #[test]
+    fn table_sections_result_optional_side_omitted() {
+        let row = TableRowDto {
+            kind: TableRowKind::Changed,
+            left: Some(3),
+            right: Some(4),
+            important: false,
+            cells: vec![
+                TableCellDto { left: Some("a".into()), right: Some("A".into()), status: TableCellStatus::UnimportantDiff },
+                TableCellDto { left: Some("x".into()), right: None, status: TableCellStatus::LeftOnly },
+            ],
+        };
+        let s = serde_json::to_string(&row).unwrap();
+        assert!(s.contains("\"unimportantDiff\"") && s.contains("\"leftOnly\""));
+        let back: TableRowDto = serde_json::from_str(&s).unwrap();
+        assert_eq!(back, row);
+        // Added 行省略 left
+        let added = TableRowDto { kind: TableRowKind::Added, left: None, right: Some(1), important: true, cells: Vec::new() };
+        let s = serde_json::to_string(&added).unwrap();
+        assert!(!s.contains("\"left\""), "{s}");
+    }
+
+    #[test]
+    fn hex_params_result_roundtrip() {
+        let p: HexOpenParams = serde_json::from_str(r#"{"sessionId":"h1","left":"a.bin","right":"b.bin"}"#).unwrap();
+        assert!(p.options.is_none());
+        let opts: HexOptionsSpec = serde_json::from_str(r#"{"chunkSize":8192,"alignMode":"fast"}"#).unwrap();
+        assert_eq!(opts.chunk_size, Some(8192));
+        assert_eq!(opts.align_mode, Some(HexAlignMode::Fast));
+        let bp: HexBytesParams = serde_json::from_str(r#"{"sessionId":"h1","side":"left","offset":256,"length":512}"#).unwrap();
+        assert_eq!(bp.offset, 256);
+        let line = HexLineDto {
+            addr: 0,
+            hex: "00 1f 20 7e".into(),
+            ascii: ".. ~".into(),
+            status: "==xx".into(),
+        };
+        let s = serde_json::to_string(&line).unwrap();
+        assert!(s.contains("\"addr\":0"));
+        let back: HexLineDto = serde_json::from_str(&s).unwrap();
+        assert_eq!(back, line);
+    }
+
+    #[test]
+    fn patch_apply_params_defaults_and_result_shape() {
+        let minimal: PatchApplyParams = serde_json::from_str(r#"{"patch":"--- a\n+++ b\n","root":"/tmp/x"}"#).unwrap();
+        assert!(minimal.dry_run.is_none() && minimal.fuzz.is_none() && minimal.crlf_tolerant.is_none());
+        let full: PatchApplyParams = serde_json::from_str(
+            r#"{"patch":"x","root":"/tmp","dryRun":true,"fuzz":0,"crlfTolerant":false}"#,
+        )
+        .unwrap();
+        assert!(full.dry_run == Some(true) && full.fuzz == Some(0) && full.crlf_tolerant == Some(false));
+        let result: PatchApplyResult = serde_json::from_str(
+            r#"{"total":2,"applied":1,"failed":1,"dryRun":false,"allApplied":false,"results":[{"path":"a.txt","status":"applied","fuzzUsed":0,"offsetApplied":2},{"path":"b.bin","status":"skippedBinary","fuzzUsed":0,"offsetApplied":0,"detail":"二进制"}]}"#,
+        )
+        .unwrap();
+        assert_eq!(result.results[1].status, PatchFileStatus::SkippedBinary);
+        assert_eq!(result.results[0].offset_applied, 2);
+    }
+
+    #[test]
+    fn dir_execute_payload_matches_ui_proposal() {
+        // 与 ui/src/protocol/types.ts §3 提案同构：side/copy/move/rename/touch/mtimeMs
+        let p: DirExecuteParams = serde_json::from_str(
+            r#"{"sessionId":"d1","ops":[{"kind":"copy","path":"a.txt","side":"left"},{"kind":"rename","path":"old.txt","side":"right","newName":"new.txt"},{"kind":"touch","path":"b.txt","side":"left","mtimeMs":1234567890},{"kind":"move","path":"c.txt","side":"left","targetSide":"right"}],"dryRun":true}"#,
+        )
+        .unwrap();
+        assert_eq!(p.ops.len(), 4);
+        assert_eq!(p.ops[0].kind, DirExecuteOpKind::Copy);
+        assert_eq!(p.ops[1].new_name.as_deref(), Some("new.txt"));
+        assert_eq!(p.ops[2].mtime_ms, Some(1234567890));
+        assert_eq!(p.ops[3].target_side, Some(DiffSide::Right));
+        // 可选字段缺省省略
+        let s = serde_json::to_string(&p.ops[0]).unwrap();
+        assert!(!s.contains("targetSide") && !s.contains("newName") && !s.contains("mtimeMs"), "{s}");
+        let r: DirExecuteResult = serde_json::from_str(
+            r#"{"sessionId":"d1","total":1,"succeeded":[{"op":{"kind":"delete","path":"x.txt","side":"right"},"status":"succeeded","detail":null}],"failed":[],"skipped":[],"dryRun":false,"cancelled":false}"#,
+        )
+        .unwrap();
+        assert_eq!(r.succeeded[0].status, DirExecuteOpStatus::Succeeded);
+        assert!(r.succeeded[0].detail.is_none());
+    }
+
     #[test]
     fn engine_capabilities_old_payload_without_three_way_merge() {
         // P2/P3 旧载荷（无 threeWayMerge）可解析；缺省 true（可选能力位约定）
@@ -2133,8 +2785,14 @@ mod tests {
             dir_filters: true,
             dir_operate: true,
             three_way_merge: Some(true),
+            table_compare: Some(true),
+            hex_compare: Some(true),
+            patch_apply: Some(true),
+            dir_execute: Some(true),
         };
         let s = serde_json::to_string(&c).unwrap();
         assert!(s.contains("threeWayMerge"));
+        assert!(s.contains("tableCompare") && s.contains("hexCompare"));
+        assert!(s.contains("patchApply") && s.contains("dirExecute"));
     }
 }
