@@ -18,9 +18,14 @@ path = "golden/golden_test.rs"
 name = "protocol_replay"
 path = "protocol_fixtures/replay_test.rs"
 
+[[test]]
+name = "algodiff_crosscheck"
+path = "algodiff_matrix/crosscheck_test.rs"
+
 [dependencies]
 serde_json = { workspace = true }
 tempfile = { workspace = true }
 
 [dev-dependencies]
 ai-protocol = { workspace = true }
+ai-core = { workspace = true }

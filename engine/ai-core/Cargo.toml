@@ -9,7 +9,13 @@ description = "ai-compare diff 核心算法（M01）：行分割、Myers O(ND) �
 [dependencies]
 # 纯算法 crate：不依赖任何 IO / 协议 / 业务 crate（docs/03 §8.3 耦合规则）
 thiserror = { workspace = true }
+# Histogram 对齐算法（git 同源实现，Apache-2.0；docs/04 P1 交付物 ①）
+imara-diff = "0.2.0"
 
 [[bench]]
 name = "pb04_diff_smoke"
+harness = false
+
+[[bench]]
+name = "pb05_algo_matrix"
 harness = false
