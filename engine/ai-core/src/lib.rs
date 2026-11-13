@@ -20,11 +20,13 @@
 //! - 对拍测试矩阵（difflib/git diff golden，`tests/` 下）+ PB-05 算法矩阵基准。
 //!
 //! 兼容性：P0 入口 [`diff_text`] / [`diff_stream`] 签名不变；
-//! `TextDiffOptions` 字段集冻结（引擎 mapping 层逐字段构造），P1 新配置进
-//! [`DiffConfig`]。默认 [`DiffConfig`] 下行为与 P0 完全一致。
+//! `TextDiffOptions` P0 字段集冻结，P1 新配置进 [`DiffConfig`]；P10 新增
+//! `rules` 字段（[`rules::RulesOptions`]，缺省空 = 行为不变）。默认
+//! [`DiffConfig`] 下行为与 P0 完全一致。
 
 use std::borrow::Cow;
 
+pub mod formats;
 pub mod histogram;
 pub mod hex;
 pub mod incremental;
@@ -39,8 +41,19 @@ pub mod patch;
 pub mod patience;
 pub mod pipeline;
 pub mod progressive;
+pub mod rules;
 pub mod sections;
 pub mod table;
+
+pub use formats::{
+    builtin_registry, line_classify, mask_matches, sniff_bytes, sniff_shebang, unimportant_mask,
+    FileClass, FileFormat, FormatPack, FormatPackError, FormatRegistry, FormatViewKind,
+    GrammarElement, LineClass, LineWeight, SyntaxItem, UNIMPORTANT_MARK,
+};
+pub use rules::{
+    CompareRules, EffectiveRules, FormatOverride, FormatsDocument, RuleFormatBinding, RuleLayer,
+    RuleSet, RuleTarget, RulesDocument, RulesOptions,
+};
 
 pub use inline::{
     inline_diff_line, inline_diff_section, CharSpan, InlineLineDiff, InlineLineResult, InlineSpan,

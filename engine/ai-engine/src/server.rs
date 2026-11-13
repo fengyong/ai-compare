@@ -301,6 +301,8 @@ fn clone_ctx(ctx: &HandlerCtx) -> HandlerCtx {
         sessions: Arc::clone(&ctx.sessions),
         vfs: Arc::clone(&ctx.vfs),
         max_batch_rows: ctx.max_batch_rows,
+        formats: Arc::clone(&ctx.formats),
+        rules: Arc::clone(&ctx.rules),
     }
 }
 

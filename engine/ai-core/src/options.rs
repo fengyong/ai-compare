@@ -226,8 +226,10 @@ pub struct DiffConfig {
 
 /// 文本 diff 选项（docs/03 §3.1.1 TextDiffOptions 的 P0 子集 + 行内选项）。
 ///
-/// **字段集冻结**：引擎 mapping 层以全字段字面量构造本结构，新增配置进
-/// [`DiffConfig`] / [`ImportanceOptions`] / [`ManualAlignOptions`]。
+/// 字段集说明（P10 更新）：新增 [`crate::rules::RulesOptions`] 字段 `rules`
+/// （语法折叠：注释行/字符串内容在**重要性键**中折叠；缺省空 = 与 P0/P1
+/// 行为完全一致——向后兼容默认值）。既有调用方一律以 `..Default` 展开，
+/// 无需改动；引擎 mapping 层构造点已同步。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TextDiffOptions {
     pub algo: LineAlignAlgo,
@@ -236,6 +238,8 @@ pub struct TextDiffOptions {
     /// true（默认）= 行尾风格（CRLF/LF/CR）不参与骨架比较（docs/03 §6.1）
     pub ignore_eol_style: bool,
     pub inline: InlineOptions,
+    /// P10：规则体系语法折叠（文件格式 × 重要性规则；缺省 = 不折叠）
+    pub rules: crate::rules::RulesOptions,
 }
 
 impl Default for TextDiffOptions {
@@ -246,6 +250,7 @@ impl Default for TextDiffOptions {
             ignore_case: false,
             ignore_eol_style: true,
             inline: InlineOptions::default(),
+            rules: crate::rules::RulesOptions::default(),
         }
     }
 }

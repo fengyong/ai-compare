@@ -83,6 +83,7 @@ pub fn text_options_from_dto(opts: &ai_protocol::TextDiffOptions) -> ai_core::Te
         ignore_case: opts.ignore_case,
         ignore_eol_style: opts.ignore_eol_style,
         inline: ai_core::InlineOptions::default(),
+        rules: ai_core::RulesOptions::default(),
     }
 }
 
@@ -196,8 +197,216 @@ pub fn line_keys_entry(
         side: side_to_dto(side),
         line,
         raw: ai_core::raw_key(entry, opts).into_owned(),
-        importance: ai_core::importance_key(entry, opts, imp).into_owned(),
+        importance: ai_core::importance_key(entry, opts, imp, Some(index)).into_owned(),
     }
+}
+
+// ---------------------------------------------------------------------------
+// P10：文件格式与规则体系（formats/*、rules/*）协议映射
+// ---------------------------------------------------------------------------
+
+/// core 语法项 -> 协议 GrammarItemSpec
+fn syntax_item_to_spec(item: &ai_core::SyntaxItem) -> ai_protocol::GrammarItemSpec {
+    use ai_core::SyntaxItem;
+    match item {
+        SyntaxItem::Text { pattern, regex, case_sensitive } => ai_protocol::GrammarItemSpec {
+            kind: ai_protocol::GrammarItemKind::Text,
+            pattern: Some(pattern.clone()),
+            regex: *regex,
+            case_sensitive: *case_sensitive,
+            ..Default::default()
+        },
+        SyntaxItem::Delimited { start, end, escape, to_eol, regex, case_sensitive } => {
+            ai_protocol::GrammarItemSpec {
+                kind: ai_protocol::GrammarItemKind::Delimited,
+                start: Some(start.clone()),
+                end: end.clone(),
+                escape: escape.clone(),
+                to_eol: *to_eol,
+                regex: *regex,
+                case_sensitive: *case_sensitive,
+                ..Default::default()
+            }
+        }
+        SyntaxItem::List { tokens, regex, case_sensitive } => ai_protocol::GrammarItemSpec {
+            kind: ai_protocol::GrammarItemKind::List,
+            tokens: tokens.clone(),
+            regex: *regex,
+            case_sensitive: *case_sensitive,
+            ..Default::default()
+        },
+        SyntaxItem::Column { from, to } => ai_protocol::GrammarItemSpec {
+            kind: ai_protocol::GrammarItemKind::Column,
+            from: Some(*from),
+            to: *to,
+            ..Default::default()
+        },
+        SyntaxItem::RowTitle { pattern, lines, or_first_line } => ai_protocol::GrammarItemSpec {
+            kind: ai_protocol::GrammarItemKind::RowTitle,
+            pattern: Some(pattern.clone()),
+            lines: Some(*lines),
+            or_first_line: *or_first_line,
+            ..Default::default()
+        },
+    }
+}
+
+/// 协议 GrammarItemSpec -> core 语法项
+pub fn syntax_item_from_spec(spec: &ai_protocol::GrammarItemSpec) -> ai_core::SyntaxItem {
+    use ai_core::SyntaxItem;
+    match spec.kind {
+        ai_protocol::GrammarItemKind::Text => SyntaxItem::Text {
+            pattern: spec.pattern.clone().unwrap_or_default(),
+            regex: spec.regex,
+            case_sensitive: spec.case_sensitive,
+        },
+        ai_protocol::GrammarItemKind::Delimited => SyntaxItem::Delimited {
+            start: spec.start.clone().unwrap_or_default(),
+            end: spec.end.clone(),
+            escape: spec.escape.clone(),
+            to_eol: spec.to_eol,
+            regex: spec.regex,
+            case_sensitive: spec.case_sensitive,
+        },
+        ai_protocol::GrammarItemKind::List => SyntaxItem::List {
+            tokens: spec.tokens.clone(),
+            regex: spec.regex,
+            case_sensitive: spec.case_sensitive,
+        },
+        ai_protocol::GrammarItemKind::Column => SyntaxItem::Column {
+            from: spec.from.unwrap_or(1),
+            to: spec.to,
+        },
+        ai_protocol::GrammarItemKind::RowTitle => SyntaxItem::RowTitle {
+            pattern: spec.pattern.clone().unwrap_or_default(),
+            lines: spec.lines.unwrap_or(1),
+            or_first_line: spec.or_first_line,
+        },
+    }
+}
+
+/// core 文件格式 -> 协议 FileFormatSpec
+pub fn format_to_spec(f: &ai_core::FileFormat) -> ai_protocol::FileFormatSpec {
+    ai_protocol::FileFormatSpec {
+        id: f.id.clone(),
+        enabled: f.enabled,
+        masks: f.masks.clone(),
+        description: f.description.clone(),
+        view_kind: match f.view_kind {
+            ai_core::FormatViewKind::Text => ai_protocol::FormatViewKind::Text,
+            ai_core::FormatViewKind::Table => ai_protocol::FormatViewKind::Table,
+            ai_core::FormatViewKind::Hex => ai_protocol::FormatViewKind::Hex,
+            ai_core::FormatViewKind::Picture => ai_protocol::FormatViewKind::Picture,
+            ai_core::FormatViewKind::External => ai_protocol::FormatViewKind::External,
+        },
+        grammar: f
+            .grammar
+            .iter()
+            .map(|e| ai_protocol::GrammarElementSpec {
+                name: e.name.clone(),
+                case_sensitive: e.case_sensitive,
+                items: e.items.iter().map(syntax_item_to_spec).collect(),
+            })
+            .collect(),
+        tab_stops: f.tab_stops,
+        independent_lines: f.independent_lines,
+        column_data: f.column_data,
+    }
+}
+
+/// 协议 FileFormatSpec -> core 文件格式
+pub fn format_from_spec(spec: &ai_protocol::FileFormatSpec) -> ai_core::FileFormat {
+    ai_core::FileFormat {
+        id: spec.id.clone(),
+        enabled: spec.enabled,
+        masks: spec.masks.clone(),
+        description: spec.description.clone(),
+        view_kind: match spec.view_kind {
+            ai_protocol::FormatViewKind::Text => ai_core::FormatViewKind::Text,
+            ai_protocol::FormatViewKind::Table => ai_core::FormatViewKind::Table,
+            ai_protocol::FormatViewKind::Hex => ai_core::FormatViewKind::Hex,
+            ai_protocol::FormatViewKind::Picture => ai_core::FormatViewKind::Picture,
+            ai_protocol::FormatViewKind::External => ai_core::FormatViewKind::External,
+        },
+        grammar: spec
+            .grammar
+            .iter()
+            .map(|e| ai_core::GrammarElement {
+                name: e.name.clone(),
+                case_sensitive: e.case_sensitive,
+                items: e.items.iter().map(syntax_item_from_spec).collect(),
+            })
+            .collect(),
+        weights: Vec::new(),
+        tab_stops: spec.tab_stops,
+        independent_lines: spec.independent_lines,
+        column_data: spec.column_data,
+        encoding: None,
+    }
+}
+
+/// core 规则层 -> 协议 RuleLayerSpec
+pub fn rule_layer_to_spec(layer: &ai_core::RuleLayer) -> ai_protocol::RuleLayerSpec {
+    ai_protocol::RuleLayerSpec {
+        compare: layer.compare.as_ref().map(compare_rules_to_spec),
+        unimportant_elements: layer.unimportant_elements.clone(),
+    }
+}
+
+/// 协议 RuleLayerSpec -> core 规则层
+pub fn rule_layer_from_spec(spec: &ai_protocol::RuleLayerSpec) -> ai_core::RuleLayer {
+    ai_core::RuleLayer {
+        compare: spec.compare.as_ref().map(compare_rules_from_spec),
+        unimportant_elements: spec.unimportant_elements.clone(),
+    }
+}
+
+/// core CompareRules（全字段具值）-> 协议 CompareRulesSpec
+fn compare_rules_to_spec(c: &ai_core::CompareRules) -> ai_protocol::CompareRulesSpec {
+    ai_protocol::CompareRulesSpec {
+        leading_ws_unimportant: Some(c.leading_ws_unimportant),
+        embedded_ws_unimportant: Some(c.embedded_ws_unimportant),
+        trailing_ws_unimportant: Some(c.trailing_ws_unimportant),
+        case_unimportant: Some(c.case_unimportant),
+        eol_style_unimportant: Some(c.eol_style_unimportant),
+        encoding_unimportant: Some(c.encoding_unimportant),
+    }
+}
+
+/// 协议 CompareRulesSpec（部分）-> core CompareRules（None = 缺省值）
+fn compare_rules_from_spec(spec: &ai_protocol::CompareRulesSpec) -> ai_core::CompareRules {
+    let d = ai_core::CompareRules::default();
+    ai_core::CompareRules {
+        leading_ws_unimportant: spec.leading_ws_unimportant.unwrap_or(d.leading_ws_unimportant),
+        embedded_ws_unimportant: spec.embedded_ws_unimportant.unwrap_or(d.embedded_ws_unimportant),
+        trailing_ws_unimportant: spec.trailing_ws_unimportant.unwrap_or(d.trailing_ws_unimportant),
+        case_unimportant: spec.case_unimportant.unwrap_or(d.case_unimportant),
+        eol_style_unimportant: spec.eol_style_unimportant.unwrap_or(d.eol_style_unimportant),
+        encoding_unimportant: spec.encoding_unimportant.unwrap_or(d.encoding_unimportant),
+    }
+}
+
+/// core EffectiveRules -> 协议 EffectiveRulesSpec
+pub fn effective_rules_to_spec(e: &ai_core::EffectiveRules) -> ai_protocol::EffectiveRulesSpec {
+    ai_protocol::EffectiveRulesSpec {
+        compare: compare_rules_to_spec(&e.compare),
+        unimportant_elements: e.unimportant_elements.clone(),
+    }
+}
+
+/// 会话 rules 载荷（text/open params.rules）-> (ImportanceOptions, 元素集 Option)。
+/// None 字段 = 引擎缺省（ImportanceOptions::default）；元素集 None = 不启用语法折叠。
+pub fn rules_spec_to_core(spec: &ai_protocol::RulesSpec) -> (ai_core::ImportanceOptions, Option<Vec<String>>) {
+    let d = ai_core::ImportanceOptions::default();
+    let imp = ai_core::ImportanceOptions {
+        leading_ws_unimportant: spec.leading_ws_unimportant.unwrap_or(d.leading_ws_unimportant),
+        embedded_ws_unimportant: spec.embedded_ws_unimportant.unwrap_or(d.embedded_ws_unimportant),
+        trailing_ws_unimportant: spec.trailing_ws_unimportant.unwrap_or(d.trailing_ws_unimportant),
+        case_unimportant: spec.case_unimportant.unwrap_or(d.case_unimportant),
+        eol_style_unimportant: spec.eol_style_unimportant.unwrap_or(d.eol_style_unimportant),
+        encoding_unimportant: spec.encoding_unimportant.unwrap_or(d.encoding_unimportant),
+    };
+    (imp, spec.unimportant_elements.clone())
 }
 
 // ---------------------------------------------------------------------------

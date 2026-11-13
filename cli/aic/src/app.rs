@@ -63,7 +63,10 @@ pub fn print_usage() {
          aic diff <left> <right> [--algo standard|myers|patience|histogram]\n  \
                 [-w|--ignore-whitespace] [--ignore-whitespace-amount] [--ignore-case]\n  \
                 [--compare-eol] [-U <n>] [--color auto|always|never]\n  \
-                （两侧为目录时递归输出，diff -r 风格）\n  \
+                [--rules <rules.json>] [--format-load <formats.bcpack>]\n  \
+                （两侧为目录时递归输出，diff -r 风格；--rules 加载规则文档全局层，\n\
+                  --format-load 加载格式集——两者加载即生效，重要性规则随文件格式\n\
+                  语法折叠注释/字符串差异，对齐骨架不变）\n  \
          aic merge <base> <left> <right> [-o <out>] [--auto|--marker] [--diff3]\n  \
                 [--conflict-exit-code <n>] [--favor-left|--favor-right]\n  \
                 [-iu|--ignore-unimportant] [--on-conflict left|right|base|leftThenRight|rightThenLeft]\n  \
@@ -93,6 +96,10 @@ pub struct DiffFlags {
     pub context: u32,
     pub color: String,
     pub opts: TextDiffOptions,
+    /// P10：规则文档（rules.json 形态；加载即生效，全局层）
+    pub rules_path: Option<String>,
+    /// P10：格式集（.bcpack / JSON；加载后参与文件格式检测，语法供规则折叠）
+    pub format_pack_path: Option<String>,
 }
 
 impl Default for DiffFlags {
@@ -101,6 +108,8 @@ impl Default for DiffFlags {
             context: 3,
             color: "auto".to_string(),
             opts: TextDiffOptions::default(),
+            rules_path: None,
+            format_pack_path: None,
         }
     }
 }
@@ -160,6 +169,27 @@ pub fn parse_diff_flags(args: &[String]) -> Result<(Vec<&String>, DiffFlags), St
                     _ => return Err("--color 仅支持 auto|always|never".into()),
                 }
             }
+            // P10：规则/格式集加载即生效
+            "--rules" => {
+                i += 1;
+                match args.get(i) {
+                    Some(p) => flags.rules_path = Some(p.to_string()),
+                    None => return Err("--rules 需要规则文档路径（rules.json 形态）".into()),
+                }
+            }
+            _ if a.starts_with("--rules=") => {
+                flags.rules_path = Some(a["--rules=".len()..].to_string());
+            }
+            "--format-load" => {
+                i += 1;
+                match args.get(i) {
+                    Some(p) => flags.format_pack_path = Some(p.to_string()),
+                    None => return Err("--format-load 需要格式集路径（.bcpack / JSON）".into()),
+                }
+            }
+            _ if a.starts_with("--format-load=") => {
+                flags.format_pack_path = Some(a["--format-load=".len()..].to_string());
+            }
             _ if a.starts_with('-') => return Err(format!("未知参数: {a}")),
             _ => positional.push(&args[i]),
         }
@@ -192,7 +222,7 @@ pub fn cmd_diff(args: &[String]) -> ExitCode {
         positional[0],
         positional[1],
         flags.context,
-        &flags.opts,
+        &flags,
         palette,
     ));
     match result {
@@ -209,7 +239,7 @@ async fn run_diff(
     left_s: &str,
     right_s: &str,
     context: u32,
-    opts: &TextDiffOptions,
+    flags: &DiffFlags,
     palette: &Palette,
 ) -> Result<(), DiffOutcome> {
     let vfs = LocalFs::new();
@@ -239,8 +269,38 @@ async fn run_diff(
 
     let lt = LineTable::from_text(&left_text);
     let rt = LineTable::from_text(&right_text);
-    let out = ai_core::diff_text(&lt, &rt, opts)
+
+    // P10：格式集 / 规则文档加载即生效（--format-load 先建注册表，--rules 取全局层；
+    // 语法按左侧文件名检测的文件格式提供，未命中 → 不折叠）
+    let mut registry = ai_core::FormatRegistry::builtin();
+    if let Some(pack_path) = &flags.format_pack_path {
+        let text = std::fs::read_to_string(pack_path)
+            .map_err(|e| DiffOutcome::Error(format!("格式集读取失败 {pack_path}: {e}")))?;
+        let pack = ai_core::FormatPack::from_json(&text)
+            .map_err(|e| DiffOutcome::Error(format!("格式集解析失败: {e}")))?;
+        registry.merge_pack(&pack);
+    }
+    let mut config = ai_core::DiffConfig { base: flags.opts.clone(), ..ai_core::DiffConfig::default() };
+    if let Some(rules_path) = &flags.rules_path {
+        let text = std::fs::read_to_string(rules_path)
+            .map_err(|e| DiffOutcome::Error(format!("规则文档读取失败 {rules_path}: {e}")))?;
+        let doc = ai_core::RulesDocument::from_json(&text)
+            .map_err(|e| DiffOutcome::Error(format!("规则文档解析失败: {e}")))?;
+        let set = ai_core::RuleSet::from_document(&doc);
+        let fname = std::path::Path::new(left_s)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(left_s);
+        let head = vfs.read_range(&left_path, 0, 8192).await.unwrap_or_default();
+        let fmt = registry.detect(fname, &head);
+        let effective = set.resolve(None, None, fmt.map(|f| f.id.as_str()));
+        config.importance = effective.to_importance_options();
+        config.base.rules = ai_core::RulesOptions::resolve(&effective, fmt);
+    }
+
+    let keyed = ai_core::diff_config(&lt, &rt, &config)
         .map_err(|e| DiffOutcome::Error(e.to_string()))?;
+    let out = keyed.output;
 
     if out.sections.iter().all(|s| s.kind == ai_core::SectionKind::Equal) {
         return Ok(()); // 相同：无输出，退出码 0

@@ -30,6 +30,9 @@ pub fn raw_key<'a>(line: &'a LineEntry, opts: &TextDiffOptions) -> Cow<'a, str> 
 
 /// importance 键：在 raw 文本上再折叠"不重要"方面（FR-TXT-010）。
 ///
+/// - P10 语法折叠（`opts.rules`）：不重要语法元素（注释/字符串等）的匹配
+///   跨度先折叠为占位符（FR-FMT-003 × FR-TXT-010；`line_index` 供页标题
+///   "或第 1 行"判定）；
 /// - 行首/嵌入/行尾空白各自可折叠；
 /// - 大小写折叠（Unicode 简单小写）；
 /// - 行尾风格标记仅在"骨架比较行尾 且 行尾重要"时纳入（与 raw 键一致地携带）。
@@ -37,15 +40,25 @@ pub fn importance_key<'a>(
     line: &'a LineEntry,
     opts: &TextDiffOptions,
     imp: &ImportanceOptions,
+    line_index: Option<usize>,
 ) -> Cow<'a, str> {
     let text = line.text.as_str();
     let needs_ws = imp.leading_ws_unimportant || imp.embedded_ws_unimportant || imp.trailing_ws_unimportant;
     let needs_case = imp.case_unimportant;
     let needs_eol = !opts.ignore_eol_style && !imp.eol_style_unimportant && line.ending != crate::lines::LineEnding::Lf;
-    if !needs_ws && !needs_case && !needs_eol {
+    let needs_grammar = opts.rules.has_folding();
+    if !needs_ws && !needs_case && !needs_eol && !needs_grammar {
         return Cow::Borrowed(text);
     }
-    let mut owned = fold_whitespace(text, imp);
+    // P10 语法折叠先行（产出 owned 文本），再走空白/大小写折叠
+    let mut owned = if needs_grammar {
+        opts.rules.fold_line(text, line_index)
+    } else {
+        String::from(text)
+    };
+    if needs_ws {
+        owned = fold_whitespace(&owned, imp);
+    }
     if needs_case {
         owned = owned.to_lowercase();
     }
@@ -116,7 +129,7 @@ pub fn compute_keys(
                 let entry = table.line(i);
                 LineKeys {
                     raw: raw_key(entry, opts).into_owned(),
-                    importance: importance_key(entry, opts, imp).into_owned(),
+                    importance: importance_key(entry, opts, imp, Some(i)).into_owned(),
                 }
             })
             .collect()
@@ -155,7 +168,9 @@ pub fn classify_sections(
                     for k in 0..l.len() {
                         let le = left.line((l.start + k) as usize);
                         let re = right.line((r.start + k) as usize);
-                        if importance_key(le, opts, imp) != importance_key(re, opts, imp) {
+                        let li = Some((l.start + k) as usize);
+                        let ri = Some((r.start + k) as usize);
+                        if importance_key(le, opts, imp, li) != importance_key(re, opts, imp, ri) {
                             unimportant = false;
                             break;
                         }
@@ -352,7 +367,7 @@ fn line_keys(table: &LineTable, i: usize, opts: &TextDiffOptions, imp: &Importan
     let entry = table.line(i);
     LineKeys {
         raw: raw_key(entry, opts).into_owned(),
-        importance: importance_key(entry, opts, imp).into_owned(),
+        importance: importance_key(entry, opts, imp, Some(i)).into_owned(),
     }
 }
 
@@ -373,20 +388,20 @@ mod tests {
         let a = entry("  alpha  beta  ");
         let b = entry("alpha beta");
         // 默认：全部重要 → 键即原文，不同
-        assert_ne!(importance_key(&a, &opts, &imp), importance_key(&b, &opts, &imp));
+        assert_ne!(importance_key(&a, &opts, &imp, None), importance_key(&b, &opts, &imp, None));
 
         imp.trailing_ws_unimportant = true;
-        assert_ne!(importance_key(&a, &opts, &imp), importance_key(&b, &opts, &imp), "行首空白仍重要");
+        assert_ne!(importance_key(&a, &opts, &imp, None), importance_key(&b, &opts, &imp, None), "行首空白仍重要");
 
         imp.leading_ws_unimportant = true;
-        assert_ne!(importance_key(&a, &opts, &imp), importance_key(&b, &opts, &imp), "嵌入空白仍重要");
+        assert_ne!(importance_key(&a, &opts, &imp, None), importance_key(&b, &opts, &imp, None), "嵌入空白仍重要");
 
         imp.embedded_ws_unimportant = true;
-        assert_eq!(importance_key(&a, &opts, &imp), importance_key(&b, &opts, &imp));
+        assert_eq!(importance_key(&a, &opts, &imp, None), importance_key(&b, &opts, &imp, None));
 
         // 嵌入折叠语义：连续空白 -> 单空格
         let c = entry("alpha   beta");
-        assert_eq!(importance_key(&c, &opts, &imp), importance_key(&b, &opts, &imp));
+        assert_eq!(importance_key(&c, &opts, &imp, None), importance_key(&b, &opts, &imp, None));
     }
 
     #[test]
@@ -395,9 +410,9 @@ mod tests {
         let mut imp = ImportanceOptions::default();
         let a = entry("Hello");
         let b = entry("hello");
-        assert_ne!(importance_key(&a, &opts, &imp), importance_key(&b, &opts, &imp));
+        assert_ne!(importance_key(&a, &opts, &imp, None), importance_key(&b, &opts, &imp, None));
         imp.case_unimportant = true;
-        assert_eq!(importance_key(&a, &opts, &imp), importance_key(&b, &opts, &imp));
+        assert_eq!(importance_key(&a, &opts, &imp, None), importance_key(&b, &opts, &imp, None));
     }
 
     #[test]
@@ -408,14 +423,14 @@ mod tests {
         crlf.ending = crate::lines::LineEnding::CrLf;
         let lf = entry("x");
         // 默认：骨架忽略行尾 + 行尾不重要 → 无标记
-        assert_eq!(importance_key(&crlf, &opts, &imp), importance_key(&lf, &opts, &imp));
+        assert_eq!(importance_key(&crlf, &opts, &imp, None), importance_key(&lf, &opts, &imp, None));
         // 骨架比较行尾（raw 键带标记），但行尾仍不重要 → importance 键无标记
         opts.ignore_eol_style = false;
         assert_ne!(raw_key(&crlf, &opts), raw_key(&lf, &opts));
-        assert_eq!(importance_key(&crlf, &opts, &imp), importance_key(&lf, &opts, &imp));
+        assert_eq!(importance_key(&crlf, &opts, &imp, None), importance_key(&lf, &opts, &imp, None));
         // 行尾重要 → importance 键带标记
         imp.eol_style_unimportant = false;
-        assert_ne!(importance_key(&crlf, &opts, &imp), importance_key(&lf, &opts, &imp));
+        assert_ne!(importance_key(&crlf, &opts, &imp, None), importance_key(&lf, &opts, &imp, None));
     }
 
     #[test]

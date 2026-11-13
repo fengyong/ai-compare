@@ -11,6 +11,7 @@
         "dirExecute": true,
         "dirFilters": true,
         "dirOperate": true,
+        "formatRules": true,
         "hexCompare": true,
         "inlineDiff": true,
         "linesRead": true,

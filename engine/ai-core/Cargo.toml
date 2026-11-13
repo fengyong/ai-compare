@@ -11,6 +11,9 @@ description = "ai-compare diff 核心算法（M01）：行分割、Myers O(ND) �
 thiserror = { workspace = true }
 # Histogram 对齐算法（git 同源实现，Apache-2.0；docs/04 P1 交付物 ①）
 imara-diff = "0.2.0"
+# P10：格式/规则持久化模型与格式集（.bcpack/JSON）载体的序列化
+serde = { workspace = true }
+serde_json = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
