@@ -8,10 +8,18 @@ import type { SideInfo } from "./SideInfo";
  */
 export type DirRow = { 
 /**
- * 稳定行 id（相对路径，POSIX 风格；根的子项无前缀）
+ * 稳定行 id（相对路径，POSIX 风格；根的子项无前缀；平铺模式带 # 序号消歧）
  */
 id: string, name: string, kind: EntryKind, left: SideInfo | null, right: SideInfo | null, status: DirEntryStatus, 
 /**
  * 有子节点的目录为 true（展开由后续 dir/expand 提供，P0 预留）
  */
-hasChildren: boolean, };
+hasChildren: boolean, 
+/**
+ * P2：被显示过滤器隐藏（不影响比较结果；FR-DIR-033）
+ */
+hidden: boolean, 
+/**
+ * P2：抑制过滤器生效时被隐藏行以 suppressed 标记显示（FR-DIR-035 青绿色语义）
+ */
+suppressed: boolean, };

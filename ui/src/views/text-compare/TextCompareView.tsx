@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { EditorView } from '@codemirror/view';
 import type { Tab } from '../../shell/store';
-import { openText } from '../../ipc/engineProcess';
+import { openText, trackSession } from '../../ipc/engineProcess';
 import { S } from '../../strings';
 import { buildAlignedDocs, buildAllInlineMarks } from './alignment';
 import { loadTextSession, type LoadedTextSession } from './textSession';
@@ -31,7 +31,15 @@ export function TextCompareView({ tab }: { tab: Tab }) {
           options: null,
         });
         const loaded = await loadTextSession(opened, text.left.path, text.right.path);
-        if (!disposed) setSession(loaded);
+        if (!disposed) {
+          trackSession(text.sessionId, 'text', {
+            left: text.left.path,
+            right: text.right.path,
+            options: null,
+          });
+          setSession(loaded);
+          setError(null);
+        }
       } catch (err) {
         if (!disposed) setError(err instanceof Error ? err.message : String(err));
       }

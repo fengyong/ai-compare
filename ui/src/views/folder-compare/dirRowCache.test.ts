@@ -7,10 +7,12 @@ const row = (id: string, over: Partial<DirRow> = {}): DirRow => ({
   id,
   name: id.split('/').pop() ?? id,
   kind: 'file',
-  left: { size: 1, mtimeMs: 0 },
-  right: { size: 1, mtimeMs: 0 },
+  left: { size: 1, mtimeMs: 0, attribute: null, unixMode: 0, uid: 0, gid: 0 },
+  right: { size: 1, mtimeMs: 0, attribute: null, unixMode: 0, uid: 0, gid: 0 },
   status: 'same',
   hasChildren: false,
+  hidden: false,
+  suppressed: false,
   ...over,
 });
 
@@ -26,6 +28,7 @@ const delta = (over: Partial<DirDelta> & Pick<DirDelta, 'upserts'>): DirDelta =>
     leftOnly: 0,
     rightOnly: 0,
     dirSame: 0,
+    dirDiff: 0,
   },
   progress: { scanned: over.upserts.length, total: over.upserts.length },
   batch: { index: 0, hasMore: false },
@@ -82,6 +85,7 @@ describe('DirRowCache', () => {
           leftOnly: 1,
           rightOnly: 0,
           dirSame: 0,
+          dirDiff: 0,
         },
         progress: { scanned: 2, total: 2 },
       })

@@ -3,4 +3,8 @@
 /**
  * 各状态计数（状态栏 / 信息对话框数据源）
  */
-export type DirStats = { total: number, same: number, quickDiff: number, contentDiff: number, leftOnly: number, rightOnly: number, dirSame: number, };
+export type DirStats = { total: number, same: number, quickDiff: number, contentDiff: number, leftOnly: number, rightOnly: number, dirSame: number, 
+/**
+ * P2：聚合出差异的目录数（0 时省略，旧载荷字节级兼容）
+ */
+dirDiff: number, };

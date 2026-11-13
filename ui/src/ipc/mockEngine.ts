@@ -166,6 +166,9 @@ export class MockEngine {
         cancel: true,
         deltaBatching: true,
         maxDeltaBatchRows: MAX_BATCH_ROWS,
+        dirBackgroundScan: false,
+        dirFilters: false,
+        dirOperate: false,
       },
       license: { proUnlocked: true },
     };
@@ -308,6 +311,7 @@ function computeStats(rows: DirRow[]): DirStats {
     leftOnly: 0,
     rightOnly: 0,
     dirSame: 0,
+    dirDiff: 0,
   };
   for (const row of rows) {
     switch (row.status) {
@@ -351,6 +355,10 @@ function sideInfo(rand: () => number, missing: boolean): SideInfo | null {
   return {
     size: Math.floor(rand() * 4_000_000),
     mtimeMs: Date.now() - Math.floor(rand() * 90 * 24 * 3600 * 1000),
+    attribute: null,
+    unixMode: 0,
+    uid: 0,
+    gid: 0,
   };
 }
 
@@ -373,6 +381,8 @@ function buildDirModel(left: string, right: string): DirRow[] {
       right: sideInfo(rand, status === 'leftOnly'),
       status,
       hasChildren,
+      hidden: false,
+      suppressed: false,
     });
   };
 
