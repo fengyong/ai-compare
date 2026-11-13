@@ -60,6 +60,22 @@ pub fn export_all_to_ui() -> Result<usize, Box<dyn std::error::Error>> {
     TextSectionsNotification::export()?;
     SessionCloseParams::export()?;
     CancelParams::export()?;
+    // P3 新增
+    DiffSide::export()?;
+    TextLinesParams::export()?;
+    TextLinesResult::export()?;
+    LineKeysEntry::export()?;
+    TextInlineDiffParams::export()?;
+    TextInlineDiffResult::export()?;
+    InlineSpanKind::export()?;
+    InlineSpanDto::export()?;
+    InlineLineDiffDto::export()?;
+    TextSectionEventKind::export()?;
+    SectionIdSpan::export()?;
+    ImportanceOptionsSpec::export()?;
+    TextAlignAnchor::export()?;
+    SideLineRange::export()?;
+    TextManualAlignSpec::export()?;
     // P2 新增
     NameFilterSpec::export()?;
     OtherFilterSpec::export()?;

@@ -22,10 +22,22 @@ pub struct DirSessionData {
 }
 
 /// 文本比较会话数据
+///
+/// P3 起保存两侧行表与完整 diff 配置：text/lines（行分页）、text/inlineDiff
+/// （懒计算）、重要性重判（ImportanceUpdate）与逐行双键（withKeys）均以
+/// 本结构为数据源（docs/03 §2.3.2 / §4.1）。
 #[derive(Debug, Clone)]
 pub struct TextSessionData {
-    pub sections: Vec<ai_protocol::Section>,
-    pub summary: ai_protocol::DiffSummary,
+    /// 骨架 diff 结果（core 域；importance 可被 text/sections importance 重判更新）
+    pub sections: Vec<ai_core::sections::Section>,
+    pub summary: ai_core::DiffSummary,
+    /// 两侧行表（text/lines 分页与双键计算的数据源）
+    pub left: ai_core::LineTable,
+    pub right: ai_core::LineTable,
+    /// 打开会话时生效的完整配置（骨架选项 + 重要性模型 + 手动对齐）
+    pub config: ai_core::DiffConfig,
+    /// 会话内单调递增版本号（重要性重判等模型变更时 +1）
+    pub rev: u64,
 }
 
 #[derive(Clone)]

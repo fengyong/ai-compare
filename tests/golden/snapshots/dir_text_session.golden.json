@@ -10,7 +10,8 @@
         "dirCompare": true,
         "dirFilters": true,
         "dirOperate": true,
-        "inlineDiff": false,
+        "inlineDiff": true,
+        "linesRead": true,
         "maxDeltaBatchRows": 512,
         "textCompare": true
       },
@@ -220,7 +221,7 @@
         {
           "id": 1,
           "important": "important",
-          "inline": "notComputed",
+          "inline": "full",
           "kind": "change",
           "left": {
             "end": 2,
@@ -270,7 +271,7 @@
         {
           "id": 1,
           "important": "important",
-          "inline": "notComputed",
+          "inline": "full",
           "kind": "change",
           "left": {
             "end": 2,

@@ -1,0 +1,385 @@
+[
+  {
+    "id": 1,
+    "jsonrpc": "2.0",
+    "result": {
+      "capabilities": {
+        "cancel": true,
+        "deltaBatching": true,
+        "dirBackgroundScan": true,
+        "dirCompare": true,
+        "dirFilters": true,
+        "dirOperate": true,
+        "inlineDiff": true,
+        "linesRead": true,
+        "maxDeltaBatchRows": 512,
+        "textCompare": true
+      },
+      "engine": {
+        "name": "ai-engine",
+        "version": "0.1.0"
+      },
+      "license": {
+        "proUnlocked": true
+      },
+      "protocolVersion": "1.0"
+    }
+  },
+  {
+    "id": 2,
+    "jsonrpc": "2.0",
+    "result": {
+      "leftLineCount": 4,
+      "rightLineCount": 5,
+      "sectionCount": 4,
+      "sessionId": "t1",
+      "summary": {
+        "changeSections": 1,
+        "deleteSections": 0,
+        "deletedLines": 1,
+        "equalLines": 3,
+        "equalSections": 2,
+        "insertSections": 1,
+        "insertedLines": 2,
+        "sectionCount": 4
+      }
+    }
+  },
+  {
+    "id": 3,
+    "jsonrpc": "2.0",
+    "result": {
+      "done": false,
+      "lines": [
+        "one",
+        "two"
+      ],
+      "side": "left",
+      "start": 0
+    }
+  },
+  {
+    "id": 4,
+    "jsonrpc": "2.0",
+    "result": {
+      "done": true,
+      "lines": [
+        "three",
+        "four",
+        "five"
+      ],
+      "side": "right",
+      "start": 2
+    }
+  },
+  {
+    "id": 5,
+    "jsonrpc": "2.0",
+    "result": {
+      "done": true,
+      "lines": [],
+      "side": "left",
+      "start": 4
+    }
+  },
+  {
+    "id": 6,
+    "jsonrpc": "2.0",
+    "result": {
+      "hasMore": false,
+      "offset": 0,
+      "sections": [
+        {
+          "id": 0,
+          "important": "important",
+          "inline": "notComputed",
+          "kind": "equal",
+          "left": {
+            "end": 1,
+            "start": 0
+          },
+          "right": {
+            "end": 1,
+            "start": 0
+          }
+        },
+        {
+          "id": 1,
+          "important": "important",
+          "inline": "full",
+          "kind": "change",
+          "left": {
+            "end": 2,
+            "start": 1
+          },
+          "right": {
+            "end": 2,
+            "start": 1
+          }
+        },
+        {
+          "id": 2,
+          "important": "important",
+          "inline": "notComputed",
+          "kind": "equal",
+          "left": {
+            "end": 4,
+            "start": 2
+          },
+          "right": {
+            "end": 4,
+            "start": 2
+          }
+        },
+        {
+          "id": 3,
+          "important": "important",
+          "inline": "notComputed",
+          "kind": "insert",
+          "right": {
+            "end": 5,
+            "start": 4
+          }
+        }
+      ],
+      "sessionId": "t1",
+      "total": 4
+    }
+  },
+  {
+    "id": 7,
+    "jsonrpc": "2.0",
+    "result": {
+      "kind": "change",
+      "lines": [
+        {
+          "leftLine": 1,
+          "rightLine": 1,
+          "spans": [
+            {
+              "kind": "replace",
+              "left": {
+                "end": 3,
+                "start": 0
+              },
+              "right": {
+                "end": 3,
+                "start": 0
+              }
+            }
+          ],
+          "truncated": false
+        }
+      ],
+      "sectionId": 1,
+      "sessionId": "t1",
+      "state": "full"
+    }
+  },
+  {
+    "id": 8,
+    "jsonrpc": "2.0",
+    "result": {
+      "kind": "equal",
+      "lines": [],
+      "sectionId": 0,
+      "sessionId": "t1",
+      "state": "full"
+    }
+  },
+  {
+    "error": {
+      "code": -32602,
+      "data": {
+        "sectionId": 99,
+        "sessionId": "t1"
+      },
+      "message": "section 不存在: 99"
+    },
+    "id": 9,
+    "jsonrpc": "2.0"
+  },
+  {
+    "id": 10,
+    "jsonrpc": "2.0",
+    "result": {
+      "hasMore": false,
+      "lineKeys": [
+        {
+          "importance": "two",
+          "line": 1,
+          "raw": "two",
+          "side": "left"
+        },
+        {
+          "importance": "TWO",
+          "line": 1,
+          "raw": "TWO",
+          "side": "right"
+        },
+        {
+          "importance": "five",
+          "line": 4,
+          "raw": "five",
+          "side": "right"
+        }
+      ],
+      "offset": 0,
+      "sections": [
+        {
+          "id": 0,
+          "important": "important",
+          "inline": "notComputed",
+          "kind": "equal",
+          "left": {
+            "end": 1,
+            "start": 0
+          },
+          "right": {
+            "end": 1,
+            "start": 0
+          }
+        },
+        {
+          "id": 1,
+          "important": "important",
+          "inline": "full",
+          "kind": "change",
+          "left": {
+            "end": 2,
+            "start": 1
+          },
+          "right": {
+            "end": 2,
+            "start": 1
+          }
+        },
+        {
+          "id": 2,
+          "important": "important",
+          "inline": "notComputed",
+          "kind": "equal",
+          "left": {
+            "end": 4,
+            "start": 2
+          },
+          "right": {
+            "end": 4,
+            "start": 2
+          }
+        },
+        {
+          "id": 3,
+          "important": "important",
+          "inline": "notComputed",
+          "kind": "insert",
+          "right": {
+            "end": 5,
+            "start": 4
+          }
+        }
+      ],
+      "sessionId": "t1",
+      "total": 4
+    }
+  },
+  {
+    "jsonrpc": "2.0",
+    "method": "text/sections",
+    "params": {
+      "appended": [],
+      "done": false,
+      "event": "importanceUpdate",
+      "importance": "unimportant",
+      "rev": 1,
+      "sessionId": "t1",
+      "summary": {
+        "changeSections": 1,
+        "deleteSections": 0,
+        "deletedLines": 1,
+        "equalLines": 3,
+        "equalSections": 2,
+        "insertSections": 1,
+        "insertedLines": 2,
+        "sectionCount": 4
+      },
+      "updatedIds": [
+        1
+      ]
+    }
+  },
+  {
+    "id": 11,
+    "jsonrpc": "2.0",
+    "result": {
+      "hasMore": false,
+      "offset": 0,
+      "sections": [
+        {
+          "id": 0,
+          "important": "important",
+          "inline": "notComputed",
+          "kind": "equal",
+          "left": {
+            "end": 1,
+            "start": 0
+          },
+          "right": {
+            "end": 1,
+            "start": 0
+          }
+        },
+        {
+          "id": 1,
+          "important": "unimportant",
+          "inline": "full",
+          "kind": "change",
+          "left": {
+            "end": 2,
+            "start": 1
+          },
+          "right": {
+            "end": 2,
+            "start": 1
+          }
+        },
+        {
+          "id": 2,
+          "important": "important",
+          "inline": "notComputed",
+          "kind": "equal",
+          "left": {
+            "end": 4,
+            "start": 2
+          },
+          "right": {
+            "end": 4,
+            "start": 2
+          }
+        },
+        {
+          "id": 3,
+          "important": "important",
+          "inline": "notComputed",
+          "kind": "insert",
+          "right": {
+            "end": 5,
+            "start": 4
+          }
+        }
+      ],
+      "sessionId": "t1",
+      "total": 4
+    }
+  },
+  {
+    "id": 12,
+    "jsonrpc": "2.0",
+    "result": null
+  },
+  {
+    "id": 13,
+    "jsonrpc": "2.0",
+    "result": null
+  }
+]

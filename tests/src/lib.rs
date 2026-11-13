@@ -23,6 +23,30 @@ pub fn engine_bin() -> PathBuf {
     p
 }
 
+/// CLI 二进制路径（aic / aicc；workspace 内同 profile 目录）
+///
+/// 注意：`cargo test --workspace` 会先构建全部 workspace 目标（含 aic/aicc bin）
+/// 再运行测试，因此断言仅在漏构建时触发并给出指引。
+pub fn cli_bin(name: &str) -> PathBuf {
+    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let root = manifest.parent().expect("workspace root");
+    let target = std::env::var("CARGO_TARGET_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| root.join("target"));
+    let target = if target.is_absolute() { target } else { root.join(target) };
+    let profile = if cfg!(debug_assertions) { "debug" } else { "release" };
+    let mut p = target.join(profile).join(name);
+    if cfg!(windows) {
+        p.set_extension("exe");
+    }
+    assert!(
+        p.is_file(),
+        "{name} 二进制不存在: {}（先 `cargo build -p aic`，或跑 `cargo test --workspace` 触发全量构建）",
+        p.display()
+    );
+    p
+}
+
 /// 与引擎跑一轮 stdio 会话：写入请求行（逐行 NDJSON）-> 读全部输出行。
 /// 输入应以 shutdown 请求收尾（引擎处理后退出）。
 pub fn run_engine(inputs: &[serde_json::Value], record: Option<&Path>) -> Vec<serde_json::Value> {

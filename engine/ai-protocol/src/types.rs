@@ -197,6 +197,11 @@ fn default_true() -> bool {
     true
 }
 
+/// Option<bool> 字段的"缺省 true"（协议演进：可选能力位缺省视为可用）
+fn default_some_true() -> Option<bool> {
+    Some(true)
+}
+
 impl Default for CompareCriteria {
     fn default() -> Self {
         CompareCriteria {
@@ -309,6 +314,11 @@ pub struct EngineCapabilities {
     pub delta_batching: bool,
     /// 分批的单批最大行数
     pub max_delta_batch_rows: u32,
+    /// P3：text/lines 行内容分页入口（大内容按需分页，docs/03 §2.3.2）
+    /// 可选字段（缺省 true）：旧引擎载荷不含该字段时按 true 解析
+    #[serde(default = "default_some_true", skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub lines_read: Option<bool>,
     /// P2：dir/open 惰性 + 后台扫描（lazyScan 参数与 dir/progress 通知）
     #[serde(default = "default_true")]
     pub dir_background_scan: bool,
@@ -602,6 +612,15 @@ pub struct TextOpenParams {
     /// 缺省用引擎默认选项（docs/03 §6.1：忽略行尾风格）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub options: Option<TextDiffOptions>,
+    /// P3：重要性模型（FR-TXT-010 上协议面；缺省 = 引擎默认：
+    /// 行尾风格与纯编码差异不重要，其余重要）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub importance: Option<ImportanceOptionsSpec>,
+    /// P3：手动对齐/隔离/偏斜容差（FR-TXT-011 上协议面；缺省 = 无手动锚点）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub manual: Option<TextManualAlignSpec>,
 }
 
 /// diff 统计（docs/03 §4.1 DiffSummary 的协议形态）
@@ -698,6 +717,16 @@ pub struct TextSectionsParams {
     pub offset: u32,
     /// 取回数量上限
     pub count: u32,
+    /// P3：true 时响应附带窗口内差异行的逐行 (raw, importance) 双键
+    /// （`lineKeys` 字段；Equal section 不含，FR-TXT-010 双键证据）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub with_keys: Option<bool>,
+    /// P3：以指定重要性模型重判 section 重要性（ImportanceUpdate 语义，
+    /// 不重跑 diff；重判结果写回会话并推送 `text/sections` 通知）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub importance: Option<ImportanceOptionsSpec>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -711,9 +740,18 @@ pub struct TextSectionsResult {
     pub total: u32,
     pub has_more: bool,
     pub sections: Vec<Section>,
+    /// P3：窗口内差异行的逐行双键（withKeys=true 时填充；按 side/line 升序）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub line_keys: Option<Vec<LineKeysEntry>>,
 }
 
 /// text/sections 流式推送变体（引擎 -> UI；P0 引擎走请求/响应，类型为协议稳定预留）
+///
+/// P3 扩展（docs/03 §4.1 SectionEvent 上协议面；全部可选字段，旧载荷字节级不变）：
+/// - 缺省（event 缺省）= Append 事件（appended 为新增 section）；
+/// - `event: "replace"`：编辑后局部重算，replacedSpan 区间被 with 替换；
+/// - `event: "importanceUpdate"`：重要性重判，updatedIds 按组共享 importance。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
@@ -725,6 +763,265 @@ pub struct TextSectionsNotification {
     pub appended: Vec<Section>,
     pub done: bool,
     pub summary: DiffSummary,
+    /// P3：事件类别（缺省/省略 = Append；Append 事件序列化时省略，旧载荷字节级不变）
+    #[serde(default, skip_serializing_if = "is_append_event")]
+    pub event: TextSectionEventKind,
+    /// P3：Replace 事件——被替换的 section id 闭区间 [start, end]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub replaced_span: Option<SectionIdSpan>,
+    /// P3：Replace 事件——替换后的新 section 序列
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub with: Option<Vec<Section>>,
+    /// P3：ImportanceUpdate 事件——被重判的 section id（组内共享 importance）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub updated_ids: Option<Vec<u32>>,
+    /// P3：ImportanceUpdate 事件——重判后的重要性
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub importance: Option<Importance>,
+}
+
+/// P3：Append 事件序列化时省略（缺省语义，兼容 P0 载荷）
+fn is_append_event(e: &TextSectionEventKind) -> bool {
+    matches!(e, TextSectionEventKind::Append)
+}
+
+/// P3：text/sections 通知的事件类别（docs/03 §4.1 SectionEvent）
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub enum TextSectionEventKind {
+    /// 新增 section（缺省；appended 携带内容）
+    #[default]
+    Append,
+    /// 编辑后局部重算（replacedSpan + with）
+    Replace,
+    /// 重要性重判（updatedIds + importance；不重跑 diff）
+    ImportanceUpdate,
+    /// 流结束（summary 终值）
+    Done,
+}
+
+/// P3：section id 闭区间 [start, end]（Replace 事件的替换范围）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct SectionIdSpan {
+    pub start: u32,
+    pub end: u32,
+}
+
+// ---------------------------------------------------------------------------
+// P3：text/lines（大内容行分页，docs/03 §2.3.2）与 text/inlineDiff（行内懒计算）
+// ---------------------------------------------------------------------------
+
+/// 比较侧（docs/03 §4.1 Side）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub enum DiffSide {
+    Left,
+    Right,
+}
+
+/// text/lines 参数：行内容按需分页（docs/03 §2.3.2 大内容约定）
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct TextLinesParams {
+    pub session_id: String,
+    pub side: DiffSide,
+    /// 起始行号（0 起；越界自动钳制）
+    pub start: u32,
+    /// 取回行数上限
+    pub count: u32,
+}
+
+/// text/lines 应答（分页约定与 UI mock 对齐：done = 后续无更多行）
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct TextLinesResult {
+    pub side: DiffSide,
+    /// 实际起始行号（钳制后）
+    pub start: u32,
+    pub lines: Vec<String>,
+    /// true = 本页之后无更多行
+    pub done: bool,
+}
+
+/// 逐行 (raw, importance) 双键条目（FR-TXT-010；仅差异行，Equal section 不含）
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct LineKeysEntry {
+    pub side: DiffSide,
+    /// 全局行号（0 起）
+    pub line: u32,
+    /// 骨架键（raw_key；对齐骨架在其上计算）
+    pub raw: String,
+    /// 重要性键（importance_key；折叠"不重要"方面后）
+    pub importance: String,
+}
+
+/// text/inlineDiff 参数：对单个 Change section 懒计算行内差异（docs/03 §2.3.2）
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct TextInlineDiffParams {
+    pub session_id: String,
+    /// section id（text/sections 返回的 id）
+    pub section_id: u32,
+}
+
+/// 行内区间类别（docs/03 §4.1；Equal 之外的类别参与高亮标注）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub enum InlineSpanKind {
+    Equal,
+    Replace,
+    Insert,
+    Delete,
+}
+
+/// 行内单区间标注：两侧字符区间成对出现（None = 该侧不存在）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct InlineSpanDto {
+    pub left: Option<CharRange>,
+    pub right: Option<CharRange>,
+    pub kind: InlineSpanKind,
+}
+
+/// Change section 内单行的行内差异（位置配对：第 i 行对第 i 行）
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct InlineLineDiffDto {
+    pub left_line: u32,
+    pub right_line: u32,
+    pub spans: Vec<InlineSpanDto>,
+    /// 超长行/超时降级：spans 为空，调用方按整行差异渲染（docs/03 §6.2）
+    pub truncated: bool,
+}
+
+/// text/inlineDiff 应答
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct TextInlineDiffResult {
+    pub session_id: String,
+    pub section_id: u32,
+    pub kind: SectionKind,
+    /// 行内计算状态（Full = 全部行完成；Partial = 存在超长/超时降级行）
+    pub state: InlineState,
+    pub lines: Vec<InlineLineDiffDto>,
+}
+
+// ---------------------------------------------------------------------------
+// P3：重要性模型与手动对齐选项（FR-TXT-010 / FR-TXT-011 上协议面）
+// ---------------------------------------------------------------------------
+
+/// 重要性模型选项（FR-TXT-010）：勾选"不重要"的方面在重要性键中折叠。
+///
+/// 语义与 ai-core `ImportanceOptions` 一一对应：diff 骨架不受影响，
+/// 仅触发 section 重要性重判（ImportanceUpdate 事件）。
+/// Default 与 serde 缺省一致（eol/encoding 不重要 = true，docs/03 §6.1）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase", default)]
+pub struct ImportanceOptionsSpec {
+    #[serde(default)]
+    pub leading_ws_unimportant: bool,
+    #[serde(default)]
+    pub embedded_ws_unimportant: bool,
+    #[serde(default)]
+    pub trailing_ws_unimportant: bool,
+    #[serde(default)]
+    pub case_unimportant: bool,
+    /// 行尾风格不重要（缺省 true，docs/03 §6.1）
+    #[serde(default = "default_true")]
+    pub eol_style_unimportant: bool,
+    /// 纯编码差异不重要（缺省 true；编码差异已在解码层消除，规则系统占位）
+    #[serde(default = "default_true")]
+    pub encoding_unimportant: bool,
+}
+
+impl Default for ImportanceOptionsSpec {
+    fn default() -> Self {
+        ImportanceOptionsSpec {
+            leading_ws_unimportant: false,
+            embedded_ws_unimportant: false,
+            trailing_ws_unimportant: false,
+            case_unimportant: false,
+            eol_style_unimportant: true,
+            encoding_unimportant: true,
+        }
+    }
+}
+
+/// 手动对齐锚点（强制左右行区间并排；两区间行数须相等）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct TextAlignAnchor {
+    pub left: LineRange,
+    pub right: LineRange,
+}
+
+/// 单侧区间（隔离 / 手动忽略共用；side 指明区间归属侧）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct SideLineRange {
+    pub side: DiffSide,
+    pub range: LineRange,
+}
+
+/// 手动对齐/隔离/偏斜容差选项（FR-TXT-011 上协议面；与 ai-core
+/// `ManualAlignOptions` 一一对应）
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase", default)]
+pub struct TextManualAlignSpec {
+    /// 手动对齐锚点（强制并排）
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub align_anchors: Vec<TextAlignAnchor>,
+    /// 隔离：这些行区间从不对齐（独立成 Delete/Insert 块）
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub isolate: Vec<SideLineRange>,
+    /// 从不对齐重要差异：重要差异行显示为"添加 + 删除"而非"更改"
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub never_align_important: bool,
+    /// 偏斜容差（0 = 引擎默认值）
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub skew_tolerance: u32,
+    /// 接近度匹配（对被等值段分隔的 删除+插入 块做窗口重 diff）
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub proximity_match: bool,
+    /// 手动忽略：与这些区间重叠的差异 section 标记为 Ignored
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ignore: Vec<SideLineRange>,
 }
 
 // ---------------------------------------------------------------------------
@@ -1222,5 +1519,154 @@ mod tests {
         let v: TextDiffOptions = serde_json::from_str("{}").unwrap();
         assert_eq!(v, TextDiffOptions::default());
         assert!(v.ignore_eol_style);
+    }
+
+    // ------------------------------------------------------------------
+    // P3：向后兼容（旧载荷字节级不变；新字段缺省省略）
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn engine_capabilities_old_payload_gains_lines_read_default() {
+        // P2 旧载荷（无 linesRead）可解析；缺省 true（引擎 P3 起恒支持）
+        let old = r#"{"dirCompare":true,"textCompare":true,"inlineDiff":false,"cancel":true,"deltaBatching":true,"maxDeltaBatchRows":512,"dirBackgroundScan":true,"dirFilters":true,"dirOperate":true}"#;
+        let v: EngineCapabilities = serde_json::from_str(old).unwrap();
+        assert_eq!(v.lines_read, Some(true));
+        // 新引擎序列化：linesRead 出现；值为 None 时省略（不会序列化为 null）
+        let mut c = EngineCapabilities {
+            dir_compare: true,
+            text_compare: true,
+            inline_diff: true,
+            cancel: true,
+            delta_batching: true,
+            max_delta_batch_rows: 512,
+            lines_read: Some(true),
+            dir_background_scan: true,
+            dir_filters: true,
+            dir_operate: true,
+        };
+        let s = serde_json::to_string(&c).unwrap();
+        assert!(s.contains("linesRead"));
+        c.lines_read = None;
+        let s = serde_json::to_string(&c).unwrap();
+        assert!(!s.contains("linesRead"), "None 不应序列化: {s}");
+    }
+
+    #[test]
+    fn text_open_params_old_payload_unchanged_bytes() {
+        let old = r#"{"sessionId":"t1","left":"a","right":"b","options":null}"#;
+        let v: TextOpenParams = serde_json::from_str(old).unwrap();
+        assert_eq!(v.session_id, "t1");
+        assert!(v.importance.is_none() && v.manual.is_none());
+        // 旧字段集序列化逐字节不变（新字段 None 时省略）
+        let s = serde_json::to_string(&v).unwrap();
+        assert!(!s.contains("importance") && !s.contains("manual"), "{s}");
+    }
+
+    #[test]
+    fn text_sections_params_result_old_payload_unchanged() {
+        let old_params = r#"{"sessionId":"t1","offset":0,"count":10}"#;
+        let p: TextSectionsParams = serde_json::from_str(old_params).unwrap();
+        assert!(p.with_keys.is_none() && p.importance.is_none());
+        let s = serde_json::to_string(&p).unwrap();
+        assert!(!s.contains("withKeys") && !s.contains("importance"), "{s}");
+
+        let old_result = r#"{"sessionId":"t1","offset":0,"total":1,"hasMore":false,"sections":[]}"#;
+        let r: TextSectionsResult = serde_json::from_str(old_result).unwrap();
+        assert!(r.line_keys.is_none());
+        let s = serde_json::to_string(&r).unwrap();
+        assert!(!s.contains("lineKeys"), "{s}");
+    }
+
+    #[test]
+    fn text_sections_notification_append_event_bytes_unchanged() {
+        // P0 载荷（无 event 字段）解析为 Append 事件且序列化逐字节一致
+        // （Append 为缺省事件，序列化时省略 event 字段）
+        let old = r#"{"sessionId":"t1","rev":1,"appended":[],"done":true,"summary":{"sectionCount":0,"equalSections":0,"insertSections":0,"deleteSections":0,"changeSections":0,"equalLines":0,"insertedLines":0,"deletedLines":0}}"#;
+        let v: TextSectionsNotification = serde_json::from_str(old).unwrap();
+        assert_eq!(v.event, TextSectionEventKind::Append);
+        let s = serde_json::to_string(&v).unwrap();
+        assert_eq!(s, old, "旧载荷字节级不变");
+    }
+
+    #[test]
+    fn text_sections_notification_replace_and_importance_events_roundtrip() {
+        let sec = Section {
+            id: 2,
+            kind: SectionKind::Change,
+            left: Some(LineRange::new(1, 3)),
+            right: Some(LineRange::new(1, 3)),
+            important: Importance::Important,
+            inline: InlineState::NotComputed,
+        };
+        let replace = TextSectionsNotification {
+            session_id: "t1".into(),
+            rev: 7,
+            appended: Vec::new(),
+            done: false,
+            summary: DiffSummary::default(),
+            event: TextSectionEventKind::Replace,
+            replaced_span: Some(SectionIdSpan { start: 1, end: 3 }),
+            with: Some(vec![sec]),
+            updated_ids: None,
+            importance: None,
+        };
+        let json = serde_json::to_string(&replace).unwrap();
+        assert!(json.contains("\"event\":\"replace\""));
+        assert!(json.contains("\"replacedSpan\":{\"start\":1,\"end\":3}"));
+        let back: TextSectionsNotification = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, replace);
+
+        let imp = TextSectionsNotification {
+            updated_ids: Some(vec![1, 2]),
+            importance: Some(Importance::Unimportant),
+            event: TextSectionEventKind::ImportanceUpdate,
+            replaced_span: None,
+            with: None,
+            ..replace.clone()
+        };
+        let json = serde_json::to_string(&imp).unwrap();
+        assert!(json.contains("\"event\":\"importanceUpdate\""));
+        assert!(json.contains("\"updatedIds\":[1,2]"));
+        assert!(json.contains("\"importance\":\"unimportant\""));
+        assert!(!json.contains("replacedSpan"), "importance 事件不应携带 replace 字段: {json}");
+        let back: TextSectionsNotification = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, imp);
+    }
+
+    #[test]
+    fn diff_side_and_lines_payload_roundtrip() {
+        let p: TextLinesParams = serde_json::from_str(r#"{"sessionId":"t1","side":"left","start":3,"count":10}"#).unwrap();
+        assert_eq!(p.side, DiffSide::Left);
+        let r = TextLinesResult { side: DiffSide::Right, start: 0, lines: vec!["a".into()], done: true };
+        let s = serde_json::to_string(&r).unwrap();
+        assert_eq!(s, r#"{"side":"right","start":0,"lines":["a"],"done":true}"#);
+        let back: TextLinesResult = serde_json::from_str(&s).unwrap();
+        assert_eq!(back, r);
+    }
+
+    #[test]
+    fn importance_spec_defaults_match_core_defaults() {
+        let v: ImportanceOptionsSpec = serde_json::from_str("{}").unwrap();
+        assert!(!v.leading_ws_unimportant && !v.case_unimportant);
+        assert!(v.eol_style_unimportant, "行尾风格缺省不重要（docs/03 §6.1）");
+        assert!(v.encoding_unimportant);
+    }
+
+    #[test]
+    fn manual_align_spec_zero_skew_omitted() {
+        let spec = TextManualAlignSpec::default();
+        let s = serde_json::to_string(&spec).unwrap();
+        assert!(!s.contains("skewTolerance") && !s.contains("alignAnchors"), "{s}");
+        let spec = TextManualAlignSpec {
+            align_anchors: vec![TextAlignAnchor { left: LineRange::new(0, 1), right: LineRange::new(2, 3) }],
+            isolate: vec![SideLineRange { side: DiffSide::Left, range: LineRange::new(4, 5) }],
+            skew_tolerance: 2500,
+            ..Default::default()
+        };
+        let s = serde_json::to_string(&spec).unwrap();
+        assert!(s.contains("\"skewTolerance\":2500"));
+        assert!(s.contains("\"side\":\"left\""));
+        let back: TextManualAlignSpec = serde_json::from_str(&s).unwrap();
+        assert_eq!(back, spec);
     }
 }

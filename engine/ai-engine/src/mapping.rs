@@ -98,6 +98,106 @@ pub fn summary_to_dto(s: &ai_core::DiffSummary) -> ai_protocol::DiffSummary {
     }
 }
 
+// ---------------------------------------------------------------------------
+// P3：行内差异 / 双键 / 重要性 / 手动对齐 的协议映射
+// ---------------------------------------------------------------------------
+
+/// 协议 Side -> core 侧别
+pub fn side_from_dto(side: ai_protocol::DiffSide) -> ai_core::options::DiffSide {
+    match side {
+        ai_protocol::DiffSide::Left => ai_core::options::DiffSide::Left,
+        ai_protocol::DiffSide::Right => ai_core::options::DiffSide::Right,
+    }
+}
+
+/// core 侧别 -> 协议 Side
+pub fn side_to_dto(side: ai_core::options::DiffSide) -> ai_protocol::DiffSide {
+    match side {
+        ai_core::options::DiffSide::Left => ai_protocol::DiffSide::Left,
+        ai_core::options::DiffSide::Right => ai_protocol::DiffSide::Right,
+    }
+}
+
+fn char_range_to_dto(r: ai_core::CharSpan) -> ai_protocol::CharRange {
+    ai_protocol::CharRange { start: r.start, end: r.end }
+}
+
+/// core 行内区间 -> 协议 InlineSpanDto
+pub fn inline_span_to_dto(s: &ai_core::InlineSpan) -> ai_protocol::InlineSpanDto {
+    ai_protocol::InlineSpanDto {
+        left: s.left.map(char_range_to_dto),
+        right: s.right.map(char_range_to_dto),
+        kind: match s.kind {
+            ai_core::InlineSpanKind::Equal => ai_protocol::InlineSpanKind::Equal,
+            ai_core::InlineSpanKind::Replace => ai_protocol::InlineSpanKind::Replace,
+            ai_core::InlineSpanKind::Insert => ai_protocol::InlineSpanKind::Insert,
+            ai_core::InlineSpanKind::Delete => ai_protocol::InlineSpanKind::Delete,
+        },
+    }
+}
+
+/// core 单行行内结果 -> 协议 InlineLineDiffDto
+pub fn inline_line_diff_to_dto(d: &ai_core::InlineLineDiff) -> ai_protocol::InlineLineDiffDto {
+    ai_protocol::InlineLineDiffDto {
+        left_line: d.left_line,
+        right_line: d.right_line,
+        spans: d.result.spans.iter().map(inline_span_to_dto).collect(),
+        truncated: d.result.truncated,
+    }
+}
+
+/// 重要性选项 DTO -> core 选项（字段一一对应；缺省值与 core 默认一致）
+pub fn importance_from_dto(spec: &ai_protocol::ImportanceOptionsSpec) -> ai_core::ImportanceOptions {
+    ai_core::ImportanceOptions {
+        leading_ws_unimportant: spec.leading_ws_unimportant,
+        embedded_ws_unimportant: spec.embedded_ws_unimportant,
+        trailing_ws_unimportant: spec.trailing_ws_unimportant,
+        case_unimportant: spec.case_unimportant,
+        eol_style_unimportant: spec.eol_style_unimportant,
+        encoding_unimportant: spec.encoding_unimportant,
+    }
+}
+
+/// 手动对齐选项 DTO -> core 选项（偏斜容差 0 由 core effective_skew 取默认）
+pub fn manual_from_dto(spec: &ai_protocol::TextManualAlignSpec) -> ai_core::ManualAlignOptions {
+    fn side_range(sr: &ai_protocol::SideLineRange) -> (ai_core::options::DiffSide, ai_core::sections::LineRange) {
+        (side_from_dto(sr.side), ai_core::sections::LineRange::new(sr.range.start, sr.range.end))
+    }
+    ai_core::ManualAlignOptions {
+        align_anchors: spec
+            .align_anchors
+            .iter()
+            .map(|a| ai_core::AlignAnchor {
+                left: ai_core::sections::LineRange::new(a.left.start, a.left.end),
+                right: ai_core::sections::LineRange::new(a.right.start, a.right.end),
+            })
+            .collect(),
+        isolate: spec.isolate.iter().map(side_range).collect(),
+        never_align_important: spec.never_align_important,
+        skew_tolerance: spec.skew_tolerance,
+        proximity_match: spec.proximity_match,
+        ignore: spec.ignore.iter().map(side_range).collect(),
+    }
+}
+
+/// 逐行双键条目（side + 全局行号 + raw/importance 键）
+pub fn line_keys_entry(
+    side: ai_core::options::DiffSide,
+    line: u32,
+    table: &ai_core::LineTable,
+    index: usize,
+    opts: &ai_core::TextDiffOptions,
+    imp: &ai_core::ImportanceOptions,
+) -> ai_protocol::LineKeysEntry {
+    let entry = table.line(index);
+    ai_protocol::LineKeysEntry {
+        side: side_to_dto(side),
+        line,
+        raw: ai_core::raw_key(entry, opts).into_owned(),
+        importance: ai_core::importance_key(entry, opts, imp).into_owned(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -129,5 +229,83 @@ mod tests {
         assert_eq!(e.code, codes::INVALID_ENCODING);
         let e = vfs_error_to_rpc(&VfsError::Io(std::io::Error::other("disk")));
         assert_eq!(e.code, codes::INTERNAL_ERROR);
+    }
+
+    #[test]
+    fn importance_spec_maps_to_core() {
+        let spec = ai_protocol::ImportanceOptionsSpec::default();
+        let imp = importance_from_dto(&spec);
+        assert_eq!(imp, ai_core::ImportanceOptions::default(), "缺省 DTO == core 默认");
+        let spec = ai_protocol::ImportanceOptionsSpec { case_unimportant: true, trailing_ws_unimportant: true, ..Default::default() };
+        let imp = importance_from_dto(&spec);
+        assert!(imp.case_unimportant && imp.trailing_ws_unimportant);
+        assert!(!imp.leading_ws_unimportant);
+    }
+
+    #[test]
+    fn manual_spec_maps_to_core() {
+        let spec = ai_protocol::TextManualAlignSpec {
+            align_anchors: vec![ai_protocol::TextAlignAnchor {
+                left: ai_protocol::LineRange::new(0, 2),
+                right: ai_protocol::LineRange::new(1, 3),
+            }],
+            isolate: vec![ai_protocol::SideLineRange {
+                side: ai_protocol::DiffSide::Right,
+                range: ai_protocol::LineRange::new(4, 6),
+            }],
+            ignore: vec![ai_protocol::SideLineRange {
+                side: ai_protocol::DiffSide::Left,
+                range: ai_protocol::LineRange::new(7, 8),
+            }],
+            never_align_important: true,
+            skew_tolerance: 0,
+            proximity_match: true,
+        };
+        let m = manual_from_dto(&spec);
+        assert_eq!(m.align_anchors.len(), 1);
+        assert_eq!(m.align_anchors[0].left.len(), 2);
+        assert_eq!(m.isolate, vec![(ai_core::options::DiffSide::Right, ai_core::sections::LineRange::new(4, 6))]);
+        assert_eq!(m.ignore, vec![(ai_core::options::DiffSide::Left, ai_core::sections::LineRange::new(7, 8))]);
+        assert!(m.never_align_important && m.proximity_match);
+        assert_eq!(m.skew_tolerance, 0, "0 = core 层取默认偏斜容差");
+    }
+
+    #[test]
+    fn inline_mapping_roundtrip_shape() {
+        use ai_core::{CharSpan, InlineSpan, InlineSpanKind};
+        let core = ai_core::InlineLineDiff {
+            left_line: 1,
+            right_line: 2,
+            result: ai_core::InlineLineResult {
+                spans: vec![InlineSpan {
+                    left: Some(CharSpan { start: 0, end: 3 }),
+                    right: Some(CharSpan { start: 0, end: 4 }),
+                    kind: InlineSpanKind::Replace,
+                }],
+                truncated: false,
+            },
+        };
+        let dto = inline_line_diff_to_dto(&core);
+        assert_eq!(dto.left_line, 1);
+        assert_eq!(dto.right_line, 2);
+        assert_eq!(dto.spans.len(), 1);
+        assert_eq!(dto.spans[0].kind, ai_protocol::InlineSpanKind::Replace);
+        assert_eq!(dto.spans[0].left, Some(ai_protocol::CharRange { start: 0, end: 3 }));
+        assert!(!dto.truncated);
+    }
+
+    #[test]
+    fn line_keys_entry_dual_keys() {
+        let lt = ai_core::LineTable::from_text("hello\n");
+        let rt = ai_core::LineTable::from_text("Hello  \n");
+        let opts = ai_core::TextDiffOptions::default();
+        let imp = ai_core::ImportanceOptions { trailing_ws_unimportant: true, ..Default::default() };
+        let e = line_keys_entry(ai_core::options::DiffSide::Left, 0, &lt, 0, &opts, &imp);
+        assert_eq!(e.side, ai_protocol::DiffSide::Left);
+        assert_eq!(e.line, 0);
+        assert_eq!(e.raw, "hello");
+        let e = line_keys_entry(ai_core::options::DiffSide::Right, 0, &rt, 0, &opts, &imp);
+        assert_eq!(e.raw, "Hello  ");
+        assert_eq!(e.importance, "Hello", "尾随空白不重要键折叠（大小写仍区分）");
     }
 }
