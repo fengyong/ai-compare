@@ -36,4 +36,9 @@ dirFilters: boolean,
 /**
  * P2：dir/operate（同步状态机 operate 计划）
  */
-dirOperate: boolean, };
+dirOperate: boolean, 
+/**
+ * P7：三向文本合并入口（text/merge3/* 四方法）
+ * 可选字段（缺省 true）：旧引擎载荷不含该字段时按 true 解析
+ */
+threeWayMerge?: boolean, };

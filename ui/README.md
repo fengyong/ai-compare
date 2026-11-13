@@ -95,6 +95,15 @@ cd ui && pnpm e2e:engine          # 退出码 0=通过（含 tempdir 场景与�
 - 状态管理：React 内置 + zustand slice（窗口/标签/会话等轻量 UI 状态）；大数据（目录行窗口、文本行）在视图级非响应式缓存。
 - 会话/设置持久化（SET-001）：`sessions.json` / `session-defaults.json` / `settings.json` / `state.json` 四文档；桌面存平台设置目录（可执行文件旁 `portable.ini` → 便携模式存程序目录），浏览器 dev 存 localStorage（键 `aic:<文件名>`）；原子写（tmp+rename）+ `.bak` 回滚 + 损坏自动恢复提示，语义以 `src/session/storage.ts` 纯函数为口径（Rust 侧同语义实现）。
 
+## P6 已交付（文件夹比较视图与文件操作）
+
+- 树形/平铺切换（FR-DIR-021）：惰性会话（`lazyScan: true`）双击目录消费 `dir/expand`；树序由 `views/folder-compare/dirTree.ts` 客户端 DFS 组织（目录先、名称次）。
+- 选择模型（FR-DIR-050 子集）：单击/Ctrl 累加/Shift 连选/全选/反选（`dirSelection.ts`）。
+- 右键操作（FR-DIR-060~066 子集）：复制/移动到对侧、删除（双侧）、重命名（单项）、对时、刷新；确认对话框含不可逆警示（OP-001）；结果反馈条含成功/失败/跳过明细（OP-002 部分成功语义）。批次构造与文件夹覆盖语义在 `dirOps.ts`。
+- 同步预设（FR-DIR-067）：5 预设按钮 → `dir/operate` 计划预览（统计 + 清单）→ 确认执行。
+- 过滤器（FR-DIR-031/033/035）：名称过滤输入栏（`*.txt; -*.log; -build\` 语义）→ `dir/filter`；显示过滤预设下拉；抑制开关（被隐藏行青绿色 + "已抑制"徽标还原）。
+- `dir/execute` 为 **P6 提案协议**（`src/protocol/types.ts` 第 3 节）：mock 引擎同形实现（浏览器可演示完整落盘链路）；真实引擎 RPC 入口待协议变更合入（-32601 时 UI 提示降级）。
+
 ## P4 已知边界（后续阶段交付）
 
 - 原生多窗口（Tauri WebviewWindow + 跨窗口状态同步）：P13；当前"拖出成新窗口/合并窗口"为应用内窗口帧（store 级多窗口完整，浏览器可演示）。

@@ -2,8 +2,16 @@ import { invoke } from '@tauri-apps/api/core';
 import { RpcClient, RpcError } from '../protocol/client';
 import type {
   DirDelta,
+  DirExecuteParams,
+  DirExecuteResult,
+  DirExpandParams,
+  DirExpandResult,
+  DirFilterParams,
+  DirFilterResult,
   DirOpenParams,
   DirOpenResult,
+  DirOperateParams,
+  DirOperateResult,
   EngineCapabilities,
   InitializeResult,
   SessionCloseParams,
@@ -278,6 +286,41 @@ export function switchToMockEngine(): void {
 export async function openFolder(params: DirOpenParams): Promise<DirOpenResult> {
   const c = await getEngineClient();
   return c.request<DirOpenResult>('dir/open', params);
+}
+
+// ==================================================================
+// P6：目录视图完备化方法集（expand/filter/operate；execute 为提案协议）
+// ==================================================================
+
+/** dir/expand：展开目录子树（惰性会话的消费入口；增量经 dir/delta 回推） */
+export async function expandDir(params: DirExpandParams): Promise<DirExpandResult> {
+  const c = await getEngineClient();
+  return c.request<DirExpandResult>('dir/expand', params, 30_000);
+}
+
+/**
+ * dir/filter：名称/其他过滤（引擎重扫）+ 显示过滤/抑制/平铺（仅显示）。
+ * 真实引擎 P2 起 dirFilters=true；mock 同形实现。
+ */
+export async function filterDir(params: DirFilterParams): Promise<DirFilterResult> {
+  const c = await getEngineClient();
+  return c.request<DirFilterResult>('dir/filter', params, 60_000);
+}
+
+/** dir/operate：生成同步操作计划（不执行；SYNC-002 状态机数据层） */
+export async function planOperations(params: DirOperateParams): Promise<DirOperateResult> {
+  const c = await getEngineClient();
+  return c.request<DirOperateResult>('dir/operate', params, 60_000);
+}
+
+/**
+ * dir/execute（P6 提案协议，见 protocol/types.ts 第 3 节）：
+ * 消费操作计划/右键操作执行文件操作（dryRun 试运行可对拍）。
+ * mock 引擎已同形实现；真实引擎 RPC 入口待协议变更合入（-32601 时调用方降级提示）。
+ */
+export async function executeOperations(params: DirExecuteParams): Promise<DirExecuteResult> {
+  const c = await getEngineClient();
+  return c.request<DirExecuteResult>('dir/execute', params, 120_000);
 }
 
 export async function openText(params: TextOpenParams): Promise<TextOpenResult> {

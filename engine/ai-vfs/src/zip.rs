@@ -416,4 +416,32 @@ mod tests {
         assert!(parse_central_directory(&data).is_err());
         assert!(parse_central_directory(b"short").is_err());
     }
+
+    /// P6 写路径：zip 只读 Provider 能力位 false，写方法走 trait 默认实现
+    #[tokio::test]
+    async fn readonly_provider_rejects_write_ops() {
+        let fs = ZipFs::from_bytes(&build_zip(&[("a.txt", b"x")])).unwrap();
+        let caps = fs.capabilities();
+        assert!(caps.has(crate::VfsCaps::READ));
+        for cap in [
+            crate::VfsCaps::WRITE,
+            crate::VfsCaps::MKDIR,
+            crate::VfsCaps::DELETE,
+            crate::VfsCaps::MOVE,
+            crate::VfsCaps::COPY,
+            crate::VfsCaps::TOUCH,
+        ] {
+            assert!(!caps.has(cap), "zip 不应声明写能力位 {cap:?}");
+        }
+        let p = VfsPath::parse("/a.txt").unwrap();
+        let q = VfsPath::parse("/b.txt").unwrap();
+        assert!(matches!(fs.write_file_bytes(&p, b"x").await, Err(VfsError::Unsupported(_))));
+        assert!(matches!(fs.mkdir(&q).await, Err(VfsError::Unsupported(_))));
+        assert!(matches!(fs.rename(&p, &q).await, Err(VfsError::Unsupported(_))));
+        assert!(matches!(fs.remove(&p, true).await, Err(VfsError::Unsupported(_))));
+        assert!(matches!(fs.copy_file(&p, &q).await, Err(VfsError::Unsupported(_))));
+        assert!(matches!(fs.set_mtime(&p, 0).await, Err(VfsError::Unsupported(_))));
+        // mkdir_all 走 stat 路径：能力协商在执行层判断，这里只验默认 mkdir 已拦
+        assert!(matches!(fs.mkdir_all(&q).await, Err(VfsError::Unsupported(_))));
+    }
 }

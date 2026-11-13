@@ -18,6 +18,7 @@
 pub mod align;
 pub mod cache;
 pub mod compare;
+pub mod execute;
 pub mod filter;
 pub mod quick;
 pub mod session;
@@ -37,6 +38,11 @@ pub use filter::{NameFilter, OtherFilter};
 pub use quick::QuickTest;
 pub use session::{DirDeltaData, DirModel, DirSessionOptions};
 pub use sync::plan_operations;
+
+pub use execute::{
+    execute_ops, execute_planned_operations, sanitize_rel, ExecuteOptions, ExecuteReport, FileOp,
+    OpResult, OpStatus, Side,
+};
 
 /// arena 节点下标（docs/03 §4.2：NodeId = u32）
 pub type NodeId = u32;
