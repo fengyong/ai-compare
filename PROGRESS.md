@@ -18,8 +18,12 @@
   - [x] 引擎线：Rust workspace 五 crate + ai-engine stdio + aic CLI（119 测试、clippy 零警、Myers 300 轮 oracle 对拍、`aic diff`≡`diff -u`、38 个 ts-rs 类型）
   - [x] UI 线：Tauri2+React 壳 + 目录/文本视图 + 协议客户端（44 测试、浏览器端到端冒烟）
   - [x] 集成验收：UI 切 generated 类型、引擎路径修正（workspace 根 target）、`pnpm e2e:engine` 真实引擎全链路全绿（initialize→dir/open→delta 断言→text/sections→shutdown）；顺带修复 dirRowCache 删除未清 id 索引 bug；51 UI 测试 / build / lint / cargo check 全绿
-- [ ] **M2 MVP（进行中）**：按 docs/04 并行启动 P1（diff 核心完备化）+ P2（目录引擎完备化）+ P4（UI 壳与会话体系）
-  - ⚠️ 2026-11-13 23:0x 遇 provider 5 小时配额上限（02:10:56 重置）；若 agent 启动仍报配额错误，等待重置后由看护任务重试
+- [ ] **M2 MVP ✅ 完成（2026-11-14 02:1x 联合验收通过）**：P1+P2+P4 三线并行交付
+  - [x] P1 diff 核心（91 测试、四算法、重要性双键、增量重 diff、对拍矩阵）
+  - [x] P2 目录引擎（惰性扫描、BC 过滤器全集、zip CRC、SQLite 缓存、同步状态机、10 万项 PB-03 1.54s 达标）
+  - [x] P4 UI 壳会话（134 测试、主页/多窗口/持久化/快捷键/重连）
+  - [x] 联合验收：workspace 259 测试全绿 + clippy 零警 + golden 重固化 + 新二进制 e2e + UI build 全绿
+- [ ] **M3 V1.0（进行中）**：并行启动 P3（CLI 全集+文本 RPC 接线+P1 协议映射）+ P5（文本比较视图完备化）
 - [ ] M2 MVP（P0 需求）
 - [ ] M3 V1.0（P0+P1）
 - [ ] M4 V2.0（含 Pro 级功能）
@@ -43,15 +47,15 @@
 | 2026-11-13 22:5x | Agent「M1 集成」→ UI 切真实引擎 + generated 类型合入 + e2e:engine 脚本 | ⚠️ 23:04 因 provider 5h 配额中断于半程；主会话接手完成全部剩余工作并验收（a0801ca） |
 | 2026-11-13 23:59 | 看护定时任务重建（旧任务因模型切换失效，新任务同节奏每 20 分钟） | active |
 | 2026-11-13 23:36 | Agent「P1 diff 核心完备化」（engine/ai-core，算法矩阵/重要性/增量重diff） | ✅ 完成并验收（01:1x）：ai-core 91/91 测试、clippy 零警、对拍 19/21 与 difflib+git 逐 hunk 一致（2 歧义用例性质校验+编辑量守恒）、PB-05 20 万行 standard 24.9ms；提交（仅 P1 文件）；遗留——协议 DTO 映射（Replace/ImportanceUpdate/双键/手动对齐）待 P2/P5 排期 |
-| 2026-11-13 23:36 | Agent「P2 目录引擎完备化」（ai-dir/ai-vfs/protocol/cli，惰性扫描/过滤器/缓存/同步状态机） | 运行中（01:0x 活跃：session.rs 重构） |
+| 2026-11-13 23:36 | Agent「P2 目录引擎完备化」（ai-dir/ai-vfs/protocol/cli，惰性扫描/过滤器/缓存/同步状态机） | ✅ 完成并验收（02:1x）：workspace **259 测试**全绿、clippy 零警、golden 重固化仅 3 能力字段差异、新二进制 e2e 通过、PB-03 10 万项 1.54s 达标、PB-10 delta 23.3ms；修复 5 个关键缺陷（含单线程 runtime 死锁红线）；**M2 联合验收通过并提交** |
 | 2026-11-13 23:36 | Agent「P4 UI 壳与会话体系」（ui/，主页/多窗口/会话持久化/ViewRegistry） | ✅ 完成并验收（含一次并发中断+SendMessage 原地续跑）：134/134 测试（+83）、build/lint/e2e:engine 全绿、浏览器冒烟全流程通过（00:47 主会话复验）；遗留项见 ui/README P4 边界 |
 
-### M2 断点（下一步，P1/P2/P4 并行）
+### M3 断点（下一步，P3/P5 并行）
 
-1. **P1 diff 核心完备化**（agent，权限限定 `engine/ai-core/` + `tests/`）：docs/04 §P1 全项（Myers/Patience/Histogram 接入、重要性规范化、手动对齐、编辑增量重 diff、行内 diff 超时降级、对拍测试矩阵）
-2. **P2 目录引擎完备化**（agent，权限限定 `engine/ai-dir/`、`engine/ai-vfs/`、`engine/ai-protocol/`、`cli/`）：docs/04 §P2 全项（惰性+后台扫描、快速测试全集、CRC 缓存、过滤器引擎侧求值、SQLite 缓存、同步状态机数据层、10 万项 corpora）
-3. **P4 UI 壳与会话体系**（agent，权限限定 `ui/`）：docs/04 §P4 全项（主页视图、标签/窗口管理、会话保存/作用域、sessions.json/state.json、ViewRegistry、快捷键、设置对话框、rev 同步/重连）
-4. 三 agent 文件权限互斥避免冲突；协议类型变更只允许 P2 的 ai-protocol 做，P1/P4 需要新类型时先在 PROGRESS.md 登记（由主会话协调补协议）
+1. **P3 CLI 全集 + 文本 RPC 接线**（agent，权限：`cli/`、`tests/`、`engine/ai-protocol/`、`engine/ai-engine/`、`engine/ai-core/` 对外暴露）：docs/04 §P3（aic/aicc 双形态、退出码 0/1/2/11/12/13/14、`--record` 已有补 fixture、git difftool 冒烟）+ P1 协议 DTO 映射（SectionEvent::Replace/ImportanceUpdate、双键、手动对齐选项上协议面）+ text/lines RPC 引擎入口开放
+2. **P5 文本比较视图完备化**（agent，权限：`ui/` 独占）：docs/04 §P5（FR-TXT-001~004/013/014/020~023/030、FIND-001、UNDO-001、ENC-001、EDIT-001——折叠/语法高亮/查找替换/编码切换/概览条/编辑能力，消费 P3 新协议面；若 P3 未就绪先做 UI 侧不依赖协议扩展的部分）
+3. 文件权限互斥（P3=引擎侧全权、P5=ui/ 独占）；协议类型修改权随 P2 完成移交 P3
+4. 完成后：M3 阶段验收 + 启动 P6（文件夹比较视图与文件操作，12 人周最大件）前评估是否三线并行
 | 2026-11-13 21:3x | Agent「P0 UI 线」→ Tauri2+React 壳 + 目录/文本视图 | ✅ 完成并验收：44/44 测试、build 零错误、cargo check 过、浏览器端到端冒烟通过（22:31 主会话复验 + 提交 1297af9） |
 | 2026-11-13 21:44 | 后台：rustup default stable 修复工具链 | ❌ 失败：与原安装任务并发竞争 downloads 目录（教训：勿并行跑两个 rustup） |
 | 2026-11-13 21:52 | 后台：原 rustup 安装任务仍在下载 stable 工具链（40MB/~200MB） | ⛔ 已主动终止：官方源仅 1.3MB/min，预估还需 1.5h+ |
