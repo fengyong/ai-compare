@@ -1,0 +1,26 @@
+[package]
+name = "ai-compare-tests"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+description = "ai-compare 集成测试：golden 快照 + 协议录制回放（docs/04 P0 交付物 ⑧）"
+
+[lib]
+path = "src/lib.rs"
+
+[[test]]
+name = "golden"
+path = "golden/golden_test.rs"
+
+[[test]]
+name = "protocol_replay"
+path = "protocol_fixtures/replay_test.rs"
+
+[dependencies]
+serde_json = { workspace = true }
+tempfile = { workspace = true }
+
+[dev-dependencies]
+ai-protocol = { workspace = true }

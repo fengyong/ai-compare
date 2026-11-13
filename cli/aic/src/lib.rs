@@ -1,0 +1,261 @@
+//! `aic` 的纯逻辑层：unified diff 渲染与 quick 判定（可单测）。
+
+use ai_core::sections::SectionKind;
+use ai_core::{DiffOutput, LineTable};
+
+/// 退出码（docs/04 P0：0 相同 / 1 不同 / 2 错误；P3 细分 11/12/13/14）
+pub const EXIT_SAME: u8 = 0;
+pub const EXIT_DIFF: u8 = 1;
+pub const EXIT_ERROR: u8 = 2;
+
+/// ANSI 颜色
+pub struct Palette {
+    pub delete: &'static str,
+    pub insert: &'static str,
+    pub hunk: &'static str,
+    pub header: &'static str,
+    pub reset: &'static str,
+}
+
+pub const PLAIN: Palette = Palette { delete: "", insert: "", hunk: "", header: "", reset: "" };
+
+pub const ANSI: Palette = Palette {
+    delete: "\x1b[31m",
+    insert: "\x1b[32m",
+    hunk: "\x1b[36m",
+    header: "\x1b[1m",
+    reset: "\x1b[0m",
+};
+
+/// 脚本条目：Same(i) 引用左侧行 i（与右侧行 i 相同）；Left/Right 为删/增行
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Entry {
+    Same(u32),
+    Left(u32),
+    Right(u32),
+}
+
+impl Entry {
+    fn is_change(&self) -> bool {
+        !matches!(self, Entry::Same(_))
+    }
+}
+
+/// 渲染 unified diff（`diff -u` 风格，hunk 头计数采用 git 约定：
+/// count==0 时行号为前导行数）。无差异时返回空串。
+pub fn render_unified(
+    left_label: &str,
+    right_label: &str,
+    out: &DiffOutput,
+    left: &LineTable,
+    right: &LineTable,
+    context: u32,
+    palette: &Palette,
+) -> String {
+    let has_diff = out.sections.iter().any(|s| s.kind != SectionKind::Equal);
+    if !has_diff {
+        return String::new();
+    }
+
+    // 1. 展开为脚本条目序列（Change = 先删后增，git/unified 惯例）
+    let mut script: Vec<Entry> = Vec::new();
+    for s in &out.sections {
+        match s.kind {
+            SectionKind::Equal => {
+                let l = s.left.expect("Equal 必有左区间");
+                for i in l.start..l.end {
+                    script.push(Entry::Same(i));
+                }
+            }
+            SectionKind::Change | SectionKind::Delete => {
+                let l = s.left.expect("Change/Delete 必有左区间");
+                for i in l.start..l.end {
+                    script.push(Entry::Left(i));
+                }
+                if s.kind == SectionKind::Change {
+                    let r = s.right.expect("Change 必有右区间");
+                    for i in r.start..r.end {
+                        script.push(Entry::Right(i));
+                    }
+                }
+            }
+            SectionKind::Insert => {
+                let r = s.right.expect("Insert 必有右区间");
+                for i in r.start..r.end {
+                    script.push(Entry::Right(i));
+                }
+            }
+        }
+    }
+
+    // 2. 以非等条目为锚，按 context 扩展并合并相邻窗口
+    let ctx = context as usize;
+    let mut hunks: Vec<(usize, usize)> = Vec::new(); // [start, end) in script
+    for (idx, e) in script.iter().enumerate() {
+        if e.is_change() {
+            let s = idx.saturating_sub(ctx);
+            let e = (idx + ctx + 1).min(script.len());
+            match hunks.last_mut() {
+                Some((_, pe)) if s <= *pe => {
+                    if e > *pe {
+                        *pe = e;
+                    }
+                }
+                _ => hunks.push((s, e)),
+            }
+        }
+    }
+
+    // 3. 渲染
+    let mut text = String::new();
+    let paint = |color: &'static str, body: String| -> String {
+        if color.is_empty() {
+            body
+        } else {
+            format!("{color}{body}{}", palette.reset)
+        }
+    };
+
+    text.push_str(&paint(palette.header, format!("--- {left_label}")));
+    text.push('\n');
+    text.push_str(&paint(palette.header, format!("+++ {right_label}")));
+    text.push('\n');
+
+    for (hs, he) in &hunks {
+        // 窗口前左/右已消耗行数（= 下一行 0 基下标）
+        let (mut left_before, mut right_before) = (0u32, 0u32);
+        for e in &script[..*hs] {
+            match e {
+                Entry::Same(_) => {
+                    left_before += 1;
+                    right_before += 1;
+                }
+                Entry::Left(_) => left_before += 1,
+                Entry::Right(_) => right_before += 1,
+            }
+        }
+        let (mut left_count, mut right_count) = (0u32, 0u32);
+        for e in &script[*hs..*he] {
+            match e {
+                Entry::Same(_) => {
+                    left_count += 1;
+                    right_count += 1;
+                }
+                Entry::Left(_) => left_count += 1,
+                Entry::Right(_) => right_count += 1,
+            }
+        }
+        // git 约定：count == 0 时显示前导行数（顶部插入显示 -0,0）；count == 1 时省略 `,1`
+        let ls = if left_count > 0 { left_before + 1 } else { left_before };
+        let rs = if right_count > 0 { right_before + 1 } else { right_before };
+        let lpart = if left_count == 1 { format!("-{ls}") } else { format!("-{ls},{left_count}") };
+        let rpart = if right_count == 1 { format!("+{rs}") } else { format!("+{rs},{right_count}") };
+        text.push_str(&paint(palette.hunk, format!("@@ {lpart} {rpart} @@")));
+        text.push('\n');
+        for e in &script[*hs..*he] {
+            match e {
+                Entry::Same(i) => text.push_str(&format!(" {}\n", left.line(*i as usize).text)),
+                Entry::Left(i) => {
+                    text.push_str(&paint(palette.delete, format!("-{}", left.line(*i as usize).text)));
+                    text.push('\n');
+                }
+                Entry::Right(i) => {
+                    text.push_str(&paint(palette.insert, format!("+{}", right.line(*i as usize).text)));
+                    text.push('\n');
+                }
+            }
+        }
+    }
+    text
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ai_core::TextDiffOptions;
+
+    fn diff(a: &str, b: &str) -> (DiffOutput, LineTable, LineTable) {
+        let lt = LineTable::from_text(a);
+        let rt = LineTable::from_text(b);
+        let out = ai_core::diff_text(&lt, &rt, &TextDiffOptions::default()).unwrap();
+        (out, lt, rt)
+    }
+
+    #[test]
+    fn no_diff_renders_empty() {
+        let (out, lt, rt) = diff("a\nb\n", "a\nb\n");
+        let text = render_unified("a", "b", &out, &lt, &rt, 3, &PLAIN);
+        assert_eq!(text, "");
+    }
+
+    #[test]
+    fn simple_replacement_hunk() {
+        let (out, lt, rt) = diff("one\ntwo\nthree\n", "one\nTWO\nthree\n");
+        let text = render_unified("left.c", "right.c", &out, &lt, &rt, 3, &PLAIN);
+        let expect = "\
+--- left.c
++++ right.c
+@@ -1,3 +1,3 @@
+ one
+-two
++TWO
+ three
+";
+        assert_eq!(text, expect);
+    }
+
+    #[test]
+    fn insertion_at_top_uses_zero_start() {
+        let (out, lt, rt) = diff("b\n", "a\nb\n");
+        let text = render_unified("l", "r", &out, &lt, &rt, 0, &PLAIN);
+        let expect = "\
+--- l
++++ r
+@@ -0,0 +1 @@
++a
+";
+        assert_eq!(text, expect);
+    }
+
+    #[test]
+    fn context_limits_and_merges_adjacent_hunks() {
+        let a = "1\n2\n3\n4\n5\n6\n7\n8\n9\n10\n11\n12\n";
+        let b = "1\n2\n3\nX\n5\n6\n7\nY\n9\n10\n11\n12\n";
+        let (out, lt, rt) = diff(a, b);
+        let text = render_unified("l", "r", &out, &lt, &rt, 1, &PLAIN);
+        // 两处修改相距 3 行，context=1 不合并 -> 两个 hunk（每 hunk 头一个 "@@ -"）
+        assert_eq!(text.matches("@@ -").count(), 2);
+        let text2 = render_unified("l", "r", &out, &lt, &rt, 2, &PLAIN);
+        // context=2 时窗口相接 -> 合并为一个 hunk
+        assert_eq!(text2.matches("@@ -").count(), 1);
+        assert!(text2.contains("-4\n+X\n 5"));
+        assert!(text2.contains("-8\n+Y"));
+    }
+
+    #[test]
+    fn hunk_position_numbers_are_consistent() {
+        let a = "1\n2\n3\n4\n5\n";
+        let b = "1\n2\n3\n4\n5\n6\n";
+        let (out, lt, rt) = diff(a, b);
+        let text = render_unified("l", "r", &out, &lt, &rt, 0, &PLAIN);
+        // 尾部追加：git 约定 count==0 -> 前导行数 5
+        assert!(text.contains("@@ -5,0 +6 @@\n+6\n"), "实际输出:\n{text}");
+    }
+
+    #[test]
+    fn ansi_coloring_wraps_lines() {
+        let (out, lt, rt) = diff("a\n", "b\n");
+        let text = render_unified("l", "r", &out, &lt, &rt, 0, &ANSI);
+        assert!(text.contains("\x1b[31m-a\x1b[0m"));
+        assert!(text.contains("\x1b[32m+b\x1b[0m"));
+        assert!(text.contains("\x1b[36m@@ -1 +1 @@\x1b[0m"));
+        assert!(text.contains("\x1b[1m--- l\x1b[0m"));
+    }
+
+    #[test]
+    fn exit_code_consts_match_docs() {
+        assert_eq!(EXIT_SAME, 0);
+        assert_eq!(EXIT_DIFF, 1);
+        assert_eq!(EXIT_ERROR, 2);
+    }
+}

@@ -1,0 +1,15 @@
+[package]
+name = "ai-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "ai-compare diff 核心算法（M01）：行分割、Myers O(ND) 行级 diff、行内词级差异、section 化流式输出（纯函数，无 IO）"
+
+[dependencies]
+# 纯算法 crate：不依赖任何 IO / 协议 / 业务 crate（docs/03 §8.3 耦合规则）
+thiserror = { workspace = true }
+
+[[bench]]
+name = "pb04_diff_smoke"
+harness = false

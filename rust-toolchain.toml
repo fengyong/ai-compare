@@ -1,0 +1,3 @@
+# 统一工具链：stable（docs/04 P0 交付物 ①）
+[toolchain]
+channel = "stable"

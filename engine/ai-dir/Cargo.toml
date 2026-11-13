@@ -1,0 +1,16 @@
+[package]
+name = "ai-dir"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "ai-compare 目录比较引擎（M03）：两树扫描、按名对齐、size+mtime 快速测试、分块哈希二进制判等、delta 事件流"
+
+[dependencies]
+ai-protocol = { workspace = true }
+ai-vfs = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
