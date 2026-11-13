@@ -117,6 +117,33 @@ impl LineTable {
         out
     }
 
+    /// 行区间替换（编辑增量重 diff 的行表落盘）：
+    /// `[start, end)` 行被 `new_text` 按行分割后的内容替换。
+    ///
+    /// 行尾修正：拼接结果若不在文件末尾且新内容末行缺行尾符，则继承被替换
+    /// 首行的行尾风格（缺省 LF），保证文件仍可无损还原为规整文本。
+    pub fn replace_lines(&mut self, start: usize, end: usize, new_text: &str) {
+        let entries = LineTable::from_text(new_text).lines;
+        self.replace_lines_entries(start, end, entries);
+    }
+
+    /// [`Self::replace_lines`] 的行条目版本（避免重复解析）。
+    pub fn replace_lines_entries(&mut self, start: usize, end: usize, mut new_lines: Vec<LineEntry>) {
+        assert!(start <= end && end <= self.lines.len(), "replace_lines 区间越界");
+        // 行尾修正：中段拼接时末行必须带行尾
+        if end < self.lines.len() {
+            if let Some(last) = new_lines.last_mut() {
+                if last.ending == LineEnding::None {
+                    last.ending = self.lines.get(start).map_or(LineEnding::Lf, |old| old.ending);
+                    if last.ending == LineEnding::None {
+                        last.ending = LineEnding::Lf;
+                    }
+                }
+            }
+        }
+        self.lines.splice(start..end, new_lines);
+    }
+
     /// 规范化比较键：diff 在键上运算、在原文上渲染（docs/03 §3.1.1）。
     ///
     /// - `ignore_eol_style`（默认 true）：行尾风格不参与比较；
@@ -278,6 +305,39 @@ mod tests {
         assert_eq!(crlf.compare_key(&opts), lf.compare_key(&opts), "默认忽略行尾风格");
         opts.ignore_eol_style = false;
         assert_ne!(crlf.compare_key(&opts), lf.compare_key(&opts));
+    }
+
+    #[test]
+    fn replace_lines_splices_and_roundtrips() {
+        let mut lt = t("a\nb\nc\nd\n");
+        lt.replace_lines(1, 3, "X1\nX2\nX3\n");
+        assert_eq!(lt.to_text(), "a\nX1\nX2\nX3\nd\n");
+        assert_eq!(lt.len(), 5);
+
+        // 纯插入（start == end）
+        let mut lt = t("a\nb\n");
+        lt.replace_lines(1, 1, "mid\n");
+        assert_eq!(lt.to_text(), "a\nmid\nb\n");
+
+        // 纯删除（new_text 为空）
+        let mut lt = t("a\nb\nc\n");
+        lt.replace_lines(1, 2, "");
+        assert_eq!(lt.to_text(), "a\nc\n");
+    }
+
+    #[test]
+    fn replace_lines_fixes_midfile_missing_ending() {
+        // 中段拼接时新内容末行缺行尾 -> 继承被替换首行的行尾，保证可无损还原
+        let mut lt = t("a\r\nb\r\nc\r\n");
+        lt.replace_lines(1, 2, "X"); // 缺行尾
+        assert_eq!(lt.to_text(), "a\r\nX\r\nc\r\n");
+    }
+
+    #[test]
+    #[should_panic]
+    fn replace_lines_out_of_bounds_panics() {
+        let mut lt = t("a\n");
+        lt.replace_lines(0, 5, "x\n");
     }
 
     #[test]

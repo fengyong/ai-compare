@@ -25,7 +25,7 @@ pub enum Importance {
 }
 
 /// 行区间 [start, end)，0 起、半开
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct LineRange {
     pub start: u32,
     pub end: u32,
@@ -125,15 +125,25 @@ pub struct DiffOutput {
     pub summary: DiffSummary,
 }
 
-/// diff 入口错误（算法层；P0 仅一种）
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+/// diff 入口错误
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum DiffError {
-    #[error("不支持的行对齐算法（P0 仅实现 Standard/Myers）")]
-    UnsupportedAlgorithm(crate::options::LineAlignAlgo),
+    #[error("无效的手动对齐锚点：{0}")]
+    InvalidManualAnchor(String),
+    #[error("无效的编辑：{0}")]
+    InvalidEdit(String),
 }
 
 /// 由合并后的 RawOp 序列构建 section 序列（相邻 Delete+Insert 合并为 Change）。
 pub fn build_sections(ops: &[crate::myers::RawOp]) -> DiffOutput {
+    let mut sections: Vec<Section> = build_section_vec(ops);
+    renumber(&mut sections);
+    let summary = DiffSummary::from_sections(&sections);
+    DiffOutput { sections, summary }
+}
+
+/// 不重编号的原始构建（供分块装配管线使用）
+pub(crate) fn build_section_vec(ops: &[crate::myers::RawOp]) -> Vec<Section> {
     let mut sections: Vec<Section> = Vec::new();
     let mut la = 0u32; // 左侧行游标
     let mut lr = 0u32; // 右侧行游标
@@ -208,9 +218,62 @@ pub fn build_sections(ops: &[crate::myers::RawOp]) -> DiffOutput {
             }
         }
     }
+    sections
+}
 
-    let summary = DiffSummary::from_sections(&sections);
-    DiffOutput { sections, summary }
+/// 合并相邻 Equal section（分块/增量装配后的规范化步骤；区间必须连续）。
+pub fn merge_adjacent_equal(sections: &mut Vec<Section>) {
+    let mut out: Vec<Section> = Vec::with_capacity(sections.len());
+    for sec in sections.drain(..) {
+        if sec.kind == SectionKind::Equal {
+            if let Some(last) = out.last_mut() {
+                if last.kind == SectionKind::Equal {
+                    let (Some(ll), Some(sl)) = (last.left, sec.left) else {
+                        unreachable!("Equal section 必有左侧区间");
+                    };
+                    debug_assert_eq!(ll.end, sl.start, "相邻 Equal 区间必须连续");
+                    last.left = Some(LineRange::new(ll.start, sl.end));
+                    let (Some(lr), Some(sr)) = (last.right, sec.right) else {
+                        unreachable!("Equal section 必有右侧区间");
+                    };
+                    debug_assert_eq!(lr.end, sr.start, "相邻 Equal 右区间必须连续");
+                    last.right = Some(LineRange::new(lr.start, sr.end));
+                    continue;
+                }
+            }
+        }
+        out.push(sec);
+    }
+    *sections = out;
+}
+
+/// 重编号：ids = 下标（0 起连续），并重算统计。
+pub fn renumber(sections: &mut [Section]) -> DiffSummary {
+    let mut summary = DiffSummary::default();
+    for (i, sec) in sections.iter_mut().enumerate() {
+        sec.id = i as SectionId;
+        summary.section_count += 1;
+        match sec.kind {
+            SectionKind::Equal => {
+                summary.equal_sections += 1;
+                summary.equal_lines += sec.left.map_or(0, |r| r.len());
+            }
+            SectionKind::Insert => {
+                summary.insert_sections += 1;
+                summary.inserted_lines += sec.right.map_or(0, |r| r.len());
+            }
+            SectionKind::Delete => {
+                summary.delete_sections += 1;
+                summary.deleted_lines += sec.left.map_or(0, |r| r.len());
+            }
+            SectionKind::Change => {
+                summary.change_sections += 1;
+                summary.deleted_lines += sec.left.map_or(0, |r| r.len());
+                summary.inserted_lines += sec.right.map_or(0, |r| r.len());
+            }
+        }
+    }
+    summary
 }
 
 #[cfg(test)]

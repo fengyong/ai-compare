@@ -211,3 +211,22 @@ fn roundtrip_property_over_variants() {
         assert_patch_roundtrip(a, b);
     }
 }
+
+#[test]
+fn golden_corpus_shape_preserved_by_standard_pipeline() {
+    // golden 语料 changed.txt：Standard 分块管线的最终 section 结构必须与
+    // P0 全量 Myers 一致（锚点分块 + 相邻 Equal 合并的收敛性质）
+    let left = LineTable::from_text("one\ntwo\nthree\nfour\n");
+    let right = LineTable::from_text("one\nTWO\nthree\nfour\nfive\n");
+    let out = diff_text(&left, &right, &TextDiffOptions::default()).unwrap();
+    let kinds: Vec<SectionKind> = out.sections.iter().map(|s| s.kind).collect();
+    assert_eq!(
+        kinds,
+        vec![SectionKind::Equal, SectionKind::Change, SectionKind::Equal, SectionKind::Insert],
+        "Standard 管线在 golden 语料上的 section 结构必须与 P0 一致: {out:?}"
+    );
+    assert_eq!(out.summary.change_sections, 1);
+    // P0 统计口径：Change 行同时计入 deleted 与 inserted
+    assert_eq!(out.summary.inserted_lines, 2);
+    assert_eq!(out.summary.deleted_lines, 1);
+}

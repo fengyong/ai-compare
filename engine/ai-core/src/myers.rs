@@ -29,6 +29,28 @@ enum Task {
 /// 计算编辑脚本（覆盖整个 a 与 b；输出顺序即应用顺序）。
 /// 相邻同类操作会被合并（coalesce）。
 pub fn diff_seq<T: PartialEq>(a: &[T], b: &[T]) -> Vec<RawOp> {
+    diff_seq_deadline(a, b, None).0
+}
+
+/// 带 deadline 的编辑脚本：超时后子问题降级为"全删全插"（合法但非最优），
+/// `degraded = true` 供调用方按超时语义处理（FR-BIG / docs/03 §6.2 行内策略）。
+/// `deadline = None` 时行为与 [`diff_seq`] 完全一致（无额外开销）。
+pub fn diff_seq_deadline<T: PartialEq>(
+    a: &[T],
+    b: &[T],
+    deadline: Option<std::time::Instant>,
+) -> (Vec<RawOp>, bool) {
+    let mut degraded = false;
+    let out = diff_seq_inner(a, b, deadline, &mut degraded);
+    (out, degraded)
+}
+
+fn diff_seq_inner<T: PartialEq>(
+    a: &[T],
+    b: &[T],
+    deadline: Option<std::time::Instant>,
+    degraded: &mut bool,
+) -> Vec<RawOp> {
     let mut out: Vec<RawOp> = Vec::new();
     let mut stack: Vec<Task> = vec![Task::Range { a0: 0, a1: a.len() as u32, b0: 0, b1: b.len() as u32 }];
 
@@ -38,6 +60,21 @@ pub fn diff_seq<T: PartialEq>(a: &[T], b: &[T]) -> Vec<RawOp> {
             Task::Ins(len) => out.push(RawOp::Insert(len)),
             Task::Del(len) => out.push(RawOp::Delete(len)),
             Task::Range { mut a0, a1, mut b0, b1 } => {
+                // 超时抢占：剩余子问题降级为全删全插（脚本仍合法）
+                if let Some(dl) = deadline {
+                    if std::time::Instant::now() > dl {
+                        let n = (a1 - a0) as usize;
+                        let m = (b1 - b0) as usize;
+                        if n > 0 {
+                            out.push(RawOp::Delete(n as u32));
+                        }
+                        if m > 0 {
+                            out.push(RawOp::Insert(m as u32));
+                        }
+                        *degraded = true;
+                        continue;
+                    }
+                }
                 // 公共前缀：直接输出
                 let mut pre = 0u32;
                 while a0 + pre < a1 && b0 + pre < b1 && a[(a0 + pre) as usize] == b[(b0 + pre) as usize] {
@@ -65,7 +102,7 @@ pub fn diff_seq<T: PartialEq>(a: &[T], b: &[T]) -> Vec<RawOp> {
                 } else if m == 0 {
                     Some(vec![Task::Del(n as u32)])
                 } else {
-                    match middle_snake(&a[a0 as usize..a1 as usize], &b[b0 as usize..b1 as usize]) {
+                    match middle_snake(&a[a0 as usize..a1 as usize], &b[b0 as usize..b1 as usize], deadline) {
                         Some((x, y))
                             // 防退化守卫：分割点必须两侧都有进展，否则回退全删全插
                             if !((x == 0 && y == 0) || (x == n && y == m)) =>
@@ -77,7 +114,10 @@ pub fn diff_seq<T: PartialEq>(a: &[T], b: &[T]) -> Vec<RawOp> {
                             ])
                         }
                         _ => {
-                            // 理论不可达兜底：全删全插（保证终止与正确性）
+                            // 仅当 deadline 确实已过才标记降级（理论退化兜底不算超时）
+                            if deadline.is_some_and(|dl| std::time::Instant::now() > dl) {
+                                *degraded = true;
+                            }
                             Some(vec![Task::Del(n as u32), Task::Ins(m as u32)])
                         }
                     }
@@ -127,7 +167,8 @@ pub fn coalesce_ops(ops: Vec<RawOp>) -> Vec<RawOp> {
 
 /// 线性空间中点分治：寻找"中蛇"（middle snake），
 /// 返回蛇末端 (x, y)（0 起、半开）作为分割点。
-fn middle_snake<T: PartialEq>(a: &[T], b: &[T]) -> Option<(usize, usize)> {
+/// `deadline` 超时返回 None（每 32 轮 d 迭代检查一次，摊销开销可忽略）。
+fn middle_snake<T: PartialEq>(a: &[T], b: &[T], deadline: Option<std::time::Instant>) -> Option<(usize, usize)> {
     let n = a.len();
     let m = b.len();
     debug_assert!(n > 0 && m > 0, "调用方已排除空侧");
@@ -152,6 +193,11 @@ fn middle_snake<T: PartialEq>(a: &[T], b: &[T]) -> Option<(usize, usize)> {
 
     for d in 0..=max_d {
         let di = d as isize;
+        if let Some(dl) = deadline {
+            if d % 32 == 0 && std::time::Instant::now() > dl {
+                return None;
+            }
+        }
 
         // ---- forward d：对角线 |k| <= d 且 k ≡ d (mod 2)；
         //      绝对对角线有效域 [-m, n]（x ∈ [0,n], y ∈ [0,m] => k = x-y）----
