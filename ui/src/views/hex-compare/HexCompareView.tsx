@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { getEngineCapabilities, hexBytes, openHex } from '../../ipc/engineProcess';
+import { getEngineCapabilities, hexBytes, openHex, trackSession } from '../../ipc/engineProcess';
 import { S } from '../../strings';
 import type { Tab } from '../../shell/store';
 
@@ -181,6 +181,11 @@ export function HexCompareView({ tab }: { tab: Tab & { kind: 'hex'; hex: { left:
     openHex({ sessionId: tab.hex.sessionId, left: tab.hex.left, right: tab.hex.right, options: null })
       .then((r) => {
         if (!disposed) {
+          trackSession(tab.hex.sessionId, 'hex', {
+            left: tab.hex.left,
+            right: tab.hex.right,
+            options: null,
+          });
           setSummary(r.summary);
           setSizes({ leftSize: r.leftSize, rightSize: r.rightSize });
         }

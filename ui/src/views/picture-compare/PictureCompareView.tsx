@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, WheelEvent as ReactWheelEvent } from 'react';
-import { openPictureIdempotent } from '../../ipc/engineProcess';
+import { openPictureIdempotent, trackSession } from '../../ipc/engineProcess';
 import { S } from '../../strings';
 import type { Tab } from '../../shell/store';
 import {
@@ -125,6 +125,11 @@ export function PictureCompareView({ tab }: { tab: PictureTab }) {
       try {
         const r = await openPictureIdempotent({
           sessionId: tab.picture.sessionId,
+          left: tab.picture.left,
+          right: tab.picture.right,
+          options: { tolerance, block: 32 },
+        });
+        trackSession(tab.picture.sessionId, 'picture', {
           left: tab.picture.left,
           right: tab.picture.right,
           options: { tolerance, block: 32 },

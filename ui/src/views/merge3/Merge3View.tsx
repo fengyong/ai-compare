@@ -6,6 +6,7 @@ import {
   merge3Output,
   merge3Sections,
   saveMerge3,
+  trackSession,
 } from '../../ipc/engineProcess';
 import type {
   LineRange,
@@ -310,6 +311,7 @@ export function Merge3View({ tab }: { tab: Merge3Tab }) {
       try {
         const r = await merge3OpenIdempotent({ sessionId, base, left, right, options: null });
         if (disposed) return;
+        trackSession(sessionId, 'merge3', { base, left, right, options: null });
         setOpened(r);
         const all = await loadSections();
         if (!disposed) setChunks(all);

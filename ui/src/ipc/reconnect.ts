@@ -96,10 +96,16 @@ export function isMethodNotFound(err: unknown): boolean {
   return err instanceof RpcError && err.code === -32601;
 }
 
+/**
+ * 引擎侧会话种类（= 客户端句柄前缀；文件夹同步复用 dir 会话）。
+ * 崩溃恢复必须覆盖全部种类，否则该视图重连后持失效句柄（R3-19）。
+ */
+export type EngineSessionKind = 'dir' | 'text' | 'merge' | 'merge3' | 'picture' | 'table' | 'hex';
+
 /** 已跟踪会话的描述（重启后按此重建） */
 export interface TrackedSession {
-  kind: 'dir' | 'text';
-  /** dir/open 或 text/open 参数（不含 sessionId；由恢复流程分配新句柄） */
+  kind: EngineSessionKind;
+  /** 对应 open 方法的参数（不含 sessionId；由恢复流程分配新句柄） */
   params: Record<string, unknown>;
 }
 
@@ -107,6 +113,6 @@ export interface ResyncOutcome {
   /** 降级重放时的新会话句柄（session/resync 成功时与旧句柄一致） */
   oldSessionId: string;
   newSessionId: string;
-  kind: 'dir' | 'text';
+  kind: EngineSessionKind;
   mode: 'resync' | 'replay';
 }
