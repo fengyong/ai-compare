@@ -1256,7 +1256,7 @@ async fn run_picture(left_s: &str, right_s: &str, flags: &PictureFlags) -> Resul
         tolerance: flags.tolerance.unwrap_or(8) as u8,
         block: flags.block.unwrap_or(32),
     };
-    let r = ai_core::picture::diff_bytes(&left, &right, &opts).map_err(|e| e)?;
+    let r = ai_core::picture::diff_bytes(&left, &right, &opts)?;
     let same = r.diff_pixels == 0;
     use std::io::Write as _;
     let mut lock = std::io::stdout().lock();
