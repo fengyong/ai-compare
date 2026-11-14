@@ -831,15 +831,60 @@ impl ZipFsMut {
         self.state.read().expect("zip 状态锁中毒").to_bytes()
     }
 
-    /// write-through：装载自文件时，把当前内存模型回写归档
-    fn persist(&self) {
-        if let Some(path) = &self.archive {
-            let bytes = self.to_bytes();
-            if let Err(e) = std::fs::write(path.as_ref(), &bytes) {
-                eprintln!("[zip] 归档回写失败（{}）: {e}", path.display());
-            }
+    /// write-through：装载自文件时，把当前内存模型回写归档。
+    ///
+    /// 失败必须上抛（R3-12）：只读权限/磁盘满时若仍返回 Ok，调用方会把
+    /// "内存改了、磁盘没改"当成复制/删除/改名成功。内存模型保留改动，
+    /// 调用方报错后重试或另存即可（不回滚用户意图）。
+    fn persist(&self) -> Result<(), VfsError> {
+        match &self.archive {
+            Some(path) => atomic_write(path, &self.to_bytes()),
+            None => Ok(()),
         }
     }
+}
+
+/// 原子落盘：同目录临时文件 → fsync → rename 覆盖 → 父目录 fsync。
+///
+/// 直接 `fs::write` 全量覆盖归档时，中断会留下半个归档（原文件已毁）；
+/// 同目录 rename 保证读者要么看到旧归档、要么看到新归档。临时名带 pid +
+/// 进程内序号，避免并发写互相覆盖。失败时清掉临时文件并把 io 错误上抛。
+fn atomic_write(path: &std::path::Path, bytes: &[u8]) -> Result<(), VfsError> {
+    use std::io::Write;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let parent = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| std::path::Path::new("."));
+    let name = path
+        .file_name()
+        .ok_or_else(|| VfsError::InvalidPath(path.display().to_string()))?
+        .to_string_lossy()
+        .into_owned();
+    let tmp = parent.join(format!(
+        ".{name}.tmp-{}-{}",
+        std::process::id(),
+        SEQ.fetch_add(1, Ordering::Relaxed)
+    ));
+
+    let result = (|| -> std::io::Result<()> {
+        let mut f = std::fs::File::create(&tmp)?;
+        f.write_all(bytes)?;
+        f.sync_all()?;
+        std::fs::rename(&tmp, path)?;
+        // rename 已成功 → 数据已可见；父目录 fsync 只为掉电后目录项仍在，
+        // 且 Windows 无法以 File 打开目录，故此处失败不得反过来报写入失败。
+        if let Ok(dir) = std::fs::File::open(parent) {
+            let _ = dir.sync_all();
+        }
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result.map_err(VfsError::Io)
 }
 
 #[async_trait]
@@ -931,19 +976,19 @@ impl VfsProvider for ZipFsMut {
             .write()
             .expect("zip 状态锁中毒")
             .write_file(path, data)?;
-        self.persist();
+        self.persist()?;
         Ok(())
     }
 
     async fn mkdir(&self, path: &VfsPath) -> Result<(), VfsError> {
         self.state.write().expect("zip 状态锁中毒").create_dir(path)?;
-        self.persist();
+        self.persist()?;
         Ok(())
     }
 
     async fn rename(&self, from: &VfsPath, to: &VfsPath) -> Result<(), VfsError> {
         self.state.write().expect("zip 状态锁中毒").rename(from, to)?;
-        self.persist();
+        self.persist()?;
         Ok(())
     }
 
@@ -952,13 +997,13 @@ impl VfsProvider for ZipFsMut {
             .write()
             .expect("zip 状态锁中毒")
             .remove(path, recursive)?;
-        self.persist();
+        self.persist()?;
         Ok(())
     }
 
     async fn copy_file(&self, from: &VfsPath, to: &VfsPath) -> Result<(), VfsError> {
         self.state.write().expect("zip 状态锁中毒").copy_file(from, to)?;
-        self.persist();
+        self.persist()?;
         Ok(())
     }
 
@@ -967,7 +1012,7 @@ impl VfsProvider for ZipFsMut {
             .write()
             .expect("zip 状态锁中毒")
             .set_mtime(path, mtime_ms)?;
-        self.persist();
+        self.persist()?;
         Ok(())
     }
 }
@@ -1417,5 +1462,145 @@ mod tests {
         // to_bytes 与写入面一致
         let re = parse_central_directory(&fs.to_bytes()).unwrap();
         assert!(re.iter().any(|e| e.name == "x/y.txt"));
+    }
+
+    // ---------------- R3-12：回写失败必须上抛 + 原子替换 ----------------
+
+    /// 归档路径被换成非空目录 → rename 必失败（与 uid 无关的失败注入）。
+    /// 六个写方法都必须返回 Err，且不得留下临时文件。
+    #[tokio::test]
+    async fn persist_failure_is_reported_by_all_write_methods() {
+        let dir = tempfile::tempdir().unwrap();
+        let zip_path = dir.path().join("a.zip");
+        std::fs::write(&zip_path, build_zip(&[("a.txt", b"A"), ("d/b.txt", b"B")])).unwrap();
+        let fs = ZipFsMut::from_file(&zip_path).unwrap();
+        // 失败注入：原归档换成非空目录（rename 覆盖非空目录必失败）
+        std::fs::remove_file(&zip_path).unwrap();
+        std::fs::create_dir(&zip_path).unwrap();
+        std::fs::write(zip_path.join("blocker"), b"x").unwrap();
+
+        let p = |s: &str| VfsPath::parse(s).unwrap();
+        assert!(matches!(
+            fs.write_file_bytes(&p("/a.txt"), b"new").await,
+            Err(VfsError::Io(_))
+        ));
+        assert!(matches!(fs.mkdir(&p("/nd")).await, Err(VfsError::Io(_))));
+        assert!(matches!(
+            fs.rename(&p("/a.txt"), &p("/z.txt")).await,
+            Err(VfsError::Io(_))
+        ));
+        assert!(matches!(
+            fs.remove(&p("/d"), true).await,
+            Err(VfsError::Io(_))
+        ));
+        assert!(matches!(
+            fs.copy_file(&p("/z.txt"), &p("/c.txt")).await,
+            Err(VfsError::Io(_))
+        ));
+        assert!(matches!(
+            fs.set_mtime(&p("/c.txt"), 123).await,
+            Err(VfsError::Io(_))
+        ));
+
+        // 临时文件已清理：父目录只剩我们造的目录
+        let left: Vec<String> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(left, vec!["a.zip".to_string()], "实际残留: {left:?}");
+    }
+
+    /// 只读父目录 → 临时文件都建不出来：报错，且原归档字节分毫未动。
+    /// （权限型断言需非 root 运行；root 会绕过目录权限。）
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn persist_failure_keeps_original_archive_intact() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let zip_path = dir.path().join("ro.zip");
+        let original = build_zip(&[("a.txt", b"original")]);
+        std::fs::write(&zip_path, &original).unwrap();
+        let fs = ZipFsMut::from_file(&zip_path).unwrap();
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o555)).unwrap();
+
+        let res = fs
+            .write_file_bytes(&VfsPath::parse("/a.txt").unwrap(), b"changed")
+            .await;
+
+        // 先恢复权限，tempdir 析构才能删掉
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(matches!(res, Err(VfsError::Io(_))), "实际: {res:?}");
+        assert_eq!(std::fs::read(&zip_path).unwrap(), original, "原归档被破坏");
+        let left: Vec<String> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(left, vec!["ro.zip".to_string()], "实际残留: {left:?}");
+    }
+
+    /// 成功路径：原子替换后归档可独立装载，且不留临时文件（防"永远报错"式过度修复）。
+    #[tokio::test]
+    async fn persist_success_is_atomic_and_leaves_no_temp() {
+        let dir = tempfile::tempdir().unwrap();
+        let zip_path = dir.path().join("ok.zip");
+        std::fs::write(&zip_path, build_zip(&[("a.txt", b"old")])).unwrap();
+        let fs = ZipFsMut::from_file(&zip_path).unwrap();
+        fs.write_file_bytes(&VfsPath::parse("/a.txt").unwrap(), b"brand-new")
+            .await
+            .unwrap();
+        let fresh = ZipFsMut::from_file(&zip_path).unwrap();
+        assert_eq!(
+            fresh
+                .read_file_bytes(&VfsPath::parse("/a.txt").unwrap())
+                .await
+                .unwrap(),
+            b"brand-new"
+        );
+        let left: Vec<String> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(left, vec!["ok.zip".to_string()], "实际残留: {left:?}");
+    }
+
+    /// 无归档路径（from_bytes/empty 构造）时 persist 是 no-op：写方法照常成功。
+    #[tokio::test]
+    async fn persist_without_archive_path_is_noop() {
+        let fs = ZipFsMut::from_bytes_writable(&build_zip(&[("a.txt", b"A")])).unwrap();
+        fs.write_file_bytes(&VfsPath::parse("/a.txt").unwrap(), b"B")
+            .await
+            .unwrap();
+        assert_eq!(
+            fs.read_file_bytes(&VfsPath::parse("/a.txt").unwrap())
+                .await
+                .unwrap(),
+            b"B"
+        );
+    }
+
+    /// 原子替换的可观测语义：替换前已打开的读句柄仍读到完整旧归档。
+    /// 就地 `fs::write` 覆盖会截断同一 inode，旧句柄会看到新内容——这条断言
+    /// 是"tmp + rename"与"全量覆盖"的唯一可测差别（掉电中间态无法在单测注入）。
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn persist_replaces_archive_without_mutating_open_readers() {
+        use std::io::{Read, Seek, SeekFrom};
+
+        let dir = tempfile::tempdir().unwrap();
+        let zip_path = dir.path().join("atomic.zip");
+        let original = build_zip(&[("a.txt", b"original-content")]);
+        std::fs::write(&zip_path, &original).unwrap();
+        let mut held = std::fs::File::open(&zip_path).unwrap();
+
+        let fs = ZipFsMut::from_file(&zip_path).unwrap();
+        fs.write_file_bytes(&VfsPath::parse("/a.txt").unwrap(), b"replacement")
+            .await
+            .unwrap();
+
+        let mut seen = Vec::new();
+        held.seek(SeekFrom::Start(0)).unwrap();
+        held.read_to_end(&mut seen).unwrap();
+        assert_eq!(seen, original, "已打开的读句柄看到了新内容 → 不是原子替换");
     }
 }

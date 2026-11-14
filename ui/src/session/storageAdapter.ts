@@ -85,6 +85,8 @@ export class MemoryFileStore implements KvFileStore {
 
   async deleteFile(path: string): Promise<void> {
     this.files.delete(path);
+    // .bak 必须一起删：否则删除后走恢复协议会把旧文档复活（R3-13）
+    this.files.delete(`${path}.bak`);
   }
 
   /** 按 AtomicWritePlan 语义应用（测试可断言 .bak/.tmp 的中间状态） */
@@ -134,6 +136,8 @@ export class BrowserFileStore implements KvFileStore {
 
   async deleteFile(path: string): Promise<void> {
     this.storage?.removeItem(this.key(path));
+    // 与 Memory/Tauri 后端同口径：.bak 一并删除，避免恢复协议复活旧文档
+    this.storage?.removeItem(`${this.key(path)}.bak`);
   }
 }
 

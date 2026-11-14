@@ -327,10 +327,19 @@ struct SettingsReadResult {
     contents: Option<String>,
 }
 
-/// 原子写设置文件：写临时文件 → 旧内容备份为 `<name>.bak` → rename 原子替换。
-/// 失败路径上目标与 .bak 均保持旧值（rename 为原子操作）。
+/// 原子写设置文件：唯一临时文件 + fsync → 旧内容**复制**为 `<name>.bak` →
+/// rename 原子替换 → 父目录 fsync。
+///
+/// 备份用 copy 而非 rename（R3-13）：rename 会先把主文件搬走，随后的替换一旦
+/// 失败主文件就不存在了，旧注释"目标与备份保持旧值"并不成立。copy 之后主文件
+/// 始终在位，任何一步失败主文件都仍是旧值（.bak 至多被更新为同一份旧值）。
+/// 临时名带 pid + 进程内序号：同进程并发写不再共用一个 tmp 路径。
 #[tauri::command]
 fn settings_write(path: String, contents: String) -> Result<(), String> {
+    use std::io::Write;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static WRITE_SEQ: AtomicU64 = AtomicU64::new(0);
     let path_buf = PathBuf::from(&path);
     let parent = path_buf
         .parent()
@@ -341,31 +350,50 @@ fn settings_write(path: String, contents: String) -> Result<(), String> {
     let file_name = path_buf
         .file_name()
         .ok_or_else(|| format!("设置路径非法: {path}"))?
-        .to_os_string();
+        .to_string_lossy()
+        .into_owned();
     let tmp = parent.join(format!(
-        "{}.tmp-{}",
-        file_name.to_string_lossy(),
-        std::process::id()
+        "{}.tmp-{}-{}",
+        file_name,
+        std::process::id(),
+        WRITE_SEQ.fetch_add(1, Ordering::Relaxed)
     ));
-    std::fs::write(&tmp, contents.as_bytes())
-        .map_err(|e| format!("写临时文件失败（{}）: {e}", tmp.display()))?;
 
-    if path_buf.is_file() {
-        let bak = parent.join(format!("{}.bak", file_name.to_string_lossy()));
-        std::fs::rename(&path_buf, &bak).map_err(|e| format!("备份 .bak 失败: {e}"))?;
-    }
-    std::fs::rename(&tmp, &path_buf).map_err(|e| {
-        // rename 失败：临时文件清理；目标/备份保持旧值
+    let result = (|| -> std::io::Result<()> {
+        let mut f = std::fs::File::create(&tmp)?;
+        f.write_all(contents.as_bytes())?;
+        // 落盘耐久性：rename 之前 tmp 内容必须已刷到介质，否则掉电后
+        // 目录项指向一个空/半截文件（文档承诺的"原子写"不含这一步就不成立）
+        f.sync_all()?;
+        if path_buf.is_file() {
+            let bak = parent.join(format!("{file_name}.bak"));
+            std::fs::copy(&path_buf, &bak)?;
+        }
+        std::fs::rename(&tmp, &path_buf)?;
+        // 父目录 fsync 让 rename 本身耐久；Windows 无法以 File 打开目录，
+        // 且此时数据已可见，故该步失败不得反过来报写入失败。
+        if let Ok(dir) = std::fs::File::open(&parent) {
+            let _ = dir.sync_all();
+        }
+        Ok(())
+    })();
+    result.map_err(|e| {
         let _ = std::fs::remove_file(&tmp);
-        format!("原子替换失败（{}）: {e}", path_buf.display())
+        format!("写设置文件失败（{path}）: {e}")
     })
 }
 
-/// 删除设置文件（及其 .bak）
+/// 删除设置文件（及其 .bak）。不存在视为成功（幂等）；其余错误必须上抛，
+/// 否则"删除会话"会静默失败而 UI 以为已删（R3-13）。
 #[tauri::command]
 fn settings_delete(path: String) -> Result<(), String> {
-    let _ = std::fs::remove_file(&path);
-    let _ = std::fs::remove_file(format!("{path}.bak"));
+    for p in [path.clone(), format!("{path}.bak")] {
+        match std::fs::remove_file(&p) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(format!("删除设置文件失败（{p}）: {e}")),
+        }
+    }
     Ok(())
 }
 
@@ -395,4 +423,221 @@ pub fn run() {
                 }
             }
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn read(path: &std::path::Path) -> Option<String> {
+        std::fs::read_to_string(path).ok()
+    }
+
+    fn entries(dir: &std::path::Path) -> Vec<String> {
+        let mut v: Vec<String> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        v.sort();
+        v
+    }
+
+    #[test]
+    fn settings_write_creates_parent_dirs_and_readable_content() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("nested/deep/sessions.json");
+        settings_write(p.display().to_string(), "{\"v\":1}".into()).unwrap();
+        let r = settings_read(p.display().to_string()).unwrap();
+        assert!(r.found);
+        assert_eq!(r.contents.as_deref(), Some("{\"v\":1}"));
+        // 首次写入无旧值 → 不产生 .bak
+        assert_eq!(entries(p.parent().unwrap()), vec!["sessions.json"]);
+    }
+
+    #[test]
+    fn settings_write_backs_up_previous_content() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("s.json");
+        settings_write(p.display().to_string(), "v1".into()).unwrap();
+        settings_write(p.display().to_string(), "v2".into()).unwrap();
+        assert_eq!(read(&p).as_deref(), Some("v2"));
+        assert_eq!(read(&p.with_extension("json.bak")).as_deref(), Some("v1"));
+        // 第三次写：.bak 跟进到 v2，且不留临时文件
+        settings_write(p.display().to_string(), "v3".into()).unwrap();
+        assert_eq!(read(&p.with_extension("json.bak")).as_deref(), Some("v2"));
+        assert_eq!(entries(dir.path()), vec!["s.json", "s.json.bak"]);
+    }
+
+    /// R3-13 核心：失败路径上主文件与 .bak 都保持旧值。
+    /// 旧实现先 rename(primary → bak)，替换失败时主文件已不存在。
+    /// （权限型断言需非 root 运行。）
+    #[cfg(unix)]
+    #[test]
+    fn settings_write_failure_keeps_primary_and_backup() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("s.json");
+        settings_write(p.display().to_string(), "v1".into()).unwrap();
+        settings_write(p.display().to_string(), "v2".into()).unwrap();
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o555)).unwrap();
+
+        let res = settings_write(p.display().to_string(), "v3".into());
+
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(res.is_err(), "只读目录写入必须报错，实际: {res:?}");
+        assert_eq!(read(&p).as_deref(), Some("v2"), "主文件被破坏");
+        assert_eq!(
+            read(&p.with_extension("json.bak")).as_deref(),
+            Some("v1"),
+            ".bak 被破坏"
+        );
+        assert_eq!(
+            entries(dir.path()),
+            vec!["s.json", "s.json.bak"],
+            "临时文件残留"
+        );
+    }
+
+    /// 归档路径被换成非空目录 → 原子替换必失败（与 uid 无关的失败注入）。
+    #[test]
+    fn settings_write_reports_replace_failure_and_cleans_tmp() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("s.json");
+        settings_write(p.display().to_string(), "v1".into()).unwrap();
+        settings_write(p.display().to_string(), "v2".into()).unwrap();
+        std::fs::remove_file(&p).unwrap();
+        std::fs::create_dir(&p).unwrap();
+        std::fs::write(p.join("blocker"), "x").unwrap();
+
+        let res = settings_write(p.display().to_string(), "v3".into());
+        assert!(res.is_err(), "实际: {res:?}");
+        // .bak 仍是上一次的旧值；父目录无 tmp 残留
+        assert_eq!(read(&p.with_extension("json.bak")).as_deref(), Some("v1"));
+        assert_eq!(entries(dir.path()), vec!["s.json", "s.json.bak"]);
+    }
+
+    /// 同进程并发写：临时名必须每次唯一，否则互相删/覆盖对方的 tmp。
+    #[test]
+    fn settings_write_concurrent_writes_do_not_collide() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("s.json");
+        settings_write(p.display().to_string(), "seed".into()).unwrap();
+        let path = p.display().to_string();
+        let handles: Vec<_> = (0..8)
+            .map(|i| {
+                let path = path.clone();
+                std::thread::spawn(move || settings_write(path, format!("writer-{i}")))
+            })
+            .collect();
+        for h in handles {
+            h.join().unwrap().unwrap();
+        }
+        let final_content = read(&p).unwrap();
+        assert!(
+            (0..8).any(|i| final_content == format!("writer-{i}")),
+            "主文件内容不是任何一次完整写入: {final_content:?}"
+        );
+        assert_eq!(
+            entries(dir.path()),
+            vec!["s.json", "s.json.bak"],
+            "临时文件残留"
+        );
+    }
+
+    #[test]
+    fn settings_delete_removes_primary_and_backup_idempotently() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("s.json");
+        settings_write(p.display().to_string(), "v1".into()).unwrap();
+        settings_write(p.display().to_string(), "v2".into()).unwrap();
+        settings_delete(p.display().to_string()).unwrap();
+        assert_eq!(entries(dir.path()), Vec::<String>::new());
+        // 再删一次仍成功（不存在 = 幂等）
+        settings_delete(p.display().to_string()).unwrap();
+    }
+
+    /// 删除失败必须上抛（旧实现 `let _ =` 吞掉全部错误）。
+    /// .bak 换成非空目录 → remove_file 必失败，与 uid 无关。
+    #[test]
+    fn settings_delete_reports_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("s.json");
+        settings_write(p.display().to_string(), "v1".into()).unwrap();
+        let bak = p.with_extension("json.bak");
+        std::fs::create_dir(&bak).unwrap();
+        std::fs::write(bak.join("blocker"), "x").unwrap();
+        let res = settings_delete(p.display().to_string());
+        assert!(res.is_err(), "实际: {res:?}");
+        assert!(res.unwrap_err().contains("s.json.bak"));
+    }
+
+    #[test]
+    fn settings_read_missing_file_is_not_found() {
+        let dir = tempfile::tempdir().unwrap();
+        let r = settings_read(dir.path().join("nope.json").display().to_string()).unwrap();
+        assert!(!r.found);
+        assert!(r.contents.is_none());
+    }
+
+    /// R3-13 的关键窗口：备份已生成、最终替换失败 → 主文件必须仍是旧值。
+    /// 只读目录注入走不到这一步（tmp 会先建不出来）；用 macOS 的 uchg 标记
+    /// 让 rename 失败，而 tmp 创建与备份 copy 都正常完成。
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn settings_write_replace_failure_after_backup_keeps_primary() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("s.json");
+        settings_write(p.display().to_string(), "v1".into()).unwrap();
+        settings_write(p.display().to_string(), "v2".into()).unwrap();
+        let flag = |on: bool| {
+            let st = std::process::Command::new("chflags")
+                .arg(if on { "uchg" } else { "nouchg" })
+                .arg(&p)
+                .status()
+                .unwrap();
+            assert!(st.success(), "chflags 执行失败");
+        };
+        flag(true);
+        let res = settings_write(p.display().to_string(), "v3".into());
+        flag(false);
+
+        assert!(
+            res.is_err(),
+            "immutable 目标上的替换必须报错，实际: {res:?}"
+        );
+        assert_eq!(read(&p).as_deref(), Some("v2"), "主文件丢失或被改写");
+        assert_eq!(
+            read(&p.with_extension("json.bak")).as_deref(),
+            Some("v2"),
+            ".bak 必须是同一份旧值"
+        );
+        assert_eq!(
+            entries(dir.path()),
+            vec!["s.json", "s.json.bak"],
+            "临时文件残留"
+        );
+    }
+
+    /// 原子替换的可观测语义：替换前已打开的读句柄仍读到完整旧内容。
+    /// 就地覆盖会截断同一 inode，旧句柄会看到新内容。
+    #[cfg(unix)]
+    #[test]
+    fn settings_write_replaces_file_without_mutating_open_readers() {
+        use std::io::{Read, Seek, SeekFrom};
+
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("s.json");
+        settings_write(p.display().to_string(), "old-content-longer".into()).unwrap();
+        let mut held = std::fs::File::open(&p).unwrap();
+        settings_write(p.display().to_string(), "new".into()).unwrap();
+
+        let mut seen = String::new();
+        held.seek(SeekFrom::Start(0)).unwrap();
+        held.read_to_string(&mut seen).unwrap();
+        assert_eq!(
+            seen, "old-content-longer",
+            "已打开的读句柄看到了新内容 → 不是原子替换"
+        );
+    }
 }
