@@ -15,6 +15,7 @@ use async_trait::async_trait;
 use thiserror::Error;
 
 pub mod crc32;
+pub mod ftp;
 pub mod local;
 pub mod route;
 pub mod zip;
@@ -22,6 +23,7 @@ pub mod zip;
 pub use crc32::{crc32, crc32_update};
 pub use crc32::INITIAL as CRC32_INITIAL;
 pub use local::LocalFs;
+pub use ftp::{split_ftp_uri, FtpConfig, FtpFs};
 pub use route::{provider_for_session, RouteFs};
 pub use zip::{ZipEntry, ZipFs, ZipFsMut};
 
