@@ -252,3 +252,11 @@
 - **回归测试**：411→close→open 链路、历史满 `add`、空文本 `registerText`、HTML 转义/包装/标题清洗、命令异常捕获、命令总线注册栈等；UI 测试 463 → **470**。
 - **最终门禁**：引擎 **822/0**、UI **470/0**、clippy `-D warnings` 零警、`pnpm e2e:engine`（含 merge3 四方法与 report/generate 分块链路）、`pnpm build`、`pnpm lint` 零警告；看门狗守护进程存活（10 分钟心跳 + 每小时 AI 接手）。
 - **边界（如实登记）**：队列 9 与 P13 后半属平台/发布能力项（Windows exe/dll 资源与实时注册表比较、音频解码、签名更新与安装程序、主题 i18n 壳集成、命令面板、设置 > 命令自定义页），需额外引擎或发布基础设施，非本环境可闭环；已登记为后续批次，看门狗据此续作。
+
+## 最终交付状态（2026-11-14 21:1x）
+
+- **HEAD = `6bd20de`**，main 单分支，工作树干净；本会话共 8 次提交（看门狗 + 队列 4~8 + 自审修复 + 状态登记），每项功能均单独 commit 并同步更新本文件。
+- **最终门禁复验（提交后重跑）**：`cargo test --workspace` **822/0**、`cargo clippy --workspace --all-targets -- -D warnings` 零警、`pnpm test` **470/0**（47 文件）、`pnpm e2e:engine` 全过（含 merge3 四方法与 report/generate 分块链路）、`pnpm build`、`pnpm lint` 零警告。
+- **看门狗**：IDE automation `ai-compare-10` ACTIVE（`FREQ=HOURLY;INTERVAL=1`，cwd 本工作区）；本地 `scripts/watchdog.sh` 后台存活，每 600 秒心跳 `target/watchdog/heartbeat.json`、异常信号 `target/watchdog/SIGNAL.md`、巡检流水 `target/watchdog/check.log`。IDE 调度最小粒度 1 小时，故 10 分钟检查由本地守护承担、AI 自动继续最长 1 小时接续延迟（已如实登记）。
+- **交付面**：迭代队列 1~8 的 UI 交互面全部闭环（1~3 由前序会话完成，4 剪贴板 / 5 报告对话框 / 6 书签与自动换行 / 7 图片闪烁缩放 / 8 菜单栏工具栏由本会话完成），三轮自审修复 12 项真实缺陷。
+- **后续断点**：队列 9 与 P13 后半（平台/发布能力项）、各队列已登记的未闭环 FR（详见各节）；看门狗遇异常自动从本节断点续作，续作时仍须「门禁全绿 → commit → 更新本文件」。
