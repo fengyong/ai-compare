@@ -31,7 +31,7 @@ describe('shell/viewRegistry 视图插件注册表', () => {
 
   it('implementedKinds 只返回已实现的会话类型（P8 起含同步/合并）', () => {
     const reg = createDefaultRegistry();
-    expect(reg.implementedKinds()).toEqual(['folder-compare', 'text-compare', 'folder-sync', 'folder-merge']);
+    expect(reg.implementedKinds()).toEqual(['folder-compare', 'text-compare', 'folder-sync', 'folder-merge', 'picture-compare']);
     // P8 同步/合并视图能力声明：同步双窗格、合并三窗格，reports 面开放
     expect(reg.get('folder-sync')!.capabilities.reports).toBe(true);
     expect(reg.get('folder-merge')!.capabilities.panes).toBe(3);

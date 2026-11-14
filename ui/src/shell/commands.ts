@@ -26,7 +26,7 @@ export interface CommandDef {
 
 /** 命令运行上下文 = ViewCtx + 活动标签信息（壳在每次触发时构建） */
 export interface CommandContext extends ViewCtx {
-  activeTabKind: 'home' | 'folder' | 'text' | 'sync' | 'merge' | null;
+  activeTabKind: 'text' | 'merge' | 'picture' | 'home' | 'folder' | 'sync' | null;
   activeTabId: string | null;
 }
 
