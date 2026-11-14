@@ -24,7 +24,7 @@ use ai_core::{
     ReportSnapshot, TableSnapshot, TextSnapshot, WrapMode,
 };
 use ai_protocol::CompareCriteria;
-use ai_vfs::{LocalFs, VfsPath, VfsProvider as _};
+use ai_vfs::{RouteFs, VfsPath, VfsProvider as _};
 
 use crate::app::arg_error;
 use crate::{EXIT_ERROR, EXIT_SAME};
@@ -274,7 +274,7 @@ async fn run_report(
     layout: ReportLayout,
     flags: &ReportFlags,
 ) -> Result<(), String> {
-    let vfs = LocalFs::new();
+    let vfs = RouteFs::new();
     let left_path = VfsPath::parse(left_s).map_err(|e| e.to_string())?;
     let right_path = VfsPath::parse(right_s).map_err(|e| e.to_string())?;
     let ls = vfs.stat(&left_path).await.map_err(|e| e.to_string())?;
@@ -357,7 +357,7 @@ pub(crate) fn now_epoch_ms() -> u64 {
 }
 
 async fn build_text_snapshot(
-    vfs: &LocalFs,
+    vfs: &RouteFs,
     left: &VfsPath,
     right: &VfsPath,
     left_s: &str,
@@ -407,7 +407,7 @@ async fn build_text_snapshot(
 }
 
 async fn build_dir_snapshot(
-    vfs: &LocalFs,
+    vfs: &RouteFs,
     left: &VfsPath,
     right: &VfsPath,
     left_s: &str,
@@ -489,7 +489,7 @@ pub(crate) fn dir_node_to_report_row(n: &ai_dir::DirNode) -> ai_core::DirReportR
 }
 
 async fn build_table_snapshot(
-    vfs: &LocalFs,
+    vfs: &RouteFs,
     left: &VfsPath,
     right: &VfsPath,
     left_s: &str,
@@ -519,7 +519,7 @@ async fn build_table_snapshot(
 }
 
 async fn build_hex_snapshot(
-    vfs: &LocalFs,
+    vfs: &RouteFs,
     left: &VfsPath,
     right: &VfsPath,
     left_s: &str,

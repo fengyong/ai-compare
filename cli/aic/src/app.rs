@@ -27,7 +27,7 @@ use ai_core::merge::{ConflictDefault, FavorSide, MarkerOptions, MarkerStyle, Mer
 use ai_core::options::{ImportanceOptions, LineAlignAlgo, TextDiffOptions, WhitespaceMode};
 use ai_core::LineTable;
 use ai_protocol::CompareCriteria;
-use ai_vfs::{LocalFs, VfsPath, VfsProvider as _};
+use ai_vfs::{RouteFs, VfsPath, VfsProvider as _};
 
 use crate::{EXIT_DIFF, EXIT_ERROR, EXIT_SAME};
 
@@ -258,7 +258,7 @@ async fn run_diff(
     flags: &DiffFlags,
     palette: &Palette,
 ) -> Result<(), DiffOutcome> {
-    let vfs = LocalFs::new();
+    let vfs = RouteFs::new();
     let left_path = VfsPath::parse(left_s).map_err(|e| DiffOutcome::Error(e.to_string()))?;
     let right_path = VfsPath::parse(right_s).map_err(|e| DiffOutcome::Error(e.to_string()))?;
 
@@ -332,7 +332,7 @@ async fn run_diff(
 /// 目录递归 diff：ai-dir 全量扫描 -> `diff -rq` 风格摘要输出（对接 P2 引擎能力）。
 /// 判据：内容比较 Always + 容差 0（与 `diff -r` 的内容语义一致，不按 mtime 判同）。
 async fn run_dir_diff(
-    vfs: &LocalFs,
+    vfs: &RouteFs,
     left: &VfsPath,
     right: &VfsPath,
     left_s: &str,
@@ -491,7 +491,7 @@ async fn run_merge(
     marker_style: MarkerStyle,
     out_path: Option<&str>,
 ) -> Result<(), MergeOutcome> {
-    let vfs = LocalFs::new();
+    let vfs = RouteFs::new();
     let (base_p, left_p, right_p) = (
         VfsPath::parse(base_s).map_err(|e| MergeOutcome::Error(e.to_string()))?,
         VfsPath::parse(left_s).map_err(|e| MergeOutcome::Error(e.to_string()))?,
@@ -636,7 +636,7 @@ async fn run_quick(
     mode: QuickMode,
     imp: &ImportanceOptions,
 ) -> Result<QuickVerdict, String> {
-    let vfs = LocalFs::new();
+    let vfs = RouteFs::new();
     let left = VfsPath::parse(left_s).map_err(|e| e.to_string())?;
     let right = VfsPath::parse(right_s).map_err(|e| e.to_string())?;
     let ls = vfs.stat(&left).await.map_err(|e| e.to_string())?;
@@ -857,7 +857,7 @@ enum TableOutcome {
 }
 
 async fn run_table(left_s: &str, right_s: &str, opts: &ai_core::table::TableDiffOptions) -> Result<(), TableOutcome> {
-    let vfs = LocalFs::new();
+    let vfs = RouteFs::new();
     let left_path = VfsPath::parse(left_s).map_err(|e| TableOutcome::Error(e.to_string()))?;
     let right_path = VfsPath::parse(right_s).map_err(|e| TableOutcome::Error(e.to_string()))?;
     let left_text = vfs.read_file_text(&left_path).await.map_err(|e| TableOutcome::Error(e.to_string()))?;
@@ -971,7 +971,7 @@ enum HexOutcome {
 }
 
 async fn run_hex(left_s: &str, right_s: &str, opts: &ai_core::hex::HexOptions) -> Result<(), HexOutcome> {
-    let vfs = LocalFs::new();
+    let vfs = RouteFs::new();
     let left_path = VfsPath::parse(left_s).map_err(|e| HexOutcome::Error(e.to_string()))?;
     let right_path = VfsPath::parse(right_s).map_err(|e| HexOutcome::Error(e.to_string()))?;
     let left = vfs.read_file_bytes(&left_path).await.map_err(|e| HexOutcome::Error(e.to_string()))?;
