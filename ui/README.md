@@ -81,7 +81,31 @@ ui/
 - 客户端 `src/protocol/client.ts`：initialize 握手、超时 + `$/cancel`、通知分发、写入串行化；传输层 `src/ipc/tauriTransport.ts`（Tauri command/事件透传，Tauri 仅作字节管道，ADR-003）。
 - P0 方法集（与真实引擎 handlers.rs 对齐）：`initialize`、`dir/open`、`dir/delta`(通知)、`text/open`、`text/sections`、`text/lines`(mock 扩展，引擎 P1)、`session/close`、`shutdown`。
 
-### 3. 真实引擎端到端验收（M1 闭环门禁）
+### 3. 桌面发行包（可分发）：.app / .dmg
+
+```bash
+# 仓库根一键打包（macOS）
+scripts/build-app.sh          # 仅 .app
+scripts/build-app.sh --dmg    # 追加 DMG
+```
+
+流程与产物：
+
+| 步骤 | 动作 |
+| --- | --- |
+| 1 | `cargo build --release -p ai-engine`（引擎 → `<repo>/target/release/ai-engine`） |
+| 2 | `pnpm build`（前端 → `ui/dist`） |
+| 3 | `pnpm tauri build --bundles app`（桌面壳 → `ui/src-tauri/target/release/bundle/macos/ai-compare.app`） |
+| 4 | **随包放入引擎**：复制 `ai-engine` 到 `ai-compare.app/Contents/MacOS/`，并 `codesign --force --deep --sign -` 重建签名（新增可执行文件会使原签名失效，缺一即启动被系统拒绝） |
+
+- `.app`：`ui/src-tauri/target/release/bundle/macos/ai-compare.app`（双击即用）
+- `.dmg`：`ui/src-tauri/target/release/bundle/dmg/ai-compare_<version>_<arch>.dmg`（`--dmg` 时生成）
+
+**为什么不用 `tauri build --bundles dmg`**：① 它会重建 `bundle/macos/*.app`，把上一步随包放入的引擎覆盖掉；② 其 `bundle_dmg.sh` 需挂载/卸载卷，在无头/沙箱环境会以 `hdiutil couldn't unmount - 资源忙` 失败。改用 `hdiutil create -srcfolder <含引擎的 .app>`（不挂载卷）。详见 docs/03 ADR-011。
+
+**引擎解析顺序**（`src-tauri/src/lib.rs`，release 下前两级不参与）：`AI_ENGINE_PATH` 环境变量 → debug 构建的 `<repo>/target/debug/ai-engine` → **与可执行文件同目录**（macOS 即 `Contents/MacOS/ai-engine`）。发行包缺引擎时提示「当前安装包不完整，请重新获取完整安装包」。
+
+### 4. 真实引擎端到端验收（M1 闭环门禁）
 
 ```bash
 cargo build -p ai-engine          # 仓库根执行；或 AI_ENGINE_PATH 指定二进制
@@ -94,6 +118,7 @@ cd ui && pnpm e2e:engine          # 退出码 0=通过（含 tempdir 场景与�
 - 暗色主题优先，颜色 token 集中在 `src/theme/palette.ts`（语义对齐 docs/01 附录 C：黑=相同、灰=未知/较旧、紫=孤立、红=不同/较新、蓝=不重要、青绿=被过滤、黄=未扫描）。
 - 状态管理：React 内置 + zustand slice（窗口/标签/会话等轻量 UI 状态）；大数据（目录行窗口、文本行）在视图级非响应式缓存。
 - 会话/设置持久化（SET-001）：`sessions.json` / `session-defaults.json` / `settings.json` / `state.json` 四文档；桌面存平台设置目录（可执行文件旁 `portable.ini` → 便携模式存程序目录），浏览器 dev 存 localStorage（键 `aic:<文件名>`）；原子写（tmp+rename）+ `.bak` 回滚 + 损坏自动恢复提示，语义以 `src/session/storage.ts` 纯函数为口径（Rust 侧同语义实现）。
+- **示例路径双轨**：主页「填充示例路径」在**演示引擎**（浏览器 dev / 手动降级）下填占位路径 `/demo/project-v1`（mock 不触碰文件系统，任意路径都渲染合成目录树）；在**真实引擎**（桌面）下改为先在应用数据目录 `<baseDir>/demo/project-v1|project-v2` 落盘一对真实演示目录（`src/lib/demoSeed.ts`，内容覆盖相同/不同/仅左/仅右）再填入——真实引擎的 `dir/open` 会真的扫文件系统，占位路径会报「根路径不存在（left）」。
 
 ## P6 已交付（文件夹比较视图与文件操作）
 
