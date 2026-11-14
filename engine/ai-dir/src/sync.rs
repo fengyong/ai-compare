@@ -72,6 +72,17 @@ fn apply_preset(row: &DirRow, preset: Option<SyncPreset>, plan: &mut Vec<Planned
             SyncPreset::UpdateLeftToRight | SyncPreset::UpdateBoth => {}
         },
         s if is_diff(s) => {
+            // Update 语义不得对目录行做整树复制：目录 mtime 只反映条目增删，
+            // 不代表内容新旧；整树复制会无条件覆写子项中较新的文件（数据丢失）。
+            // 子文件行各自携带 Update 语义，目录行在此跳过。
+            if row.kind == ai_protocol::EntryKind::Dir
+                && matches!(
+                    preset,
+                    SyncPreset::UpdateLeftToRight | SyncPreset::UpdateRightToLeft | SyncPreset::UpdateBoth
+                )
+            {
+                return;
+            }
             let left_newer = mt(&row.left) >= mt(&row.right);
             let right_newer = mt(&row.right) > mt(&row.left);
             match preset {
@@ -704,6 +715,28 @@ mod tests {
 
     use crate::execute::Side;
     use crate::sync::{apply_strategy, plan_with_strategy, ConflictPolicy, SyncStrategy};
+
+    #[test]
+    fn update_preset_must_not_tree_copy_dir_rows() {
+        // 目录 mtime 较新不代表内容较新：整树复制会无条件覆写子项中较新的文件。
+        let mut dir = row("sub", DirEntryStatus::DirDiff, 200, 100);
+        dir.kind = EntryKind::Dir;
+        let rows = vec![
+            dir,
+            row("sub/f.txt", DirEntryStatus::ContentDiff, 100, 200), // 右较新 → 不复制
+            row("sub/g.txt", DirEntryStatus::RightOnly, 0, 0),       // 右孤 → 保留
+            row("sub/h.txt", DirEntryStatus::ContentDiff, 300, 200), // 左较新 → 复制
+        ];
+        let plan = plan_operations(&rows, Some(SyncPreset::UpdateLeftToRight), None, None);
+        assert_eq!(
+            ops(&plan),
+            vec![(PlannedOpKind::CopyLeftToRight, "sub/h.txt")],
+            "Update 只按子文件行判定，不得整树复制目录行"
+        );
+        // Mirror 语义=使两侧一致，仍允许整树复制
+        let m = plan_operations(&rows, Some(SyncPreset::MirrorLeftToRight), None, None);
+        assert!(ops(&m).contains(&(PlannedOpKind::CopyLeftToRight, "sub")));
+    }
 
     fn mirror_rows() -> Vec<DirRow> {
         vec![
