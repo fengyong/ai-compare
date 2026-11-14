@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<report kind="folder" title="dir compare report" left="L" right="R">
+<summary total="6" same="1" contentDiff="3" quickDiff="0" leftOnly="1" rightOnly="1" dirSame="0" dirDiff="1"/>
+<rows>
+  <row path="changed.txt" name="changed.txt" kind="file" status="contentDiff" leftSize="20" leftMtimeMs="1000" rightSize="24" rightMtimeMs="2000"/>
+  <row path="only_l.txt" name="only_l.txt" kind="file" status="leftOnly" leftSize="5" leftMtimeMs="1500"/>
+  <row path="only_r.txt" name="only_r.txt" kind="file" status="rightOnly" rightSize="7" rightMtimeMs="1600"/>
+  <row path="same.txt" name="same.txt" kind="file" status="same" leftSize="10" leftMtimeMs="999" rightSize="10" rightMtimeMs="999"/>
+  <row path="sub" name="sub" kind="dir" status="dirDiff" leftSize="0" leftMtimeMs="0" rightSize="0" rightMtimeMs="0"/>
+  <row path="sub/inner.txt" name="inner.txt" kind="file" status="contentDiff" leftSize="9" leftMtimeMs="99" rightSize="10" rightMtimeMs="100"/>
+</rows>
+</report>

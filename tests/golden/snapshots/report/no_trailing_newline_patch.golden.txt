@@ -1,0 +1,8 @@
+--- no_trailing_newline.left
++++ no_trailing_newline.right
+@@ -1,2 +1,3 @@
+ x
+ y
+\ No newline at end of file
++z
+\ No newline at end of file

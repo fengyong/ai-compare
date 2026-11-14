@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>dir compare report</title>
+<style>body{font-family:monospace}td{vertical-align:top;white-space:pre;}
+h1{font-family:sans-serif}table{border-collapse:collapse;width:100%}
+td,th{border:1px solid #ccc;padding:1px 6px;font-family:monospace}
+th{background:#eee}
+tr.del{background:#ffd6d6}tr.ins{background:#d6ffd6}tr.chg{background:#d6e4ff}
+tr.same{}tr.orphan{background:#eee}tr.unimp{background:#fff3c2}
+.meta{color:#555}
+</style></head>
+<body>
+<h1>dir compare report</h1>
+<p class="meta">左: L　右: R</p>
+<table class="dir">
+<tr><th>路径</th><th>状态</th><th>左大小</th><th>右大小</th><th>左时间</th><th>右时间</th></tr>
+<tr class="chg"><td>changed.txt</td><td>contentDiff</td><td>20</td><td>24</td><td>1000</td><td>2000</td></tr>
+<tr class="orphan"><td>only_l.txt</td><td>leftOnly</td><td>5</td><td></td><td>1500</td><td></td></tr>
+<tr class="orphan"><td>only_r.txt</td><td>rightOnly</td><td></td><td>7</td><td></td><td>1600</td></tr>
+<tr class="same"><td>same.txt</td><td>same</td><td>10</td><td>10</td><td>999</td><td>999</td></tr>
+<tr class="chg"><td>sub/</td><td>dirDiff</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>
+<tr class="chg"><td>sub/inner.txt</td><td>contentDiff</td><td>9</td><td>10</td><td>99</td><td>100</td></tr>
+</table>
+</body>
+</html>

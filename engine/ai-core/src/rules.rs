@@ -467,8 +467,7 @@ mod tests {
         let left = LineTable::from_text("int   a;\n");
         let right = LineTable::from_text("int a;\n");
         let rules = rules_options(&["注释"], Some(c_format()));
-        let mut imp = ImportanceOptions::default();
-        imp.embedded_ws_unimportant = true;
+        let imp = ImportanceOptions { embedded_ws_unimportant: true, ..ImportanceOptions::default() };
         let keyed = diff_config(&left, &right, &config_with(rules.clone(), imp)).unwrap();
         assert_eq!(keyed.output.sections[0].important, Importance::Unimportant);
         // 空白重要时仍重要（语法折叠不吞代码空白）
@@ -481,10 +480,11 @@ mod tests {
     #[test]
     fn r09_scope_inheritance_layering() {
         let mut set = RuleSet::default();
-        set.global = RuleLayer {
+        let layer = RuleLayer {
             compare: Some(CompareRules { case_unimportant: true, ..CompareRules::default() }),
             unimportant_elements: Some(vec!["注释".into()]),
         };
+        set.global = layer;
         set.type_defaults.insert(
             "text-compare".into(),
             RuleLayer {
@@ -550,10 +550,11 @@ mod tests {
     #[test]
     fn r12_rules_document_roundtrip() {
         let mut set = RuleSet::default();
-        set.global = RuleLayer {
+        let layer = RuleLayer {
             compare: Some(CompareRules { case_unimportant: true, ..CompareRules::default() }),
             unimportant_elements: Some(vec!["注释".into()]),
         };
+        set.global = layer;
         set.type_defaults.insert(
             "text-compare".into(),
             RuleLayer { compare: None, unimportant_elements: Some(vec!["字符串".into()]) },

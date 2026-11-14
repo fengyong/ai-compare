@@ -1,0 +1,6 @@
+--- unicode.left
++++ unicode.right
+@@ -1,2 +1,2 @@
+ 中文第一行
+-第二行
++第二行改

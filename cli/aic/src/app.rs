@@ -35,6 +35,14 @@ use crate::{EXIT_DIFF, EXIT_ERROR, EXIT_SAME};
 pub fn run_cli(args: &[String]) -> ExitCode {
     match args.first().map(String::as_str) {
         Some("diff") => cmd_diff(&args[1..]),
+        Some("report") => crate::report_cmd::cmd_report(&args[1..]),
+        // FR-CLI-002 位置参数形态：aic @script.aicscript [args...]
+        Some(s) if s.starts_with('@') => {
+            let mut script_args = vec![s[1..].to_string()];
+            script_args.extend(args[1..].iter().cloned());
+            crate::script::run_cli_script(&script_args)
+        }
+        Some("script") => crate::script::cmd_script(&args[1..]),
         Some("merge") => cmd_merge(&args[1..]),
         Some("quick") => cmd_quick(&args[1..]),
         Some("table") => cmd_table(&args[1..]),
@@ -73,7 +81,15 @@ pub fn print_usage() {
                 [--conflict-window <n>] [-w] [--ignore-case] [--compare-eol]\n  \
                 （三向合并：退出 0 无冲突 / 1 有未决冲突 / 2 错误；marker 模式以\n\
                   <<<<<<< / ======= / >>>>>>> 标记冲突，--diff3 附 ||||||| base 段）\n  \
-         aic quick <left> <right> [--mode size|crc|binary|rules] [--ignore-whitespace] [--ignore-case]\n\
+         aic quick <left> <right> [--mode size|crc|binary|rules] [--ignore-whitespace] [--ignore-case]\n  \
+         aic report <left> <right> --layout summary|side-by-side|interleaved|patch|html|xml|csv|tree|list|stats\n  \
+                [-o <out>] [--title <t>] [--display all|mismatches|context|matches] [--dir-display <f>]\n  \
+                [--ignore-unimportant] [--line-numbers] [-U <n>] [--patch-style unified|context|normal]\n  \
+                [--tsv] [--color|--mono] [--kind auto|dir|text|table|hex] [--file-links]\n  \
+                （文件夹/文本/表格/十六进制报告；-o 支持 %f/%F/%k/%t 文件名模板占位符）\n  \
+         aic script run <file.aicscript> [args...] [--var name=value] [--silent]\n  \
+                （FR-SCR 脚本处理器；退出码 105 读失败/106 语法错误/107 加载失败；\n\
+                  aiscript bin 为同引擎独立入口；aic @script.txt 为位置参数形态）\n\
          \n\
          退出码: 0 相同/成功 / 1 不同 / 2 错误 / 11 二进制差异 / 12 相似（仅不重要差异）\n\
                  13 基于规则的差异 / 14 冲突（aic merge --conflict-exit-code 14 对齐 FR-CLI-004）\n\

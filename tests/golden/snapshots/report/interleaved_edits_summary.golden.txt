@@ -1,0 +1,9 @@
+text compare report
+左: interleaved_edits.left  右: interleaved_edits.right
+统计: 差异块=2 插入行=3 删除行=1 相同行=2 不重要块=0
+差异清单:
+  [change] 左 2-2 / 右 2-2
+    < b
+    > B
+  [insert] 左 - / 右 4-5
+    > d

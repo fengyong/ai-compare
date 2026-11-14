@@ -1,0 +1,3 @@
+path,name,kind,status,leftSize,rightSize,leftMtimeMs,rightMtimeMs
+l_orphan,l_orphan,dir,leftOnly,0,,5,
+r_orphan.bin,r_orphan.bin,file,rightOnly,,8,,6

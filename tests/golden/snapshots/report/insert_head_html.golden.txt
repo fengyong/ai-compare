@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>text compare report</title>
+<style>body{font-family:monospace}td{vertical-align:top;white-space:pre;}
+h1{font-family:sans-serif}table{border-collapse:collapse;width:100%}
+td,th{border:1px solid #ccc;padding:1px 6px;font-family:monospace}
+th{background:#eee}
+tr.del{background:#ffd6d6}tr.ins{background:#d6ffd6}tr.chg{background:#d6e4ff}
+tr.same{}tr.orphan{background:#eee}tr.unimp{background:#fff3c2}
+.meta{color:#555}
+</style></head>
+<body>
+<h1>text compare report</h1>
+<p class="meta">左: insert_head.left　右: insert_head.right</p>
+<table class="diff">
+<tr><th>左</th><th>右</th></tr>
+<tr class="ins"><td class="t"></td><td class="t">a</td></tr>
+<tr class="same"><td class="t">b</td><td class="t">b</td></tr>
+<tr class="same"><td class="t">c</td><td class="t">c</td></tr>
+</table>
+</body>
+</html>

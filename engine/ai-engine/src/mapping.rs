@@ -797,6 +797,130 @@ pub fn dir_execute_result_to_dto(
     }
 }
 
+// ---------------------------------------------------------------------------
+// P11：report/generate 映射（协议 DTO -> ai-core 报告快照/选项）
+// ---------------------------------------------------------------------------
+
+/// 协议 DirRow -> 报告行（rel_path 取行 id；同形字段直映）
+pub fn dir_row_to_report_row(row: &ai_protocol::DirRow) -> ai_core::DirReportRow {
+    let side = |s: &Option<ai_protocol::SideInfo>| {
+        s.as_ref().map(|i| ai_core::ReportSideInfo {
+            size: i.size,
+            mtime_ms: i.mtime_ms,
+            attribute: i.attribute.clone(),
+        })
+    };
+    ai_core::DirReportRow {
+        rel_path: row.id.clone(),
+        name: row.name.clone(),
+        kind: match row.kind {
+            ai_protocol::EntryKind::File => ai_core::ReportEntryKind::File,
+            ai_protocol::EntryKind::Dir => ai_core::ReportEntryKind::Dir,
+            ai_protocol::EntryKind::Symlink => ai_core::ReportEntryKind::Symlink,
+        },
+        status: match row.status {
+            ai_protocol::DirEntryStatus::Same => ai_core::ReportEntryStatus::Same,
+            ai_protocol::DirEntryStatus::QuickDiff => ai_core::ReportEntryStatus::QuickDiff,
+            ai_protocol::DirEntryStatus::ContentDiff => ai_core::ReportEntryStatus::ContentDiff,
+            ai_protocol::DirEntryStatus::LeftOnly => ai_core::ReportEntryStatus::LeftOnly,
+            ai_protocol::DirEntryStatus::RightOnly => ai_core::ReportEntryStatus::RightOnly,
+            ai_protocol::DirEntryStatus::DirSame => ai_core::ReportEntryStatus::DirSame,
+            ai_protocol::DirEntryStatus::DirDiff => ai_core::ReportEntryStatus::DirDiff,
+            ai_protocol::DirEntryStatus::Unknown => ai_core::ReportEntryStatus::Unknown,
+        },
+        left: side(&row.left),
+        right: side(&row.right),
+    }
+}
+
+/// 协议 DirStats -> 报告统计（同构）
+pub fn dir_stats_to_report_stats(s: &ai_protocol::DirStats) -> ai_core::DirReportStats {
+    ai_core::DirReportStats {
+        total: s.total,
+        same: s.same,
+        quick_diff: s.quick_diff,
+        content_diff: s.content_diff,
+        left_only: s.left_only,
+        right_only: s.right_only,
+        dir_same: s.dir_same,
+        dir_diff: s.dir_diff,
+    }
+}
+
+/// report/generate 参数 -> ai-core 报告选项（缺省对齐 ReportOptions::default）
+pub fn report_options_from_dto(p: &ai_protocol::ReportGenerateParams) -> ai_core::ReportOptions {
+    let columns = p.columns.as_ref().map(|c| ai_core::DirColumns {
+        size: c.size,
+        timestamp: c.timestamp,
+        attributes: c.attributes,
+        crc: c.crc,
+        vcs: c.vcs,
+        revision: c.revision,
+        version: c.version,
+        owner: c.owner,
+        group: c.group,
+    });
+    ai_core::ReportOptions {
+        title: p.title.clone(),
+        layout: match p.layout {
+            ai_protocol::ReportLayout::Summary => ai_core::ReportLayout::Summary,
+            ai_protocol::ReportLayout::SideBySide => ai_core::ReportLayout::SideBySide,
+            ai_protocol::ReportLayout::Interleaved => ai_core::ReportLayout::Interleaved,
+            ai_protocol::ReportLayout::Patch => ai_core::ReportLayout::Patch,
+            ai_protocol::ReportLayout::Html => ai_core::ReportLayout::Html,
+            ai_protocol::ReportLayout::Xml => ai_core::ReportLayout::Xml,
+            ai_protocol::ReportLayout::Csv => ai_core::ReportLayout::Csv,
+            ai_protocol::ReportLayout::Tree => ai_core::ReportLayout::Tree,
+            ai_protocol::ReportLayout::List => ai_core::ReportLayout::List,
+            ai_protocol::ReportLayout::Stats => ai_core::ReportLayout::Stats,
+        },
+        display: match p.display.unwrap_or_default() {
+            ai_protocol::ReportDisplayFilter::All => ai_core::DisplayFilter::All,
+            ai_protocol::ReportDisplayFilter::Mismatches => ai_core::DisplayFilter::Mismatches,
+            ai_protocol::ReportDisplayFilter::Context => ai_core::DisplayFilter::Context,
+            ai_protocol::ReportDisplayFilter::Matches => ai_core::DisplayFilter::Matches,
+        },
+        dir_display: match p.dir_display.unwrap_or_default() {
+            ai_protocol::ReportDirDisplayFilter::All => ai_core::DirDisplayFilter::All,
+            ai_protocol::ReportDirDisplayFilter::Mismatches => ai_core::DirDisplayFilter::Mismatches,
+            ai_protocol::ReportDirDisplayFilter::NoOrphans => ai_core::DirDisplayFilter::NoOrphans,
+            ai_protocol::ReportDirDisplayFilter::MismatchesNoOrphans => ai_core::DirDisplayFilter::MismatchesNoOrphans,
+            ai_protocol::ReportDirDisplayFilter::Orphans => ai_core::DirDisplayFilter::Orphans,
+            ai_protocol::ReportDirDisplayFilter::Matches => ai_core::DirDisplayFilter::Matches,
+            ai_protocol::ReportDirDisplayFilter::LeftNewer => ai_core::DirDisplayFilter::LeftNewer,
+            ai_protocol::ReportDirDisplayFilter::RightNewer => ai_core::DirDisplayFilter::RightNewer,
+            ai_protocol::ReportDirDisplayFilter::LeftNewerOrphans => ai_core::DirDisplayFilter::LeftNewerOrphans,
+            ai_protocol::ReportDirDisplayFilter::RightNewerOrphans => ai_core::DirDisplayFilter::RightNewerOrphans,
+            ai_protocol::ReportDirDisplayFilter::LeftOrphans => ai_core::DirDisplayFilter::LeftOrphans,
+            ai_protocol::ReportDirDisplayFilter::RightOrphans => ai_core::DirDisplayFilter::RightOrphans,
+        },
+        ignore_unimportant: p.ignore_unimportant.unwrap_or(false),
+        line_numbers: p.line_numbers.unwrap_or(false),
+        context_lines: p.context_lines.unwrap_or(ai_core::DEFAULT_REPORT_CONTEXT),
+        patch_style: match p.patch_style.unwrap_or_default() {
+            ai_protocol::ReportPatchStyle::Normal => ai_core::PatchStyle::Normal,
+            ai_protocol::ReportPatchStyle::Context => ai_core::PatchStyle::Context,
+            ai_protocol::ReportPatchStyle::Unified => ai_core::PatchStyle::Unified,
+        },
+        delimiter: match p.delimiter.as_deref() {
+            Some("tsv") => '\t',
+            _ => ',',
+        },
+        color: match p.color.unwrap_or_default() {
+            ai_protocol::ReportColorMode::Color => ai_core::ColorMode::Color,
+            ai_protocol::ReportColorMode::Mono => ai_core::ColorMode::Mono,
+        },
+        wrap: match p.wrap.unwrap_or_default() {
+            ai_protocol::ReportWrapMode::None => ai_core::WrapMode::None,
+            ai_protocol::ReportWrapMode::Character => ai_core::WrapMode::Character,
+            ai_protocol::ReportWrapMode::Word => ai_core::WrapMode::Word,
+        },
+        wrap_columns: p.wrap_columns.map(|v| v as usize).unwrap_or(80),
+        columns: columns.unwrap_or_default(),
+        include_file_links: p.include_file_links.unwrap_or(false),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

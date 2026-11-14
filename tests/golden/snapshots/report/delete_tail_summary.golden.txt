@@ -1,0 +1,6 @@
+text compare report
+左: delete_tail.left  右: delete_tail.right
+统计: 差异块=1 插入行=0 删除行=1 相同行=2 不重要块=0
+差异清单:
+  [delete] 左 3-3 / 右 -
+    < c

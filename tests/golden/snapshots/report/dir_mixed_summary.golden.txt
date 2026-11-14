@@ -1,0 +1,9 @@
+dir compare report
+左: L  右: R
+统计: 总数=6 相同=1 内容差异=3 快速差异=0 仅左=1 仅右=1 目录同=0 目录异=1
+差异清单:
+  [contentDiff] changed.txt
+  [leftOnly] only_l.txt
+  [rightOnly] only_r.txt
+  [dirDiff] sub/
+  [contentDiff] sub/inner.txt

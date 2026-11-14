@@ -1,0 +1,7 @@
+dir compare report
+contentDiff	changed.txt	20	24
+leftOnly	only_l.txt	5	-
+rightOnly	only_r.txt	-	7
+same	same.txt	10	10
+dirDiff	sub/	0	0
+contentDiff	sub/inner.txt	9	10

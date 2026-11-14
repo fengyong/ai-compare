@@ -1,0 +1,9 @@
+total=6
+same=1
+contentDiff=3
+quickDiff=0
+leftOnly=1
+rightOnly=1
+dirSame=0
+dirDiff=1
+hasDifferences=true

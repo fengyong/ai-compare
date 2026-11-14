@@ -32,7 +32,7 @@ favor: MergeFavorSide | null,
 /**
  * 忽略不重要差异（/iu）：不重要冲突不升级为未决冲突
  */
-ignoreUnimportant: boolean | null, 
+ignoreUnimportant?: boolean, 
 /**
  * 重要性模型（FR-TXT-010 上协议面，作用于冲突子对齐与不重要冲突判定）
  */

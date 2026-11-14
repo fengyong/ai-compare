@@ -1,0 +1,8 @@
+text compare report
+左: moves_blocks.left  右: moves_blocks.right
+统计: 差异块=2 插入行=2 删除行=2 相同行=7 不重要块=0
+差异清单:
+  [delete] 左 1-2 / 右 -
+    < 1
+  [insert] 左 - / 右 3-4
+    > 1

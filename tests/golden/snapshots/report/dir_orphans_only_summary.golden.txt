@@ -1,0 +1,6 @@
+dir compare report
+左: L  右: R
+统计: 总数=2 相同=0 内容差异=0 快速差异=0 仅左=1 仅右=1 目录同=0 目录异=0
+差异清单:
+  [leftOnly] l_orphan/
+  [rightOnly] r_orphan.bin

@@ -1,0 +1,10 @@
+sections=3
+equalSections=2
+insertSections=0
+deleteSections=0
+changeSections=1
+equalLines=2
+insertedLines=1
+deletedLines=1
+unimportantSections=0
+hasDifferences=true

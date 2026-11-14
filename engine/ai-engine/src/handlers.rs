@@ -90,6 +90,7 @@ pub async fn dispatch(
         ai_protocol::method::FORMATS_LOAD => formats_load(params, ctx).await,
         ai_protocol::method::RULES_GET => rules_get(params, ctx).await,
         ai_protocol::method::RULES_SET => rules_set(params, ctx).await,
+        ai_protocol::method::REPORT_GENERATE => report_generate(params, ctx).await,
         ai_protocol::method::SESSION_CLOSE => session_close(params, ctx).await,
         other => Err(RpcErrorObject {
             code: codes::METHOD_NOT_FOUND,
@@ -127,6 +128,8 @@ fn initialize() -> Result<Handled, RpcErrorObject> {
             dir_execute: Some(true),
             // P10：文件格式与规则体系（formats/*、rules/*、text/open rules、dir formatAware）
             format_rules: Some(true),
+            // P11：报告生成入口（report/generate）
+            reports: Some(true),
             dir_background_scan: true,
             dir_filters: true,
             dir_operate: true,
@@ -647,6 +650,7 @@ async fn text_open(
                 left: lt,
                 right: rt,
                 config,
+                labels: (params.left.clone(), params.right.clone()),
                 rev: 0,
             }),
         );
@@ -1253,7 +1257,13 @@ async fn table_open(
         }
         sessions.insert(
             params.session_id.clone(),
-            Session::Table(crate::server::TableSessionData { left, right, model, options: opts }),
+            Session::Table(crate::server::TableSessionData {
+                left,
+                right,
+                model,
+                options: opts,
+                labels: (params.left.clone(), params.right.clone()),
+            }),
         );
     }
 
@@ -1416,6 +1426,7 @@ async fn hex_open(
                 model,
                 left,
                 right,
+                labels: (params.left.clone(), params.right.clone()),
             }),
         );
     }
@@ -1829,6 +1840,114 @@ async fn rules_effective_response(
         effective: mapping::effective_rules_to_spec(&effective),
     };
     Ok(Handled::Value(serde_json::to_value(&response).expect("rules/set 结果可序列化")))
+}
+
+// ---------------------------------------------------------------------------
+// P11：report/generate（FR-RPT：会话快照 + 布局参数 -> 报告字符串或分块流）
+// ---------------------------------------------------------------------------
+
+/// report/generate：dir/text/merge/table/hex 会话均可出报告。
+/// 应答 content 为本块内容（offset/limit 分块流；缺省全量）。
+async fn report_generate(
+    params: Option<serde_json::Value>,
+    ctx: &HandlerCtx,
+) -> Result<Handled, RpcErrorObject> {
+    let params: ai_protocol::ReportGenerateParams = parse_params(params)?;
+    if params.session_id.is_empty() {
+        return Err(bad_params("sessionId 不能为空"));
+    }
+
+    // 会话快照构建（持锁只做取数，渲染在锁外）
+    let snap = {
+        let sessions = ctx.sessions.lock().await;
+        let session = sessions.get(&params.session_id).ok_or_else(|| session_not_found(&params.session_id))?;
+        match session {
+            Session::Text(data) => {
+                ai_core::ReportSnapshot::Text(ai_core::TextSnapshot::from_tables(
+                    data.labels.0.clone(),
+                    data.labels.1.clone(),
+                    &data.left,
+                    &data.right,
+                    data.sections.clone(),
+                ))
+            }
+            Session::Dir(data) => {
+                let (left_label, right_label) = data
+                    .roots
+                    .as_ref()
+                    .map(|(l, r)| (l.as_str().to_string(), r.as_str().to_string()))
+                    .unwrap_or_default();
+                let (rows, stats) = if let Some(model) = &data.model {
+                    let rows = model.rows_snapshot().await.iter().map(mapping::dir_row_to_report_row).collect();
+                    let stats = mapping::dir_stats_to_report_stats(&model.stats_snapshot());
+                    (rows, stats)
+                } else if let Some(scan) = &data.scan {
+                    let rows = ai_dir::rows_from_arena(&scan.arena)
+                        .iter()
+                        .map(mapping::dir_row_to_report_row)
+                        .collect();
+                    let stats = mapping::dir_stats_to_report_stats(&scan.stats);
+                    (rows, stats)
+                } else {
+                    (Vec::new(), ai_core::DirReportStats::default())
+                };
+                ai_core::ReportSnapshot::Dir(ai_core::DirSnapshot { left_label, right_label, rows, stats })
+            }
+            Session::Merge(data) => {
+                let unresolved = data.model.unresolved_with(&data.decisions);
+                ai_core::ReportSnapshot::Merge(ai_core::MergeSnapshot {
+                    base_label: data.labels.0.clone(),
+                    left_label: data.labels.1.clone(),
+                    right_label: data.labels.2.clone(),
+                    model: data.model.clone(),
+                    unresolved,
+                })
+            }
+            Session::Table(data) => ai_core::ReportSnapshot::Table(ai_core::TableSnapshot {
+                left_label: data.labels.0.clone(),
+                right_label: data.labels.1.clone(),
+                columns: data.model.columns.clone(),
+                rows: data.model.rows.clone(),
+                summary: data.model.summary,
+                has_header: data.options.parse.has_header,
+            }),
+            Session::Hex(data) => ai_core::ReportSnapshot::Hex(ai_core::HexSnapshot {
+                left_label: data.labels.0.clone(),
+                right_label: data.labels.1.clone(),
+                left: data.left.clone(),
+                right: data.right.clone(),
+                model: data.model.clone(),
+                status_left: data.status_left.clone(),
+                status_right: data.status_right.clone(),
+            }),
+        }
+    };
+
+    let opts = mapping::report_options_from_dto(&params);
+    let rendered = ai_core::report::render_report(&snap, &opts)
+        .map_err(|e| ai_protocol::error_object(codes::INVALID_PARAMS, e.to_string()))?;
+
+    // 分块流：字符（Unicode 标量）偏移切片，避免劈开 UTF-8
+    let total = rendered.chars().count() as u64;
+    let offset = params.offset.unwrap_or(0).min(total);
+    let limit = params.limit;
+    let content: String = {
+        let chars = rendered.chars().skip(offset as usize);
+        match limit {
+            Some(l) => chars.take(l as usize).collect(),
+            None => chars.collect(),
+        }
+    };
+    let taken = content.chars().count() as u64;
+    let has_more = offset + taken < total;
+    let result = ai_protocol::ReportGenerateResult {
+        layout: params.layout,
+        content,
+        total_chars: total,
+        offset,
+        has_more,
+    };
+    Ok(Handled::Value(serde_json::to_value(&result).expect("report/generate 结果可序列化")))
 }
 
 // ---------------------------------------------------------------------------
@@ -3371,7 +3490,7 @@ mod p10_tests {
             "right": r.to_string_lossy(),
             "rules": rules,
         });
-        let (tx, _rx) = chan();
+        let (_tx, _rx) = chan();
         let r = text_open(Some(params), c).await;
         drop(dir);
         value_of(r).await
@@ -3544,5 +3663,292 @@ mod p10_tests {
     async fn initialize_reports_format_rules_capability() {
         let v = value_of(initialize()).await;
         assert_eq!(v["capabilities"]["formatRules"], true);
+    }
+}
+
+#[cfg(test)]
+mod p11_report_tests {
+    use super::*;
+    use crate::server::Outbound;
+    use serde_json::json;
+
+    fn ctx() -> HandlerCtx {
+        HandlerCtx::new(512)
+    }
+
+    fn chan() -> (
+        tokio::sync::mpsc::UnboundedSender<Outbound>,
+        tokio::sync::mpsc::UnboundedReceiver<Outbound>,
+    ) {
+        tokio::sync::mpsc::unbounded_channel()
+    }
+
+    async fn value_of(r: Result<Handled, RpcErrorObject>) -> serde_json::Value {
+        match r.expect("应答") {
+            Handled::Value(v) => v,
+            _ => panic!("形态"),
+        }
+    }
+
+    /// 本模块本地目录会话（P9 测试模块的 make_dir_session 跨模块不可见）
+    async fn make_dir_session(c: &HandlerCtx, id: &str) -> (tempfile::TempDir, String, String) {
+        let dir = tempfile::tempdir().unwrap();
+        let l = dir.path().join("L");
+        let r = dir.path().join("R");
+        std::fs::create_dir_all(&l).unwrap();
+        std::fs::create_dir_all(&r).unwrap();
+        std::fs::write(l.join("same.txt"), b"1").unwrap();
+        std::fs::write(r.join("same.txt"), b"1").unwrap();
+        std::fs::write(l.join("lonly.txt"), b"L").unwrap();
+        std::fs::write(r.join("ronly.txt"), b"R").unwrap();
+        let (tx, _rx) = chan();
+        let _ = dispatch(
+            "dir/open",
+            Some(json!({
+                "sessionId": id, "left": l.to_string_lossy(), "right": r.to_string_lossy(),
+                "depth": 1,
+                "criteria": {"mtimeToleranceSec": 0, "contentCompare": "always"},
+                "lazyScan": true
+            })),
+            c, &ai_dir::CancelFlag::new(), tx,
+        )
+        .await;
+        (dir, l.to_string_lossy().into_owned(), r.to_string_lossy().into_owned())
+    }
+
+    async fn open_text_session(c: &HandlerCtx, id: &str, l: &std::path::Path, r: &std::path::Path) {
+        let (tx, _rx) = chan();
+        let _ = dispatch(
+            "text/open",
+            Some(json!({"sessionId": id, "left": l.to_string_lossy(), "right": r.to_string_lossy()})),
+            c, &ai_dir::CancelFlag::new(), tx,
+        )
+        .await
+        .expect("text/open");
+    }
+
+    #[tokio::test]
+    async fn report_generate_text_patch_roundtrip_ready() {
+        let c = ctx();
+        let dir = tempfile::tempdir().unwrap();
+        let l = dir.path().join("a.txt");
+        let r = dir.path().join("b.txt");
+        std::fs::write(&l, "alpha\nbeta\ngamma\n").unwrap();
+        std::fs::write(&r, "alpha\nBETA\ngamma\ndelta\n").unwrap();
+        open_text_session(&c, "t1", &l, &r).await;
+        let v = value_of(
+            dispatch(
+                "report/generate",
+                Some(json!({"sessionId": "t1", "layout": "patch", "contextLines": 1})),
+                &c, &ai_dir::CancelFlag::new(), chan().0,
+            )
+            .await,
+        )
+        .await;
+        let content = v["content"].as_str().unwrap();
+        assert!(content.starts_with("--- ") && content.contains("+++ "), "{content}");
+        assert!(content.contains("-beta\n+BETA\n gamma\n+delta\n"), "{content}");
+        assert_eq!(v["layout"], "patch");
+        assert_eq!(v["hasMore"], false);
+        // 全文总长与 content 一致（未分块）
+        assert_eq!(v["totalChars"].as_u64().unwrap(), content.chars().count() as u64);
+    }
+
+    #[tokio::test]
+    async fn report_generate_text_chunked_stream() {
+        let c = ctx();
+        let dir = tempfile::tempdir().unwrap();
+        let l = dir.path().join("a.txt");
+        let r = dir.path().join("b.txt");
+        std::fs::write(&l, "1\n2\n3\n").unwrap();
+        std::fs::write(&r, "1\nX\n3\n").unwrap();
+        open_text_session(&c, "t2", &l, &r).await;
+        let fetch = |offset: u64, limit: u64| {
+            let c = &c;
+            async move {
+                value_of(
+                    dispatch(
+                        "report/generate",
+                        Some(json!({"sessionId": "t2", "layout": "xml", "offset": offset, "limit": limit})),
+                        c, &ai_dir::CancelFlag::new(), chan().0,
+                    )
+                    .await,
+                )
+                .await
+            }
+        };
+        let first = fetch(0, 10).await;
+        assert_eq!(first["offset"], 0);
+        assert_eq!(first["hasMore"], true);
+        assert_eq!(first["content"].as_str().unwrap().chars().count(), 10);
+        let total = first["totalChars"].as_u64().unwrap();
+        // 续块拼回全文
+        let mut assembled = first["content"].as_str().unwrap().to_string();
+        let mut off = 10u64;
+        while off < total {
+            let blk = fetch(off, 7).await;
+            assembled.push_str(blk["content"].as_str().unwrap());
+            off = blk["offset"].as_u64().unwrap() + blk["content"].as_str().unwrap().chars().count() as u64;
+            if !blk["hasMore"].as_bool().unwrap() {
+                break;
+            }
+        }
+        let full = fetch(0, total).await;
+        assert_eq!(assembled, full["content"].as_str().unwrap(), "分块拼接 == 全量");
+        assert!(assembled.contains("<report kind=\"text\""));
+    }
+
+    #[tokio::test]
+    async fn report_generate_dir_summary_and_tree() {
+        let c = ctx();
+        let (dir, l, r) = make_dir_session(&c, "d11").await;
+        let _ = dir;
+        // 等待后台扫描完成（lazyScan 模型）
+        {
+            let sessions = c.sessions.lock().await;
+            if let Some(Session::Dir(data)) = sessions.get("d11") {
+                if let Some(model) = &data.model {
+                    let _ = model.wait_until_done(std::time::Duration::from_secs(5)).await;
+                }
+            }
+        }
+        let v = value_of(
+            dispatch(
+                "report/generate",
+                Some(json!({"sessionId": "d11", "layout": "summary"})),
+                &c, &ai_dir::CancelFlag::new(), chan().0,
+            )
+            .await,
+        )
+        .await;
+        let summary = v["content"].as_str().unwrap();
+        assert!(summary.contains("差异清单"), "{summary}");
+        assert!(summary.contains("lonly.txt") && summary.contains("ronly.txt"), "{summary}");
+        // tree 布局 + 孤项过滤
+        let v = value_of(
+            dispatch(
+                "report/generate",
+                Some(json!({"sessionId": "d11", "layout": "tree", "dirDisplay": "orphans"})),
+                &c, &ai_dir::CancelFlag::new(), chan().0,
+            )
+            .await,
+        )
+        .await;
+        let tree = v["content"].as_str().unwrap();
+        assert!(tree.contains("[<] lonly.txt"), "{tree}");
+        assert!(tree.contains("[>] ronly.txt"));
+        assert!(!tree.contains("same.txt"), "orphans 过滤后不含相同项: {tree}");
+        let _ = (l, r);
+    }
+
+    #[tokio::test]
+    async fn report_generate_table_hex_merge() {
+        let c = ctx();
+        let dir = tempfile::tempdir().unwrap();
+        let lcsv = dir.path().join("l.csv");
+        let rcsv = dir.path().join("r.csv");
+        std::fs::write(&lcsv, "id,v\n1,a\n2,b\n").unwrap();
+        std::fs::write(&rcsv, "id,v\n1,a\n2,B\n3,c\n").unwrap();
+        let (tx, _rx) = chan();
+        let _ = dispatch(
+            "table/open",
+            Some(json!({"sessionId": "tb1", "left": lcsv.to_string_lossy(), "right": rcsv.to_string_lossy()})),
+            &c, &ai_dir::CancelFlag::new(), tx,
+        )
+        .await
+        .expect("table/open");
+        let v = value_of(
+            dispatch(
+                "report/generate",
+                Some(json!({"sessionId": "tb1", "layout": "csv", "delimiter": "tsv"})),
+                &c, &ai_dir::CancelFlag::new(), chan().0,
+            )
+            .await,
+        )
+        .await;
+        let content = v["content"].as_str().unwrap();
+        assert!(content.contains('\t') && content.contains("added"), "{content}");
+
+        let lbin = dir.path().join("l.bin");
+        let rbin = dir.path().join("r.bin");
+        std::fs::write(&lbin, b"AAAABBBB").unwrap();
+        std::fs::write(&rbin, b"AAAAXXBB").unwrap();
+        let (tx, _rx) = chan();
+        let _ = dispatch(
+            "hex/open",
+            Some(json!({"sessionId": "hx1", "left": lbin.to_string_lossy(), "right": rbin.to_string_lossy()})),
+            &c, &ai_dir::CancelFlag::new(), tx,
+        )
+        .await
+        .expect("hex/open");
+        let v = value_of(
+            dispatch(
+                "report/generate",
+                Some(json!({"sessionId": "hx1", "layout": "stats"})),
+                &c, &ai_dir::CancelFlag::new(), chan().0,
+            )
+            .await,
+        )
+        .await;
+        let content = v["content"].as_str().unwrap();
+        assert!(content.contains("changedBytes=2"), "{content}");
+
+        let lb = dir.path().join("lb.txt");
+        let mb = dir.path().join("mb.txt");
+        let rb = dir.path().join("rb.txt");
+        std::fs::write(&lb, "a\nb\nc\n").unwrap();
+        std::fs::write(&mb, "a\nb\nc\n").unwrap();
+        std::fs::write(&rb, "a\nC\nc\n").unwrap();
+        let (tx, _rx) = chan();
+        let _ = dispatch(
+            "text/merge3/open",
+            Some(json!({
+                "sessionId": "m1",
+                "base": mb.to_string_lossy(), "left": lb.to_string_lossy(), "right": rb.to_string_lossy()
+            })),
+            &c, &ai_dir::CancelFlag::new(), tx,
+        )
+        .await
+        .expect("merge3/open");
+        let v = value_of(
+            dispatch(
+                "report/generate",
+                Some(json!({"sessionId": "m1", "layout": "xml"})),
+                &c, &ai_dir::CancelFlag::new(), chan().0,
+            )
+            .await,
+        )
+        .await;
+        let content = v["content"].as_str().unwrap();
+        assert!(content.contains("<report kind=\"merge\""), "{content}");
+        assert!(content.contains("origin=\"rightOnly\"") || content.contains("origin=\"leftOnly\"") || content.contains("origin=\"conflict\""), "{content}");
+    }
+
+    #[tokio::test]
+    async fn report_generate_unknown_session_and_bad_layout() {
+        let c = ctx();
+        let r = dispatch(
+            "report/generate",
+            Some(json!({"sessionId": "ghost", "layout": "summary"})),
+            &c, &ai_dir::CancelFlag::new(), chan().0,
+        )
+        .await;
+        assert!(r.is_err(), "未知会话应报错");
+        // patch 布局对目录会话不支持
+        let (dir, l, r2) = make_dir_session(&c, "d12").await;
+        let _ = (dir, l, r2);
+        let res = dispatch(
+            "report/generate",
+            Some(json!({"sessionId": "d12", "layout": "patch"})),
+            &c, &ai_dir::CancelFlag::new(), chan().0,
+        )
+        .await;
+        assert!(res.is_err(), "目录会话 patch 布局应报不支持");
+    }
+
+    #[tokio::test]
+    async fn initialize_reports_reports_capability() {
+        let v = value_of(initialize()).await;
+        assert_eq!(v["capabilities"]["reports"], true);
     }
 }

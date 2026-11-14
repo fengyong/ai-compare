@@ -1,0 +1,7 @@
+dir compare report
+[!] changed.txt
+[<] only_l.txt
+[>] only_r.txt
+[=] same.txt
+[!] sub/
+  [!] inner.txt

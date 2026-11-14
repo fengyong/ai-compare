@@ -1,0 +1,5 @@
+--- empty_vs_content.left
++++ empty_vs_content.right
+@@ -0,0 +1,2 @@
++first
++second

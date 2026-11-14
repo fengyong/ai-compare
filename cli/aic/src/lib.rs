@@ -4,8 +4,11 @@
 //! aicc 等待型包装（进程内回退路径）共用同一命令面。
 
 pub mod app;
+pub mod report_cmd;
+pub mod script;
 
 use ai_core::sections::SectionKind;
+use ai_core::lines::LineEnding;
 use ai_core::{DiffOutput, LineTable};
 use ai_dir::DirNode;
 use ai_protocol::{DirEntryStatus, EntryKind};
@@ -80,6 +83,13 @@ pub fn render_unified(
     if !has_diff {
         return String::new();
     }
+    // 无换行标记（diff -u 约定）：末行无换行符的侧在文件末行后输出标记
+    let no_nl = |t: &LineTable| !t.is_empty() && t.line(t.len() - 1).ending == LineEnding::None;
+    let left_no_nl = no_nl(left);
+    let right_no_nl = no_nl(right);
+    let last_left = left.len().saturating_sub(1) as u32;
+    let last_right = right.len().saturating_sub(1) as u32;
+    const NO_NEWLINE_MARKER: &str = "\\ No newline at end of file\n";
 
     // 1. 展开为脚本条目序列（Change = 先删后增，git/unified 惯例）
     let mut script: Vec<Entry> = Vec::new();
@@ -178,14 +188,26 @@ pub fn render_unified(
         text.push('\n');
         for e in &script[*hs..*he] {
             match e {
-                Entry::Same(i) => text.push_str(&format!(" {}\n", left.line(*i as usize).text)),
+                Entry::Same(i) => {
+                    text.push_str(&format!(" {}\n", left.line(*i as usize).text));
+                    // 上下文行任一侧末行无换行即标记一次（解析器 context 前标记双侧置位）
+                    if (*i == last_left && left_no_nl) || (*i == last_right && right_no_nl) {
+                        text.push_str(NO_NEWLINE_MARKER);
+                    }
+                }
                 Entry::Left(i) => {
                     text.push_str(&paint(palette.delete, format!("-{}", left.line(*i as usize).text)));
                     text.push('\n');
+                    if *i == last_left && left_no_nl {
+                        text.push_str(NO_NEWLINE_MARKER);
+                    }
                 }
                 Entry::Right(i) => {
                     text.push_str(&paint(palette.insert, format!("+{}", right.line(*i as usize).text)));
                     text.push('\n');
+                    if *i == last_right && right_no_nl {
+                        text.push_str(NO_NEWLINE_MARKER);
+                    }
                 }
             }
         }

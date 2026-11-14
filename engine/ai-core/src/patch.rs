@@ -530,10 +530,18 @@ pub fn apply_file(orig: &str, file: &PatchFile, opts: &PatchApplyOptions) -> Res
 
         let base_pos = (h.old_start as i64 - 1 + offset).max(0) as usize;
 
-        // 已应用检测：新内容在期望位置（偏移校正后）精确命中 -> AlreadyApplied
+        // 已应用检测：新内容在期望位置（偏移校正后）精确命中 -> AlreadyApplied。
+        // 纯删除 hunk（新内容 == 期望旧内容去掉删除行 -> 仅为上下文）时该检测无意义
+        // （任何含上下文前缀的未应用文件都会命中），跳过。
         let new_expected_texts: Vec<String> = new_expected.iter().map(|(t, _)| t.clone()).collect();
         let new_expected_cr: Vec<bool> = new_expected.iter().map(|(_, c)| *c).collect();
-        if find_match_window(&lines, base_pos, &new_expected_texts, opts, 0, &new_expected_cr).is_some() {
+        // 纯删除 hunk（无 Add 行）不做该检测：此时"新内容"仅为上下文，
+        // 任何含上下文前缀的未应用文件都会误命中（roundtrip: 全删尾行场景）。
+        // 含 Add 行的 hunk 检测保留（新内容含新增行，未应用文件不会命中）。
+        let has_add = h.lines.iter().any(|l| l.kind == PatchLineKind::Add);
+        if has_add
+            && find_match_window(&lines, base_pos, &new_expected_texts, opts, 0, &new_expected_cr).is_some()
+        {
             return Err(format!("hunk #{} 已应用（目标内容与补丁结果一致）", hidx + 1));
         }
 
@@ -597,6 +605,15 @@ pub fn apply_file(orig: &str, file: &PatchFile, opts: &PatchApplyOptions) -> Res
 
         fuzz_used = fuzz_used.max(used_fuzz);
         offset += new_expected.len() as i64 - old_span as i64;
+    }
+
+    // 中部空行尾归一：旧文件末行（无换行）经上下文进入新文件中部时，
+    // 该行必须补行尾（补丁标记语义 = 旧末行无换行；新文件后续还有行）
+    let non_last = lines.len().saturating_sub(1);
+    for line in &mut lines[..non_last] {
+        if line.1.is_empty() {
+            line.1 = dominant_eol;
+        }
     }
 
     // 末行行尾归一（\ No newline 语义）
@@ -1153,6 +1170,18 @@ index bbbb..0000000\n\
         let applied = "a\nB\nc\n";
         let err = apply_file(applied, f, &OPTS).unwrap_err();
         assert!(err.contains("已应用"), "{err}");
+    }
+
+    /// 纯删除 hunk 不触发已应用误判（上下文前缀在未应用文件中必命中）：
+    /// 回归 P11 roundtrip（delete_tail 语料）
+    #[test]
+    fn apply_pure_delete_not_false_already_applied() {
+        let patch = "--- a\n+++ b\n@@ -1,3 +1,2 @@\n a\n b\n-c\n";
+        let f = &parse_patch(patch).unwrap().files[0];
+        match apply_file("a\nb\nc\n", f, &OPTS).unwrap() {
+            ApplyOutcome::Applied { text, .. } => assert_eq!(text, "a\nb\n"),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

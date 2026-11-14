@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<report kind="folder" title="dir compare report" left="L" right="R">
+<summary total="2" same="0" contentDiff="0" quickDiff="0" leftOnly="1" rightOnly="1" dirSame="0" dirDiff="0"/>
+<rows>
+  <row path="l_orphan" name="l_orphan" kind="dir" status="leftOnly" leftSize="0" leftMtimeMs="5"/>
+  <row path="r_orphan.bin" name="r_orphan.bin" kind="file" status="rightOnly" rightSize="8" rightMtimeMs="6"/>
+</rows>
+</report>

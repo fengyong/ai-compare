@@ -359,6 +359,11 @@ pub struct EngineCapabilities {
     #[serde(default = "default_some_true", skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub format_rules: Option<bool>,
+    /// P11：报告生成入口（report/generate；FR-RPT 布局族）
+    /// 可选字段（缺省 true）：旧引擎载荷不含该字段时按 true 解析
+    #[serde(default = "default_some_true", skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub reports: Option<bool>,
 }
 
 /// 许可能力（ADR-009：开源/自用默认全能力；字段为后续门控留位）
@@ -1163,6 +1168,7 @@ pub struct Merge3OptionsSpec {
     pub favor: Option<MergeFavorSide>,
     /// 忽略不重要差异（/iu）：不重要冲突不升级为未决冲突
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub ignore_unimportant: Option<bool>,
     /// 重要性模型（FR-TXT-010 上协议面，作用于冲突子对齐与不重要冲突判定）
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1423,6 +1429,7 @@ pub enum TableRowAlign {
 pub struct TableOptionsSpec {
     /// 列分隔符（取首字符；"\\t" = TSV；缺省 ','）
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub delimiter: Option<String>,
     /// 首行为表头（缺省 true）
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2623,6 +2630,239 @@ pub struct DirProgressEvent {
     pub total_estimate: Option<u32>,
 }
 
+// ---------------------------------------------------------------------------
+// P11：report/generate（FR-RPT-001/002 / FR-PATCH-010；布局 × 选项 × 会话矩阵）
+// ---------------------------------------------------------------------------
+
+/// 报告布局（FR-RPT-002 布局族；serde 字符串小驼峰）
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, Hash)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub enum ReportLayout {
+    /// 纯文本摘要（统计 + 差异清单）
+    #[default]
+    Summary,
+    /// 双栏并排
+    SideBySide,
+    /// 全量交错（unified 式前缀、不裁上下文）
+    Interleaved,
+    /// 补丁（FR-PATCH-010：unified/context/normal 三式）
+    Patch,
+    /// 自包含 HTML（样式内联）
+    Html,
+    /// 结构化 XML
+    Xml,
+    /// CSV/TSV 表格化
+    Csv,
+    /// 文件夹缩进树 + 状态标记
+    Tree,
+    /// 文件清单
+    List,
+    /// 变更统计（只统计无内容）
+    Stats,
+}
+
+/// 文本差异显示过滤（display-all/mismatches/context/matches）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub enum ReportDisplayFilter {
+    #[default]
+    All,
+    Mismatches,
+    Context,
+    Matches,
+}
+
+/// 文件夹显示过滤（FR-RPT-002 文件夹 display 标志集）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub enum ReportDirDisplayFilter {
+    #[default]
+    All,
+    Mismatches,
+    NoOrphans,
+    MismatchesNoOrphans,
+    Orphans,
+    Matches,
+    LeftNewer,
+    RightNewer,
+    LeftNewerOrphans,
+    RightNewerOrphans,
+    LeftOrphans,
+    RightOrphans,
+}
+
+/// 补丁格式（FR-PATCH-010）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub enum ReportPatchStyle {
+    Normal,
+    Context,
+    #[default]
+    Unified,
+}
+
+/// 颜色模式（html-color/html-mono）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub enum ReportColorMode {
+    #[default]
+    Color,
+    Mono,
+}
+
+/// 换行模式（wrap-none/character/word；HTML 仅 none/word）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub enum ReportWrapMode {
+    #[default]
+    None,
+    Character,
+    Word,
+}
+
+/// 文件夹可选列（column-*；缺省 size+timestamp）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase", default)]
+pub struct ReportDirColumns {
+    #[serde(default = "default_true")]
+    pub size: bool,
+    #[serde(default = "default_true")]
+    pub timestamp: bool,
+    #[serde(default)]
+    pub attributes: bool,
+    #[serde(default)]
+    pub crc: bool,
+    #[serde(default)]
+    pub vcs: bool,
+    #[serde(default)]
+    pub revision: bool,
+    #[serde(default)]
+    pub version: bool,
+    #[serde(default)]
+    pub owner: bool,
+    #[serde(default)]
+    pub group: bool,
+}
+
+impl Default for ReportDirColumns {
+    fn default() -> Self {
+        ReportDirColumns {
+            size: true,
+            timestamp: true,
+            attributes: false,
+            crc: false,
+            vcs: false,
+            revision: false,
+            version: false,
+            owner: false,
+            group: false,
+        }
+    }
+}
+
+/// report/generate 请求（会话快照 + 布局参数 -> 报告字符串或分块流）
+///
+/// 除 layout/sessionId 外全部可选（缺省 = 引擎缺省；协议演进只加不改）。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase", default)]
+pub struct ReportGenerateParams {
+    pub session_id: String,
+    pub layout: ReportLayout,
+    /// 报告标题（None = 自动生成 "<kind> compare report"；省略键）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub title: Option<String>,
+    /// 文本差异显示过滤（缺省 all）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub display: Option<ReportDisplayFilter>,
+    /// 文件夹显示过滤（缺省 all）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub dir_display: Option<ReportDirDisplayFilter>,
+    /// 忽略不重要差异（缺省 false）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub ignore_unimportant: Option<bool>,
+    /// 显示行号（缺省 false）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub line_numbers: Option<bool>,
+    /// 上下文行数（patch 与 display=context 共用；缺省 3）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub context_lines: Option<u32>,
+    /// 补丁格式（缺省 unified）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub patch_style: Option<ReportPatchStyle>,
+    /// CSV 分隔符："csv"（','）| "tsv"（'\t'）；缺省 csv
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub delimiter: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub color: Option<ReportColorMode>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub wrap: Option<ReportWrapMode>,
+    /// 字符硬折行列数（wrap=character 时生效；缺省 80）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub wrap_columns: Option<u32>,
+    /// 文件夹可选列
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub columns: Option<ReportDirColumns>,
+    /// 文件夹 side-by-side HTML 内嵌逐文件报告链接（缺省 false）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub include_file_links: Option<bool>,
+    /// 分块流：起始字符偏移（缺省 0）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub offset: Option<u64>,
+    /// 分块流：本块最大字符数（None = 全量）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub limit: Option<u64>,
+}
+
+/// report/generate 应答
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct ReportGenerateResult {
+    pub layout: ReportLayout,
+    /// 报告内容（本块；limit 未给 = 全量）
+    pub content: String,
+    /// 全文总字符数（Unicode 标量数；JSON number）
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
+    pub total_chars: u64,
+    /// 本块起始偏移（JSON number）
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
+    pub offset: u64,
+    /// 是否还有后续块
+    pub has_more: bool,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2753,6 +2993,7 @@ mod tests {
             hex_compare: Some(true),
             patch_apply: Some(true),
             dir_execute: Some(true),
+            reports: Some(true),
             format_rules: None,
         };
         let s = serde_json::to_string(&c).unwrap();
@@ -3036,6 +3277,7 @@ mod tests {
             patch_apply: None,
             dir_execute: None,
             format_rules: None,
+            reports: None,
         };
         let s = serde_json::to_string(&c).unwrap();
         assert!(!s.contains("tableCompare") && !s.contains("hexCompare"), "{s}");
@@ -3154,6 +3396,7 @@ mod tests {
         assert_eq!(v.three_way_merge, Some(true));
         assert_eq!(v.lines_read, Some(true));
         assert_eq!(v.format_rules, Some(true), "P10 能力位缺省 true");
+        assert_eq!(v.reports, Some(true), "P11 能力位缺省 true");
         // 新引擎序列化携带 threeWayMerge
         let c = EngineCapabilities {
             dir_compare: true,
@@ -3172,6 +3415,7 @@ mod tests {
             patch_apply: Some(true),
             dir_execute: Some(true),
             format_rules: Some(true),
+            reports: Some(true),
         };
         let s = serde_json::to_string(&c).unwrap();
         assert!(s.contains("threeWayMerge"));
@@ -3315,5 +3559,62 @@ mod tests {
         )
         .unwrap();
         assert_eq!(aware.format_aware, Some(true));
+    }
+
+    #[test]
+    fn p11_report_generate_serde_anchor() {
+        // 布局枚举字节锚定
+        assert_eq!(serde_json::to_string(&ReportLayout::Summary).unwrap(), "\"summary\"");
+        assert_eq!(serde_json::to_string(&ReportLayout::SideBySide).unwrap(), "\"sideBySide\"");
+        assert_eq!(serde_json::to_string(&ReportLayout::Interleaved).unwrap(), "\"interleaved\"");
+        assert_eq!(serde_json::to_string(&ReportLayout::Patch).unwrap(), "\"patch\"");
+        assert_eq!(serde_json::to_string(&ReportLayout::Html).unwrap(), "\"html\"");
+        assert_eq!(serde_json::to_string(&ReportLayout::Stats).unwrap(), "\"stats\"");
+        let v: ReportLayout = serde_json::from_str("\"sideBySide\"").unwrap();
+        assert_eq!(v, ReportLayout::SideBySide);
+        // 最小载荷（旧客户端形态）：只给 sessionId + layout
+        let min: ReportGenerateParams = serde_json::from_str(r#"{"sessionId":"t1","layout":"patch"}"#).unwrap();
+        assert_eq!(min.title, None);
+        assert_eq!(min.context_lines, None);
+        assert_eq!(min.offset, None);
+        // 全字段 roundtrip
+        let full = ReportGenerateParams {
+            session_id: "d1".into(),
+            layout: ReportLayout::Html,
+            title: Some("T".into()),
+            display: Some(ReportDisplayFilter::Context),
+            dir_display: Some(ReportDirDisplayFilter::MismatchesNoOrphans),
+            ignore_unimportant: Some(true),
+            line_numbers: Some(true),
+            context_lines: Some(5),
+            patch_style: Some(ReportPatchStyle::Unified),
+            delimiter: Some("tsv".into()),
+            color: Some(ReportColorMode::Mono),
+            wrap: Some(ReportWrapMode::Word),
+            wrap_columns: Some(60),
+            columns: Some(ReportDirColumns { size: true, timestamp: false, ..ReportDirColumns::default() }),
+            include_file_links: Some(true),
+            offset: Some(1024),
+            limit: Some(4096),
+        };
+        let s = serde_json::to_string(&full).unwrap();
+        let back: ReportGenerateParams = serde_json::from_str(&s).unwrap();
+        assert_eq!(back, full);
+        assert!(s.contains("\"layout\":\"html\""));
+        assert!(s.contains("\"dirDisplay\":\"mismatchesNoOrphans\""));
+        assert!(s.contains("\"patchStyle\":\"unified\""));
+        // 应答 roundtrip
+        let res = ReportGenerateResult {
+            layout: ReportLayout::Csv,
+            content: "a,b\n".into(),
+            total_chars: 4,
+            offset: 0,
+            has_more: false,
+        };
+        let s = serde_json::to_string(&res).unwrap();
+        let back: ReportGenerateResult = serde_json::from_str(&s).unwrap();
+        assert_eq!(back, res);
+        assert!(s.contains("\"totalChars\":4"));
+        assert!(s.contains("\"hasMore\":false"));
     }
 }

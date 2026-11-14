@@ -10,7 +10,7 @@ export type TableOptionsSpec = {
 /**
  * 列分隔符（取首字符；"\\t" = TSV；缺省 ','）
  */
-delimiter: string | null, 
+delimiter?: string, 
 /**
  * 首行为表头（缺省 true）
  */

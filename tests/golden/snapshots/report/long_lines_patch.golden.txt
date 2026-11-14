@@ -1,0 +1,6 @@
+--- long_lines.left
++++ long_lines.right
+@@ -1,2 +1,2 @@
+-aaaa bbbb cccc dddd eeee
++AAAA BBBB CCCC DDDD EEEE
+ next

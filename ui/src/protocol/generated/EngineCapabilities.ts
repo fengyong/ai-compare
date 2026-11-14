@@ -67,4 +67,9 @@ dirExecute?: boolean,
  * text/open rules、dir/open formatAware）
  * 可选字段（缺省 true）：旧引擎载荷不含该字段时按 true 解析
  */
-formatRules?: boolean, };
+formatRules?: boolean, 
+/**
+ * P11：报告生成入口（report/generate；FR-RPT 布局族）
+ * 可选字段（缺省 true）：旧引擎载荷不含该字段时按 true 解析
+ */
+reports?: boolean, };
