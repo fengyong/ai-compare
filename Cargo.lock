@@ -74,6 +74,7 @@ dependencies = [
  "ai-dir",
  "ai-protocol",
  "ai-vfs",
+ "image",
  "serde",
  "serde_json",
  "tempfile",

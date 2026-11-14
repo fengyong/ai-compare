@@ -17,6 +17,7 @@
         "linesRead": true,
         "maxDeltaBatchRows": 512,
         "patchApply": true,
+        "pictureCompare": true,
         "reports": true,
         "tableCompare": true,
         "textCompare": true,

@@ -74,6 +74,7 @@ pub mod method {
     pub const TABLE_SECTIONS: &str = "table/sections";
     /// 十六进制比较：打开会话（P9，FR-HEX 引擎侧）
     pub const HEX_OPEN: &str = "hex/open";
+    pub const PICTURE_OPEN: &str = "picture/open";
     /// 十六进制比较：十六进制行分页取数（P9，docs/03 §2.3.2 大内容约定）
     pub const HEX_BYTES: &str = "hex/bytes";
     /// 补丁应用（P9，FR-PATCH-011：输入补丁文本 + 目标规格 -> 结果报告）

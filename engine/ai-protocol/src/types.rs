@@ -364,6 +364,10 @@ pub struct EngineCapabilities {
     #[serde(default = "default_some_true", skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub reports: Option<bool>,
+    /// P14：图片比较（picture/open）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub picture_compare: Option<bool>,
 }
 
 /// 许可能力（ADR-009：开源/自用默认全能力；字段为后续门控留位）
@@ -1671,6 +1675,72 @@ pub struct HexOpenResult {
     /// diff 块数（same/changed/inserted/deleted 块序列）
     pub block_count: u32,
     pub summary: HexSummary,
+}
+
+// ---------------------------------------------------------------------------
+// P14：picture/open（图片比较，FR-PIC 引擎侧）
+// ---------------------------------------------------------------------------
+
+/// picture/open 选项（FR-PIC：容差 + 聚合块边长）
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase", default)]
+pub struct PictureOptionsSpec {
+    /// 每通道容差（0-255；缺省 8）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tolerance: Option<u16>,
+    /// 差异聚合块边长（像素；缺省 32）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub block: Option<u32>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase", default)]
+pub struct PictureOpenParams {
+    pub session_id: String,
+    pub left: String,
+    pub right: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub options: Option<PictureOptionsSpec>,
+}
+
+/// 差异聚合块（边界框 + 块内差异占比）
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct PictureBlockDto {
+    pub x: u32,
+    pub y: u32,
+    pub w: u32,
+    pub h: u32,
+    pub diff_ratio: f32,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase", default)]
+pub struct PictureOpenResult {
+    pub session_id: String,
+    /// 画布尺寸（两侧最大宽高）
+    pub width: u32,
+    pub height: u32,
+    pub left_width: u32,
+    pub left_height: u32,
+    pub right_width: u32,
+    pub right_height: u32,
+    pub diff_pixels: u64,
+    pub total_pixels: u64,
+    /// 相似度百分比（100.0 = 全同）
+    pub similarity_pct: f64,
+    /// 差异聚合块（全量；P14 块数上限保护 >10 万时截断）
+    pub blocks: Vec<PictureBlockDto>,
+    /// true = 块清单因超限被截断（视图提示聚合视图）
+    pub truncated: bool,
 }
 
 /// hex/bytes 参数：十六进制行分页（16 字节/行；offset 按字节、自动对齐到行首）
@@ -2994,6 +3064,7 @@ mod tests {
             patch_apply: Some(true),
             dir_execute: Some(true),
             reports: Some(true),
+            picture_compare: Some(true),
             format_rules: None,
         };
         let s = serde_json::to_string(&c).unwrap();
@@ -3278,6 +3349,7 @@ mod tests {
             dir_execute: None,
             format_rules: None,
             reports: None,
+            picture_compare: None,
         };
         let s = serde_json::to_string(&c).unwrap();
         assert!(!s.contains("tableCompare") && !s.contains("hexCompare"), "{s}");
@@ -3416,6 +3488,7 @@ mod tests {
             dir_execute: Some(true),
             format_rules: Some(true),
             reports: Some(true),
+            picture_compare: Some(true),
         };
         let s = serde_json::to_string(&c).unwrap();
         assert!(s.contains("threeWayMerge"));
