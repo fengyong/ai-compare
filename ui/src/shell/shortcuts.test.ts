@@ -10,6 +10,7 @@ import {
 import { commandRegistry } from './commands';
 import { createShortcutEngine, ShortcutEngine } from './shortcutEngine';
 import type { CommandContext } from './commands';
+import { registerFolderView } from '../views/folder-compare/folderViewBus';
 
 function fakeEvent(key: string, mods: Partial<{ ctrl: boolean; alt: boolean; shift: boolean; meta: boolean }> = {}): KeyboardEvent {
   return {
@@ -105,8 +106,10 @@ describe('shell/shortcuts 键位引擎', () => {
     ]) {
       expect(ids).toContain(required);
     }
-    const def = commandRegistry.get('folder.copyToLeft')!;
-    expect(def.phaseNote).toContain('P6');
+    // R3-17：复制到对侧/空格标记不再是占位桩（经 folderViewBus 调视图内真实操作）
+    for (const id of ['folder.copyToLeft', 'folder.copyToRight', 'folder.markSelection']) {
+      expect(commandRegistry.get(id)!.phaseNote).toBeUndefined();
+    }
   });
 
   it('ShortcutEngine.resolveCommand：按键 → 命令 id', () => {
@@ -139,21 +142,31 @@ describe('shell/shortcuts 键位引擎', () => {
 
   it('runCommand：when 门控（folder 命令仅在目录视图可用）', () => {
     const runLog: string[] = [];
-    const engine = makeEngine();
-    engine.runCommand('folder.copyToLeft'); // context.activeTabKind = 'folder' → 执行（占位 notice）
-    const homeCtx = createShortcutEngine({
-      registry: commandRegistry,
-      buildContext: () =>
-        ({
-          sessions: {} as never,
-          clipboard: {} as never,
-          notice: () => {},
-          activeTabKind: 'home',
-          activeTabId: null,
-        }) as CommandContext,
+    const dispose = registerFolderView({
+      copyToLeft: () => runLog.push('copyToLeft'),
+      copyToRight: () => runLog.push('copyToRight'),
+      markSelection: () => runLog.push('markSelection'),
     });
-    // home 视图下 folder.* 的 when 不满足 → 不执行（此处仅验证门控不抛错）
-    homeCtx.runCommand('folder.copyToLeft');
-    expect(runLog).toEqual([]);
+    try {
+      const engine = makeEngine();
+      engine.runCommand('folder.copyToLeft'); // activeTabKind = 'folder' → 真实操作
+      expect(runLog).toEqual(['copyToLeft']);
+      const homeCtx = createShortcutEngine({
+        registry: commandRegistry,
+        buildContext: () =>
+          ({
+            sessions: {} as never,
+            clipboard: {} as never,
+            notice: () => {},
+            activeTabKind: 'home',
+            activeTabId: null,
+          }) as CommandContext,
+      });
+      // home 视图下 folder.* 的 when 不满足 → 不执行
+      homeCtx.runCommand('folder.copyToLeft');
+      expect(runLog).toEqual(['copyToLeft']);
+    } finally {
+      dispose();
+    }
   });
 });

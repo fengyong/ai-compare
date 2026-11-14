@@ -53,6 +53,7 @@ import { BasePathBar } from './BasePathBar';
 import { renamesToOps } from './renameTemplate';
 import { copyText } from './clipboard';
 import { F } from './localStrings';
+import { registerFolderView, type FolderViewActions } from './folderViewBus';
 
 /**
  * 文件夹比较视图（docs/03 §3.4.2 folder-compare / P6 完备化 + P6b 遗留批）：
@@ -428,11 +429,24 @@ export function FolderCompareView({ tab }: { tab: Tab }) {
     // 文案局部常量（待并入 strings.ts）
     setNotice(target ? F.markedCount(ids.length) : `已取消 ${ids.length} 项标记`);
   };
-  // 供 window 捕获监听读取的即时引用（避免 effect 闭包过期）
-  const toggleSelectionMarksRef = useRef(toggleSelectionMarks);
-  toggleSelectionMarksRef.current = toggleSelectionMarks;
-  const selectionRef = useRef(selection);
-  selectionRef.current = selection;
+  // ---- 壳级命令总线（Ctrl+L/Ctrl+R 复制到对侧、Space 标记；附录 G / FR-DIR-050）----
+  // 动作闭包每次渲染刷新到 ref，注册只做一次：多标签下重复注册会把本视图顶到
+  // 栈顶，抢走仍在挂载的其它目录视图的命令。
+  const folderActionsRef = useRef<FolderViewActions | null>(null);
+  folderActionsRef.current = {
+    copyToLeft: () => runOps(commandOps('copyToLeft'), S.folder.ctxCopyToLeft),
+    copyToRight: () => runOps(commandOps('copyToRight'), S.folder.ctxCopyToRight),
+    markSelection: toggleSelectionMarks,
+  };
+  useEffect(
+    () =>
+      registerFolderView({
+        copyToLeft: () => folderActionsRef.current?.copyToLeft(),
+        copyToRight: () => folderActionsRef.current?.copyToRight(),
+        markSelection: () => folderActionsRef.current?.markSelection(),
+      }),
+    [],
+  );
 
   // ---- P6b：表头排序（FR-DIR-042）升序→降序→默认 循环（两侧表头共用规格） ----
   const headerSortClick = (key: DirSortKey): void => {
@@ -629,7 +643,7 @@ export function FolderCompareView({ tab }: { tab: Tab }) {
     return items;
   };
 
-  // ---- 键盘：Ctrl/Cmd+A 全选本格（Space 标记见下方 window 捕获监听） ----
+  // ---- 键盘：Ctrl/Cmd+A 全选本格（Space 标记走壳级 shortcutEngine → folderViewBus） ----
   const onPaneKeyDown = (side: PaneSide, e: React.KeyboardEvent): void => {
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
       e.preventDefault();
@@ -637,24 +651,6 @@ export function FolderCompareView({ tab }: { tab: Tab }) {
       setSelection(selectAll(visibleIds), side);
     }
   };
-
-  // ---- P6b：空格标记（BC 惯例 FR-DIR-050）——window 捕获监听解耦说明：
-  // 壳层 shortcutEngine（P4，commands.ts 本批不可改）把 Space 绑到过期桩命令
-  // folder.markSelection 并在 window capture 阶段 stopPropagation，React 合成
-  // 事件永远收不到 Space。同节点（window capture）监听器不受 stopPropagation
-  // 影响且注册序靠后：本标记逻辑照常执行，且本视图的反馈文案覆盖过期桩文案。
-  // 输入焦点保护与引擎同口径（INPUT/TEXTAREA/contentEditable 不触发）。
-  useEffect(() => {
-    const onWinKeyDown = (e: KeyboardEvent): void => {
-      if (e.key !== ' ') return;
-      const target = e.target as HTMLElement | null;
-      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
-      if (!selectionRef.current || selectionRef.current.selected.size === 0) return;
-      toggleSelectionMarksRef.current();
-    };
-    window.addEventListener('keydown', onWinKeyDown, true);
-    return () => window.removeEventListener('keydown', onWinKeyDown, true);
-  }, []);
 
   // ---- 单侧窗格：独立表头 + 独立横向滚动 + 独立选择集（FR-DIR-001/003） ----
   const renderPane = (side: PaneSide): React.ReactNode => {
