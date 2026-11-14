@@ -1006,7 +1006,49 @@ pub fn builtin_formats() -> Vec<FileFormat> {
             vec![SyntaxItem::RowTitle { pattern: "\\f.*".into(), lines: 2, or_first_line: true }],
         )],
     );
+    // 非文本视图格式（FR-FMT-004）：双击目录行时由本表决定视图类型（FR-SEL-001）。
+    // 追加在全部文本格式之后——掩码互不重叠，列表顺序即优先级（FR-FMT-001）。
+    v.push(view_format(
+        "builtin-table",
+        "表格数据（CSV/制表符分隔）",
+        &["*.csv", "*.tsv", "*.tab"],
+        FormatViewKind::Table,
+    ));
+    v.push(view_format(
+        "builtin-hex",
+        "二进制/可执行文件",
+        &[
+            "*.exe", "*.dll", "*.so", "*.dylib", "*.bin", "*.dat", "*.o", "*.obj", "*.a", "*.lib",
+            "*.class",
+        ],
+        FormatViewKind::Hex,
+    ));
+    // 图片内置关联取 FR-PIX-001 七项，另加 BC mime.types 的 tif 别名（image/tiff → tiff tif）
+    v.push(view_format(
+        "builtin-picture",
+        "图片",
+        &[
+            "*.gif", "*.ico", "*.jpeg", "*.jpg", "*.png", "*.tiff", "*.tif", "*.bmp",
+        ],
+        FormatViewKind::Picture,
+    ));
     v
+}
+
+/// 非文本格式构造（无语法元素；视图类型由格式列表决定，FR-SEL-001）
+fn view_format(
+    id: &str,
+    description: &str,
+    masks: &[&str],
+    view_kind: FormatViewKind,
+) -> FileFormat {
+    FileFormat {
+        id: id.to_string(),
+        description: description.to_string(),
+        masks: masks.iter().map(|m| m.to_string()).collect(),
+        view_kind,
+        ..FileFormat::default()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1313,7 +1355,9 @@ mod tests {
     #[test]
     fn det11_unknown_name_no_mask_hit() {
         let r = reg();
-        assert!(r.detect("data.bin", b"plain").is_none(), "无掩码命中且无 shebang");
+        // R3-17d 起 *.bin 属内置十六进制格式，"无命中"样本改用未登记扩展名
+        assert!(r.detect("data.xyz", b"plain").is_none(), "无掩码命中且无 shebang");
+        assert_eq!(r.detect("data.bin", b"plain").unwrap().view_kind, FormatViewKind::Hex);
     }
 
     // ---- 检测矩阵：shebang 嗅探 ----
@@ -1574,5 +1618,47 @@ mod tests {
         ids.dedup();
         assert_eq!(ids.len(), r.formats.len(), "内置 id 唯一");
         assert!(r.formats.iter().filter(|f| f.masks.is_empty()).count() <= 1, "仅 shebang 兜底格式允许空掩码");
+    }
+
+    // ---- R3-17d：非文本视图格式（FR-FMT-004；双击选型 FR-SEL-001） ----
+
+    #[test]
+    fn r317d_builtin_non_text_formats_present() {
+        let r = reg();
+        let cases = [
+            ("builtin-table", FormatViewKind::Table),
+            ("builtin-hex", FormatViewKind::Hex),
+            ("builtin-picture", FormatViewKind::Picture),
+        ];
+        for (id, kind) in cases {
+            let f = r.formats.iter().find(|f| f.id == id).unwrap();
+            assert_eq!(f.view_kind, kind, "{id}");
+            assert!(f.enabled);
+            assert!(f.grammar.is_empty(), "非文本格式不带语法元素");
+        }
+    }
+
+    #[test]
+    fn r317d_detect_routes_by_extension() {
+        let r = reg();
+        let kind = |n: &str| r.detect(n, &[]).unwrap().view_kind;
+        assert_eq!(kind("data.csv"), FormatViewKind::Table);
+        assert_eq!(kind("a.tsv"), FormatViewKind::Table);
+        assert_eq!(kind("x.dll"), FormatViewKind::Hex);
+        assert_eq!(kind("photo.png"), FormatViewKind::Picture);
+        assert_eq!(kind("PHOTO.JPG"), FormatViewKind::Picture); // 掩码大小写不敏感
+        assert_eq!(kind("main.c"), FormatViewKind::Text); // 文本格式在前且掩码不重叠
+        assert!(r.detect("archive.zip", &[]).is_none()); // 无匹配 → 调用方兜底（FR-SEL-001）
+    }
+
+    #[test]
+    fn r317d_picture_masks_cover_srs_builtin_associations() {
+        let r = reg();
+        let id = "builtin-picture";
+        let f = r.formats.iter().find(|f| f.id == id).unwrap();
+        for ext in ["gif", "ico", "jpeg", "jpg", "png", "tiff", "bmp"] {
+            let mask = format!("*.{ext}");
+            assert!(f.masks.contains(&mask), "FR-PIX-001 内置关联缺 {ext}");
+        }
     }
 }

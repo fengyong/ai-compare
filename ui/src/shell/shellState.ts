@@ -161,10 +161,10 @@ export interface TabsSlice {
   openMerge3Tab(base: string, left: string, right: string, opts?: OpenTabOpts): void;
   /** 文件夹合并标签（P8，FR-DMRG-001：三路 base/left/right） */
   openFolderMergeTab(base: string, left: string, right: string, opts?: OpenTabOpts): void;
-  /** 独立文本比较（主页文本大按钮入口；子会话路径见 openTextChild） */
+  /** 独立文本比较（主页文本大按钮入口；子会话路径见 openChild） */
   openTextTab(leftPath: string, rightPath: string, opts?: OpenTabOpts): Promise<void>;
-  /** 双击目录行 → 打开文本子会话（P0 闭环，保持原语义） */
-  openTextChild(parentTabId: string, row: Pick<DirRow, 'id' | 'name' | 'leftPath' | 'rightPath'>): Promise<void>;
+  /** 双击目录行 → 按格式列表选型打开子会话（FR-DIR-070 / FR-SEL-001：文本/表格/十六进制/图片） */
+  openChild(parentTabId: string, row: Pick<DirRow, 'id' | 'name' | 'leftPath' | 'rightPath'>): Promise<void>;
   activate(tabId: string): void;
   /** 另存文件为后改指标签上的该侧路径/名称/标题（R3-04：会话保存与关闭守卫据此取正确目标） */
   retargetTextSide(tabId: string, side: 'left' | 'right', path: string): void;

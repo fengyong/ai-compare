@@ -9,9 +9,11 @@ import {
 } from '../views/text-compare/diffFileNav';
 import { parentRescanParams } from '../views/text-compare/parentWriteback';
 import { deleteTextSession } from '../views/text-compare/textModel';
-import { basename, joinPath, looksTextual } from '../lib/env';
+import { basename, joinPath } from '../lib/env';
 import { S } from '../strings';
 import { closeGuardKind, firstPendingGuard, guardOf } from './closeGuard';
+import { resolveViewKind } from './settings/formatsModel';
+import { effectiveFormatsFromSettings } from './settings/formatsRuntime';
 import type { ShellStore, Tab, WindowState, WindowsSlice, TabsSlice, OpenTabOpts } from './shellState';
 
 /** 窗口 slice（FR-WIN-001/002）：多窗口、拖出标签、合并窗口 */
@@ -322,20 +324,17 @@ export const createTabsSlice: StateCreator<ShellStore, [], [], TabsSlice> = (set
   },
 
   /**
-   * 双击目录行 → 打开文本子会话。
+   * 双击目录行 → 按文件格式列表决定的视图类型打开子会话（FR-DIR-070 / FR-SEL-001）。
    *
    * 地址必须取 leftPath/rightPath：树形模式 id 恰好等于 rel，但平铺模式 id 是
    * `name` / `name#i`（显示消歧），手动对齐时左右还可能不同名（R3-03）。
-   * 引擎侧 dir/openChild（FormatRegistry 探测）与父会话差异回传见 R3-17。
+   * 文本子会话记录父目录链接（保存回传 FR-SES-004、差异文件遍历 FR-DIR-071）；
+   * 表格/十六进制/图片视图当前只读，无回传与遍历需求，故不记父链接。
    */
-  async openTextChild(parentTabId, row) {
+  async openChild(parentTabId, row) {
     const found = get().findTab(parentTabId);
     const folder = found?.tab.folder;
     if (!found || !folder) return;
-    if (!looksTextual(row.name)) {
-      get().setNotice(S.text.unsupportedView);
-      return;
-    }
     const leftRel = row.leftPath;
     const rightRel = row.rightPath;
     if (!leftRel || !rightRel) {
@@ -344,6 +343,18 @@ export const createTabsSlice: StateCreator<ShellStore, [], [], TabsSlice> = (set
     }
     const left = joinPath(folder.left, leftRel);
     const right = joinPath(folder.right, rightRel);
+    const kind = resolveViewKind(effectiveFormatsFromSettings(), row.name);
+    if (kind === 'external') {
+      get().setNotice(S.text.externalView);
+      return;
+    }
+    if (kind !== 'text') {
+      const opts: OpenTabOpts = { windowId: found.windowId };
+      if (kind === 'table') get().openTableTab(left, right, opts);
+      else if (kind === 'hex') get().openHexTab(left, right, opts);
+      else get().openPictureTab(left, right, opts);
+      return;
+    }
     const baseName = (rel: string): string => rel.split('/').pop() || rel;
     try {
       const sessionId = engine.newSessionId('text');
