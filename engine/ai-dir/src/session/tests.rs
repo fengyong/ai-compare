@@ -143,6 +143,40 @@ async fn update_filters_rescans_and_removes_old_rows() {
 }
 
 #[tokio::test]
+async fn unchanged_name_filter_must_not_rescan_away_expanded_rows() {
+    // 回归：UI 的显示类切换（平铺/抑制/显示过滤）每次都附带当前 nameFilter（空 spec）。
+    // 若 update_filters 无条件重扫，已展开子树会被整体移除 → 平铺视图丢光文件、
+    // 切回树形也只剩折叠顶层（用户实测缺陷）。
+    let (ld, left) = make_tree(&[("sub/a.txt", b"1"), ("top.txt", b"t")]).await;
+    let (rd, right) = make_tree(&[("sub/a.txt", b"1"), ("top.txt", b"t")]).await;
+    let vfs = Arc::new(LocalFs::new());
+    let mut o = opts();
+    o.target_depth = Some(1);
+    let (model, _first) = DirModel::open(vfs, &left, &right, o, crate::CancelFlag::new()).await.unwrap();
+    assert_eq!(model.expand("sub", 1).await.unwrap(), 1);
+    let _ = model.take_delta().await;
+
+    // 空 spec（= UI parseMaskInput("") 的形状）重复下发：不得重扫
+    model.update_filters(Some(NameFilterSpec::default()), None).await.unwrap();
+    assert!(model.take_delta().await.is_none(), "过滤器未变不应产生重扫 delta");
+
+    // 显示类切换后平铺行必须仍含已展开子树里的文件
+    model.set_display(None, None, Some(true));
+    let d = model.take_delta().await.expect("平铺 delta");
+    assert!(d.removals.is_empty(), "显示切换不得移除行：{:?}", d.removals);
+    let ids: Vec<&str> = d.upserts.iter().map(|r| r.id.as_str()).collect();
+    assert!(ids.contains(&"a.txt"), "平铺须含子树文件：{ids:?}");
+
+    // 切回树形：子树行仍在（展开状态未被重扫摧毁）
+    model.set_display(None, None, Some(false));
+    let d = model.take_delta().await.expect("树形 delta");
+    let ids: Vec<&str> = d.upserts.iter().map(|r| r.id.as_str()).collect();
+    assert!(ids.contains(&"sub/a.txt"), "切回树形子树行须仍在：{ids:?}");
+    drop(ld);
+    drop(rd);
+}
+
+#[tokio::test]
 async fn display_filter_hides_rows_without_affecting_status() {
     let (ld, left) = make_tree(&[("same.txt", b"s"), ("diff.txt", b"L")]).await;
     let (rd, right) = make_tree(&[("same.txt", b"s"), ("diff.txt", b"R")]).await;

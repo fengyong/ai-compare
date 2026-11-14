@@ -1116,15 +1116,36 @@ impl DirModel {
         name_filter: Option<NameFilterSpec>,
         other_filter: Option<OtherFilterSpec>,
     ) -> Result<(), DirScanError> {
-        {
+        // 过滤器未变则不重扫：重扫会重建 arena 并移除全部旧行（含已展开子树），
+        // 而 UI 的显示类切换（平铺/抑制/显示过滤）每次都附带当前 nameFilter，
+        // 无条件重扫会把用户展开的目录静默折叠、平铺视图丢光文件。
+        let changed = {
             let mut opts = self.opts.lock().expect("选项锁");
+            let mut changed = false;
             if let Some(nf) = name_filter {
-                opts.name_filter = Some(nf);
+                // 全空 spec 与「无过滤器」语义等价，归一为 None 以便判等
+                let nf = if nf == NameFilterSpec::default() { None } else { Some(nf) };
+                if nf != opts.name_filter {
+                    opts.name_filter = nf;
+                    changed = true;
+                }
             }
             if let Some(of) = other_filter {
-                opts.other_filter = Some(of);
+                if opts.other_filter.as_ref() != Some(&of) {
+                    opts.other_filter = Some(of);
+                    changed = true;
+                }
             }
+            changed
+        };
+        if !changed {
+            return Ok(());
         }
+        self.rescan().await
+    }
+
+    /// 文件系统已被外部改动（dir/execute 落盘）后的强制重扫：与过滤器是否变化无关
+    pub async fn refresh(&self) -> Result<(), DirScanError> {
         self.rescan().await
     }
 

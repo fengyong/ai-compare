@@ -140,6 +140,22 @@ describe('MockEngine P6：dir/filter', () => {
     expect(restored.some((r) => r.kind === 'dir')).toBe(true);
     await client.close();
   });
+
+  it('强制重扫（rescan=true）：过滤器未变也重推行集（右键「刷新」）', async () => {
+    const { client, sessionId } = await openSession();
+    const deltas: DirDelta[] = [];
+    client.on('dir/delta', (p) => deltas.push(p as DirDelta));
+    const base = { sessionId, nameFilter: null, otherFilter: null, displayFilter: null, suppress: null, flat: null };
+    // 过滤器未变且未请求重扫：no-op（显示类切换不得摧毁行集）
+    await client.request('dir/filter', base);
+    expect(deltas.length).toBe(0);
+    const res = await client.request<{ visibleRows: number }>('dir/filter', { ...base, rescan: true });
+    expect(deltas.length).toBeGreaterThan(0);
+    const last = deltas[deltas.length - 1];
+    expect(last.upserts.length).toBeGreaterThan(0);
+    expect(last.upserts.filter((r) => !r.hidden).length).toBe(res.visibleRows);
+    await client.close();
+  });
 });
 
 describe('MockEngine P6：dir/operate（5 预设计划）', () => {

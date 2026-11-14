@@ -309,7 +309,7 @@ export function FolderCompareView({ tab }: { tab: Tab }) {
   };
 
   // ---- 过滤器（dir/filter：名称 + 显示 + 抑制 + 平铺） ----
-  const applyFilters = async (patch?: { flat?: boolean; suppress?: boolean; display?: string; filterText?: string }): Promise<void> => {
+  const applyFilters = async (patch?: { flat?: boolean; suppress?: boolean; display?: string; filterText?: string; rescan?: boolean }): Promise<void> => {
     const nextFlat = patch?.flat ?? flat;
     const nextSuppress = patch?.suppress ?? suppress;
     const nextDisplay = patch?.display ?? displayPreset;
@@ -324,6 +324,7 @@ export function FolderCompareView({ tab }: { tab: Tab }) {
         displayFilter: df,
         suppress: nextSuppress,
         flat: nextFlat,
+        rescan: patch?.rescan ?? null,
       });
       setNotice(S.folder.filterResult(result.visibleRows, result.hiddenRows));
     } catch (err: unknown) {
@@ -547,7 +548,7 @@ export function FolderCompareView({ tab }: { tab: Tab }) {
         });
       },
     });
-    items.push({ label: S.folder.ctxRefresh, onSelect: () => void applyFilters() });
+    items.push({ label: S.folder.ctxRefresh, onSelect: () => void applyFilters({ rescan: true }) });
     return items;
   };
 
