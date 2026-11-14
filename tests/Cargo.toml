@@ -52,6 +52,16 @@ path = "patch_matrix/patch_test.rs"
 name = "p9_e2e"
 path = "p9_e2e/p9_rpc_test.rs"
 
+# P11 报告 golden 矩阵 + HTML/XML 校验 + patch roundtrip + RPC 端到端（docs/04 §P11）
+[[test]]
+name = "report_matrix"
+path = "report_matrix/report_test.rs"
+
+# P11 脚本处理器矩阵：≥15 脚本语料（全命令覆盖/变量/条件/退出码 105~107）
+[[test]]
+name = "script_matrix"
+path = "script_matrix/script_test.rs"
+
 [[test]]
 name = "pb_bench"
 path = "pb_bench.rs"

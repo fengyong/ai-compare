@@ -1,0 +1,4 @@
+text compare report
+左: identical.left  右: identical.right
+统计: 差异块=0 插入行=0 删除行=0 相同行=3 不重要块=0
+差异清单:

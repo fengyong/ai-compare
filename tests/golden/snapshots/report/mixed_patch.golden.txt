@@ -1,0 +1,11 @@
+--- mixed.left
++++ mixed.right
+@@ -1,6 +1,6 @@
+ a
+-b
++X
+ c
+ d
+-e
++Y
+ f

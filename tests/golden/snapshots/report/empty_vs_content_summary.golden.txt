@@ -1,0 +1,6 @@
+text compare report
+左: empty_vs_content.left  右: empty_vs_content.right
+统计: 差异块=1 插入行=2 删除行=0 相同行=0 不重要块=0
+差异清单:
+  [insert] 左 - / 右 1-2
+    > first

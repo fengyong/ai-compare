@@ -173,6 +173,16 @@ pub fn export_all_to_ui() -> Result<usize, Box<dyn std::error::Error>> {
     RulesSetResult::export()?;
     RulesSpec::export()?;
     DetectedFileKind::export()?;
+    // P11 新增（report/generate 布局族 + 能力位 reports）
+    ReportLayout::export()?;
+    ReportDisplayFilter::export()?;
+    ReportDirDisplayFilter::export()?;
+    ReportPatchStyle::export()?;
+    ReportColorMode::export()?;
+    ReportWrapMode::export()?;
+    ReportDirColumns::export()?;
+    ReportGenerateParams::export()?;
+    ReportGenerateResult::export()?;
     crate::error::RpcErrorObject::export()?;
 
     // 2. 拷贝到 UI 侧
@@ -200,7 +210,7 @@ mod tests {
     #[test]
     fn export_ts_bindings() {
         let n = export_all_to_ui().expect("TS 导出失败");
-        assert!(n >= 130, "应导出全部协议类型（P10 起含 formats/rules 全家），实际 {n}");
+        assert!(n >= 139, "应导出全部协议类型（P10 formats/rules + P11 report），实际 {n}");
         let ui_dir = ui_generated_dir();
         assert!(ui_dir.join("DirDelta.ts").exists(), "DirDelta.ts 应存在");
         assert!(ui_dir.join("Section.ts").exists(), "Section.ts 应存在");
@@ -209,5 +219,7 @@ mod tests {
         assert!(ui_dir.join("HexLineDto.ts").exists(), "HexLineDto.ts 应存在");
         assert!(ui_dir.join("FileFormatSpec.ts").exists(), "FileFormatSpec.ts 应存在");
         assert!(ui_dir.join("RulesGetResult.ts").exists(), "RulesGetResult.ts 应存在");
+        assert!(ui_dir.join("ReportGenerateParams.ts").exists(), "ReportGenerateParams.ts 应存在");
+        assert!(ui_dir.join("ReportGenerateResult.ts").exists(), "ReportGenerateResult.ts 应存在");
     }
 }

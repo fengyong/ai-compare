@@ -506,7 +506,7 @@ fn atom_match(a: &Atom, txt: &[char], pos: usize, cs: bool) -> Option<usize> {
             inside != *neg
         }
     };
-    ok.then(|| 1)
+    ok.then_some(1)
 }
 
 fn fold_eq(a: char, b: char, cs: bool) -> bool {
@@ -1134,10 +1134,8 @@ pub fn unimportant_mask(
             if let SyntaxItem::RowTitle { pattern, or_first_line, .. } = item {
                 let is_title = chars.first() == Some(&'\u{c}')
                     || (*or_first_line && line_index == Some(0));
-                if is_title {
-                    if !pattern.is_empty() || *or_first_line {
-                        return UNIMPORTANT_MARK.to_string();
-                    }
+                if is_title && (!pattern.is_empty() || *or_first_line) {
+                    return UNIMPORTANT_MARK.to_string();
                 }
             }
         }
@@ -1216,7 +1214,7 @@ pub fn line_classify(
 /// 内置注册表单例（引擎/CLI 共享，避免每次重建）
 pub fn builtin_registry() -> &'static FormatRegistry {
     static REG: OnceLock<FormatRegistry> = OnceLock::new();
-    REG.get_or_init(|| FormatRegistry::builtin())
+    REG.get_or_init(FormatRegistry::builtin)
 }
 
 // ---------------------------------------------------------------------------

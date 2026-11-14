@@ -41,6 +41,7 @@ pub mod patch;
 pub mod patience;
 pub mod pipeline;
 pub mod progressive;
+pub mod report;
 pub mod rules;
 pub mod sections;
 pub mod table;
@@ -78,6 +79,16 @@ pub use options::{
     DMP_SEMANTIC_EDIT_COST,
 };
 pub use progressive::ProgressiveDiffer;
+pub use report::{
+    civil_from_epoch_ms, default_report_name, expand_template, html_escape, layout_extension,
+    render_report, renderer_for_layout, status_is_diff, status_is_orphan, status_mark, CsvRenderer,
+    DirColumns, DirDisplayFilter, DirReportRow, DirReportStats, DirSnapshot, DisplayFilter,
+    HexSnapshot, HtmlRenderer, InterleavedRenderer, ListRenderer, MergeSnapshot, PatchRenderer,
+    PatchStyle, ReportEntryKind, ReportEntryStatus, ReportError, ReportLayout, ReportNaming,
+    ReportOptions, ReportRenderer, ReportSideInfo, ReportSnapshot, SideBySideRenderer,
+    StatsRenderer, SummaryRenderer, TableSnapshot, TextSnapshot, TreeRenderer, XmlRenderer,
+    ColorMode, WrapMode, DEFAULT_REPORT_CONTEXT,
+};
 pub use sections::{
     build_sections, DiffError, DiffOutput, DiffSummary, Importance, Section, SectionEvent,
     SectionId, SectionKind,

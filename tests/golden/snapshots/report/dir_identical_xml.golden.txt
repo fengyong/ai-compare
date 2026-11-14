@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<report kind="folder" title="dir compare report" left="L" right="R">
+<summary total="1" same="1" contentDiff="0" quickDiff="0" leftOnly="0" rightOnly="0" dirSame="0" dirDiff="0"/>
+<rows>
+  <row path="a.txt" name="a.txt" kind="file" status="same" leftSize="1" leftMtimeMs="1" rightSize="1" rightMtimeMs="1"/>
+</rows>
+</report>

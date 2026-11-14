@@ -1,0 +1,10 @@
+text compare report
+左: mixed.left  右: mixed.right
+统计: 差异块=2 插入行=2 删除行=2 相同行=4 不重要块=0
+差异清单:
+  [change] 左 2-2 / 右 2-2
+    < b
+    > X
+  [change] 左 5-5 / 右 5-5
+    < e
+    > Y

@@ -1,0 +1,12 @@
+--- moves_blocks.left
++++ moves_blocks.right
+@@ -1,7 +1,7 @@
+-1
+-2
+ 3
+ 4
++1
++2
+ 5
+ 6
+ 7

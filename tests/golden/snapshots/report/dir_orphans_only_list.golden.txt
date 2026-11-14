@@ -1,0 +1,3 @@
+dir compare report
+leftOnly	l_orphan/	0	-
+rightOnly	r_orphan.bin	-	8

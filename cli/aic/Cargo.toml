@@ -15,6 +15,11 @@ path = "src/main.rs"
 name = "aicc"
 path = "src/bin/aicc.rs"
 
+# aiscript：脚本处理器独立入口（P11 / FR-SCR；与 aic script run 同引擎）
+[[bin]]
+name = "aiscript"
+path = "src/bin/aiscript.rs"
+
 [lib]
 name = "aic"
 path = "src/lib.rs"

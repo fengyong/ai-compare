@@ -1,0 +1,7 @@
+path,name,kind,status,leftSize,rightSize,leftMtimeMs,rightMtimeMs
+changed.txt,changed.txt,file,contentDiff,20,24,1000,2000
+only_l.txt,only_l.txt,file,leftOnly,5,,1500,
+only_r.txt,only_r.txt,file,rightOnly,,7,,1600
+same.txt,same.txt,file,same,10,10,999,999
+sub,sub,dir,dirDiff,0,0,0,0
+sub/inner.txt,inner.txt,file,contentDiff,9,10,99,100

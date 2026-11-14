@@ -84,6 +84,8 @@ pub mod method {
     pub const FORMATS_LIST: &str = "formats/list";
     /// 文件格式：按 id 覆盖/追加（P10；引擎会话期态，持久化由 UI 负责）
     pub const FORMATS_SAVE: &str = "formats/save";
+    /// 报告生成（P11，FR-RPT：会话快照 + 布局参数 -> 报告字符串或分块流）
+    pub const REPORT_GENERATE: &str = "report/generate";
     /// 文件格式：从文件加载格式集（.bcpack / JSON，P10）
     pub const FORMATS_LOAD: &str = "formats/load";
     /// 规则：读取三层 + 生效解析（P10，FR-SES-006 作用域）

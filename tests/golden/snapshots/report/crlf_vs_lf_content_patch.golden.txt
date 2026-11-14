@@ -1,0 +1,6 @@
+--- crlf_vs_lf_content.left
++++ crlf_vs_lf_content.right
+@@ -1,2 +1,2 @@
+ alpha
+-beta
++gamma

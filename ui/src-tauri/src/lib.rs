@@ -104,12 +104,31 @@ fn engine_start(
     path: Option<String>,
 ) -> Result<EngineStartInfo, String> {
     let mut guard = state.0.lock().map_err(|e| format!("引擎状态锁中毒: {e}"))?;
-    if let Some(p) = guard.as_ref() {
-        return Ok(EngineStartInfo {
-            pid: p.pid,
-            path: p.path.clone(),
-            engine: ENGINE_NAME.to_string(),
-        });
+    if let Some(p) = guard.as_mut() {
+        // 探活（REVIEW P0-1）：子进程已退出（崩溃）则收尸并摘除僵尸条目，
+        // 走正常 spawn 路径——否则崩溃后重连永远拿到死 pid，自动重启不可用。
+        match p.child.try_wait() {
+            Ok(Some(status)) => {
+                eprintln!(
+                    "[engine] 检测到引擎进程已退出（pid={}，status={status}），清理后重新启动",
+                    p.pid
+                );
+                guard.take();
+            }
+            Ok(None) => {
+                // 仍在运行：幂等返回
+                return Ok(EngineStartInfo {
+                    pid: p.pid,
+                    path: p.path.clone(),
+                    engine: ENGINE_NAME.to_string(),
+                });
+            }
+            Err(e) => {
+                // 探活失败（罕见）：按已死处理，避免僵尸条目永久驻留
+                eprintln!("[engine] 探活引擎进程失败（pid={}）: {e}，清理后重新启动", p.pid);
+                guard.take();
+            }
+        }
     }
 
     let resolved = match path {

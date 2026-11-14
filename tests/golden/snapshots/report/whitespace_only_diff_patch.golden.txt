@@ -1,0 +1,6 @@
+--- whitespace_only_diff.left
++++ whitespace_only_diff.right
+@@ -1,2 +1,2 @@
+ int a;
+-int  b;
++int b;

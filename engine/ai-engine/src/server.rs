@@ -39,6 +39,8 @@ pub struct TextSessionData {
     pub right: ai_core::LineTable,
     /// 打开会话时生效的完整配置（骨架选项 + 重要性模型 + 手动对齐）
     pub config: ai_core::DiffConfig,
+    /// P11：两侧标签（打开时的路径原串；report/generate 报告头用）
+    pub labels: (String, String),
     /// 会话内单调递增版本号（重要性重判等模型变更时 +1）
     pub rev: u64,
 }
@@ -77,6 +79,8 @@ pub struct TableSessionData {
     pub model: ai_core::table::TableDiffModel,
     /// 打开会话时生效的选项
     pub options: ai_core::table::TableDiffOptions,
+    /// P11：两侧标签（打开时的路径原串；report/generate 报告头用）
+    pub labels: (String, String),
 }
 
 /// 十六进制比较会话数据（P9，hex/open|bytes）
@@ -94,6 +98,8 @@ pub struct HexSessionData {
     pub status_right: Vec<ai_core::hex::HexByteStatus>,
     /// 打开会话时生效的选项
     pub options: ai_core::hex::HexOptions,
+    /// P11：两侧标签（打开时的路径原串；report/generate 报告头用）
+    pub labels: (String, String),
 }
 
 #[derive(Clone)]
