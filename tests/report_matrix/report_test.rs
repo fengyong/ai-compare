@@ -357,6 +357,31 @@ fn xml_structure_and_escaping() {
     }
 }
 
+/// XML 1.0 的 Char 产生式排除 0x00-0x08/0x0B/0x0C/0x0E-0x1F 与 0xFFFE/0xFFFF；
+/// 这些码点连字符引用都非法，直出会让整份报告无法被任何 XML 解析器读取。
+#[test]
+fn xml_report_strips_illegal_control_chars() {
+    fn legal_xml_char(c: char) -> bool {
+        matches!(c, '\u{9}' | '\u{A}' | '\u{D}' | '\u{20}'..='\u{D7FF}' | '\u{E000}'..='\u{FFFD}' | '\u{10000}'..='\u{10FFFF}')
+    }
+    for (label, a, b) in [
+        ("ctl", "ok\u{1}bad\n", "ok\u{2}worse\n"),
+        ("nul", "a\u{0}b\n", "a\u{8}b\n"),
+        ("noncharacter", "x\u{FFFE}y\n", "x\u{FFFF}y\n"),
+        ("legal_kept", "tab\tlf\n", "cr\r\n"),
+    ] {
+        let snap = ReportSnapshot::Text(text_snapshot(label, a, b));
+        let xml = ai_core::render_report(&snap, &ReportOptions { layout: ReportLayout::Xml, ..Default::default() }).unwrap();
+        let illegal: Vec<String> = xml.chars().filter(|c| !legal_xml_char(*c)).map(|c| format!("U+{:04X}", c as u32)).collect();
+        assert!(illegal.is_empty(), "{label}: XML 含非法码点 {illegal:?}");
+        assert!(!xml.contains('\u{1}') && !xml.contains('\u{2}'), "{label}: 控制字符必须剔除而非直出");
+    }
+    // 合法空白（TAB/LF/CR）不得被误删
+    let snap = ReportSnapshot::Text(text_snapshot("ws", "a\tb\n", "a\tc\r\n"));
+    let xml = ai_core::render_report(&snap, &ReportOptions { layout: ReportLayout::Xml, ..Default::default() }).unwrap();
+    assert!(xml.contains('\t'), "合法 TAB 应保留");
+}
+
 // ---------------------------------------------------------------------------
 // 4) roundtrip：aic diff ≡ patch 布局 -> patch apply 还原
 // ---------------------------------------------------------------------------

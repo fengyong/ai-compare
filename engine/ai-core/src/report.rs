@@ -1599,7 +1599,15 @@ fn html_merge(out: &mut String, s: &MergeSnapshot, _opts: &ReportOptions) {
 pub struct XmlRenderer;
 
 fn xml_escape(s: &str) -> String {
-    html_escape(s)
+    // XML 1.0 的 Char 产生式不含 0x00-0x08/0x0B/0x0C/0x0E-0x1F 与 0xFFFE/0xFFFF，
+    // 且这些码点连 `&#xNN;` 引用都非法 —— 只能剔除，否则整份报告无法被任何 XML 解析器读取。
+    let cleaned: String = s
+        .chars()
+        .filter(|c| {
+            !matches!(c, '\u{0}'..='\u{8}' | '\u{B}' | '\u{C}' | '\u{E}'..='\u{1F}' | '\u{FFFE}' | '\u{FFFF}')
+        })
+        .collect();
+    html_escape(&cleaned)
 }
 
 fn xml_attr_row(row: &DirReportRow, indent: &str, out: &mut String) {
