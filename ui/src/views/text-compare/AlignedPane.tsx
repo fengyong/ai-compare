@@ -11,6 +11,7 @@ import {
   type PaneViewData,
 } from './cmDecorations';
 import type { FoldRange } from './folding';
+import type { BookmarkMap } from './bookmarks';
 
 /**
  * 对齐文本窗格（M32，P5 可编辑态）。
@@ -33,6 +34,8 @@ export interface PaneContentInput {
   /** 语法高亮语言扩展（null = 纯文本） */
   langExtension: Extension | null;
   editable: boolean;
+  /** FR-TXT-023 书签（编号 0-9 → 0 基对齐行号）；可选，缺省无标记 */
+  bookmarks?: BookmarkMap;
 }
 
 export interface AlignedPaneHooks {
@@ -263,5 +266,6 @@ function toViewData(input: PaneContentInput): PaneViewData {
     folds: input.folds,
     findMarks: input.findMarks,
     currentSectionId: input.currentSectionId,
+    bookmarks: input.bookmarks ?? {},
   };
 }

@@ -15,6 +15,7 @@ import { tags as t } from '@lezer/highlight';
 import type { AlignedRow } from './alignment';
 import type { InlineMark } from '../../lib/inlineDiffCore';
 import type { FoldRange } from './folding';
+import type { BookmarkMap } from './bookmarks';
 
 /**
  * CM6 "对齐层"装饰（docs/03 §3.4.3 M32，ADR-008：CM6 为编辑内核、差异布局自研）。
@@ -53,6 +54,8 @@ export interface PaneViewData {
   findMarks: FindMark[];
   /** 当前差异 section id（行侧标） */
   currentSectionId: number | null;
+  /** FR-TXT-023 书签：编号 0-9 → 0 基对齐行号 */
+  bookmarks?: BookmarkMap;
 }
 
 class StatusMarker extends GutterMarker {
@@ -135,9 +138,21 @@ export function buildPaneDecorations(data: PaneViewData, docText: string): Decor
     if (data.currentSectionId !== null && row.sectionId === data.currentSectionId && row.status !== 'equal') {
       classes.push('cm-aic-line-current');
     }
+    // FR-TXT-023：书签编号标记（0-9，行侧显示编号）
+    let slot: number | null = null;
+    const bm = data.bookmarks ?? {};
+    for (let s = 0; s <= 9; s++) {
+      if (bm[s] === i) { slot = s; break; }
+    }
+    if (slot !== null) classes.push('cm-aic-line-bookmark');
     const joined = classes.filter(Boolean).join(' ');
     if (joined) {
-      ranges.push(Decoration.line({ class: joined }).range(line.from));
+      ranges.push(
+        Decoration.line({
+          class: joined,
+          ...(slot !== null ? { attributes: { 'data-bookmark': String(slot) } } : {}),
+        }).range(line.from)
+      );
     }
   }
 

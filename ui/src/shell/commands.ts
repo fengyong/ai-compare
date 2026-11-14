@@ -3,6 +3,7 @@ import type { ViewCtx } from './viewRegistry';
 import { useShell } from './store';
 import { S } from '../strings';
 import { captureClipboard, compareLatestClipboard, comparePathWithClipboard } from './clipboardActions';
+import { activeTextView } from '../views/text-compare/textViewBus';
 
 /**
  * 命令注册表（docs/03 §3.4.2：菜单/工具栏/快捷键统一来源，对齐 SRS 附录 F 命令矩阵）。
@@ -287,6 +288,47 @@ export function registerBuiltinCommands(reg: CommandRegistry): void {
     phaseNote: 'FR-RPT-001/002：报告对话框（布局/布局级选项/输出目标）',
     when: (ctx) => ctx.activeTabKind !== null && ctx.activeTabKind !== 'home',
     run: () => useShell.getState().openReportDialog(),
+  });
+
+  // 队列 6：文本视图命令（FR-TXT-002 自动换行 / FR-TXT-023 书签 0-9）
+  const textWhen = (ctx: CommandContext) => ctx.activeTabKind === 'text';
+  reg.register({
+    id: 'text.toggleWrap',
+    title: '自动换行',
+    category: '视图',
+    when: textWhen,
+    run: () => activeTextView()?.toggleWrap(),
+  });
+  reg.register({
+    id: 'text.toggleBookmark',
+    title: '切换书签（0-9）',
+    category: '视图',
+    defaultKeys: 'Ctrl+F2',
+    when: textWhen,
+    run: () => activeTextView()?.toggleBookmark(),
+  });
+  reg.register({
+    id: 'text.nextBookmark',
+    title: '转到下一个书签',
+    category: '视图',
+    defaultKeys: 'F2',
+    when: textWhen,
+    run: () => activeTextView()?.gotoBookmark(1),
+  });
+  reg.register({
+    id: 'text.prevBookmark',
+    title: '转到上一个书签',
+    category: '视图',
+    defaultKeys: 'Shift+F2',
+    when: textWhen,
+    run: () => activeTextView()?.gotoBookmark(-1),
+  });
+  reg.register({
+    id: 'text.clearBookmarks',
+    title: '清除书签',
+    category: '视图',
+    when: textWhen,
+    run: () => activeTextView()?.clearBookmarks(),
   });
 
   reg.register({

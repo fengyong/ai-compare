@@ -1850,3 +1850,11 @@ input:focus {
 .aic-rpt-error { padding: 4px 12px; color: var(--danger, #e5534b); }
 .aic-rpt-hint { padding: 2px 12px; color: var(--fg-dim, #999); font-size: 11px; }
 
+/* ---- 队列 6：自动换行（FR-TXT-002）与书签（FR-TXT-023） ---- */
+.aic-text.wrap-on .cm-content { white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }
+.aic-text.wrap-on .cm-line { white-space: pre-wrap; overflow-wrap: anywhere; }
+.cm-aic-line-bookmark { position: relative; box-shadow: inset 3px 0 0 #e5c07b; }
+.cm-aic-line-bookmark::before { content: attr(data-bookmark); position: absolute; left: -18px; width: 16px; text-align: center; color: #e5c07b; font-weight: 700; font-size: 11px; }
+.aic-text-bookmarks { display: inline-flex; gap: 2px; }
+.aic-text .nav.mini { min-width: 18px; padding: 0 3px; }
+
