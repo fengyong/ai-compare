@@ -207,3 +207,12 @@
 - 其余排队：队列 4 剪贴板入口（小件）、5 报告对话框、6 书签/自动换行、P13 菜单栏/自动更新、P14 后半（媒体/版本/注册表——需额外引擎工作）
 - 已知遗留：引擎 picture_compare 能力位未入 handler initialize 字面量（已有字段+e2e 通过，补一行 `picture_compare: Some(true)` 即可）、SNAPSHOT 全量格式（P16）、FTPS 验证/SFTP（需真实服务器）
 - 接手指南：读 PROGRESS 本节 + docs/04 队列；接线模式参照 picture-compare/table-compare/hex-compare 三个先例（Tab kind→store→viewRegistry→主页→mock 同形→组件）
+
+## ⏸ 暂停状态 2（2026-11-14 20:5x，额度即将耗尽，用户指令）
+
+**当前断点（接手 AI 从这里继续）：**
+- **迭代队列 3「三向合并 UI 视图」：尚未开工**（仅完成协议形态侦察——generated/ 下 18 个 Merge3*.ts 类型齐全：MergeChunkDto 含三方行内容/冲突类别/子对齐/决策状态/输出行；RPC 四方法 text/merge3/open|sections|decide|output 已在引擎交付）
+- 接手步骤：① engineProcess 加 4 个封装（merge3Open/Sections/Decide/Output，参数形态见 generated/Merge*.ts）② newSessionId 加 'merge3' ③ mockEngine 四方法同形实现（确定性三路演示）④ shellState Tab kind 加 'merge3' + Merge3TabData + slice openMerge3Tab ⑤ Merge3View 组件（块序列着色：stable 灰/leftOnly 蓝/rightOnly 绿/conflict 红/bothChanged 黄；冲突块决策按钮 takeLeft/Right/Base/Manual→decide 批量提交→output 预览）⑥ AppShell 挂载 + viewRegistry 插件 + KIND_META implemented:true + viewRegistry.test 期望序更新 ⑦ 门禁全绿提交
+- 接线模板：picture-compare / table-compare / hex-compare 三个已验收先例（Tab kind→store→registry→主页/mock→组件）
+- 工作树干净（git 73 提交，HEAD=ca3ec89）；引擎 822 + UI 400 全绿
+- **剩余迭代队列**：队列 3 合并 UI（本断点）→ 4 剪贴板入口 → 5 报告对话框 → 6 书签/自动换行 → P13 菜单栏/自动更新 → P14 后半
