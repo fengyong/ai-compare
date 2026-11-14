@@ -339,6 +339,24 @@ export function registerBuiltinCommands(reg: CommandRegistry): void {
     run: () => activeTextView()?.clearBookmarks(),
   });
 
+  // R3-04：文件落盘（FR-TXT-020）。BC 帮助未明示"保存文件"的默认键位，
+  // 此处取 Ctrl+Shift+S（Ctrl+S 已被"保存会话"占用，不改既有键位语义）。
+  reg.register({
+    id: 'text.saveFile',
+    title: '保存文件',
+    category: '会话',
+    defaultKeys: 'Ctrl+Shift+S',
+    when: textWhen,
+    run: () => activeTextView()?.saveFile(),
+  });
+  reg.register({
+    id: 'text.saveFileAs',
+    title: '另存文件为',
+    category: '会话',
+    when: textWhen,
+    run: () => activeTextView()?.saveFileAs(),
+  });
+
   reg.register({
     id: 'text.compareWithClipboard',
     title: '与剪贴板比较',

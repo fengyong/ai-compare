@@ -12,6 +12,10 @@ export interface TextViewActions {
   gotoBookmark(direction: 1 | -1): void;
   clearBookmarks(): void;
   setBookmarkAtCursor(slot: number): void;
+  /** 保存文件（R3-04，FR-TXT-020）：写回所有有未落盘编辑的侧 */
+  saveFile(): void;
+  /** 另存文件为：作用于当前活动窗格侧 */
+  saveFileAs(): void;
 }
 
 interface Registration {

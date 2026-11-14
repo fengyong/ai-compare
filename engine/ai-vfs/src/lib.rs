@@ -329,11 +329,20 @@ pub trait VfsProvider: Send + Sync {
 
     /// 读取并解码为文本：UTF-8 / UTF-8 BOM（BOM 剥离）；P0 不做其他编码检测
     async fn read_file_text(&self, path: &VfsPath) -> Result<String, VfsError> {
+        Ok(self.read_file_text_bom(path).await?.0)
+    }
+
+    /// 同 [`VfsProvider::read_file_text`]，并报告原文件是否带 UTF-8 BOM。
+    /// 保存时需原样写回 BOM，否则文件的编码签名被静默改掉（FR-TXT-013）。
+    async fn read_file_text_bom(&self, path: &VfsPath) -> Result<(String, bool), VfsError> {
         let bytes = self.read_file_bytes(path).await?;
-        let stripped = strip_bom(&bytes);
-        String::from_utf8(stripped.to_vec()).map_err(|_| VfsError::InvalidEncoding {
-            path: path.as_str().to_string(),
-        })
+        let has_bom = bytes.starts_with(UTF8_BOM);
+        let text = String::from_utf8(strip_bom(&bytes).to_vec()).map_err(|_| {
+            VfsError::InvalidEncoding {
+                path: path.as_str().to_string(),
+            }
+        })?;
+        Ok((text, has_bom))
     }
 
     /// 预计算 CRC-32（IEEE）：提供中心目录等预计算元数据的 Provider
@@ -422,7 +431,7 @@ pub trait VfsProvider: Send + Sync {
     }
 }
 
-const UTF8_BOM: &[u8] = &[0xEF, 0xBB, 0xBF];
+pub const UTF8_BOM: &[u8] = &[0xEF, 0xBB, 0xBF];
 
 /// POSIX ENOTDIR（路径中间段被同名文件占据；mkdir_all 冲突归类用）
 const ENOTDIR: i32 = 20;

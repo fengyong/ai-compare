@@ -43,6 +43,9 @@ import type {
   TextLinesResult,
   TextOpenParams,
   TextOpenResult,
+  TextSaveEntry,
+  TextSaveParams,
+  TextSaveResult,
   TextInlineDiffParams,
   TextInlineDiffResult,
   TextSectionsParams,
@@ -124,6 +127,11 @@ interface MockTextSession {
   summary: DiffSummary;
   /** 会话版本号（text/edit 每次成功 +1；与引擎 TextSessionData.rev 同口径） */
   rev: number;
+  /** 两侧当前保存目标（另存为会改指；与引擎 TextSessionData.labels 同口径） */
+  leftPath: string;
+  rightPath: string;
+  /** 未落盘编辑标记（text/edit 置位，text/save 清除） */
+  modified: { left: boolean; right: boolean };
 }
 
 /** P8：mock 三路合并会话（扫描行快照 + 计划/执行的落盘对象） */
@@ -157,6 +165,8 @@ export class MockEngine {
   private sink?: (line: string) => void;
   private readonly dirSessions = new Map<string, MockDirSession>();
   private readonly textSessions = new Map<string, MockTextSession>();
+  /** 演示用文件存储：text/save 的覆盖/备份语义在 mock 下也可推演 */
+  private readonly files = new Map<string, string>();
   private readonly mergeSessions = new Map<string, MockMergeSession>();
   private readonly tableSessions = new Map<string, { seed: number; columns: Array<{ name: string; ty: string; left: number | null; right: number | null }>; rowCount?: number }>();
   private readonly hexSessions = new Map<string, { seed: number; leftSize: number; rightSize: number }>();
@@ -246,6 +256,8 @@ export class MockEngine {
         return { result: this.textLines(params as TextLinesParams), notifications: [] };
       case 'text/edit':
         return { result: this.textEdit(params as TextEditParams), notifications: [] };
+      case 'text/save':
+        return { result: this.textSave(params as TextSaveParams), notifications: [] };
       case 'picture/open':
         return { result: this.pictureOpen(params as PictureOpenParams), notifications: [] };
       case 'hex/open':
@@ -307,6 +319,7 @@ export class MockEngine {
         reports: true,
         // R3-18：text/edit 已同形实现（编辑增量重 diff）
         textEdit: true,
+        textSave: true,
       },
       license: { proUnlocked: true },
     };
@@ -838,7 +851,12 @@ export class MockEngine {
       sections: gen.sections,
       summary,
       rev: 0,
+      leftPath: p.left ?? '',
+      rightPath: p.right ?? '',
+      modified: { left: false, right: false },
     });
+    this.files.set(p.left ?? '', mockTextOf(gen.leftLines));
+    this.files.set(p.right ?? '', mockTextOf(gen.rightLines));
     return {
       sessionId: p.sessionId,
       leftLineCount: gen.leftLines.length,
@@ -898,6 +916,7 @@ export class MockEngine {
     for (const sp of spans) {
       const arr = sp.side === 'left' ? s.leftLines : s.rightLines;
       arr.splice(sp.start, sp.end - sp.start, ...sp.lines);
+      s.modified[sp.side] = true;
     }
     s.sections = toSections(diffLinesOps(s.leftLines, s.rightLines));
     s.summary = summarize(s.sections);
@@ -910,6 +929,57 @@ export class MockEngine {
       sectionCount: s.sections.length,
       summary: s.summary,
       sections: s.sections,
+    };
+  }
+
+  /**
+   * text/save 同形实现（R3-04）：both 只写被编辑过的侧、显式侧无条件写；
+   * 备份缺省开启（目标存在才产生 `.bak`）；另存为改指该侧保存目标。
+   * 与引擎的口径差异：mock 无行尾/BOM 信息，一律按 LF + 末尾换行序列化。
+   */
+  private textSave(p: TextSaveParams): TextSaveResult {
+    const s = this.requireText(p.sessionId);
+    const side = p.side ?? 'both';
+    const sel: [boolean, boolean] =
+      side === 'left'
+        ? [true, false]
+        : side === 'right'
+          ? [false, true]
+          : [s.modified.left, s.modified.right];
+    const backup = p.backup !== false;
+    const saved: TextSaveEntry[] = [];
+    for (const [i, sd] of (['left', 'right'] as const).entries()) {
+      if (!sel[i]) continue;
+      const target =
+        (sd === 'left' ? p.leftPath : p.rightPath) ?? (sd === 'left' ? s.leftPath : s.rightPath);
+      const lines = sd === 'left' ? s.leftLines : s.rightLines;
+      const text = mockTextOf(lines);
+      let backupPath: string | undefined;
+      if (backup) {
+        const orig = this.files.get(target);
+        if (orig !== undefined) {
+          backupPath = `${target}.bak`;
+          this.files.set(backupPath, orig);
+        }
+      }
+      this.files.set(target, text);
+      saved.push({
+        side: sd,
+        path: target,
+        bytes: text.length as unknown as bigint,
+        lineCount: lines.length,
+        ...(backupPath === undefined ? {} : { backupPath }),
+      });
+      s.modified[sd] = false;
+      if (sd === 'left' && p.leftPath !== undefined) s.leftPath = target;
+      if (sd === 'right' && p.rightPath !== undefined) s.rightPath = target;
+    }
+    return {
+      sessionId: s.id,
+      saved,
+      rev: s.rev as unknown as bigint,
+      leftModified: s.modified.left,
+      rightModified: s.modified.right,
     };
   }
 
@@ -2092,6 +2162,11 @@ function buildDirModel(left: string, right: string): DirRow[] {
 function baseName(p: string): string {
   const i = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'));
   return i >= 0 ? p.slice(i + 1) : p;
+}
+
+/** mock 落盘序列化：LF + 末尾换行（空行表 = 空文件） */
+function mockTextOf(lines: readonly string[]): string {
+  return lines.length === 0 ? '' : `${lines.join('\n')}\n`;
 }
 
 // ---------------- 文本对生成（记录式生成，无需跑 LCS） ----------------

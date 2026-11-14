@@ -80,6 +80,11 @@ pub fn export_all_to_ui() -> Result<usize, Box<dyn std::error::Error>> {
     TextEditOp::export()?;
     TextEditParams::export()?;
     TextEditResult::export()?;
+    // R3-04 新增（text/save 编辑内容落盘）
+    TextSaveSide::export()?;
+    TextSaveParams::export()?;
+    TextSaveEntry::export()?;
+    TextSaveResult::export()?;
     // P7 新增（text/merge3/* 三向合并）
     MergeChunkOrigin::export()?;
     MergeConflictKind::export()?;

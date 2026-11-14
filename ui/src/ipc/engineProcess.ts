@@ -40,6 +40,8 @@ import type {
   TextLinesResult,
   TextOpenParams,
   TextOpenResult,
+  TextSaveParams,
+  TextSaveResult,
   TextSectionsParams,
   TextSectionsResult,
 } from '../protocol/types';
@@ -599,6 +601,23 @@ export async function editText(params: TextEditParams): Promise<TextEditResult |
   const c = await getEngineClient();
   try {
     return await c.request<TextEditResult>('text/edit', params, 60_000);
+  } catch (err) {
+    if (isMethodNotFound(err)) return null;
+    throw err;
+  }
+}
+
+/**
+ * text/save：把会话内的编辑落盘（R3-04，FR-TXT-020）。
+ *
+ * 能力位缺失或入口不存在 → null（调用方必须提示"未保存"，不得当成已保存）；
+ * 其余错误抛出（写失败/备份失败必须让用户看见）。
+ */
+export async function saveText(params: TextSaveParams): Promise<TextSaveResult | null> {
+  if (!getEngineCapabilities()?.textSave) return null;
+  const c = await getEngineClient();
+  try {
+    return await c.request<TextSaveResult>('text/save', params, 120_000);
   } catch (err) {
     if (isMethodNotFound(err)) return null;
     throw err;

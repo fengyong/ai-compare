@@ -24,3 +24,20 @@ describe('队列 6：文本视图命令（FR-TXT-002 / FR-TXT-023）', () => {
     expect(when?.({ activeTabKind: null } as never)).toBe(false);
   });
 });
+
+describe('R3-04：文本文件落盘命令（FR-TXT-020）', () => {
+  it('保存/另存命令已注册，键位无冲突且仅文本视图可用', () => {
+    const save = commandRegistry.get('text.saveFile');
+    const saveAs = commandRegistry.get('text.saveFileAs');
+    expect(save).toBeDefined();
+    expect(saveAs).toBeDefined();
+    expect(save?.defaultKeys).toBe('Ctrl+Shift+S');
+    // Ctrl+S 仍属"保存会话"（不改既有键位语义）
+    expect(commandRegistry.get('session.save')?.defaultKeys).toBe('Ctrl+S');
+    expect(commandRegistry.defaultKeyConflicts()).toEqual([]);
+    for (const def of [save, saveAs]) {
+      expect(def?.when?.({ activeTabKind: 'text' } as never)).toBe(true);
+      expect(def?.when?.({ activeTabKind: 'folder' } as never)).toBe(false);
+    }
+  });
+});

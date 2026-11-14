@@ -75,6 +75,7 @@ dependencies = [
  "ai-dir",
  "ai-protocol",
  "ai-vfs",
+ "async-trait",
  "image",
  "serde",
  "serde_json",

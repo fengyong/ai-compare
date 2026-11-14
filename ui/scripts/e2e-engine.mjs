@@ -262,6 +262,120 @@ try {
     `rejected=${wsRejected}`
   );
 
+  // 3c. R3-04：text/save 编辑落盘 —— 真实文件字节级校验（行尾/BOM/备份/另存为）
+  ok(
+    init?.capabilities?.textSave === true,
+    "R3-04 能力位 textSave=true",
+    String(init?.capabilities?.textSave),
+  );
+  const SV = join(dir, "save");
+  mkdirSync(SV, { recursive: true });
+  const svL = join(SV, "l.txt");
+  const svR = join(SV, "r.txt");
+  const svAs = join(SV, "as.txt");
+  const origL = "alpha\r\nbeta\r\ngamma"; // CRLF + 末行无换行
+  const origR = "\uFEFFone\ntwo\n"; // UTF-8 BOM + LF
+  writeFileSync(svL, origL);
+  writeFileSync(svR, origR);
+  await client.request("text/open", {
+    sessionId: "e2e-save-1",
+    left: svL,
+    right: svR,
+    options: null,
+  });
+  const svEdit = await client.request("text/edit", {
+    sessionId: "e2e-save-1",
+    edits: [{ side: "left", start: 1, end: 2, text: "BETA" }],
+  });
+  const svSave = await client.request("text/save", { sessionId: "e2e-save-1" });
+  const svEntry = (svSave?.saved ?? [])[0];
+  ok(
+    svSave?.saved?.length === 1 &&
+      svEntry?.side === "left" &&
+      svEntry?.path === svL,
+    "R3-04 默认 both 只落盘有编辑的一侧",
+    JSON.stringify(svSave?.saved?.map((e) => [e.side, e.path])),
+  );
+  const afterL = readFileSync(svL, "utf8");
+  ok(
+    afterL === "alpha\r\nBETA\r\ngamma",
+    "R3-04 保留 CRLF 与末行无换行",
+    JSON.stringify(afterL),
+  );
+  ok(readFileSync(svR, "utf8") === origR, "R3-04 未编辑侧文件不被触碰");
+  ok(
+    svEntry?.backupPath === `${svL}.bak` &&
+      readFileSync(`${svL}.bak`, "utf8") === origL,
+    "R3-04 默认备份为覆盖前内容",
+    String(svEntry?.backupPath),
+  );
+  ok(
+    svEntry?.bytes === Buffer.byteLength(afterL, "utf8") &&
+      svEntry?.lineCount === 3,
+    "R3-04 回执字节数/行数与落盘一致",
+    `bytes=${svEntry?.bytes} lines=${svEntry?.lineCount}`,
+  );
+  ok(
+    Number(svSave?.rev) === Number(svEdit?.rev) &&
+      svSave?.leftModified === false &&
+      svSave?.rightModified === false,
+    "R3-04 保存不推进 rev 且清除脏标记",
+    `rev=${svSave?.rev} left=${svSave?.leftModified}`,
+  );
+  const svNoop = await client.request("text/save", { sessionId: "e2e-save-1" });
+  ok(
+    svNoop?.saved?.length === 0,
+    "R3-04 无编辑时保存为空操作",
+    String(svNoop?.saved?.length),
+  );
+
+  // 另存为：原文件不动，且会话改指新路径（下一次默认保存不得回写原文件）
+  await client.request("text/edit", {
+    sessionId: "e2e-save-1",
+    edits: [{ side: "left", start: 2, end: 3, text: "GAMMA" }],
+  });
+  const svAsRes = await client.request("text/save", {
+    sessionId: "e2e-save-1",
+    side: "left",
+    leftPath: svAs,
+  });
+  ok(
+    svAsRes?.saved?.[0]?.path === svAs &&
+      readFileSync(svAs, "utf8") === "alpha\r\nBETA\r\nGAMMA" &&
+      readFileSync(svL, "utf8") === afterL,
+    "R3-04 另存为写新路径且原文件不变",
+  );
+  await client.request("text/edit", {
+    sessionId: "e2e-save-1",
+    edits: [{ side: "left", start: 0, end: 1, text: "ALPHA" }],
+  });
+  const svAgain = await client.request("text/save", {
+    sessionId: "e2e-save-1",
+  });
+  ok(
+    svAgain?.saved?.[0]?.path === svAs && readFileSync(svL, "utf8") === afterL,
+    "R3-04 另存为后默认保存改指新路径（不回写原文件）",
+    String(svAgain?.saved?.[0]?.path),
+  );
+
+  // 右侧：显式 side + backup:false → BOM 原样写回、无备份文件
+  await client.request("text/edit", {
+    sessionId: "e2e-save-1",
+    edits: [{ side: "right", start: 0, end: 1, text: "ONE" }],
+  });
+  const svRRes = await client.request("text/save", {
+    sessionId: "e2e-save-1",
+    side: "right",
+    backup: false,
+  });
+  ok(
+    readFileSync(svR, "utf8") === "\uFEFFONE\ntwo\n" &&
+      !existsSync(`${svR}.bak`) &&
+      !svRRes?.saved?.[0]?.backupPath,
+    "R3-04 BOM 原样写回 + backup:false 不产生备份",
+    JSON.stringify(readFileSync(svR, "utf8")),
+  );
+
   // 4. P7：三向文本合并四方法（text/merge3/open|sections|decide|output）
   const m3 = await client.request('text/merge3/open', {
     sessionId: 'e2e-merge3-1',
