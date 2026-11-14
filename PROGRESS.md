@@ -214,4 +214,5 @@
 
 - 「暂停状态 2」登记的迭代队列 3「三向合并 UI 视图」**已完成并验收提交**（步骤 ①~⑦ 全部落地，详见 P14f 事件日志）
 - 相对三个先例新增的接线点：`session/model.ts` 的 `SessionKind`/`SESSION_KINDS`/`KIND_META` 加 `text-merge`（主页大按钮由 registry 驱动）、`SettingsDialog` 的 `Record<SessionKind, string>` 同步补齐、`sliceSessionUi` 保存会话规格覆盖 `merge3`、`cleanupTabEngines` 关闭标签时释放 merge3 会话
+- **队列 3 相对 FR-TMRG 的未闭环项（忠实度后续批次，验收基准仍是 docs/01 的 163 FR）**：FR-TMRG-003 冲突检测配置 UI（X 行窗口/行对齐/偏斜容差/字符级重要性——引擎 `Merge3OptionsSpec` 已备，视图当前传 `options: null`）；FR-TMRG-005「编辑 > 冲突：清除/设置冲突状态」（协议暂无 clear 动作，需引擎补）与输出直接保存为文件路径（现为复制/导出下载）；FR-TMRG-007「与输出比较 >（左/中/右）」打开文本比较会话；FR-TMRG-004 工具栏/菜单式采用命令（现为冲突决策区按钮）
 - **剩余迭代队列**：4 剪贴板入口 → 5 报告对话框 → 6 书签/自动换行 → P13 菜单栏/自动更新 → P14 后半
