@@ -11,6 +11,7 @@ import { PictureCompareView } from '../views/picture-compare/PictureCompareView'
 import { TableCompareView } from '../views/table-compare/TableCompareView';
 import { HexCompareView } from '../views/hex-compare/HexCompareView';
 import { Merge3View } from '../views/merge3/Merge3View';
+import { ClipboardHistoryPanel } from '../views/home/ClipboardHistoryPanel';
 import type { Tab } from './store';
 import { TextCompareView } from '../views/text-compare/TextCompareView';
 import { applyTheme } from '../theme/palette';
@@ -232,6 +233,7 @@ export function AppShell() {
       <CloseGuardDialog />
       <SaveAsDialog />
       <PromptDialog />
+      <ClipboardHistoryPanel />
     </div>
   );
 }

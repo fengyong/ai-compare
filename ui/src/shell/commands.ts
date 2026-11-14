@@ -1,6 +1,8 @@
 import { DEFAULT_BINDINGS, findConflicts, parseBinding, type BindingConflict } from './shortcuts';
 import type { ViewCtx } from './viewRegistry';
 import { useShell } from './store';
+import { S } from '../strings';
+import { captureClipboard, compareLatestClipboard, comparePathWithClipboard } from './clipboardActions';
 
 /**
  * 命令注册表（docs/03 §3.4.2：菜单/工具栏/快捷键统一来源，对齐 SRS 附录 F 命令矩阵）。
@@ -263,14 +265,37 @@ export function registerBuiltinCommands(reg: CommandRegistry): void {
     title: '剪贴板比较（最近两条内容）',
     category: '工具',
     defaultKeys: 'Ctrl+Alt+C',
-    phaseNote: '剪贴板比较视图属 P9',
+    phaseNote: 'FR-CLIP-002：最近两条剪贴板历史在新文本比较中打开',
     run: async (ctx) => {
-      try {
-        const text = await ctx.clipboard.readText();
-        ctx.notice(text ? '剪贴板比较视图属 P9（已读取剪贴板内容）' : '剪贴板为空');
-      } catch {
-        ctx.notice('剪贴板不可读（浏览器权限）');
+      await captureClipboard(ctx.clipboard);
+      await compareLatestClipboard(ctx.notice);
+    },
+  });
+
+  reg.register({
+    id: 'app.clipboardHistory',
+    title: '剪贴板历史',
+    category: '工具',
+    phaseNote: 'FR-CLIP-001：最近条目列表 + 另存/删除/比较/文本编辑打开',
+    run: () => useShell.getState().toggleClipboardPanel(),
+  });
+
+  reg.register({
+    id: 'text.compareWithClipboard',
+    title: '与剪贴板比较',
+    category: '视图',
+    phaseNote: 'FR-CLIP-004：当前文本会话左侧文件与剪贴板文本比较',
+    when: (ctx) => ctx.activeTabKind === 'text',
+    run: async (ctx) => {
+      const st = useShell.getState();
+      const win = st.windows.find((w) => w.id === st.activeWindowId);
+      const tab = win?.tabs.find((t) => t.id === win.activeTabId);
+      const left = tab?.text?.left.path;
+      if (!left) {
+        ctx.notice(S.clip.noLeftFile);
+        return;
       }
+      await comparePathWithClipboard(left, ctx.clipboard, ctx.notice);
     },
   });
 }

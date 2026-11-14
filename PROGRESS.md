@@ -187,17 +187,18 @@
 | 主页/会话树/设置框架/快捷键引擎 | ✅ P4/P10 | 菜单栏/工具栏 UI（P13）、命令面板 |
 | 编码切换 | ✅ P5 | 引擎侧非 UTF-8 解码（P10 编码检测链） |
 | 桌面壳 | ✅ 打包可用 | 自动更新、安装程序（P13） |
-| 剪贴板比较 | ⚠️ 半 | UI 入口（text 会话带剪贴板路径即可，小件） |
+| 剪贴板比较 | ✅ 队列 4 | 系统托盘常驻、全局快捷键注册、FR-CLIP-003 选项页（Web 内以面板/命令替代，见末尾最新状态节） |
 | 版本比较（exe/dll 资源） | ✗ | P14 后半（Windows-only 优先级低） |
 | 注册表比较 | ✗ | P14 后半（Windows-only） |
 | 媒体比较（MP3/音频） | ✗ | P14 后半（需音频解码） |
 
 ## 迭代队列（BC 忠实度驱动）
-1. **表格比较 UI 视图**（table RPC 已有）✅ → 2. **Hex UI 视图** ✅ → 3. **三向合并 UI 视图** ✅ → **4. 剪贴板比较入口（下一项，小件）** → 5. 报告对话框 → 6. 文本书签/自动换行 → 7. 图片闪烁/缩放同步 → 8. P13 菜单栏/工具栏/自动更新 → 9. P14 后半（媒体/版本/注册表）
+1. **表格比较 UI 视图**（table RPC 已有）✅ → 2. **Hex UI 视图** ✅ → 3. **三向合并 UI 视图** ✅ → 4. **剪贴板比较入口** ✅ → **5. 报告对话框（下一项）** → 6. 文本书签/自动换行 → 7. 图片闪烁/缩放同步 → 8. P13 菜单栏/工具栏/自动更新 → 9. P14 后半（媒体/版本/注册表）
 
 - 2026-11-14 20:1x：**P14d 表格比较视图交付**：TableCompareView（比较列网格/沟槽点 BC 语义/单元格着色/滚动分页/统计栏）+ mock table 同形 + 全接线（Tab/主页/registry/CommandContext）+ 图片/表格双视图 CSS；**迭代队列 1 完成**（队列 2：Hex UI 视图）；UI 400 全绿、e2e 过；git 72 提交
 - 2026-11-14 20:3x：**P14e 十六进制比较视图交付**：HexCompareView（左右双栏 16B 行+ASCII 侧栏+逐字节状态着色+滚动分页+0x 偏移跳转+统计栏）+ mock hex/open|bytes 同形（bigint offset 适配）+ 全接线（Tab hex kind/openHexTab/viewRegistry/主页/CommandContext 联合）；**迭代队列 2 完成**；UI 400+引擎 822+clippy 零警+e2e 全过；git 73 提交
 - 2026-11-14 20:4x：**P14f 三向合并视图交付 / 迭代队列 3 完成**：Merge3View（三源窗格含可隐藏的中间公共祖先窗格 + 块序列按 FR-TMRG-002 着色 + 显示过滤器五项组合语义 + 冲突块六动作采用族与批量 decide + plain/marker 输出预览/复制/导出 + 合并统计）+ 全接线（Tab `merge3` kind/Merge3TabData/openMerge3Tab/viewRegistry `text-merge` 插件/KIND_META/主页三路输入与拖放/CommandContext/mock 四方法同形）；**顺带修复 P14e 期间 `picture/open` 落穿 `hexOpen` 的 mock dispatch 回归**；**修复真实引擎空区间省略行内容字段导致的视图崩溃风险**（`paneLines` 兜底 + 回归测试）；e2e:engine 新增 merge3 四方法链路（open→sections→decide 幂等→output marker/plain）；引擎 **822/0** + UI **419**（+19）+ clippy `-D warnings` 零警 + e2e + build/lint 全绿；git 88 提交
+- 2026-11-14 20:3x：**P14g 剪贴板比较入口交付 / 迭代队列 4 完成**：`clipboard://N` 规格（FR-CLIP-004）+ 剪贴板历史（相邻去重/最小长度/条数与 MB 上限且至少保留最近两条，FR-CLIP-003）+ `Ctrl+Alt+C` 比较最近两条（FR-CLIP-002，占位命令替换为真实实现）+ 历史面板（列表/另存为/删除/与相邻条目比较/用文本编辑打开，FR-CLIP-001）+ 文本会话「与剪贴板比较」命令 + 主页入口；**复用既有 Tauri `settings_write` 把剪贴板文本物化为临时文件**，未改 Rust 协议面；mock `text/open` 读同一历史单例使浏览器演示即真实剪贴板内容；新增 `ClipboardHistoryPanel` / `clipboardActions` / `clipboardStore` 与 15 个测试；引擎 822/0 + UI **434**（+15）+ clippy 零警 + e2e + build/lint 全绿
 
 ## ⚠️ 额度紧张交接节点（2026-11-14 20:4x；队列 3 已完成）
 
@@ -227,3 +228,10 @@
 - **调度粒度限制（如实登记）**：IDE automation 的 RRULE 仅支持 HOURLY/DAILY/WEEKLY，实测 `BYMINUTE=0,10,20,30,40,50` 与多值 `BYHOUR` 均不展开（`nextRunAt` 恒为创建时间 +1h 或固定日边界），故 **10 分钟检查由本地守护承担，AI 自动继续最长有 1 小时接续延迟**；若后续 IDE 支持 minutely，可把 automation 改为 `FREQ=MINUTELY;INTERVAL=10` 并退役本地守护。
 - 纪律：看门狗禁止 `git merge` 其它分支、禁止 force push、禁止 push（用户只授权 commit）；异常接手后仍须门禁全绿才提交；每轮巡检结论追加到本文件并单独提交。
 - 停止：`kill "$(cat target/watchdog/pid)"`；重启：先 kill 再按上面的 nohup 命令拉起。
+
+## 最新状态（2026-11-14 20:3x；覆盖上文交接节点的旧数字）
+
+- 现场：工作树干净、全部门禁全绿 —— 引擎 **822/0**、UI **434/0**、clippy `-D warnings` 零警、`pnpm e2e:engine`（含 merge3 四方法链路）、`pnpm build`、`pnpm lint`；看门狗守护存活（10 分钟心跳 + 每小时 AI 接手）。
+- 迭代队列：**1/2/3/4 已完成**；**队列 5（下一接手项）：报告对话框 UI**（消费 P11 `report/generate`，输出目标 printer / clipboard / 文件，10 布局与 display-* 标志，见 docs/01 §3.9 / §4.7）；后续 6 书签·自动换行、7 图片闪烁·缩放同步、P13 菜单栏·自动更新、P14 后半。
+- **队列 4 相对 FR-CLIP 的未闭环项（忠实度后续批次）**：FR-CLIP-001 系统托盘常驻与后台自动监视剪贴板（Web 内为手动「捕获当前剪贴板」+ 历史面板）；FR-CLIP-002 全局快捷键注册（当前为应用内 `Ctrl+Alt+C`）；FR-CLIP-003 选项页（启动运行/键位开关/格式掩码/最小长度/条数与 MB 上限，当前为代码默认值 `DEFAULT_CLIP_LIMITS`）；FR-CLIP-004「文件 > 从剪贴板打开」直接加载到选定窗格（当前为与当前会话左文件新开文本比较）、「编辑 > 将选择与剪贴板比较」（当前无编辑器选区注入）、命令行 `clipboard://` 规格（当前仅 UI 内部使用，引擎 VFS 未注册该 scheme）。
+- 上文「⚠️ 额度紧张交接节点」的门禁数字（UI 400/419）与「下一接手项 = 队列 3」为历史快照，以本节为准。

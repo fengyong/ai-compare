@@ -69,6 +69,8 @@ import type {
 } from '../protocol/types';
 import type { InlineSpanDto } from '../protocol/generated/InlineSpanDto';
 import { wordDiff } from '../lib/inlineDiffCore';
+import { diffLinesOps, toSections } from '../lib/lineDiffCore';
+import { clipboardStore, parseClipSpec } from '../lib/clipboardStore';
 import { hashString, mulberry32 } from '../lib/env';
 import { applyDisplayToRows, fileAllowedBySpec, SHOW_ALL_DISPLAY_FILTER, wildcardMatch } from '../views/folder-compare/dirFilters';
 import { parentOf } from '../views/folder-compare/dirTree';
@@ -779,7 +781,17 @@ export class MockEngine {
       throw new RpcErr(CODE.SESSION_EXISTS, `会话已存在: ${p.sessionId}`);
     }
     const seed = baseName(p.left ?? '') || baseName(p.right ?? '') || 'file';
-    const gen = genTextPair(seed);
+    // 队列 4：clipboard://N 规格（FR-CLIP-004）在 mock 下直接取剪贴板历史文本，
+    // 使浏览器 dev 的演示数据与真实剪贴板内容一致（Tauri 侧已物化为临时文件）。
+    const leftSpec = parseClipSpec(p.left ?? '');
+    const rightSpec = parseClipSpec(p.right ?? '');
+    const gen: { leftLines: string[]; rightLines: string[]; sections: Section[] } =
+      leftSpec !== null || rightSpec !== null
+        ? genTextPairFromClipboard(
+            leftSpec !== null ? clipboardStore.getText(leftSpec) ?? '' : '',
+            rightSpec !== null ? clipboardStore.getText(rightSpec) ?? '' : ''
+          )
+        : genTextPair(seed);
     const summary = summarize(gen.sections);
     this.textSessions.set(p.sessionId, {
       id: p.sessionId,
@@ -2237,4 +2249,27 @@ function deriveMergeChunk(t: Merge3Template, decisions: Map<number, MergeDecisio
     unresolved: t.origin === 'conflict' && d === undefined && !t.autoResolved,
     outputLines: d ? merge3OutputForDecision(t, d) : [...t.defaultOutput],
   };
+}
+
+// ==================================================================
+// 队列 4：剪贴板规格 text/open 的演示数据（FR-CLIP-002/004）
+// ==================================================================
+
+/** 与引擎 LineTable::from_text 同口径：结尾换行不产生空行，去掉行尾 \r */
+function splitClipText(text: string): string[] {
+  if (text === '') return [];
+  const parts = text.split('\n');
+  if (parts[parts.length - 1] === '') parts.pop();
+  return parts.map((l) => (l.endsWith('\r') ? l.slice(0, -1) : l));
+}
+
+/** 两侧剪贴板文本 → 行表 + 差异段（复用 P1 行 diff 的 UI 侧同形实现） */
+function genTextPairFromClipboard(left: string, right: string): {
+  leftLines: string[];
+  rightLines: string[];
+  sections: Section[];
+} {
+  const leftLines = splitClipText(left);
+  const rightLines = splitClipText(right);
+  return { leftLines, rightLines, sections: toSections(diffLinesOps(leftLines, rightLines)) };
 }

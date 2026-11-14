@@ -1812,3 +1812,19 @@ input:focus {
 .aic-m3-warn { padding: 2px 12px; color: #e5c07b; }
 .aic-m3-output-text { flex: 1; overflow: auto; margin: 0; padding: 6px 12px; font-family: var(--mono, monospace); font-size: 12px; white-space: pre; background: var(--editor-bg, #1e2126); color: var(--fg, #ddd); }
 
+/* ---- 队列 4：剪贴板历史面板（FR-CLIP-001） ---- */
+.aic-clip-backdrop { position: fixed; inset: 0; z-index: 60; background: rgba(0, 0, 0, 0.45); display: flex; align-items: center; justify-content: center; }
+.aic-clip-panel { width: min(920px, 92vw); max-height: 78vh; display: flex; flex-direction: column; background: var(--bg-panel, #23262b); border: 1px solid var(--border, #333); border-radius: 6px; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5); }
+.aic-clip-head { display: flex; align-items: center; gap: 12px; padding: 8px 12px; border-bottom: 1px solid var(--border, #333); font-weight: 600; }
+.aic-clip-head button { margin-left: auto; }
+.aic-clip-count { color: var(--fg-dim, #999); font-weight: 400; }
+.aic-clip-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 6px 12px; border-bottom: 1px solid var(--border, #333); }
+.aic-clip-hint { color: var(--fg-dim, #999); font-size: 11px; margin-left: auto; }
+.aic-clip-list { flex: 1; overflow: auto; }
+.aic-clip-empty { padding: 24px; text-align: center; color: var(--fg-dim, #999); }
+.aic-clip-row { display: flex; align-items: center; gap: 8px; padding: 4px 12px; border-bottom: 1px solid var(--row-border, #2a2a2a); }
+.aic-clip-id { width: 46px; color: var(--fg-dim, #999); font-family: var(--mono, monospace); }
+.aic-clip-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono, monospace); }
+.aic-clip-time { width: 150px; color: var(--fg-dim, #999); font-size: 11px; }
+.aic-clip-row button { padding: 1px 6px; font-size: 11px; }
+

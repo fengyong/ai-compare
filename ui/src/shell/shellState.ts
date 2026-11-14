@@ -216,6 +216,9 @@ export interface UiSlice {
   prompt: PromptDialogState | null;
   openPrompt(init: PromptDialogState): void;
   resolvePrompt(value: string | null): void;
+  /** 队列 4：剪贴板历史面板（FR-CLIP-001） */
+  clipboardPanelOpen: boolean;
+  toggleClipboardPanel(open?: boolean): void;
 }
 
 export type ShellStore = WindowsSlice & TabsSlice & SessionSlice & UiSlice;

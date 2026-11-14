@@ -3,6 +3,7 @@ import { MockEngine } from './mockEngine';
 import { MockTransport } from './mockTransport';
 import { RpcClient } from '../protocol/client';
 import type { DirDelta } from '../protocol/types';
+import { clipboardStore } from '../lib/clipboardStore';
 
 /**
  * MockEngine 与真实 ai-engine P0 方法集对齐后的协议面集成测试：
@@ -172,6 +173,29 @@ describe('MockEngine P0 协议面', () => {
     });
     expect(hex.leftSize).toBeGreaterThan(0);
     expect(hex.blockCount).toBeGreaterThan(0);
+    await client.close();
+  });
+
+  it('text/open 的 clipboard:// 规格取剪贴板历史文本（FR-CLIP-002 mock 同形）', async () => {
+    const client = await newClient();
+    const leftSpec = clipboardStore.registerText('alpha\nshared\n');
+    const rightSpec = clipboardStore.registerText('beta\nshared\n');
+    const r = await client.request<{ leftLineCount: number; rightLineCount: number }>('text/open', {
+      sessionId: 'clip-mock-1',
+      left: leftSpec,
+      right: rightSpec,
+      options: null,
+    });
+    expect(r.leftLineCount).toBe(2);
+    expect(r.rightLineCount).toBe(2);
+    const left = await client.request<{ lines: string[] }>('text/lines', {
+      sessionId: 'clip-mock-1', side: 'left', start: 0, count: 10,
+    });
+    const right = await client.request<{ lines: string[] }>('text/lines', {
+      sessionId: 'clip-mock-1', side: 'right', start: 0, count: 10,
+    });
+    expect(left.lines).toEqual(['alpha', 'shared']);
+    expect(right.lines).toEqual(['beta', 'shared']);
     await client.close();
   });
 });
