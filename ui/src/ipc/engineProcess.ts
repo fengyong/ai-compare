@@ -119,7 +119,7 @@ export function getEngineCapabilities(): EngineCapabilities | null {
 }
 
 /** 生成引擎侧会话句柄（客户端分配；前缀便于日志排查） */
-export function newSessionId(kind: 'dir' | 'text' | 'merge' | 'picture'): string {
+export function newSessionId(kind: 'dir' | 'text' | 'merge' | 'picture' | 'table'): string {
   const rand =
     typeof crypto !== 'undefined' && 'randomUUID' in crypto
       ? crypto.randomUUID().slice(0, 8)
@@ -332,6 +332,52 @@ export async function executeOperations(params: DirExecuteParams): Promise<DirEx
 // ==================================================================
 // P14：图片比较方法集（picture/open；块清单全量返回）
 // ==================================================================
+
+export async function openTable(params: {
+  sessionId: string;
+  left: string;
+  right: string;
+  options?: {
+    delimiter?: string;
+    hasHeader?: boolean;
+    keyColumns?: number[];
+    columnAlign?: string;
+    rowAlign?: string;
+    skewTolerance?: number;
+    caseUnimportant?: boolean;
+  } | null;
+}): Promise<{
+  sessionId: string;
+  rowCount: number;
+  leftRowCount: number;
+  rightRowCount: number;
+  columns: Array<{ name: string; ty: string; left: number | null; right: number | null }>;
+  summary: { sameRows: number; changedRows: number; addedRows: number; removedRows: number; unimportantRows: number };
+}> {
+  const c = await getEngineClient();
+  return c.request('table/open', params, 60_000);
+}
+
+export async function tableSections(params: {
+  sessionId: string;
+  offset: number;
+  count: number;
+}): Promise<{
+  sessionId: string;
+  offset: number;
+  rowCount: number;
+  hasMore: boolean;
+  rows: Array<{
+    kind: 'same' | 'changed' | 'added' | 'removed';
+    left: number | null;
+    right: number | null;
+    important: boolean;
+    cells: Array<{ left: string | null; right: string | null; status: string }>;
+  }>;
+}> {
+  const c = await getEngineClient();
+  return c.request('table/sections', params, 60_000);
+}
 
 export async function openPicture(params: {
   sessionId: string;

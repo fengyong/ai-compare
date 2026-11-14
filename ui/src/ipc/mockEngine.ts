@@ -46,6 +46,8 @@ import type {
   TextSectionsParams,
   TextSectionsResult,
   PictureOpenParams,
+  TableOpenParams,
+  TableSectionsParams,
 } from '../protocol/types';
 import type { InlineSpanDto } from '../protocol/generated/InlineSpanDto';
 import { wordDiff } from '../lib/inlineDiffCore';
@@ -127,6 +129,7 @@ export class MockEngine {
   private readonly dirSessions = new Map<string, MockDirSession>();
   private readonly textSessions = new Map<string, MockTextSession>();
   private readonly mergeSessions = new Map<string, MockMergeSession>();
+  private readonly tableSessions = new Map<string, { seed: number; columns: Array<{ name: string; ty: string; left: number | null; right: number | null }>; rowCount?: number }>();
   /** dir/filter 差分基线（会话 id -> 上次发出的行 id 集） */
   private readonly lastIds = new Map<string, string[]>();
   private disposed = false;
@@ -210,6 +213,10 @@ export class MockEngine {
       case 'text/lines':
         return { result: this.textLines(params as TextLinesParams), notifications: [] };
       case 'picture/open':
+      case 'table/open':
+        return { result: this.tableOpen(params as TableOpenParams), notifications: [] };
+      case 'table/sections':
+        return { result: this.tableSections(params as TableSectionsParams), notifications: [] };
         return { result: this.pictureOpen(params as PictureOpenParams), notifications: [] };
       case 'text/inlineDiff':
         return { result: this.textInlineDiff(params as TextInlineDiffParams), notifications: [] };
@@ -881,6 +888,123 @@ export class MockEngine {
       truncated: false,
     };
     void tolerance;
+  }
+
+  /** P14：表格比较演示（确定性 CSV 演示数据；与引擎 table/open|sections 同形） */
+  private tableOpen(p: TableOpenParams): {
+    sessionId: string;
+    rowCount: number;
+    leftRowCount: number;
+    rightRowCount: number;
+    columns: Array<{ name: string; ty: string; left: number | null; right: number | null }>;
+    summary: { sameRows: number; changedRows: number; addedRows: number; removedRows: number; unimportantRows: number };
+  } {
+    if (!p || typeof p.sessionId !== 'string' || p.sessionId === '') {
+      throw new InvalidParams('sessionId 不能为空');
+    }
+    if (this.dirSessions.has(p.sessionId) || this.textSessions.has(p.sessionId)) {
+      throw new RpcErr(CODE.SESSION_EXISTS, `会话已存在: ${p.sessionId}`);
+    }
+    const seed = (p.left ?? '').length + (p.right ?? '').length;
+    const columns = [
+      { name: 'ID', ty: 'number', left: 0, right: 0 },
+      { name: '名称', ty: 'text', left: 1, right: 1 },
+      { name: '数量', ty: 'number', left: 2, right: 2 },
+    ];
+    this.tableSessions.set(p.sessionId, { seed, columns });
+    void columns;
+    const rowCount = 40 + (seed % 5) * 8;
+    this.tableSessions.set(p.sessionId, { seed, columns, rowCount });
+    const leftRowCount = rowCount;
+    const rightRowCount = rowCount + (seed % 3);
+    return {
+      sessionId: p.sessionId,
+      rowCount,
+      leftRowCount,
+      rightRowCount,
+      columns: this.tableOpenColumns(p.sessionId),
+      summary: {
+        sameRows: Math.floor(rowCount * 0.6),
+        changedRows: Math.floor(rowCount * 0.15),
+        addedRows: Math.floor(rowCount * 0.1),
+        removedRows: Math.floor(rowCount * 0.1),
+        unimportantRows: Math.floor(rowCount * 0.05),
+      },
+    };
+  }
+
+  private tableOpenColumns(sessionId: string): Array<{ name: string; ty: string; left: number | null; right: number | null }> {
+    return this.tableSessions.get(sessionId)?.columns ?? [
+      { name: 'ID', ty: 'number', left: 0, right: 0 },
+      { name: '名称', ty: 'text', left: 1, right: 1 },
+      { name: '数量', ty: 'number', left: 2, right: 2 },
+    ];
+  }
+
+  private tableSections(p: TableSectionsParams): {
+    sessionId: string;
+    offset: number;
+    rowCount: number;
+    hasMore: boolean;
+    rows: Array<{
+      kind: string;
+      left: number | null;
+      right: number | null;
+      important: boolean;
+      cells: Array<{ left: string | null; right: string | null; status: string }>;
+    }>;
+  } {
+    const meta = this.tableSessions.get(p.sessionId);
+    if (!meta) {
+      throw new RpcErr(CODE.SESSION_NOT_FOUND, `会话不存在: ${p.sessionId}`);
+    }
+    const seed = meta.seed;
+    const rowCount = meta.rowCount ?? 40;
+    let rnd = (seed * 40503) % 2147483648 || 1;
+    const rows: Array<{
+      kind: string;
+      left: number | null;
+      right: number | null;
+      important: boolean;
+      cells: Array<{ left: string | null; right: string | null; status: string }>;
+    }> = [];
+    const start = Math.max(0, Math.min(p.offset, rowCount));
+    const end = Math.min(start + Math.max(0, p.count), rowCount);
+    for (let i = start; i < end; i++) {
+      rnd = (rnd * 1103515245 + 12345) % 2147483648;
+      const bucket = rnd % 10;
+      const kind = bucket < 6 ? 'same' : bucket < 8 ? 'changed' : bucket < 9 ? 'added' : 'removed';
+      const id = String(i + 1);
+      const name = `项目-${i + 1}`;
+      const qtyL = String(10 + ((rnd >> 3) % 90));
+      const qtyR = String(10 + ((rnd >> 5) % 90));
+      const important = bucket >= 6;
+      rows.push({
+        kind,
+        left: kind === 'added' ? null : i,
+        right: kind === 'removed' ? null : i,
+        important,
+        cells: [
+          { left: id, right: id, status: 'same' },
+          { left: name, right: name, status: 'same' },
+          {
+            left: kind === 'added' ? null : qtyL,
+            right: kind === 'removed' ? null : qtyR,
+            status:
+              kind === 'same'
+                ? 'same'
+                : kind === 'added'
+                  ? 'rightOnly'
+                  : kind === 'removed'
+                    ? 'leftOnly'
+                    : qtyL === qtyR
+                      ? 'unimportantDiff'
+                      : 'importantDiff',
+          },
+        ],
+      });
+    }
+    return { sessionId: p.sessionId, offset: start, rowCount, hasMore: end < rowCount, rows };
   }
 
   private sessionClose(p: SessionCloseParams): null {

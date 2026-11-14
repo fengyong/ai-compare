@@ -8,6 +8,7 @@ import { FolderCompareView } from '../views/folder-compare/FolderCompareView';
 import { FolderSyncView } from '../views/folder-sync/FolderSyncView';
 import { FolderMergeView } from '../views/folder-merge/FolderMergeView';
 import { PictureCompareView } from '../views/picture-compare/PictureCompareView';
+import { TableCompareView } from '../views/table-compare/TableCompareView';
 import type { Tab } from './store';
 import { TextCompareView } from '../views/text-compare/TextCompareView';
 import { applyTheme } from '../theme/palette';
@@ -171,6 +172,9 @@ export function AppShell() {
         {activeTab?.kind === 'merge' && activeTab.merge && <FolderMergeView key={activeTab.id} tab={activeTab} />}
         {activeTab?.kind === 'picture' && activeTab.picture && (
           <PictureCompareView key={activeTab.id} tab={activeTab as Tab & { kind: 'picture'; picture: { left: string; right: string; sessionId: string } }} />
+        )}
+        {activeTab?.kind === 'table' && activeTab.table && (
+          <TableCompareView key={activeTab.id} tab={activeTab as Tab & { kind: 'table'; table: { left: string; right: string; sessionId: string } }} />
         )}
       </div>
 
