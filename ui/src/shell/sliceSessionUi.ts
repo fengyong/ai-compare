@@ -5,10 +5,16 @@ import { S } from '../strings';
 import type { SessionSlice, ShellStore, Tab } from './shellState';
 import { sessionIdOfTab } from '../views/report/reportModel';
 import { nextToolbarLayout } from './menuModel';
+import { closeGuardKind, firstPendingGuard, remainingSides } from './closeGuard';
+import { applySavedEntries, runTextSave, saveRequestsFor } from '../views/text-compare/textSave';
+import { getTextSession } from '../views/text-compare/textModel';
+import * as engine from '../ipc/engineProcess';
 
 /** 会话 slice（SES-001~006）：打开已保存会话 / 保存 / 另存 / 锁定 / 关闭确认 */
 export const createSessionSlice: StateCreator<ShellStore, [], [], SessionSlice> = (set, get) => ({
   closeGuard: null,
+  pendingClose: null,
+  exitHandler: null,
   saveAsPrompt: null,
 
   /** 从会话树打开已保存会话（SES-005「加载会话」从主页树打开） */
@@ -160,6 +166,17 @@ export const createSessionSlice: StateCreator<ShellStore, [], [], SessionSlice> 
     }));
   },
 
+  markContentDirty(tabId, sides) {
+    const cur = get().findTab(tabId)?.tab.contentDirty;
+    if (cur && cur.left === sides.left && cur.right === sides.right) return;
+    set((st) => ({
+      windows: st.windows.map((w) => ({
+        ...w,
+        tabs: w.tabs.map((t) => (t.id === tabId ? { ...t, contentDirty: { ...sides } } : t)),
+      })),
+    }));
+  },
+
   /** 交换左右路径（BC 会话命令；演示脏标记 → 关闭确认 → 保存闭环） */
   swapSides(tabId) {
     set((st) => ({
@@ -179,23 +196,90 @@ export const createSessionSlice: StateCreator<ShellStore, [], [], SessionSlice> 
     }));
   },
 
-  /** 关闭确认（FR-SES-001：修改命名会话后退出提示保存） */
+  /**
+   * 关闭确认（FR-SES-001 命名会话参数 + R3-05/FR-TXT-020 未落盘文件编辑）。
+   *
+   * 批量动作（关闭窗口 / 关闭其他 / 退出）经 pendingClose 续跑：确认一次只处理
+   * 一个标签，处理完回到批量入口重新扫描，直到没有待守卫项才真正执行。
+   */
   async resolveCloseGuard(choice) {
     const guard = get().closeGuard;
     if (!guard) return;
-    const { tabId } = guard;
+    const { tabId, kind } = guard;
     if (choice === 'cancel') {
-      set({ closeGuard: null });
+      set({ closeGuard: null, pendingClose: null });
       return;
     }
     if (choice === 'save') {
-      // 保存失败（如锁定被拒）时按丢弃语义继续关闭：锁定会话本就不保存状态
-      await get().saveSessionForTab(tabId);
+      if (kind === 'content') {
+        const landed = await get().saveContentForTab(tabId);
+        // 落盘失败/引擎不支持：保留标签与编辑，不静默丢弃（用户可显式选"不保存关闭"）
+        if (!landed) {
+          set({ closeGuard: null, pendingClose: null });
+          return;
+        }
+        const tab = get().findTab(tabId)?.tab;
+        if (tab && closeGuardKind(tab) === 'session') {
+          set({ closeGuard: { tabId, kind: 'session' } });
+          return;
+        }
+      } else {
+        // 保存失败（如锁定被拒）时按丢弃语义继续关闭：锁定会话本就不保存状态
+        await get().saveSessionForTab(tabId);
+      }
     }
     set({ closeGuard: null });
     get().markDirty(tabId, false);
+    get().markContentDirty(tabId, { left: false, right: false });
+    const cont = get().pendingClose;
+    if (cont?.kind === 'exit') {
+      await get().requestAppExit();
+      return;
+    }
+    if (cont?.kind === 'window') {
+      await get().closeWindow(cont.windowId);
+      return;
+    }
+    if (cont?.kind === 'others') {
+      await get().closeOthers(cont.tabId);
+      return;
+    }
     await get().closeTab(tabId);
     set({ closeGuard: null });
+  },
+
+  async saveContentForTab(tabId) {
+    const tab = get().findTab(tabId)?.tab;
+    const sessionId = tab?.text?.sessionId;
+    const dirty = tab?.contentDirty;
+    if (!tab || !sessionId || !dirty) return true;
+    const out = await runTextSave(sessionId, saveRequestsFor(dirty), { save: engine.saveText });
+    applySavedEntries(getTextSession(sessionId), out.saved);
+    get().markContentDirty(tabId, remainingSides(dirty, out.saved));
+    if (out.unsupported) {
+      get().setNotice(S.text.saveUnsupported);
+      return false;
+    }
+    if (out.error !== null) {
+      get().setNotice(`${S.text.saveFail}: ${out.error}`);
+      return false;
+    }
+    get().setNotice(`${S.text.saved}：${out.saved.map((e) => e.path).join('、')}`);
+    return true;
+  },
+
+  async requestAppExit() {
+    const pending = firstPendingGuard(get().windows);
+    if (!pending) {
+      set({ pendingClose: null, closeGuard: null });
+      get().exitHandler?.();
+      return;
+    }
+    set({ pendingClose: { kind: 'exit' }, closeGuard: pending });
+  },
+
+  setExitHandler(fn) {
+    set({ exitHandler: fn });
   },
 });
 

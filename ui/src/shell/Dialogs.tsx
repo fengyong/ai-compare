@@ -13,14 +13,34 @@ export function CloseGuardDialog() {
   const findTab = useShell((st) => st.findTab);
   if (!closeGuard) return null;
   const tab = findTab(closeGuard.tabId)?.tab;
+  const content = closeGuard.kind === 'content';
+  const title = content ? S.session.closeGuardContentTitle : S.session.closeGuardTitle;
+  const dirtyFiles =
+    content && tab?.text
+      ? [
+          tab.contentDirty?.left ? tab.text.left.name : null,
+          tab.contentDirty?.right ? tab.text.right.name : null,
+        ].filter((n): n is string => n !== null)
+      : [];
   return (
     <div className="aic-modal-mask">
-      <div className="aic-modal aic-dialog" role="alertdialog" aria-label={S.session.closeGuardTitle}>
-        <b>{S.session.closeGuardTitle}</b>
-        <p>
-          {S.session.closeGuardBody}
-          {tab?.sessionLink && <>（{tab.sessionLink.name}）</>}
-        </p>
+      <div className="aic-modal aic-dialog" role="alertdialog" aria-label={title}>
+        <b>{title}</b>
+        {content ? (
+          <>
+            <p>{S.session.closeGuardContentBody}</p>
+            <ul className="aic-dialog-list">
+              {dirtyFiles.map((n) => (
+                <li key={n}>{n}</li>
+              ))}
+            </ul>
+          </>
+        ) : (
+          <p>
+            {S.session.closeGuardBody}
+            {tab?.sessionLink && <>（{tab.sessionLink.name}）</>}
+          </p>
+        )}
         <div className="aic-dialog-actions">
           <button className="primary" onClick={() => void resolveCloseGuard('save')}>
             {S.session.saveAndClose}

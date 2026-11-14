@@ -1,5 +1,6 @@
 import type { SessionKind } from '../session/model';
 import type { DirRow } from '../protocol/types';
+import type { CloseGuardKind, PendingClose } from './closeGuard';
 
 /**
  * 应用壳状态类型（M30）：多窗口 × 多标签（FR-WIN-001/002）。
@@ -98,6 +99,8 @@ export interface Tab {
   pinned?: boolean;
   /** 命名会话有未保存修改（关闭时提示保存，FR-SES-001） */
   dirty?: boolean;
+  /** 逐侧未落盘的文件编辑（R3-05：与命名会话无关，关闭/退出前必须提示，FR-TXT-020） */
+  contentDirty?: { left: boolean; right: boolean };
   sessionLink?: SessionLink;
   folder?: FolderTabData;
   text?: TextTabData;
@@ -161,6 +164,8 @@ export interface TabsSlice {
   /** 双击目录行 → 打开文本子会话（P0 闭环，保持原语义） */
   openTextChild(parentTabId: string, row: Pick<DirRow, 'id' | 'name' | 'leftPath' | 'rightPath'>): Promise<void>;
   activate(tabId: string): void;
+  /** 另存文件为后改指标签上的该侧路径/名称/标题（R3-04：会话保存与关闭守卫据此取正确目标） */
+  retargetTextSide(tabId: string, side: 'left' | 'right', path: string): void;
   /** 关闭（命名会话有未保存修改时转 closeGuard；引擎会话幂等清理） */
   closeTab(tabId: string): Promise<void>;
   /** 关闭其他标签（保留指定标签与各窗口 home） */
@@ -194,10 +199,21 @@ export interface SessionSlice {
   toggleLockCurrent(): Promise<void>;
   /** 标记脏（命名会话主要参数被修改） */
   markDirty(tabId: string, dirty: boolean): void;
+  /** 标记逐侧未落盘编辑（R3-05：文本视图编辑/保存后同步，关闭守卫据此判定） */
+  markContentDirty(tabId: string, sides: { left: boolean; right: boolean }): void;
   /** 交换左右路径（演示脏标记/保存闭环的可视动作） */
   swapSides(tabId: string): void;
-  closeGuard: { tabId: string } | null;
+  closeGuard: { tabId: string; kind: CloseGuardKind } | null;
+  /** 守卫处理完后要继续的批量动作（否则确认一次只关一个标签，批量动作静默中止） */
+  pendingClose: PendingClose | null;
+  exitHandler: (() => void) | null;
   resolveCloseGuard(choice: 'save' | 'discard' | 'cancel'): Promise<void>;
+  /** 把标签上未落盘的文件编辑写回磁盘（关闭守卫"保存并关闭"用；false=未全部落盘） */
+  saveContentForTab(tabId: string): Promise<boolean>;
+  /** 原生窗口关闭/退出请求：逐个处理未保存项，全部处理完才真正退出 */
+  requestAppExit(): Promise<void>;
+  /** 真正销毁原生窗口的出口（Tauri 壳注入；浏览器演示模式为 null） */
+  setExitHandler(fn: (() => void) | null): void;
 }
 
 /** 通用输入对话框（重命名会话/另存名等） */
