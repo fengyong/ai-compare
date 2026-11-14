@@ -216,3 +216,14 @@
 - 相对三个先例新增的接线点：`session/model.ts` 的 `SessionKind`/`SESSION_KINDS`/`KIND_META` 加 `text-merge`（主页大按钮由 registry 驱动）、`SettingsDialog` 的 `Record<SessionKind, string>` 同步补齐、`sliceSessionUi` 保存会话规格覆盖 `merge3`、`cleanupTabEngines` 关闭标签时释放 merge3 会话
 - **队列 3 相对 FR-TMRG 的未闭环项（忠实度后续批次，验收基准仍是 docs/01 的 163 FR）**：FR-TMRG-003 冲突检测配置 UI（X 行窗口/行对齐/偏斜容差/字符级重要性——引擎 `Merge3OptionsSpec` 已备，视图当前传 `options: null`）；FR-TMRG-005「编辑 > 冲突：清除/设置冲突状态」（协议暂无 clear 动作，需引擎补）与输出直接保存为文件路径（现为复制/导出下载）；FR-TMRG-007「与输出比较 >（左/中/右）」打开文本比较会话；FR-TMRG-004 工具栏/菜单式采用命令（现为冲突决策区按钮）
 - **剩余迭代队列**：4 剪贴板入口 → 5 报告对话框 → 6 书签/自动换行 → P13 菜单栏/自动更新 → P14 后半
+
+## 看门狗（2026-11-14 20:1x 用户指令）
+
+**用户指令**：每完成一项功能汇报一次进度 + commit + 更新文档，直至最终实现设计目标；之后多轮 self-review 并修复发现的问题；设置看门狗每 10 分钟检查当前任务是否继续，遇服务端停止响应/网络中断等异常自动继续。
+
+**双层机制（实测落地）**：
+- 本地 10 分钟层 `scripts/watchdog.sh`：`nohup bash scripts/watchdog.sh > target/watchdog/stdout.log 2>&1 &` 后台常驻，每 600 秒检查 —— 最近 git commit 时间、`ui/src`/`engine`/`cli` 源码 mtime、活跃的 `cargo test|clippy|build` / `vitest` / `pnpm test|build|lint|e2e` / `ai-engine` 进程（已排除常驻 `pnpm dev` 与 IDE 宿主，否则停滞判定永远失效）、网络两次探活（apple.com → baidu.com）、工作树未提交改动；停滞阈值 30 分钟（`WATCHDOG_STALE` 可覆盖）且带 30 秒二次复验，避免主会话读文档/思考期误报。心跳写 `target/watchdog/heartbeat.json`，异常追加 `target/watchdog/SIGNAL.md`，巡检流水 `target/watchdog/check.log`（均落在已 gitignore 的 `target/` 下）。
+- AI 接手层 IDE automation `ai-compare-10`（ACTIVE，`FREQ=HOURLY;INTERVAL=1`，cwd = 本工作区）：每小时先读心跳/信号；`SIGNAL.md` 非空、心跳超过 20 分钟未更新、或信号含网络中断/服务端停止响应/会话中断 → 立即从 PROGRESS 断点自动继续开发（不必等下一轮），必要时重新拉起守护进程，处理完清空信号。心跳正常则只巡检登记、不重复开发。
+- **调度粒度限制（如实登记）**：IDE automation 的 RRULE 仅支持 HOURLY/DAILY/WEEKLY，实测 `BYMINUTE=0,10,20,30,40,50` 与多值 `BYHOUR` 均不展开（`nextRunAt` 恒为创建时间 +1h 或固定日边界），故 **10 分钟检查由本地守护承担，AI 自动继续最长有 1 小时接续延迟**；若后续 IDE 支持 minutely，可把 automation 改为 `FREQ=MINUTELY;INTERVAL=10` 并退役本地守护。
+- 纪律：看门狗禁止 `git merge` 其它分支、禁止 force push、禁止 push（用户只授权 commit）；异常接手后仍须门禁全绿才提交；每轮巡检结论追加到本文件并单独提交。
+- 停止：`kill "$(cat target/watchdog/pid)"`；重启：先 kill 再按上面的 nohup 命令拉起。
