@@ -10,6 +10,8 @@ description = "ai-compare 虚拟文件系统抽象（M04）：VfsProvider trait 
 async-trait = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
+# P12：zip 条目内容 inflate/deflate（raw deflate，PKWARE APPNOTE method 8）
+miniz_oxide = "0.8"
 
 [dev-dependencies]
 tempfile = { workspace = true }
