@@ -16,12 +16,14 @@ use thiserror::Error;
 
 pub mod crc32;
 pub mod local;
+pub mod route;
 pub mod zip;
 
 pub use crc32::{crc32, crc32_update};
 pub use crc32::INITIAL as CRC32_INITIAL;
 pub use local::LocalFs;
-pub use zip::{ZipEntry, ZipFs};
+pub use route::{provider_for_session, RouteFs};
+pub use zip::{ZipEntry, ZipFs, ZipFsMut};
 
 /// VFS 错误（引擎上层映射为协议领域错误码）
 #[derive(Debug, Error)]
@@ -192,8 +194,30 @@ pub struct VfsPath {
 impl VfsPath {
     /// 解析并规范化路径字符串。接受 `/` 与 `\` 分隔；相对路径由
     /// [`LocalFs`] 解析到 cwd。Windows 盘符前缀（`C:/...`）保留。
+    ///
+    /// P12 scheme 感知：`zip:///repo.zip!/src`、`ftp://host/p` 等带协议
+    /// 前缀的 URI，`scheme://` 原样保留，仅规范化其后路径部分（`!` 为
+    /// 归档内外分隔符，按普通字符保留）。
     pub fn parse(s: &str) -> Result<Self, VfsError> {
         let raw = s.replace('\\', "/");
+        // P12：scheme 检测（RFC 3986 宽松式：字母开头 + 字母数字+.-）
+        let scheme_split = raw.split_once("://").filter(|(scheme, _)| {
+            let mut chars = scheme.chars();
+            matches!(chars.next(), Some(c) if c.is_ascii_alphabetic())
+                && chars.all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '.' || c == '-')
+        });
+        if let Some((scheme, rest)) = scheme_split {
+            let inner = Self::normalize_rest(rest)?;
+            return Ok(VfsPath {
+                inner: format!("{scheme}://{inner}"),
+            });
+        }
+        let inner = Self::normalize_rest(&raw)?;
+        Ok(VfsPath { inner })
+    }
+
+    /// 规范化路径主体（无 scheme 前缀；`.`/`..` 解析、空段去重、盘符保留）
+    fn normalize_rest(raw: &str) -> Result<String, VfsError> {
         let is_abs = raw.starts_with('/');
         let has_drive = raw.len() >= 2 && raw.as_bytes()[1] == b':' && raw.as_bytes()[0].is_ascii_alphabetic();
         if raw.trim().is_empty() {
@@ -211,7 +235,7 @@ impl VfsPath {
                         }
                     }
                     if is_abs || has_drive {
-                        return Err(VfsError::InvalidPath(format!("越界路径: {s}")));
+                        return Err(VfsError::InvalidPath(format!("越界路径: {raw}")));
                     }
                     parts.push("..");
                 }
@@ -229,7 +253,7 @@ impl VfsPath {
         } else {
             joined
         };
-        Ok(VfsPath { inner })
+        Ok(inner)
     }
 
     pub fn as_str(&self) -> &str {

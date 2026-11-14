@@ -768,6 +768,10 @@ impl ZipState {
 #[derive(Debug, Clone, Default)]
 pub struct ZipFsMut {
     state: Arc<RwLock<ZipState>>,
+    /// 归档文件路径（from_file 装载时携带）：trait 写方法成功后 write-through
+    /// 自动回写归档（BC「复制到压缩包」直觉语义）；from_bytes/empty 构造为
+    /// None（纯内存，调用方 to_bytes 自行落盘）。
+    archive: Option<Arc<std::path::PathBuf>>,
 }
 
 impl ZipFsMut {
@@ -800,7 +804,10 @@ impl ZipFsMut {
             }
         }
         st.rebuild_dirs();
-        Ok(ZipFsMut { state: Arc::new(RwLock::new(st)) })
+        Ok(ZipFsMut {
+            state: Arc::new(RwLock::new(st)),
+            archive: None,
+        })
     }
 
     /// 空归档（新增 zip 会话用）
@@ -808,12 +815,15 @@ impl ZipFsMut {
         Self::default()
     }
 
-    /// 从可写路径装载（路径须指向本地 .zip 文件）
+    /// 从可写路径装载（路径须指向本地 .zip 文件）。
+    /// 携带归档路径：trait 写方法成功后自动回写（write-through）。
     pub fn from_file(path: &std::path::Path) -> Result<Self, VfsError> {
         let data = std::fs::read(path).map_err(|_| VfsError::NotFound {
             path: path.display().to_string(),
         })?;
-        Self::from_bytes_writable(&data)
+        let mut fs = Self::from_bytes_writable(&data)?;
+        fs.archive = Some(Arc::new(path.to_path_buf()));
+        Ok(fs)
     }
 
     /// 写回字节流（调用方负责落盘）
@@ -821,6 +831,15 @@ impl ZipFsMut {
         self.state.read().expect("zip 状态锁中毒").to_bytes()
     }
 
+    /// write-through：装载自文件时，把当前内存模型回写归档
+    fn persist(&self) {
+        if let Some(path) = &self.archive {
+            let bytes = self.to_bytes();
+            if let Err(e) = std::fs::write(path.as_ref(), &bytes) {
+                eprintln!("[zip] 归档回写失败（{}）: {e}", path.display());
+            }
+        }
+    }
 }
 
 #[async_trait]
@@ -911,33 +930,45 @@ impl VfsProvider for ZipFsMut {
         self.state
             .write()
             .expect("zip 状态锁中毒")
-            .write_file(path, data)
+            .write_file(path, data)?;
+        self.persist();
+        Ok(())
     }
 
     async fn mkdir(&self, path: &VfsPath) -> Result<(), VfsError> {
-        self.state.write().expect("zip 状态锁中毒").create_dir(path)
+        self.state.write().expect("zip 状态锁中毒").create_dir(path)?;
+        self.persist();
+        Ok(())
     }
 
     async fn rename(&self, from: &VfsPath, to: &VfsPath) -> Result<(), VfsError> {
-        self.state.write().expect("zip 状态锁中毒").rename(from, to)
+        self.state.write().expect("zip 状态锁中毒").rename(from, to)?;
+        self.persist();
+        Ok(())
     }
 
     async fn remove(&self, path: &VfsPath, recursive: bool) -> Result<(), VfsError> {
         self.state
             .write()
             .expect("zip 状态锁中毒")
-            .remove(path, recursive)
+            .remove(path, recursive)?;
+        self.persist();
+        Ok(())
     }
 
     async fn copy_file(&self, from: &VfsPath, to: &VfsPath) -> Result<(), VfsError> {
-        self.state.write().expect("zip 状态锁中毒").copy_file(from, to)
+        self.state.write().expect("zip 状态锁中毒").copy_file(from, to)?;
+        self.persist();
+        Ok(())
     }
 
     async fn set_mtime(&self, path: &VfsPath, mtime_ms: u64) -> Result<(), VfsError> {
         self.state
             .write()
             .expect("zip 状态锁中毒")
-            .set_mtime(path, mtime_ms)
+            .set_mtime(path, mtime_ms)?;
+        self.persist();
+        Ok(())
     }
 }
 
