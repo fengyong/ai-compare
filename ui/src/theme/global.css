@@ -1765,3 +1765,50 @@ input:focus {
 .aic-table-row.kind-added td:not(.aic-table-gutter) { background: rgba(76, 175, 80, 0.08); }
 .aic-table-row.kind-removed td:not(.aic-table-gutter) { background: rgba(128, 128, 128, 0.1); }
 
+/* ---- 队列 3：三向文本合并视图（FR-TMRG-001~007） ---- */
+.aic-m3 { display: flex; flex-direction: column; height: 100%; overflow: hidden; font-size: 12px; color: var(--fg, #ddd); }
+.aic-m3-toolbar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 6px 12px; border-bottom: 1px solid var(--border, #333); }
+.aic-m3-toolbar label { display: flex; align-items: center; gap: 6px; }
+.aic-m3-title { font-weight: 600; }
+.aic-m3-cap { color: var(--fg-dim, #999); }
+.aic-m3-stats { display: flex; gap: 18px; padding: 4px 12px; border-bottom: 1px solid var(--border, #333); color: var(--fg-dim, #999); }
+.aic-m3-legend { display: flex; gap: 12px; flex-wrap: wrap; padding: 4px 12px; border-bottom: 1px solid var(--border, #333); color: var(--fg-dim, #999); }
+.aic-m3-legend span { white-space: nowrap; }
+/* FR-TMRG-002：左改青 / 右改洋红 / 冲突红 / 相同更改绿（自动合并） / 手动编辑黄 */
+.m3-stable { color: var(--fg-dim, #888); }
+.m3-left { color: #2fbfa5; }
+.m3-right { color: #d16bd1; }
+.m3-both { color: #4caf50; }
+.m3-conflict { color: #e5534b; }
+.m3-manual { color: #e5c07b; }
+.aic-m3-notice { padding: 3px 12px; background: var(--accent-soft, rgba(91,140,255,.16)); color: var(--fg, #ddd); cursor: pointer; }
+.aic-m3-error { padding: 20px; color: var(--danger, #e5534b); }
+.aic-m3-panes { display: flex; gap: 1px; flex: 1; min-height: 0; background: var(--border, #333); }
+.aic-m3-pane { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--bg-panel, #23262b); }
+.aic-m3-pane-head { padding: 3px 8px; border-bottom: 1px solid var(--border, #333); background: var(--bg-header, #252526); font-weight: 600; }
+.aic-m3-pane-body { flex: 1; overflow: auto; }
+.aic-m3-chunk { color: var(--fg, #ccc); border-bottom: 1px solid var(--row-border, #2a2a2a); border-left: 3px solid transparent; padding: 2px 0; }
+.aic-m3-chunk.m3-stable { border-left-color: #565b64; }
+.aic-m3-chunk.m3-left { border-left-color: #2fbfa5; background: rgba(47, 191, 165, 0.08); }
+.aic-m3-chunk.m3-right { border-left-color: #d16bd1; background: rgba(209, 107, 209, 0.08); }
+.aic-m3-chunk.m3-both { border-left-color: #4caf50; background: rgba(76, 175, 80, 0.08); }
+.aic-m3-chunk.m3-conflict { border-left-color: #e5534b; background: rgba(229, 83, 75, 0.12); }
+.aic-m3-chunk.m3-manual { border-left-color: #e5c07b; background: rgba(229, 192, 123, 0.12); }
+.aic-m3-chunk-head { display: flex; gap: 8px; flex-wrap: wrap; padding: 1px 8px; font-size: 11px; color: var(--fg-dim, #999); }
+.aic-m3-line { display: flex; gap: 8px; white-space: pre; font-family: var(--mono, monospace); }
+.aic-m3-ln { width: 36px; text-align: right; color: var(--fg-dim, #777); user-select: none; }
+.aic-m3-text { flex: 1; }
+.aic-m3-empty { padding: 2px 8px; color: var(--fg-dim, #777); font-style: italic; }
+.aic-m3-flag { padding: 1px 8px; font-size: 11px; color: var(--fg-dim, #999); }
+.aic-m3-conflicts { max-height: 176px; overflow: auto; border-top: 1px solid var(--border, #333); }
+.aic-m3-section-head { position: sticky; top: 0; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 4px 12px; background: var(--bg-header, #252526); border-bottom: 1px solid var(--border, #333); font-weight: 600; }
+.aic-m3-toolbar button, .aic-m3-actions button, .aic-m3-section-head button, .aic-m3-manual button { padding: 1px 6px; font-size: 11px; }
+.aic-m3-decision { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 3px 12px; border-left: 3px solid #e5534b; border-bottom: 1px solid var(--row-border, #2a2a2a); }
+.aic-m3-decision.m3-manual { border-left-color: #e5c07b; }
+.aic-m3-actions { display: flex; gap: 4px; flex-wrap: wrap; }
+.aic-m3-manual { display: flex; gap: 6px; align-items: flex-start; width: 100%; }
+.aic-m3-manual textarea { flex: 1; min-height: 44px; font-family: var(--mono, monospace); font-size: 11px; }
+.aic-m3-output { height: 26%; min-height: 120px; display: flex; flex-direction: column; border-top: 1px solid var(--border, #333); }
+.aic-m3-warn { padding: 2px 12px; color: #e5c07b; }
+.aic-m3-output-text { flex: 1; overflow: auto; margin: 0; padding: 6px 12px; font-family: var(--mono, monospace); font-size: 12px; white-space: pre; background: var(--editor-bg, #1e2126); color: var(--fg, #ddd); }
+

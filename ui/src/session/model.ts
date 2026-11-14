@@ -11,7 +11,7 @@
  * 会话文件只存覆盖项（overrides），不存全量——见 scopes.ts。
  */
 
-/** 会话类型（P4 六类 + P8 增文件夹合并）：主页大按钮口径 */
+/** 会话类型（P4 六类 + P8 文件夹合并 + P7 文本合并 UI）：主页大按钮口径 */
 export type SessionKind =
   | 'folder-compare'
   | 'text-compare'
@@ -19,7 +19,8 @@ export type SessionKind =
   | 'hex-compare'
   | 'picture-compare'
   | 'folder-sync'
-  | 'folder-merge';
+  | 'folder-merge'
+  | 'text-merge';
 
 export const SESSION_KINDS: readonly SessionKind[] = [
   'folder-compare',
@@ -29,6 +30,7 @@ export const SESSION_KINDS: readonly SessionKind[] = [
   'picture-compare',
   'folder-sync',
   'folder-merge',
+  'text-merge',
 ];
 
 export function isSessionKind(v: unknown): v is SessionKind {
@@ -52,6 +54,7 @@ export const KIND_META: Record<SessionKind, KindMeta> = {
   'picture-compare': { title: '图片比较', icon: '🖼️', phase: 'P0/P14', implemented: true },
   'folder-sync': { title: '文件夹同步', icon: '🔄', phase: 'P8', implemented: true },
   'folder-merge': { title: '文件夹合并', icon: '🔀', phase: 'P8', implemented: true },
+  'text-merge': { title: '文本合并', icon: '🧩', phase: 'P7/P14', implemented: true },
 };
 
 /** 设置作用域（FR-SES-006 四选项 + 子会话专属两项） */

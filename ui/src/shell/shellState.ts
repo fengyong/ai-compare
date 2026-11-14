@@ -51,6 +51,15 @@ export interface HexTabData {
   sessionId: string;
 }
 
+/** P7：三向文本合并标签数据（base=公共祖先/中间，left/right 两侧 + 输出） */
+export interface Merge3TabData {
+  base: string;
+  left: string;
+  right: string;
+  /** 客户端分配的 text/merge3/* 会话句柄 */
+  sessionId: string;
+}
+
 /** 文件夹合并标签数据（P8：三路 base/left/right） */
 export interface MergeTabData {
   base: string;
@@ -81,8 +90,8 @@ export interface SessionLink {
 
 export interface Tab {
   id: string;
-  /** home 主页 / folder 目录比较 / text 文本比较 / sync 文件夹同步 / merge 文件夹合并（P8） */
-  kind: 'home' | 'folder' | 'text' | 'sync' | 'merge' | 'picture' | 'table' | 'hex';
+  /** home 主页 / folder 目录比较 / text 文本比较 / sync 文件夹同步 / merge 文件夹合并（P8）/ merge3 三向文本合并（P7） */
+  kind: 'home' | 'folder' | 'text' | 'sync' | 'merge' | 'merge3' | 'picture' | 'table' | 'hex';
   title: string;
   /** 固定标签（右键菜单"固定"，FR-WIN-001） */
   pinned?: boolean;
@@ -96,6 +105,7 @@ export interface Tab {
   table?: TableTabData;
   hex?: HexTabData;
   merge?: MergeTabData;
+  merge3?: Merge3TabData;
 }
 
 export interface WindowState {
@@ -141,6 +151,8 @@ export interface TabsSlice {
   openPictureTab(left: string, right: string, opts?: OpenTabOpts): void;
   openTableTab(left: string, right: string, opts?: OpenTabOpts): void;
   openHexTab(left: string, right: string, opts?: OpenTabOpts): void;
+  /** 三向文本合并标签（队列 3，FR-TMRG-001：base/left/right 三路 + 输出） */
+  openMerge3Tab(base: string, left: string, right: string, opts?: OpenTabOpts): void;
   /** 文件夹合并标签（P8，FR-DMRG-001：三路 base/left/right） */
   openFolderMergeTab(base: string, left: string, right: string, opts?: OpenTabOpts): void;
   /** 独立文本比较（主页文本大按钮入口；子会话路径见 openTextChild） */

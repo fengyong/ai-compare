@@ -13,8 +13,8 @@ import {
 } from './model';
 
 describe('session/model', () => {
-  it('会话类型齐备且元信息标注阶段（P8 起七类）', () => {
-    expect(SESSION_KINDS).toHaveLength(7);
+  it('会话类型齐备且元信息标注阶段（队列 3 起八类）', () => {
+    expect(SESSION_KINDS).toHaveLength(8);
     for (const k of SESSION_KINDS) {
       expect(KIND_META[k].title).toBeTruthy();
       expect(KIND_META[k].phase).toMatch(/^P\d/);
@@ -25,6 +25,9 @@ describe('session/model', () => {
     expect(KIND_META['folder-sync'].implemented).toBe(true);
     expect(KIND_META['folder-merge'].implemented).toBe(true);
     expect(KIND_META['table-compare'].implemented).toBe(true);
+    // 队列 3：三向文本合并视图接入后置为已实现
+    expect(KIND_META['text-merge'].implemented).toBe(true);
+    expect(SESSION_KINDS).toContain('text-merge');
   });
 
   it('isSessionKind 判定', () => {

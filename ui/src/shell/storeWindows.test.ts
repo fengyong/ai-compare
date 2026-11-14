@@ -201,4 +201,19 @@ describe('shell/store 多窗口与标签', () => {
     expect(st.activeWindowId).toBe(st.windows[0].id);
     expect(st.windows[0].activeTabId).toBe(homeId);
   });
+
+  it('openMerge3Tab：三路路径 + merge3 会话句柄 + 文本合并标题', () => {
+    setup();
+    useShell.getState().openMerge3Tab('/demo/base.c', '/demo/left.c', '/demo/right.c');
+    const win = activeWindowSelector(useShell.getState())!;
+    expect(win.tabs).toHaveLength(2);
+    const tab = win.tabs[1];
+    expect(tab.kind).toBe('merge3');
+    expect(tab.merge3?.base).toBe('/demo/base.c');
+    expect(tab.merge3?.left).toBe('/demo/left.c');
+    expect(tab.merge3?.right).toBe('/demo/right.c');
+    expect(tab.merge3?.sessionId).toMatch(/^merge3-/);
+    expect(tab.title).toContain('文本合并');
+    expect(win.activeTabId).toBe(tab.id);
+  });
 });

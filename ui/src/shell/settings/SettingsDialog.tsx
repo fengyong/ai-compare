@@ -336,6 +336,7 @@ function kindName(kind: SessionKind): string {
     'picture-compare': '图片比较',
     'folder-sync': '文件夹同步',
     'folder-merge': '文件夹合并',
+    'text-merge': '文本合并',
   };
   return meta[kind];
 }

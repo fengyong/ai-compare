@@ -20,6 +20,14 @@ import type {
   DirOperateResult,
   EngineCapabilities,
   InitializeResult,
+  MergeDecideParams,
+  MergeDecideResult,
+  MergeOpenParams,
+  MergeOpenResult,
+  MergeOutputParams,
+  MergeOutputResult,
+  MergeSectionsParams,
+  MergeSectionsResult,
   SessionCloseParams,
   SessionCloseResult,
   TextInlineDiffParams,
@@ -119,7 +127,7 @@ export function getEngineCapabilities(): EngineCapabilities | null {
 }
 
 /** 生成引擎侧会话句柄（客户端分配；前缀便于日志排查） */
-export function newSessionId(kind: 'dir' | 'text' | 'merge' | 'picture' | 'table' | 'hex'): string {
+export function newSessionId(kind: 'dir' | 'text' | 'merge' | 'merge3' | 'picture' | 'table' | 'hex'): string {
   const rand =
     typeof crypto !== 'undefined' && 'randomUUID' in crypto
       ? crypto.randomUUID().slice(0, 8)
@@ -429,6 +437,37 @@ export async function openPicture(params: {
 }> {
   const c = await getEngineClient();
   return c.request('picture/open', params, 60_000);
+}
+
+// ==================================================================
+// P7：三向文本合并方法集（text/merge3/open|sections|decide|output）
+// ==================================================================
+// 接线模式同 P14 三视图：视图只调本模块封装，不直接触碰 RpcClient。
+// open 一次性求出合并模型；块清单经 sections 分批；decide 提交采用决策
+// （引擎侧幂等：决策内容不变时 rev 不递增）；output 合成最终文本。
+
+/** text/merge3/open：base/left/right 三路文本 → 合并会话（应答统计） */
+export async function merge3Open(params: MergeOpenParams): Promise<MergeOpenResult> {
+  const c = await getEngineClient();
+  return c.request<MergeOpenResult>('text/merge3/open', params, 60_000);
+}
+
+/** text/merge3/sections：块清单分批窗口（三方行内容 + 决策状态） */
+export async function merge3Sections(params: MergeSectionsParams): Promise<MergeSectionsResult> {
+  const c = await getEngineClient();
+  return c.request<MergeSectionsResult>('text/merge3/sections', params, 60_000);
+}
+
+/** text/merge3/decide：块决策提交（FR-TMRG-004/005 采用与手动编辑） */
+export async function merge3Decide(params: MergeDecideParams): Promise<MergeDecideResult> {
+  const c = await getEngineClient();
+  return c.request<MergeDecideResult>('text/merge3/decide', params, 60_000);
+}
+
+/** text/merge3/output：合成输出（plain / marker 冲突标记） */
+export async function merge3Output(params: MergeOutputParams): Promise<MergeOutputResult> {
+  const c = await getEngineClient();
+  return c.request<MergeOutputResult>('text/merge3/output', params, 60_000);
 }
 
 // ==================================================================
