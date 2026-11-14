@@ -510,6 +510,14 @@ async fn copy_tree_inner(vfs: &dyn VfsProvider, src_dir: &VfsPath, dst_dir: &Vfs
         let child_src = src_dir.join(&entry.name);
         let child_dst = dst_dir.join(&entry.name);
         let child_rel = format!("{rel_prefix}/{}", entry.name);
+        // 递归层必须重做末分量护栏：顶层 reject_symlink_escape 只校验 op.path()
+        // 自身，目标侧子项若是指向根外的符号链接，mkdir_all 与写入都会跟随它，
+        // 把根外数据覆写掉（且整批仍报 succeeded）。
+        if let Ok(st) = vfs.stat(&child_dst).await {
+            if st.kind == EntryKind::Symlink {
+                return Err(format!("拒绝写入符号链接目标（{child_rel}）：会越过比较根"));
+            }
+        }
         if entry.stat.kind == EntryKind::Dir {
             copy_tree(vfs, &child_src, &child_dst, &child_rel).await?;
         } else {
@@ -790,6 +798,81 @@ mod tests {
         let report = execute_ops(&vfs, &roots, &[op], &opts(false), None, &CancelFlag::new()).await;
         assert_eq!(report.succeeded.len(), 0, "不得穿过符号链接父目录删除根外文件: {report:?}");
         assert!(victim.exists(), "根外文件必须完好");
+    }
+
+    /// R3-01：递归目录复制必须逐层重做符号链接护栏。顶层护栏只校验 op.path()
+    /// 自身（"tree" 是真目录），目标侧 `tree/sub` 指向根外时旧实现会跟随它
+    /// 覆写根外文件，且整批仍报 succeeded。
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn recursive_copy_through_nested_symlink_dir_is_rejected() {
+        use std::os::unix::fs::symlink;
+        let (dir, l, r) = make_trees().await;
+        let outside = dir.path().join("OUTSIDE3");
+        std::fs::create_dir_all(&outside).unwrap();
+        let precious = outside.join("file.txt");
+        std::fs::write(&precious, "PRECIOUS-OUTSIDE").unwrap();
+        let lsub = std::path::Path::new(l.as_str()).join("tree").join("sub");
+        std::fs::create_dir_all(&lsub).unwrap();
+        std::fs::write(lsub.join("file.txt"), "LEFT-CONTENT").unwrap();
+        let rtree = std::path::Path::new(r.as_str()).join("tree");
+        std::fs::create_dir_all(&rtree).unwrap();
+        symlink(&outside, rtree.join("sub")).unwrap();
+        let vfs = LocalFs::new();
+        let roots = (l.clone(), r.clone());
+        let report = execute_ops(&vfs, &roots, &[copy_l2r("tree")], &opts(false), None, &CancelFlag::new()).await;
+        assert_eq!(report.succeeded.len(), 0, "递归复制不得穿过嵌套符号链接目录写根外: {report:?}");
+        assert_eq!(report.failed.len(), 1);
+        let detail = report.failed[0].detail.as_deref().unwrap_or("");
+        assert!(detail.contains("符号链接"), "失败明细须说明原因: {detail}");
+        assert_eq!(std::fs::read_to_string(&precious).unwrap(), "PRECIOUS-OUTSIDE", "根外文件必须完好");
+    }
+
+    /// R3-01 变体：嵌套目录里的**文件**末分量是符号链接（目录本身是真的）。
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn recursive_copy_through_nested_symlink_file_is_rejected() {
+        use std::os::unix::fs::symlink;
+        let (dir, l, r) = make_trees().await;
+        let outside = dir.path().join("OUTSIDE4");
+        std::fs::create_dir_all(&outside).unwrap();
+        let precious = outside.join("precious.txt");
+        std::fs::write(&precious, "PRECIOUS-OUTSIDE").unwrap();
+        let lsub = std::path::Path::new(l.as_str()).join("tree").join("sub");
+        std::fs::create_dir_all(&lsub).unwrap();
+        std::fs::write(lsub.join("file.txt"), "LEFT-CONTENT").unwrap();
+        let rsub = std::path::Path::new(r.as_str()).join("tree").join("sub");
+        std::fs::create_dir_all(&rsub).unwrap();
+        symlink(&precious, rsub.join("file.txt")).unwrap();
+        let vfs = LocalFs::new();
+        let roots = (l.clone(), r.clone());
+        let report = execute_ops(&vfs, &roots, &[copy_l2r("tree")], &opts(false), None, &CancelFlag::new()).await;
+        assert_eq!(report.succeeded.len(), 0, "不得穿过嵌套符号链接文件写根外: {report:?}");
+        assert_eq!(std::fs::read_to_string(&precious).unwrap(), "PRECIOUS-OUTSIDE", "根外文件必须完好");
+    }
+
+    /// 递归复制的**覆盖语义**：目标树已存在真实文件时必须被源内容覆写。
+    ///
+    /// 为什么单列：符号链接护栏的过度修复变异（一律拒绝已存在的目标子项）
+    /// 在既有 130 条用例下全绿 —— 说明此前没有任何用例走过「目标树已存在」
+    /// 的递归路径，护栏是否过宽无人守护。
+    #[tokio::test]
+    async fn recursive_copy_overwrites_existing_destination_tree() {
+        let (_dir, l, r) = make_trees().await;
+        let lp = std::path::Path::new(l.as_str());
+        let rp = std::path::Path::new(r.as_str());
+        std::fs::create_dir_all(lp.join("tree").join("sub")).unwrap();
+        std::fs::write(lp.join("tree").join("sub").join("file.txt"), "LEFT-CONTENT").unwrap();
+        std::fs::create_dir_all(rp.join("tree").join("sub")).unwrap();
+        std::fs::write(rp.join("tree").join("a.txt"), "OLD-A").unwrap();
+        std::fs::write(rp.join("tree").join("sub").join("file.txt"), "OLD-DEEP").unwrap();
+        let vfs = LocalFs::new();
+        let roots = (l.clone(), r.clone());
+        let report = execute_ops(&vfs, &roots, &[copy_l2r("tree")], &opts(false), None, &CancelFlag::new()).await;
+        assert_eq!(report.failed.len(), 0, "覆盖已存在的目标树不应失败: {report:?}");
+        assert_eq!(report.succeeded.len(), 1);
+        assert_eq!(std::fs::read_to_string(rp.join("tree").join("a.txt")).unwrap(), "a-L");
+        assert_eq!(std::fs::read_to_string(rp.join("tree").join("sub").join("file.txt")).unwrap(), "LEFT-CONTENT");
     }
 
     #[tokio::test]
