@@ -21,7 +21,7 @@ import {
   type OpCommandKind,
   type Side,
 } from './dirOps';
-import { displayFilterPreset, SHOW_ALL_DISPLAY_FILTER } from './dirFilters';
+import { displayFilterPreset, parseMaskInput, SHOW_ALL_DISPLAY_FILTER } from './dirFilters';
 import { buildTreeIndex, expandAll, orderedFlatRows, orderedTreeRows, toggleExpanded, collapseAll, rowDepth, type DirSortKey, type DirSortSpec } from './dirTree';
 import { gutterCopyDirs, nextSortSpec, paneColumns, scrollSyncPlan, sidePresent, withPaneSelection, type PaneSelections, type PaneSide } from './dirPanes';
 import { clearSelection, emptySelection, invertSelection, onRowClick, runEditSelectCommand, selectAll, type EditSelectCommand, type SelectionState } from './dirSelection';
@@ -319,13 +319,7 @@ export function FolderCompareView({ tab }: { tab: Tab }) {
     try {
       const result = await filterDir({
         sessionId: cache.sessionId,
-        nameFilter: {
-          includeFiles: nextFilterText ? nonExcludeMasks(nextFilterText) : [],
-          excludeFiles: nextFilterText ? excludeMasks(nextFilterText) : [],
-          includeDirs: [],
-          excludeDirs: [],
-          caseSensitive: null,
-        },
+        nameFilter: parseMaskInput(nextFilterText),
         otherFilter: null,
         displayFilter: df,
         suppress: nextSuppress,
@@ -1000,25 +994,6 @@ export function FolderCompareView({ tab }: { tab: Tab }) {
     }
     void openTextChild(tab.id, row);
   }
-}
-
-/** 排除掩码提取（`-` 前缀项；dirFilters.parseMaskInput 语义的轻量内联） */
-function excludeMasks(text: string): string[] {
-  return text
-    .split(';')
-    .map((t) => t.trim())
-    .filter((t) => t.startsWith('-') && t.length > 1)
-    .map((t) => t.slice(1).trim())
-    .filter((t) => t.length > 0);
-}
-
-function nonExcludeMasks(text: string): string[] {
-  return text
-    .split(';')
-    .map((t) => t.trim())
-    .filter((t) => t.length > 0 && !t.startsWith('-'))
-    .map((t) => (t.endsWith('\\') || t.endsWith('/') ? t.slice(0, -1) : t))
-    .filter((t) => t.length > 0);
 }
 
 /**

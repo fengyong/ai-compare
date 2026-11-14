@@ -127,11 +127,9 @@ function HexPane({
       setLines(r.lines);
       offsetRef.current = aligned + r.lines.length * ROW_BYTES;
       if (r.done) setDone(true);
-      const idx = Math.floor((jumpTo - aligned) / ROW_BYTES);
+      // 已从 aligned 重拉整页，jumpTo 所在行必为本页第 0 行
       requestAnimationFrame(() => {
-        hostRef.current
-          ?.querySelector(`[data-row="${Math.floor(jumpTo / ROW_BYTES) - idx + Math.floor(jumpTo / ROW_BYTES)}"]`)
-          ?.scrollIntoView({ block: 'start' });
+        hostRef.current?.querySelector('[data-row="0"]')?.scrollIntoView({ block: 'start' });
       });
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
