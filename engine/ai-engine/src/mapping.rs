@@ -798,6 +798,179 @@ pub fn dir_execute_result_to_dto(
 }
 
 // ---------------------------------------------------------------------------
+// R3-07：dir/mergeScan|mergePlan|mergeExecute 映射
+// （SideInfo / EntryKind 已是协议类型，只需映射合并专有枚举）
+// ---------------------------------------------------------------------------
+
+pub fn dir_merge_category_to_dto(c: ai_dir::MergeCategory) -> ai_protocol::DirMergeCategory {
+    use ai_dir::MergeCategory as C;
+    use ai_protocol::DirMergeCategory as D;
+    match c {
+        C::Same => D::Same,
+        C::LeftChanged => D::LeftChanged,
+        C::RightChanged => D::RightChanged,
+        C::BothSame => D::BothSame,
+        C::DeletedRight => D::DeletedRight,
+        C::DeletedLeft => D::DeletedLeft,
+        C::Conflict => D::Conflict,
+        C::LeftOnly => D::LeftOnly,
+        C::RightOnly => D::RightOnly,
+        C::BaseOnly => D::BaseOnly,
+    }
+}
+
+pub fn dir_merge_row_state_to_dto(s: ai_dir::MergeRowState) -> ai_protocol::DirMergeRowState {
+    use ai_dir::MergeRowState as S;
+    use ai_protocol::DirMergeRowState as D;
+    match s {
+        S::Same => D::Same,
+        S::Auto => D::Auto,
+        S::Conflict => D::Conflict,
+        S::Orphan => D::Orphan,
+    }
+}
+
+pub fn dir_merge_row_to_dto(r: &ai_dir::DirMergeRow) -> ai_protocol::DirMergeRow {
+    ai_protocol::DirMergeRow {
+        rel_path: r.rel_path.clone(),
+        name: r.name.clone(),
+        kind: r.kind,
+        base: r.base.clone(),
+        left: r.left.clone(),
+        right: r.right.clone(),
+        category: dir_merge_category_to_dto(r.category),
+        row_state: dir_merge_row_state_to_dto(r.row_state),
+        parent: r.parent.clone(),
+        depth: r.depth,
+        conflict_leaf: r.conflict_leaf,
+    }
+}
+
+pub fn dir_merge_target_from_dto(t: ai_protocol::DirMergeTarget) -> ai_dir::MergeTarget {
+    use ai_dir::MergeTarget as T;
+    use ai_protocol::DirMergeTarget as D;
+    match t {
+        D::Left => T::Left,
+        D::Right => T::Right,
+        D::Output => T::Output,
+    }
+}
+
+pub fn dir_merge_decision_from_dto(d: ai_protocol::DirMergeDecision) -> ai_dir::MergeDecision {
+    use ai_dir::MergeDecision as T;
+    use ai_protocol::DirMergeDecision as D;
+    match d {
+        D::Auto => T::Auto,
+        D::TakeLeft => T::TakeLeft,
+        D::TakeRight => T::TakeRight,
+        D::Both => T::Both,
+        D::Skip => T::Skip,
+    }
+}
+
+pub fn dir_merge_op_kind_to_dto(k: ai_dir::MergeOpKind) -> ai_protocol::DirMergeOpKind {
+    use ai_dir::MergeOpKind as T;
+    use ai_protocol::DirMergeOpKind as D;
+    match k {
+        T::TakeLeft => D::TakeLeft,
+        T::TakeRight => D::TakeRight,
+        T::DeleteTarget => D::DeleteTarget,
+        T::Keep => D::Keep,
+    }
+}
+
+pub fn dir_merge_op_kind_from_dto(k: ai_protocol::DirMergeOpKind) -> ai_dir::MergeOpKind {
+    use ai_dir::MergeOpKind as T;
+    use ai_protocol::DirMergeOpKind as D;
+    match k {
+        D::TakeLeft => T::TakeLeft,
+        D::TakeRight => T::TakeRight,
+        D::DeleteTarget => T::DeleteTarget,
+        D::Keep => T::Keep,
+    }
+}
+
+pub fn dir_merge_planned_op_to_dto(p: &ai_dir::MergePlannedOp) -> ai_protocol::DirMergePlannedOp {
+    ai_protocol::DirMergePlannedOp {
+        kind: dir_merge_op_kind_to_dto(p.kind),
+        path: p.path.clone(),
+        reason: p.reason.clone(),
+    }
+}
+
+pub fn dir_merge_planned_op_from_dto(p: &ai_protocol::DirMergePlannedOp) -> ai_dir::MergePlannedOp {
+    ai_dir::MergePlannedOp {
+        kind: dir_merge_op_kind_from_dto(p.kind),
+        path: p.path.clone(),
+        reason: p.reason.clone(),
+    }
+}
+
+/// 执行明细动作标签：引擎 OpRecord.kind 为字符串（MergeOpKind::as_str 或
+/// "unknown"）；无法识别时归 Unknown，不静默丢弃明细。
+pub fn dir_merge_exec_kind_from_str(s: &str) -> ai_protocol::DirMergeExecKind {
+    use ai_protocol::DirMergeExecKind as D;
+    match s {
+        "takeLeft" => D::TakeLeft,
+        "takeRight" => D::TakeRight,
+        "deleteTarget" => D::DeleteTarget,
+        "keep" => D::Keep,
+        _ => D::Unknown,
+    }
+}
+
+pub fn dir_merge_exec_status_to_dto(s: ai_dir::sync::RecordStatus) -> ai_protocol::DirMergeExecStatus {
+    use ai_dir::sync::RecordStatus as S;
+    use ai_protocol::DirMergeExecStatus as D;
+    match s {
+        S::Copied => D::Copied,
+        S::Deleted => D::Deleted,
+        S::Touched => D::Touched,
+        S::Planned => D::Planned,
+        S::Skipped => D::Skipped,
+        S::Failed => D::Failed,
+    }
+}
+
+pub fn dir_merge_exec_detail_to_dto(r: &ai_dir::sync::OpRecord) -> ai_protocol::DirMergeExecDetail {
+    ai_protocol::DirMergeExecDetail {
+        kind: dir_merge_exec_kind_from_str(&r.kind),
+        path: r.path.clone(),
+        reason: r.reason.clone(),
+        status: dir_merge_exec_status_to_dto(r.status),
+        detail: r.detail.clone(),
+    }
+}
+
+/// usize 统计 -> u32（协议口径；溢出饱和而非回绕）
+pub fn sat_u32(n: usize) -> u32 {
+    u32::try_from(n).unwrap_or(u32::MAX)
+}
+
+pub fn dir_merge_scan_stats_to_dto(s: &ai_dir::MergeScanStats) -> ai_protocol::DirMergeScanStats {
+    ai_protocol::DirMergeScanStats {
+        total: sat_u32(s.total),
+        files: sat_u32(s.files),
+        dirs: sat_u32(s.dirs),
+        same: sat_u32(s.same),
+        auto: sat_u32(s.auto),
+        conflict: sat_u32(s.conflict),
+        orphan: sat_u32(s.orphan),
+    }
+}
+
+pub fn dir_merge_batch_stats_to_dto(s: &ai_dir::BatchStats) -> ai_protocol::DirMergePlanStats {
+    ai_protocol::DirMergePlanStats {
+        total: sat_u32(s.total),
+        copied: sat_u32(s.copied),
+        deleted: sat_u32(s.deleted),
+        touched: sat_u32(s.touched),
+        skipped: sat_u32(s.skipped),
+        failed: sat_u32(s.failed),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // P11：report/generate 映射（协议 DTO -> ai-core 报告快照/选项）
 // ---------------------------------------------------------------------------
 

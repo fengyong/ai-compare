@@ -5,12 +5,11 @@
  * - 决策状态机：DecisionMap（rel -> 决策），有效决策 = 显式 > 祖先继承 >
  *   auto；目录决策经 applyDecisionToTree 递归展开（子项显式决策被覆盖）；
  * - 决策聚合统计（冲突解决进度/待处理计数）；
- * - 计划预览行（与引擎 plan_merge 默认决策表同口径的客户端镜像；
- *   协议携带决策后迁回引擎 dir/mergePlan，见 P8 RPC 变更清单）；
- * - 计划 -> DirExecuteOp（经 dir/execute 同形协议执行）与文本报告导出。
+ * - 计划预览行（join 引擎 dir/mergePlan 的 ops，不镜像默认决策表）；
+ * - 合并报告文本导出。
  */
 
-import type { DirMergeCategory, DirMergeRow, DirMergeRowState, MergeDecision, MergeOpKind, MergePlannedOp, MergeTarget } from '../../protocol/types';
+import type { DirMergeCategory, DirMergeExecuteResult, DirMergeRow, DirMergeRowState, DirMergeDecision, DirMergeOpKind, DirMergePlannedOp, DirMergeTarget } from '../../protocol/types';
 
 // ------------------------------------------------------------------
 // 树/排序
@@ -92,7 +91,7 @@ export const MERGE_CATEGORY_LABELS: Record<DirMergeCategory, string> = {
 // ------------------------------------------------------------------
 
 /** 决策表（rel 路径 -> 显式决策） */
-export type DecisionMap = Record<string, MergeDecision>;
+export type DecisionMap = Record<string, DirMergeDecision>;
 
 /** 祖先链（rel -> 最近祖先在前的数组；不含自身） */
 function ancestorChain(relPath: string): string[] {
@@ -106,7 +105,7 @@ function ancestorChain(relPath: string): string[] {
 }
 
 /** 有效决策 = 自身显式 > 最近祖先显式 > auto */
-export function effectiveDecision(relPath: string, decisions: Readonly<DecisionMap>): MergeDecision {
+export function effectiveDecision(relPath: string, decisions: Readonly<DecisionMap>): DirMergeDecision {
   const own = decisions[relPath];
   if (own) return own;
   for (const anc of ancestorChain(relPath)) {
@@ -117,7 +116,7 @@ export function effectiveDecision(relPath: string, decisions: Readonly<DecisionM
 }
 
 /** 设置决策；目录决策传播到全部后代（覆盖后代既有显式决策，交互可预期） */
-export function applyDecisionToTree(rows: readonly DirMergeRow[], decisions: DecisionMap, relPath: string, decision: MergeDecision): DecisionMap {
+export function applyDecisionToTree(rows: readonly DirMergeRow[], decisions: DecisionMap, relPath: string, decision: DirMergeDecision): DecisionMap {
   const next: DecisionMap = { ...decisions };
   const isDir = rows.find((r) => r.relPath === relPath)?.kind === 'dir';
   next[relPath] = decision;
@@ -185,115 +184,39 @@ export interface MergePreviewRow {
   name: string;
   kind: DirMergeRow['kind'];
   category: DirMergeCategory;
-  decision: MergeDecision;
-  op: MergeOpKind;
+  decision: DirMergeDecision;
+  op: DirMergeOpKind;
   reason: string;
   warning: boolean;
   /** 动作是否真的会执行（keep 仅为解释性占位） */
   actionable: boolean;
 }
 
-/** Auto 默认决策表（与引擎 merge3way::auto_default 同口径） */
-export function autoDefaultOp(row: DirMergeRow, target: MergeTarget): { op: MergeOpKind; reason: string } {
-  const cat = row.category;
-  switch (cat) {
-    case 'same':
-      return target === 'output' ? { op: 'takeLeft', reason: '三方一致（输出取左）' } : { op: 'keep', reason: '三方一致' };
-    case 'leftChanged':
-      return target === 'left' ? { op: 'keep', reason: '目标侧即左侧（已含修改）' } : { op: 'takeLeft', reason: '仅左改 → 取左' };
-    case 'rightChanged':
-      return target === 'right' ? { op: 'keep', reason: '目标侧即右侧（已含修改）' } : { op: 'takeRight', reason: '仅右改 → 取右' };
-    case 'bothSame':
-      return target === 'output' ? { op: 'takeLeft', reason: '两侧同改一致（输出取左，等价取右）' } : { op: 'keep', reason: '两侧同改一致' };
-    case 'deletedRight':
-      return target === 'right'
-        ? { op: 'keep', reason: '目标侧已删除' }
-        : target === 'left'
-          ? { op: 'deleteTarget', reason: '跟随右侧删除' }
-          : { op: 'keep', reason: '右侧已删除（输出不含该项）' };
-    case 'deletedLeft':
-      return target === 'left'
-        ? { op: 'keep', reason: '目标侧已删除' }
-        : target === 'right'
-          ? { op: 'deleteTarget', reason: '跟随左侧删除' }
-          : { op: 'keep', reason: '左侧已删除（输出不含该项）' };
-    case 'conflict':
-      return { op: 'keep', reason: '冲突需人工处理' };
-    case 'leftOnly':
-      return target === 'left' ? { op: 'keep', reason: '目标侧即左侧' } : { op: 'takeLeft', reason: target === 'output' ? '左孤立并入输出' : '左孤立并入目标' };
-    case 'rightOnly':
-      return target === 'right' ? { op: 'keep', reason: '目标侧即右侧' } : { op: 'takeRight', reason: target === 'output' ? '右孤立并入输出' : '右孤立并入目标' };
-    case 'baseOnly':
-      return { op: 'keep', reason: '两侧均已删除' };
-  }
-}
-
-/** 全行预览（决策展开 + 默认表；供计划确认对话框/统计） */
-export function buildMergePreview(rows: readonly DirMergeRow[], decisions: Readonly<DecisionMap>, target: MergeTarget): MergePreviewRow[] {
-  const out: MergePreviewRow[] = [];
-  for (const row of rows) {
-    const decision = effectiveDecision(row.relPath, decisions);
-    let op: MergeOpKind;
-    let reason: string;
-    switch (decision) {
-      case 'skip':
-        op = 'keep';
-        reason = '决策:跳过';
-        break;
-      case 'takeLeft':
-        if (!row.left) {
-          op = 'keep';
-          reason = '决策:取左（左侧缺失，保持现状）';
-        } else if (target === 'left') {
-          op = 'keep';
-          reason = '决策:取左（目标侧即左侧）';
-        } else {
-          op = 'takeLeft';
-          reason = '决策:取左';
-        }
-        break;
-      case 'takeRight':
-        if (!row.right) {
-          op = 'keep';
-          reason = '决策:取右（右侧缺失，保持现状）';
-        } else if (target === 'right') {
-          op = 'keep';
-          reason = '决策:取右（目标侧即右侧）';
-        } else {
-          op = 'takeRight';
-          reason = '决策:取右';
-        }
-        break;
-      case 'both': {
-        if (row.kind === 'dir') {
-          op = 'keep';
-          reason = '决策:both（目录递归合并，子项按各自决策）';
-        } else {
-          const d = autoDefaultOp(row, target);
-          op = d.op;
-          reason = `决策:both（单文件降级默认）· ${d.reason}`;
-        }
-        break;
-      }
-      default: {
-        const d = autoDefaultOp(row, target);
-        op = d.op;
-        reason = d.reason;
-      }
-    }
-    out.push({
-      path: row.relPath,
-      name: row.name,
-      kind: row.kind,
-      category: row.category,
-      decision,
-      op,
-      reason,
-      warning: op === 'deleteTarget',
-      actionable: op !== 'keep',
-    });
-  }
-  return out;
+/**
+ * 计划预览行：以引擎 dir/mergePlan 返回的 ops 为唯一权威（动作/理由均取引擎），
+ * 仅 join 扫描行的元数据与本地有效决策用于展示。客户端不再镜像默认决策表，
+ * 避免与引擎 auto_default/walk_plan 漂移后执行未经引擎计划的操作。
+ */
+export function mergePreviewFromPlan(
+  rows: readonly DirMergeRow[],
+  decisions: Readonly<DecisionMap>,
+  ops: readonly DirMergePlannedOp[],
+): MergePreviewRow[] {
+  const byPath = new Map(rows.map((r) => [r.relPath, r]));
+  return ops.map((op) => {
+    const row = byPath.get(op.path);
+    return {
+      path: op.path,
+      name: row?.name ?? op.path,
+      kind: row?.kind ?? 'file',
+      category: row?.category ?? 'same',
+      decision: effectiveDecision(op.path, decisions),
+      op: op.kind,
+      reason: op.reason,
+      warning: op.kind === 'deleteTarget',
+      actionable: op.kind !== 'keep',
+    };
+  });
 }
 
 /** 预览统计（确认框统计行；与引擎 plan stats 同口径） */
@@ -316,17 +239,10 @@ export function summarizeMergePlan(preview: readonly MergePreviewRow[]): MergePl
   return s;
 }
 
-/** 预览动作行 -> MergePlannedOp（经 dir/mergeExecute 或 dir/execute 执行） */
-export function previewToMergeOps(preview: readonly MergePreviewRow[]): MergePlannedOp[] {
-  return preview
-    .filter((p) => p.actionable)
-    .map((p) => ({ kind: p.op, path: p.path, reason: p.reason }));
-}
-
 /** 导出文本报告（DMRG 信息面板/日志面板共用） */
 export function exportMergeReportText(
-  meta: { target: MergeTarget; base: string; left: string; right: string },
-  result: { total: number; copied: number; deleted: number; skipped: number; failed: number; cancelled: boolean; details: { kind: string; path: string; status: string; detail: string | null }[] },
+  meta: { target: DirMergeTarget; base: string; left: string; right: string },
+  result: Pick<DirMergeExecuteResult, 'total' | 'copied' | 'deleted' | 'skipped' | 'failed' | 'cancelled' | 'details'>,
 ): string {
   const lines: string[] = [];
   lines.push('ai-compare 文件夹合并报告');

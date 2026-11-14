@@ -5,13 +5,14 @@
  * 直接 spawn `../target/debug/ai-engine --stdio`（workspace 根 target），
  * 走完整协议链路（docs/03 §2.3）：
  *   initialize → dir/open → dir/delta 收批 → 状态断言
- *   → text/open → text/sections → session/close → shutdown → 进程退出
+ *   → text/open → text/sections → text/merge3/* → dir/mergeScan|mergePlan|mergeExecute
+ *   → report/generate → session/close → shutdown → 进程退出
  *
  * 用法：pnpm e2e:engine（或 node scripts/e2e-engine.mjs [引擎路径]）
  * 退出码：0 = 通过；1 = 失败。引擎未构建时给出构建指引并退出 2。
  */
 import { spawn } from 'node:child_process';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -106,8 +107,6 @@ class EngineClient {
   }
 }
 
-import { existsSync } from 'node:fs';
-
 // ---------------- 场景语料 ----------------
 
 const dir = mkdtempSync(join(tmpdir(), 'aic-e2e-'));
@@ -126,6 +125,19 @@ writeFileSync(join(R, 'rightOnly.txt'), 'only on right\n');
 writeFileSync(join(dir, 'base.txt'), 'h\na\nb\nc\nt\n');
 writeFileSync(join(dir, 'left.txt'), 'h\nL1\nb\nL2\nt\n');
 writeFileSync(join(dir, 'right.txt'), 'h\nR1\nb\nR2\nt\nR3\n');
+
+// R3-07 文件夹三向合并语料：三方目录（一致/单侧改/冲突/孤立/删除跟随）
+const MB = join(dir, 'MB');
+const ML = join(dir, 'ML');
+const MR = join(dir, 'MR');
+for (const d of [MB, ML, MR]) mkdirSync(d);
+const put = (root, name, text) => writeFileSync(join(root, name), text);
+for (const root of [MB, ML, MR]) put(root, 'same.txt', 's\n');
+put(MB, 'lchg.txt', 'old\n'); put(ML, 'lchg.txt', 'new\n'); put(MR, 'lchg.txt', 'old\n');
+put(MB, 'rchg.txt', 'old\n'); put(ML, 'rchg.txt', 'old\n'); put(MR, 'rchg.txt', 'new\n');
+put(MB, 'conf.txt', 'b\n'); put(ML, 'conf.txt', 'l\n'); put(MR, 'conf.txt', 'r\n');
+put(ML, 'lonly.txt', 'L\n');
+put(MB, 'del.txt', 'x\n'); put(ML, 'del.txt', 'x\n');
 
 const client = new EngineClient();
 await client.ready;
@@ -268,6 +280,89 @@ try {
     `hasConflicts=${plain?.hasConflicts}`
   );
 
+  // 5. R3-07：文件夹三向合并（dir/mergeScan|mergePlan|mergeExecute，真实落盘）
+  ok(init?.capabilities?.dirMerge === true, 'initialize 能力位 dirMerge=true');
+  const dm = await client.request('dir/mergeScan', {
+    sessionId: 'e2e-dmerge-1', base: MB, left: ML, right: MR,
+  });
+  const dmRows = new Map((dm?.rows ?? []).map((r) => [r.relPath, r]));
+  const cat = (p) => dmRows.get(p)?.category;
+  ok(
+    cat('same.txt') === 'same' && cat('lchg.txt') === 'leftChanged' && cat('rchg.txt') === 'rightChanged' &&
+      cat('conf.txt') === 'conflict' && cat('lonly.txt') === 'leftOnly' && cat('del.txt') === 'deletedRight',
+    'dir/mergeScan diff3 分类',
+    `rows=${dmRows.size}`
+  );
+  ok(
+    dm?.stats?.total === dmRows.size && dm?.stats?.conflict >= 1 && dm?.stats?.orphan >= 1,
+    'dir/mergeScan stats 与行数一致',
+    JSON.stringify(dm?.stats)
+  );
+  ok(dmRows.get('conf.txt')?.conflictLeaf === true, '冲突文件行标记 conflictLeaf（双击进文本合并）');
+
+  const dmPlan = await client.request('dir/mergePlan', {
+    sessionId: 'e2e-dmerge-1', target: 'right', decisions: {},
+  });
+  const dmOps = dmPlan?.ops ?? [];
+  ok(
+    dmOps.some((o) => o.path === 'lchg.txt' && o.kind === 'takeLeft') &&
+      dmOps.some((o) => o.path === 'lonly.txt' && o.kind === 'takeLeft') &&
+      !dmOps.some((o) => o.path === 'conf.txt') && !dmOps.some((o) => o.path === 'same.txt'),
+    'dir/mergePlan 目标右：仅左改/左孤立入计划，冲突与一致不入',
+    dmOps.map((o) => `${o.kind}:${o.path}`).join(',')
+  );
+  const dmExec = await client.request('dir/mergeExecute', {
+    sessionId: 'e2e-dmerge-1', target: 'right', ops: dmOps,
+  });
+  ok(
+    dmExec?.failed === 0 && dmExec?.copied === dmOps.length && dmExec?.cancelled === false,
+    'dir/mergeExecute 目标右全部成功',
+    `copied=${dmExec?.copied} failed=${dmExec?.failed}`
+  );
+  ok(
+    readFileSync(join(MR, 'lchg.txt'), 'utf8') === 'new\n' && readFileSync(join(MR, 'lonly.txt'), 'utf8') === 'L\n',
+    '合并结果真实落盘（右侧被覆盖/新增）'
+  );
+  ok(
+    Array.isArray(dmExec?.details) && dmExec.details.length === dmOps.length &&
+      dmExec.details.every((d) => d.status === 'copied') && Array.isArray(dmExec?.log) && dmExec.log.length > 0,
+    'dir/mergeExecute 明细与日志齐备'
+  );
+
+  // 输出目标：缺 outputPath 必须拒绝；给了则新建第三目录并落盘
+  let dmNoOut = '';
+  try {
+    await client.request('dir/mergePlan', { sessionId: 'e2e-dmerge-1', target: 'output', decisions: {} });
+  } catch (e) {
+    dmNoOut = String(e?.message ?? e);
+  }
+  ok(dmNoOut.includes('-32602'), 'target=output 缺 outputPath 报 INVALID_PARAMS', dmNoOut);
+
+  const OUT = join(dir, 'OUT'); // 故意不预建：全新第三目录是 BC 常规流程
+  const outPlan = await client.request('dir/mergePlan', {
+    sessionId: 'e2e-dmerge-1', target: 'output', decisions: {}, outputPath: OUT,
+  });
+  ok(
+    (outPlan?.ops ?? []).some((o) => o.path === 'same.txt' && o.kind === 'takeLeft') &&
+      !(outPlan?.ops ?? []).some((o) => o.path === 'conf.txt'),
+    '输出目标计划：三方一致也复制、冲突不进输出',
+    `ops=${outPlan?.ops?.length}`
+  );
+  const outExec = await client.request('dir/mergeExecute', {
+    sessionId: 'e2e-dmerge-1', target: 'output', ops: outPlan.ops,
+  });
+  ok(outExec?.failed === 0 && outExec?.copied > 0, '输出目标执行成功（引擎自建第三目录）', `copied=${outExec?.copied} failed=${outExec?.failed}`);
+  ok(
+    existsSync(join(OUT, 'same.txt')) && readFileSync(join(OUT, 'same.txt'), 'utf8') === 's\n' &&
+      readFileSync(join(OUT, 'lchg.txt'), 'utf8') === 'new\n' && !existsSync(join(OUT, 'conf.txt')),
+    '第三目录内容正确（一致/左改落地，冲突缺席）'
+  );
+  // execute 省略 outputPath：复用 plan 记入会话的输出根
+  const outExec2 = await client.request('dir/mergeExecute', {
+    sessionId: 'e2e-dmerge-1', target: 'output', ops: outPlan.ops,
+  });
+  ok(outExec2?.failed === 0, 'execute 省略 outputPath 复用会话输出根');
+
   // 6. P11：report/generate（FR-RPT-001/002；真实引擎布局族 + 分块流）
   const rpt = await client.request('report/generate', {
     sessionId: 'e2e-text-1', layout: 'summary', title: 'e2e report',
@@ -318,6 +413,7 @@ try {
   ok((await client.request('session/close', { sessionId: 'e2e-dir-1' })) === null, 'session/close dir 会话');
   ok((await client.request('session/close', { sessionId: 'e2e-text-1' })) === null, 'session/close text 会话');
   ok((await client.request('session/close', { sessionId: 'e2e-merge3-1' })) === null, 'session/close merge3 会话');
+  ok((await client.request('session/close', { sessionId: 'e2e-dmerge-1' })) === null, 'session/close 文件夹合并会话');
   ok((await client.request('shutdown', null)) === null, 'shutdown 应答 null');
   const exitCode = await client.close();
   ok(exitCode === 0, '引擎进程随 shutdown 退出', `exit=${exitCode}`);

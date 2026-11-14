@@ -76,4 +76,10 @@ reports?: boolean,
 /**
  * P14：图片比较（picture/open）
  */
-pictureCompare?: boolean, };
+pictureCompare?: boolean, 
+/**
+ * R3-07：文件夹三向合并（dir/mergeScan|mergePlan|mergeExecute）。
+ * 缺省 **false**：旧引擎不含该字段时不得假定能力存在（此前多个能力位
+ * 缺省 true 属过度承诺，见 R3-22）。
+ */
+dirMerge?: boolean, };

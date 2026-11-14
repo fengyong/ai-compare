@@ -25,10 +25,10 @@ import type {
   DisplayFilterSpec,
   EntryKind,
   InitializeResult,
-  MergeDecision,
-  MergeOpKind,
-  MergePlannedOp,
-  MergeTarget,
+  DirMergeDecision,
+  DirMergeOpKind,
+  DirMergePlannedOp,
+  DirMergeTarget,
   NameFilterSpec,
   PlannedOperation,
   Section,
@@ -126,6 +126,8 @@ interface MockTextSession {
 interface MockMergeSession {
   id: string;
   rows: DirMergeRow[];
+  /** target=output 的第三目录（plan 时记入，execute 可省略；与引擎会话态同口径） */
+  outputPath?: string;
 }
 
 const MAX_BATCH_ROWS = 512;
@@ -688,6 +690,10 @@ export class MockEngine {
   /** dir/mergePlan 同形实现：与引擎 plan_merge 同口径（决策继承 + 默认决策表） */
   private mergePlanP(p: DirMergePlanParams): DirMergePlanResult {
     const m = this.requireMerge(p.sessionId);
+    if (p.outputPath !== undefined) m.outputPath = p.outputPath;
+    if (p.target === 'output' && !m.outputPath) {
+      throw new InvalidParams('target=output 需要提供 outputPath（第三输出目录）');
+    }
     const ops = mockMergePlan(m.rows, p.target, p.decisions ?? {});
     const stats = { total: ops.length, copied: 0, deleted: 0, touched: 0, skipped: 0, failed: 0 };
     for (const op of ops) {
@@ -701,6 +707,10 @@ export class MockEngine {
   /** dir/mergeExecute 同形模拟：对演示模型落盘（覆盖目标侧信息/删除），逐项收集结果 */
   private mergeExecuteP(p: DirMergeExecuteParams): DirMergeExecuteResult {
     const m = this.requireMerge(p.sessionId);
+    if (p.outputPath !== undefined) m.outputPath = p.outputPath;
+    if (p.target === 'output' && !m.outputPath) {
+      throw new InvalidParams('target=output 需要提供 outputPath（第三输出目录）');
+    }
     const byPath = new Map(m.rows.map((r) => [r.relPath, r]));
     const details: DirMergeExecuteResult['details'] = [];
     let copied = 0;
@@ -716,7 +726,7 @@ export class MockEngine {
       }
       if (op.kind === 'keep') {
         skipped++;
-        details.push({ kind: op.kind, path: op.path, reason: op.reason, status: 'planned', detail: null });
+        details.push({ kind: op.kind, path: op.path, reason: op.reason, status: 'planned' });
         continue;
       }
       const targetSide: 'left' | 'right' = p.target === 'right' ? 'right' : 'left';
@@ -729,7 +739,7 @@ export class MockEngine {
       if (op.kind === 'deleteTarget') {
         if (p.target === 'output') {
           deleted++;
-          details.push({ kind: op.kind, path: op.path, reason: op.reason, status: 'deleted', detail: null });
+          details.push({ kind: op.kind, path: op.path, reason: op.reason, status: 'deleted' });
           continue;
         }
         if (!row[targetSide]) {
@@ -740,7 +750,7 @@ export class MockEngine {
         row[targetSide] = null;
         recomputeMergeRow(row);
         deleted++;
-        details.push({ kind: op.kind, path: op.path, reason: op.reason, status: 'deleted', detail: null });
+        details.push({ kind: op.kind, path: op.path, reason: op.reason, status: 'deleted' });
         continue;
       }
       // takeLeft / takeRight：目标侧被对应源覆盖（output 目标落第三目录，演示模型不持有）
@@ -759,7 +769,7 @@ export class MockEngine {
       row[targetSide] = { ...src };
       recomputeMergeRow(row);
       copied++;
-      details.push({ kind: op.kind, path: op.path, reason: op.reason, status: 'copied', detail: null });
+      details.push({ kind: op.kind, path: op.path, reason: op.reason, status: 'copied' });
     }
     const log: string[] = [
       `合并目标：${p.target === 'left' ? '左侧' : p.target === 'right' ? '右侧' : '输出文件夹'}`,
@@ -1760,21 +1770,21 @@ function recomputeMergeRow(row: DirMergeRow): void {
  * mock 合并计划（与引擎 merge3way::plan_merge 同口径）：
  * 有效决策 = 显式决策 > 祖先继承 > Auto；目录决策递归展开；Auto 走默认决策表。
  */
-function mockMergePlan(rows: DirMergeRow[], target: MergeTarget, decisions: Record<string, MergeDecision>): MergePlannedOp[] {
+function mockMergePlan(rows: DirMergeRow[], target: DirMergeTarget, decisions: DirMergePlanParams['decisions']): DirMergePlannedOp[] {
   const childrenOf = new Map<string | null, DirMergeRow[]>();
   for (const r of rows) {
     const list = childrenOf.get(r.parent) ?? [];
     list.push(r);
     childrenOf.set(r.parent, list);
   }
-  const ops: MergePlannedOp[] = [];
+  const ops: DirMergePlannedOp[] = [];
 
-  const effective = (row: DirMergeRow, inherit: MergeDecision | null): MergeDecision => {
+  const effective = (row: DirMergeRow, inherit: DirMergeDecision | null): DirMergeDecision => {
     const own = decisions[row.relPath];
     return own ?? inherit ?? 'auto';
   };
 
-  const autoDefault = (row: DirMergeRow, t: MergeTarget): { kind: MergeOpKind; reason: string } => {
+  const autoDefault = (row: DirMergeRow, t: DirMergeTarget): { kind: DirMergeOpKind; reason: string } => {
     const cat = row.category;
     switch (cat) {
       case 'same':
@@ -1800,7 +1810,7 @@ function mockMergePlan(rows: DirMergeRow[], target: MergeTarget, decisions: Reco
     }
   };
 
-  const walk = (row: DirMergeRow, inherit: MergeDecision | null): void => {
+  const walk = (row: DirMergeRow, inherit: DirMergeDecision | null): void => {
     const eff = effective(row, inherit);
     if (row.kind === 'dir' && !row.conflictLeaf && row.category !== 'conflict') {
       // 目录节点（类型冲突叶按文件处理）
@@ -1816,15 +1826,15 @@ function mockMergePlan(rows: DirMergeRow[], target: MergeTarget, decisions: Reco
         (target === 'output' && (row.category === 'leftOnly' || row.category === 'rightOnly'));
       if (kids.length === 0 && absentOnTarget) {
         const explicit = eff === 'takeLeft' || eff === 'takeRight' || eff === 'both';
-        const kind: MergeOpKind = eff === 'takeRight' || (!explicit && row.category === 'rightOnly') ? 'takeRight' : 'takeLeft';
+        const kind: DirMergeOpKind = eff === 'takeRight' || (!explicit && row.category === 'rightOnly') ? 'takeRight' : 'takeLeft';
         ops.push({ kind, path: row.relPath, reason: explicit ? '决策:目录并入（空目录）' : '孤立空目录并入' });
       }
-      const passDown: MergeDecision | null = eff === 'auto' ? null : eff;
+      const passDown: DirMergeDecision | null = eff === 'auto' ? null : eff;
       for (const c of kids) walk(c, passDown);
       return;
     }
     // 文件叶 / 类型冲突叶
-    let kind: MergeOpKind;
+    let kind: DirMergeOpKind;
     let reason: string;
     switch (eff) {
       case 'skip':

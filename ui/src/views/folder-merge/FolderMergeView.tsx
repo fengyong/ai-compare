@@ -1,22 +1,21 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { formatSize, formatTime } from '../../lib/env';
-import type { DirMergeRow, MergeDecision, MergeTarget } from '../../protocol/types';
+import type { DirMergeRow, DirMergeDecision, DirMergeTarget, DirMergePlannedOp } from '../../protocol/types';
 import { mergeExecute, mergePlan, mergeScan } from '../../ipc/engineProcess';
-import type { DirMergeExecuteResult, DirMergePlanResult } from '../../protocol/types';
+import type { DirMergeExecuteResult } from '../../protocol/types';
 import type { Tab } from '../../shell/store';
 import { useShell } from '../../shell/store';
 import { S } from '../../strings';
 import {
   applyDecisionToTree,
-  buildMergePreview,
   decisionAffectsSubtree,
   exportMergeReportText,
   mergeDecisionStats,
+  mergePreviewFromPlan,
   mergeStateClass,
   MERGE_CATEGORY_LABELS,
   MERGE_STATE_LABELS,
   orderedMergeRows,
-  previewToMergeOps,
   summarizeMergePlan,
   type DecisionMap,
   type MergePreviewRow,
@@ -29,11 +28,11 @@ import {
  * - 合并计划确认 → 分批执行（进度）→ 结果报告（统计卡 + 明细 + 导出）；
  * - 双击冲突文件行 → 文本合并视图占位（P10 后接真三向文本合并 UI）。
  *
- * 数据链路：dir/mergeScan（mock 同形实现；真实引擎 RPC 属协议变更提案）→
- * dir/mergePlan（决策继承展开）→ dir/mergeExecute（部分成功语义 + 日志）。
+ * 数据链路：dir/mergeScan（三树 diff3 分类）→ dir/mergePlan（决策继承展开，
+ * 引擎返回的 ops 即执行清单）→ dir/mergeExecute（部分成功语义 + 日志）。
  */
 
-const DECISION_LABELS: Record<MergeDecision, string> = {
+const DECISION_LABELS: Record<DirMergeDecision, string> = {
   auto: S.mergeView.decAuto,
   takeLeft: S.mergeView.decTakeLeft,
   takeRight: S.mergeView.decTakeRight,
@@ -58,12 +57,13 @@ export function FolderMergeView({ tab }: { tab: Tab }) {
   const [error, setError] = useState<string | null>(null);
   const [rows, setRows] = useState<DirMergeRow[] | null>(null);
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
-  const [target, setTarget] = useState<MergeTarget>('right');
+  const [target, setTarget] = useState<DirMergeTarget>('right');
   const [outputPath, setOutputPath] = useState('');
   const [decisions, setDecisions] = useState<DecisionMap>({});
   // 阶段：tree（决策）→ plan（确认）→ running → report
   const [phase, setPhase] = useState<'tree' | 'plan' | 'running' | 'report'>('tree');
   const [preview, setPreview] = useState<MergePreviewRow[]>([]);
+  const [planOps, setPlanOps] = useState<DirMergePlannedOp[]>([]);
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [report, setReport] = useState<DirMergeExecuteResult | null>(null);
   const [textMergeRow, setTextMergeRow] = useState<DirMergeRow | null>(null);
@@ -107,38 +107,43 @@ export function FolderMergeView({ tab }: { tab: Tab }) {
     });
   };
 
-  const setDecision = (row: DirMergeRow, decision: MergeDecision): void => {
+  const setDecision = (row: DirMergeRow, decision: DirMergeDecision): void => {
     if (decisionAffectsSubtree(rows ?? [], row.relPath)) {
       setNotice(`${row.name}: ${S.mergeView.decHintDir}`);
     }
     setDecisions((prev) => applyDecisionToTree(rows ?? [], prev, row.relPath, decision));
   };
 
-  // ---- 生成合并计划（dir/mergePlan） ----
+  // ---- 生成合并计划（dir/mergePlan；引擎返回的 ops 即执行清单） ----
+  // 目标/输出路径变更后旧计划立即失效：否则会把按旧目标生成的 ops 执行到新目标
+  const invalidatePlan = (): void => {
+    setPlanOps([]);
+    setPreview([]);
+    setPhase('tree');
+  };
+
   const buildPlan = async (): Promise<void> => {
+    if (target === 'output' && outputPath.trim() === '') {
+      setNotice(S.mergeView.outputPathRequired);
+      return;
+    }
     try {
-      const result: DirMergePlanResult = await mergePlan({ sessionId, target, decisions });
-      const ops = result.ops;
-      // 计划预览：以 preview 行渲染（决策/默认口径），动作以引擎计划为准
-      const all = buildMergePreview(rows ?? [], decisions, target);
-      const actionablePaths = new Set(ops.filter((o) => o.kind !== 'keep').map((o) => o.path));
-      const keepReasons = new Map(ops.filter((o) => o.kind === 'keep').map((o) => [o.path, o.reason]));
-      const rowsPreview = all
-        .filter((p) => actionablePaths.has(p.path) || keepReasons.has(p.path) || p.decision === 'auto')
-        .map((p) => {
-          if (actionablePaths.has(p.path)) return p;
-          const kr = keepReasons.get(p.path);
-          return kr ? { ...p, op: 'keep' as const, reason: kr, actionable: false } : p;
-        });
-      setPreview(rowsPreview);
+      const result = await mergePlan({
+        sessionId,
+        target,
+        decisions,
+        ...(target === 'output' ? { outputPath: outputPath.trim() } : {}),
+      });
+      setPlanOps(result.ops);
+      setPreview(mergePreviewFromPlan(rows ?? [], decisions, result.ops));
       setPhase('plan');
     } catch (err: unknown) {
-      setNotice(S.mergeView.engineUnsupported + `（${err instanceof Error ? err.message : String(err)}）`);
+      setNotice(err instanceof Error ? err.message : String(err));
     }
   };
 
-  const planStats = summarizeMergePlan(preview.filter((p) => p.actionable));
-  const pendingOps = previewToMergeOps(preview);
+  const planStats = summarizeMergePlan(preview);
+  const pendingOps = planOps.filter((o) => o.kind !== 'keep');
 
   // ---- 执行合并（分批 dir/mergeExecute → 进度 → 报告） ----
   const runMerge = async (): Promise<void> => {
@@ -160,7 +165,12 @@ export function FolderMergeView({ tab }: { tab: Tab }) {
     for (let i = 0; i < pendingOps.length; i += EXEC_BATCH_SIZE) {
       const batch = pendingOps.slice(i, i + EXEC_BATCH_SIZE);
       try {
-        const result = await mergeExecute({ sessionId, target, ops: batch });
+        const result = await mergeExecute({
+          sessionId,
+          target,
+          ops: batch,
+          ...(target === 'output' ? { outputPath: outputPath.trim() } : {}),
+        });
         report.copied += result.copied;
         report.deleted += result.deleted;
         report.touched += result.touched;
@@ -238,13 +248,29 @@ export function FolderMergeView({ tab }: { tab: Tab }) {
         )}
         <span className="sep" />
         <label>{S.mergeView.targetLabel}</label>
-        <select className="aic-mini-select" value={target} disabled={phase === 'running'} onChange={(e) => setTarget(e.target.value as MergeTarget)}>
+        <select
+          className="aic-mini-select"
+          value={target}
+          disabled={phase === 'running'}
+          onChange={(e) => {
+            setTarget(e.target.value as DirMergeTarget);
+            invalidatePlan();
+          }}
+        >
           <option value="right">{S.mergeView.targetRight}</option>
           <option value="left">{S.mergeView.targetLeft}</option>
           <option value="output">{S.mergeView.targetOutput}</option>
         </select>
         {target === 'output' && (
-          <input className="filter-input" placeholder={S.mergeView.outputPathLabel} value={outputPath} onChange={(e) => setOutputPath(e.target.value)} />
+          <input
+            className="filter-input"
+            placeholder={S.mergeView.outputPathLabel}
+            value={outputPath}
+            onChange={(e) => {
+              setOutputPath(e.target.value);
+              invalidatePlan();
+            }}
+          />
         )}
         <span className="sep" />
         <button className="mini" disabled={phase === 'running'} onClick={() => setExpanded(new Set(rows.filter((r) => r.kind === 'dir').map((r) => r.relPath)))}>
@@ -425,7 +451,7 @@ export function FolderMergeView({ tab }: { tab: Tab }) {
     </div>
   );
 
-  function effectiveDecisionLocal(row: DirMergeRow): MergeDecision {
+  function effectiveDecisionLocal(row: DirMergeRow): DirMergeDecision {
     // 与 mergeRows.effectiveDecision 同口径（此处经闭包取 decisions）
     let cur: string | null = row.relPath;
     while (cur) {
@@ -448,16 +474,16 @@ function MergeRowLine({
 }: {
   row: DirMergeRow;
   expanded: boolean;
-  decision: MergeDecision;
+  decision: DirMergeDecision;
   onToggle(): void;
-  onDecision(d: MergeDecision): void;
+  onDecision(d: DirMergeDecision): void;
   onOpenConflict(): void;
 }) {
   const isDir = row.kind === 'dir';
   const stateClass = mergeStateClass(row.rowState);
   // 目录行 = 聚合状态文案；叶行 = 叶级分类文案
   const catLabel = isDir ? MERGE_STATE_LABELS[row.rowState] : MERGE_CATEGORY_LABELS[row.category];
-  const decButtons: MergeDecision[] = decision === 'auto' ? ['takeLeft', 'takeRight', 'both', 'skip'] : ['takeLeft', 'takeRight', 'both', 'skip', 'auto'];
+  const decButtons: DirMergeDecision[] = decision === 'auto' ? ['takeLeft', 'takeRight', 'both', 'skip'] : ['takeLeft', 'takeRight', 'both', 'skip', 'auto'];
   return (
     <div className={`aic-merge-tr ${stateClass}`} onDoubleClick={() => !isDir && onOpenConflict()}>
       <span className="name" style={{ paddingLeft: 8 + (row.depth - 1) * 16 }} title={`${row.relPath} · ${catLabel}${row.conflictLeaf ? ' · 双击打开文本合并占位' : ''}`}>

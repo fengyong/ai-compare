@@ -379,6 +379,12 @@ pub struct EngineCapabilities {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub picture_compare: Option<bool>,
+    /// R3-07：文件夹三向合并（dir/mergeScan|mergePlan|mergeExecute）。
+    /// 缺省 **false**：旧引擎不含该字段时不得假定能力存在（此前多个能力位
+    /// 缺省 true 属过度承诺，见 R3-22）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub dir_merge: Option<bool>,
 }
 
 /// 许可能力（ADR-009：开源/自用默认全能力；字段为后续门控留位）
@@ -1985,6 +1991,283 @@ pub struct DirExecuteResult {
 }
 
 // ---------------------------------------------------------------------------
+// R3-07：dir/mergeScan|mergePlan|mergeExecute（文件夹三向合并；FR-DMRG）
+// 与 ui/src/protocol/types.ts §4 提案同构；另补提案遗漏的 outputPath
+// （target=output 时必需，否则引擎无法定位第三输出目录）。
+// 类型名统一 DirMerge* 前缀，与文本三向合并（Merge*）区分。
+// ---------------------------------------------------------------------------
+
+/// 叶级 diff3 分类（对齐 ai-dir merge3way::MergeCategory）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub enum DirMergeCategory {
+    Same,
+    LeftChanged,
+    RightChanged,
+    BothSame,
+    DeletedRight,
+    DeletedLeft,
+    Conflict,
+    LeftOnly,
+    RightOnly,
+    BaseOnly,
+}
+
+/// 着色口径（FR-DMRG-002：绿=可自动 / 红=冲突 / 灰=孤立 / 暗=三方一致）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub enum DirMergeRowState {
+    Same,
+    Auto,
+    Conflict,
+    Orphan,
+}
+
+/// 三路合并行（平铺行 + parent 构树；对齐 merge3way::DirMergeRow）
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct DirMergeRow {
+    pub rel_path: String,
+    pub name: String,
+    pub kind: EntryKind,
+    pub base: Option<SideInfo>,
+    pub left: Option<SideInfo>,
+    pub right: Option<SideInfo>,
+    pub category: DirMergeCategory,
+    pub row_state: DirMergeRowState,
+    /// 父 rel 路径（根的直接子项为 null）
+    pub parent: Option<String>,
+    pub depth: u32,
+    /// 叶子级内容冲突（双击 → 文本合并视图）
+    pub conflict_leaf: bool,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct DirMergeScanStats {
+    pub total: u32,
+    pub files: u32,
+    pub dirs: u32,
+    pub same: u32,
+    pub auto: u32,
+    pub conflict: u32,
+    pub orphan: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct DirMergeScanParams {
+    /// 客户端分配的合并会话句柄
+    pub session_id: String,
+    pub base: String,
+    pub left: String,
+    pub right: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct DirMergeScanResult {
+    pub session_id: String,
+    pub rows: Vec<DirMergeRow>,
+    pub stats: DirMergeScanStats,
+}
+
+/// 合并目标（FR-DMRG-001：左/右/第三输出文件夹）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub enum DirMergeTarget {
+    Left,
+    Right,
+    Output,
+}
+
+/// 行决策（目录决策递归展开到子树；对齐 merge3way::MergeDecision）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub enum DirMergeDecision {
+    Auto,
+    TakeLeft,
+    TakeRight,
+    Both,
+    Skip,
+}
+
+/// 合并计划动作（对齐 merge3way::MergeOpKind）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub enum DirMergeOpKind {
+    TakeLeft,
+    TakeRight,
+    DeleteTarget,
+    Keep,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct DirMergePlannedOp {
+    pub kind: DirMergeOpKind,
+    /// rel 路径（相对合并根）
+    pub path: String,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct DirMergePlanStats {
+    pub total: u32,
+    pub copied: u32,
+    pub deleted: u32,
+    pub touched: u32,
+    pub skipped: u32,
+    pub failed: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase", default)]
+pub struct DirMergePlanParams {
+    pub session_id: String,
+    pub target: DirMergeTarget,
+    /// rel 路径 -> 显式决策
+    pub decisions: std::collections::BTreeMap<String, DirMergeDecision>,
+    /// target=output 时的第三输出目录（必需；其余目标忽略）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub output_path: Option<String>,
+}
+
+impl Default for DirMergePlanParams {
+    fn default() -> Self {
+        DirMergePlanParams {
+            session_id: String::new(),
+            target: DirMergeTarget::Left,
+            decisions: std::collections::BTreeMap::new(),
+            output_path: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct DirMergePlanResult {
+    pub session_id: String,
+    pub target: DirMergeTarget,
+    pub ops: Vec<DirMergePlannedOp>,
+    pub stats: DirMergePlanStats,
+}
+
+/// 执行明细的动作标签（= DirMergeOpKind + unknown：计划外路径的兜底）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub enum DirMergeExecKind {
+    TakeLeft,
+    TakeRight,
+    DeleteTarget,
+    Keep,
+    Unknown,
+}
+
+/// 执行明细状态（对齐 ai-dir sync::RecordStatus）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Hash)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub enum DirMergeExecStatus {
+    Copied,
+    Deleted,
+    Touched,
+    /// Keep 项：计划内但不落盘
+    Planned,
+    Skipped,
+    Failed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct DirMergeExecDetail {
+    pub kind: DirMergeExecKind,
+    pub path: String,
+    pub reason: String,
+    pub status: DirMergeExecStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub detail: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase", default)]
+pub struct DirMergeExecuteParams {
+    pub session_id: String,
+    pub target: DirMergeTarget,
+    pub ops: Vec<DirMergePlannedOp>,
+    /// target=output 时的第三输出目录（必需；须与 plan 时一致）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub output_path: Option<String>,
+}
+
+impl Default for DirMergeExecuteParams {
+    fn default() -> Self {
+        DirMergeExecuteParams {
+            session_id: String::new(),
+            target: DirMergeTarget::Left,
+            ops: Vec::new(),
+            output_path: None,
+        }
+    }
+}
+
+/// dir/mergeExecute 应答（部分成功语义 + 日志面板行，FR-SYNC/DMRG 报告需求）
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct DirMergeExecuteResult {
+    pub session_id: String,
+    pub target: DirMergeTarget,
+    pub total: u32,
+    pub copied: u32,
+    pub deleted: u32,
+    pub touched: u32,
+    pub skipped: u32,
+    pub failed: u32,
+    pub cancelled: bool,
+    pub details: Vec<DirMergeExecDetail>,
+    pub log: Vec<String>,
+}
+
+// ---------------------------------------------------------------------------
 // P10：文件格式与规则体系（formats/*、rules/* 命名空间；FR-FMT / FR-TXT-010）
 // ---------------------------------------------------------------------------
 
@@ -3108,6 +3391,7 @@ mod tests {
             dir_execute: Some(true),
             reports: Some(true),
             picture_compare: Some(true),
+            dir_merge: Some(true),
             format_rules: None,
         };
         let s = serde_json::to_string(&c).unwrap();
@@ -3393,6 +3677,7 @@ mod tests {
             format_rules: None,
             reports: None,
             picture_compare: None,
+            dir_merge: None,
         };
         let s = serde_json::to_string(&c).unwrap();
         assert!(!s.contains("tableCompare") && !s.contains("hexCompare"), "{s}");
@@ -3532,6 +3817,7 @@ mod tests {
             format_rules: Some(true),
             reports: Some(true),
             picture_compare: Some(true),
+            dir_merge: Some(true),
         };
         let s = serde_json::to_string(&c).unwrap();
         assert!(s.contains("threeWayMerge"));

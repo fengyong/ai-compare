@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { MockEngine } from './mockEngine';
 import { MockTransport } from './mockTransport';
 import { RpcClient } from '../protocol/client';
-import type { DirMergeRow, MergeDecision, MergePlannedOp, MergeTarget } from '../protocol/types';
+import type { DirMergeRow, DirMergeDecision, DirMergePlannedOp, DirMergeTarget } from '../protocol/types';
 
 /**
  * MockEngine P8 方法集（同形模拟）：dir/mergeScan（三方演示树分类）/
@@ -94,9 +94,9 @@ describe('MockEngine P8：dir/mergePlan', () => {
   it('默认决策（目标右）：左改/左孤立取左，冲突保持，右改不动', async () => {
     const client = await newClient();
     await openMerge(client);
-    const res = await client.request<{ ops: MergePlannedOp[] }>('dir/mergePlan', {
+    const res = await client.request<{ ops: DirMergePlannedOp[] }>('dir/mergePlan', {
       sessionId: 'merge-1',
-      target: 'right' as MergeTarget,
+      target: 'right' as DirMergeTarget,
       decisions: {},
     });
     const ops = res.ops;
@@ -112,10 +112,10 @@ describe('MockEngine P8：dir/mergePlan', () => {
   it('显式决策取左覆盖冲突默认；skip 决策产生 keep 记录', async () => {
     const client = await newClient();
     await openMerge(client);
-    const res = await client.request<{ ops: MergePlannedOp[] }>('dir/mergePlan', {
+    const res = await client.request<{ ops: DirMergePlannedOp[] }>('dir/mergePlan', {
       sessionId: 'merge-1',
-      target: 'right' as MergeTarget,
-      decisions: { 'conflict.c': 'takeLeft', 'both.c': 'skip' } as Record<string, MergeDecision>,
+      target: 'right' as DirMergeTarget,
+      decisions: { 'conflict.c': 'takeLeft', 'both.c': 'skip' } as Record<string, DirMergeDecision>,
     });
     expect(res.ops.find((o) => o.path === 'conflict.c')?.kind).toBe('takeLeft');
     const skipOp = res.ops.find((o) => o.path === 'both.c');
@@ -127,9 +127,9 @@ describe('MockEngine P8：dir/mergePlan', () => {
   it('目标左：右改取右；右孤立并入', async () => {
     const client = await newClient();
     await openMerge(client);
-    const res = await client.request<{ ops: MergePlannedOp[] }>('dir/mergePlan', {
+    const res = await client.request<{ ops: DirMergePlannedOp[] }>('dir/mergePlan', {
       sessionId: 'merge-1',
-      target: 'left' as MergeTarget,
+      target: 'left' as DirMergeTarget,
       decisions: {},
     });
     expect(res.ops.find((o) => o.path === 'config.yml')?.kind).toBe('takeRight');
@@ -141,10 +141,10 @@ describe('MockEngine P8：dir/mergePlan', () => {
   it('目录决策继承：src 决策 takeRight 时子项全部 takeRight（目标左）', async () => {
     const client = await newClient();
     await openMerge(client);
-    const res = await client.request<{ ops: MergePlannedOp[] }>('dir/mergePlan', {
+    const res = await client.request<{ ops: DirMergePlannedOp[] }>('dir/mergePlan', {
       sessionId: 'merge-1',
-      target: 'left' as MergeTarget,
-      decisions: { src: 'takeRight' } as Record<string, MergeDecision>,
+      target: 'left' as DirMergeTarget,
+      decisions: { src: 'takeRight' } as Record<string, DirMergeDecision>,
     });
     expect(res.ops.find((o) => o.path === 'src/main.c')?.kind).toBe('takeRight');
     expect(res.ops.find((o) => o.path === 'src/util.c')?.kind).toBe('takeRight');
@@ -158,9 +158,9 @@ describe('MockEngine P8：dir/mergePlan', () => {
   it('空孤立目录并入计划；非空孤立目录由子项承载', async () => {
     const client = await newClient();
     await openMerge(client);
-    const res = await client.request<{ ops: MergePlannedOp[] }>('dir/mergePlan', {
+    const res = await client.request<{ ops: DirMergePlannedOp[] }>('dir/mergePlan', {
       sessionId: 'merge-1',
-      target: 'right' as MergeTarget,
+      target: 'right' as DirMergeTarget,
       decisions: {},
     });
     expect(res.ops.find((o) => o.path === 'src/empty-orphan')?.kind).toBe('takeLeft');
@@ -180,7 +180,7 @@ describe('MockEngine P8：dir/mergeExecute', () => {
       details: { path: string; status: string }[];
     }>('dir/mergeExecute', {
       sessionId: 'merge-1',
-      target: 'right' as MergeTarget,
+      target: 'right' as DirMergeTarget,
       ops: [
         { kind: 'takeLeft', path: 'version.json', reason: 'test' },
         { kind: 'takeLeft', path: 'nonexistent', reason: 'test' },
@@ -190,9 +190,9 @@ describe('MockEngine P8：dir/mergeExecute', () => {
     expect(res.failed).toBe(1);
     expect(res.details.find((d) => d.path === 'nonexistent')?.status).toBe('failed');
     // 模型已落盘：重计划后 version.json 变三方一致（不再出现在动作计划）
-    const replan = await client.request<{ ops: MergePlannedOp[] }>('dir/mergePlan', {
+    const replan = await client.request<{ ops: DirMergePlannedOp[] }>('dir/mergePlan', {
       sessionId: 'merge-1',
-      target: 'right' as MergeTarget,
+      target: 'right' as DirMergeTarget,
       decisions: {},
     });
     expect(replan.ops.find((o) => o.path === 'version.json')).toBeUndefined();
@@ -207,7 +207,7 @@ describe('MockEngine P8：dir/mergeExecute', () => {
       skipped: number;
     }>('dir/mergeExecute', {
       sessionId: 'merge-1',
-      target: 'right' as MergeTarget,
+      target: 'right' as DirMergeTarget,
       ops: [
         { kind: 'deleteTarget', path: 'ronly.txt', reason: 'test' },
         { kind: 'deleteTarget', path: 'lonly.txt', reason: 'test' },
@@ -216,9 +216,9 @@ describe('MockEngine P8：dir/mergeExecute', () => {
     expect(res.deleted).toBe(1);
     expect(res.skipped).toBe(1);
     // 模型已落盘：重计划后 ronly.txt 右删成为 deletedRight（目标右 = 不动）
-    const replan = await client.request<{ ops: MergePlannedOp[] }>('dir/mergePlan', {
+    const replan = await client.request<{ ops: DirMergePlannedOp[] }>('dir/mergePlan', {
       sessionId: 'merge-1',
-      target: 'right' as MergeTarget,
+      target: 'right' as DirMergeTarget,
       decisions: {},
     });
     expect(replan.ops.find((o) => o.path === 'ronly.txt')).toBeUndefined();
@@ -230,7 +230,7 @@ describe('MockEngine P8：dir/mergeExecute', () => {
     await openMerge(client);
     const res = await client.request<{ skipped: number; log: string[] }>('dir/mergeExecute', {
       sessionId: 'merge-1',
-      target: 'right' as MergeTarget,
+      target: 'right' as DirMergeTarget,
       ops: [{ kind: 'keep', path: 'README.md', reason: '冲突需人工处理' }],
     });
     expect(res.skipped).toBe(1);
@@ -243,6 +243,59 @@ describe('MockEngine P8：dir/mergeExecute', () => {
     await expect(
       client.request('dir/mergePlan', { sessionId: 'nope', target: 'right', decisions: {} }),
     ).rejects.toMatchObject({ code: 410 });
+    await client.close();
+  });
+});
+
+describe('MockEngine P8：输出目标（第三目录）契约', () => {
+  it('target=output 缺 outputPath：plan 与 execute 均拒绝（不得静默写到别处）', async () => {
+    const client = await newClient();
+    await openMerge(client);
+    await expect(
+      client.request('dir/mergePlan', { sessionId: 'merge-1', target: 'output', decisions: {} }),
+    ).rejects.toMatchObject({ code: -32602 });
+    await expect(
+      client.request('dir/mergeExecute', {
+        sessionId: 'merge-1',
+        target: 'output',
+        ops: [{ kind: 'takeLeft', path: 'version.json', reason: 'test' }],
+      }),
+    ).rejects.toMatchObject({ code: -32602 });
+    await client.close();
+  });
+
+  it('plan 带 outputPath 记入会话：execute 省略仍可用', async () => {
+    const client = await newClient();
+    await openMerge(client);
+    const plan = await client.request<{ ops: DirMergePlannedOp[] }>('dir/mergePlan', {
+      sessionId: 'merge-1',
+      target: 'output',
+      decisions: {},
+      outputPath: '/demo/out',
+    });
+    expect(plan.ops.length).toBeGreaterThan(0);
+    const res = await client.request<{ copied: number; failed: number; target: string }>('dir/mergeExecute', {
+      sessionId: 'merge-1',
+      target: 'output',
+      ops: plan.ops.filter((o) => o.kind !== 'keep'),
+    });
+    expect(res.target).toBe('output');
+    expect(res.failed).toBe(0);
+    expect(res.copied).toBe(plan.ops.filter((o) => o.kind === 'takeLeft' || o.kind === 'takeRight').length);
+    await client.close();
+  });
+
+  it('输出目标：三方一致也复制，冲突项不进输出', async () => {
+    const client = await newClient();
+    await openMerge(client);
+    const plan = await client.request<{ ops: DirMergePlannedOp[] }>('dir/mergePlan', {
+      sessionId: 'merge-1',
+      target: 'output',
+      decisions: {},
+      outputPath: '/demo/out',
+    });
+    expect(plan.ops.find((o) => o.path === 'README.md')?.kind).toBe('takeLeft');
+    expect(plan.ops.find((o) => o.path === 'conflict.c')).toBeUndefined();
     await client.close();
   });
 });

@@ -112,11 +112,22 @@ pub struct PictureSessionData {
     pub labels: (String, String),
 }
 
+/// R3-07：文件夹三向合并会话（dir/mergeScan|mergePlan|mergeExecute）
+///
+/// 扫描 arena 打开时一次求出；plan 是纯函数（决策 -> 计划），execute 复用
+/// ai-dir execute 层的护栏/部分成功/取消语义。output 根仅在 target=output 时需要。
+#[derive(Debug, Clone)]
+pub struct DirMergeSessionData {
+    pub roots: ai_dir::MergeRoots,
+    pub scan: ai_dir::MergeScanResult,
+}
+
 #[derive(Clone)]
 pub enum Session {
     Dir(DirSessionData),
     Text(TextSessionData),
     Merge(MergeSessionData),
+    DirMerge(DirMergeSessionData),
     Table(TableSessionData),
     Hex(HexSessionData),
     Picture(PictureSessionData),
