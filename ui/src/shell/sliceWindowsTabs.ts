@@ -60,6 +60,13 @@ export const createWindowsSlice: StateCreator<ShellStore, [], [], WindowsSlice> 
   async closeWindow(windowId) {
     const win = get().windows.find((w) => w.id === windowId);
     if (!win) return;
+    // 脏的命名会话需要确认（与 closeTab 同口径）：否则下方整窗移除会
+    // 静默丢弃未保存内容（FR-SES-001）。
+    const dirty = win.tabs.find((t) => t.kind !== 'home' && t.sessionLink && t.dirty);
+    if (dirty) {
+      set({ closeGuard: { tabId: dirty.id } });
+      return;
+    }
     for (const t of [...win.tabs]) {
       if (t.kind !== 'home') await get().closeTab(t.id);
     }
@@ -387,6 +394,14 @@ export const createTabsSlice: StateCreator<ShellStore, [], [], TabsSlice> = (set
     const found = get().findTab(tabId);
     if (!found) return;
     const win = get().windows.find((w) => w.id === found.windowId)!;
+    // 脏的命名会话需要确认：否则下方批量过滤会静默丢弃未保存内容（FR-SES-001）。
+    const dirty = win.tabs.find(
+      (t) => t.kind !== 'home' && t.id !== tabId && !t.pinned && t.sessionLink && t.dirty
+    );
+    if (dirty) {
+      set({ closeGuard: { tabId: dirty.id } });
+      return;
+    }
     for (const t of win.tabs) {
       if (t.kind !== 'home' && t.id !== tabId && !t.pinned) await cleanupTabEngines(t);
     }
@@ -429,15 +444,7 @@ export const createTabsSlice: StateCreator<ShellStore, [], [], TabsSlice> = (set
     set((st) => ({
       windows: st.windows.map((w) => ({
         ...w,
-        tabs: w.tabs.map((t) => {
-          if (t.folder?.sessionId === oldSessionId) {
-            return { ...t, folder: { ...t.folder, sessionId: newSessionId } };
-          }
-          if (t.text?.sessionId === oldSessionId) {
-            return { ...t, text: { ...t.text, sessionId: newSessionId } };
-          }
-          return t;
-        }),
+        tabs: w.tabs.map((t) => rebindTabSession(t, oldSessionId, newSessionId)),
       })),
     }));
   },
@@ -451,32 +458,51 @@ export const createTabsSlice: StateCreator<ShellStore, [], [], TabsSlice> = (set
   },
 });
 
+/**
+ * 标签上持有引擎会话句柄的子视图种类（全覆盖清单）。
+ *
+ * 背景：引擎侧 sessions map 为 picture/table/hex/text/merge/merge3/dir 全部建会话，
+ * 此前清理只覆盖 text/folder/merge3 → 其余类型的会话在引擎侧只增不减（内存泄漏），
+ * 且崩溃重放后会拿旧句柄继续请求（410/411）。
+ */
+const TAB_SESSION_KINDS = ['text', 'folder', 'sync', 'picture', 'table', 'hex', 'merge', 'merge3'] as const;
+
+/** 取标签上首个非空的引擎会话句柄（同一标签通常只有一个视图持有会话） */
+export function tabSessionId(tab: Tab): string | undefined {
+  for (const kind of TAB_SESSION_KINDS) {
+    const holder = tab[kind] as { sessionId?: string } | undefined;
+    if (holder?.sessionId) return holder.sessionId;
+  }
+  return undefined;
+}
+
+/** 引擎重连后重绑标签的会话句柄（覆盖全部视图种类） */
+function rebindTabSession(tab: Tab, oldSessionId: string, newSessionId: string): Tab {
+  let changed = false;
+  const next: Tab = { ...tab };
+  const mutable = next as unknown as Record<string, unknown>;
+  for (const kind of TAB_SESSION_KINDS) {
+    const holder = tab[kind] as { sessionId?: string } | undefined;
+    if (holder?.sessionId === oldSessionId) {
+      mutable[kind] = { ...holder, sessionId: newSessionId };
+      changed = true;
+    }
+  }
+  return changed ? next : tab;
+}
+
 /** 关闭标签的引擎侧清理（session/close 幂等 + 目录缓存释放 + 崩溃恢复登记注销） */
 export async function cleanupTabEngines(tab: Tab): Promise<void> {
-  if (tab.text?.sessionId) {
-    engine.untrackSession(tab.text.sessionId);
-    try {
-      await engine.closeSession({ sessionId: tab.text.sessionId });
-    } catch (err) {
-      console.warn('[session/close] 失败', err);
-    }
+  const sessionId = tabSessionId(tab);
+  if (!sessionId) return;
+  engine.untrackSession(sessionId);
+  try {
+    await engine.closeSession({ sessionId });
+  } catch (err) {
+    console.warn('[session/close] 失败', err);
   }
+  // 目录视图另有 UI 侧行缓存需要释放
   if (tab.folder?.sessionId) {
-    engine.untrackSession(tab.folder.sessionId);
-    try {
-      await engine.closeSession({ sessionId: tab.folder.sessionId });
-    } catch (err) {
-      console.warn('[session/close] 失败', err);
-    }
     releaseDirCache(tab.folder.sessionId);
-  }
-  // 队列 3：三向合并会话（引擎 Session::Merge）关闭时同样释放
-  if (tab.merge3?.sessionId) {
-    engine.untrackSession(tab.merge3.sessionId);
-    try {
-      await engine.closeSession({ sessionId: tab.merge3.sessionId });
-    } catch (err) {
-      console.warn('[session/close] 失败', err);
-    }
   }
 }

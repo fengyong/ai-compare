@@ -222,10 +222,11 @@ pub async fn run_stdio(opts: ServerOptions) -> std::io::Result<()> {
         let value: serde_json::Value = match serde_json::from_str(trimmed) {
             Ok(v) => v,
             Err(e) => {
-                // 解析失败无法定位会话/顺序，直接应答（id 未知，RFC 允许 null）
+                // 解析失败无法定位请求 id：按 JSON-RPC 2.0 §4 应答 "id": null。
+                // 此前固定回 id=0，会与真实 id=0 的请求撞号（客户端幽灵应答）。
                 log::warn(format!("解析失败: {e}"));
                 let resp = RpcResponse::failure(
-                    ai_protocol::RequestId::Number(0),
+                    ai_protocol::RequestId::Null(None),
                     ai_protocol::error_object(codes::PARSE_ERROR, format!("JSON 解析失败: {e}")),
                 );
                 send_outbound(&tx, Outbound::Response(resp));
@@ -238,20 +239,40 @@ pub async fn run_stdio(opts: ServerOptions) -> std::io::Result<()> {
 
         if has_id {
             // ---- 请求 ----
+            // 先取原始 id（from_value 会消费 value）：信封非法时尽量回显原 id。
+            let raw_id = value.get("id").cloned();
             let req: ai_protocol::RpcRequest = match serde_json::from_value(value) {
                 Ok(r) => r,
                 Err(e) => {
                     log::warn(format!("请求信封不合法: {e}"));
+                    // 信封非法但 id 可能合法：尽量回显原 id；id 不可解析时回 null。
+                    let id = raw_id
+                        .and_then(|v| serde_json::from_value::<ai_protocol::RequestId>(v).ok())
+                        .unwrap_or(ai_protocol::RequestId::Null(None));
                     send_outbound(
                         &tx,
                         Outbound::Response(RpcResponse::failure(
-                            ai_protocol::RequestId::Number(0),
+                            id,
                             ai_protocol::error_object(codes::INVALID_REQUEST, format!("请求信封不合法: {e}")),
                         )),
                     );
                     continue;
                 }
             };
+            // JSON-RPC 2.0 §4：jsonrpc 成员必须为 "2.0"，否则 Invalid Request。
+            if req.jsonrpc != ai_protocol::JSONRPC_VERSION {
+                send_outbound(
+                    &tx,
+                    Outbound::Response(RpcResponse::failure(
+                        req.id.clone(),
+                        ai_protocol::error_object(
+                            codes::INVALID_REQUEST,
+                            format!("jsonrpc 版本必须为 \"2.0\"，收到 {:?}", req.jsonrpc),
+                        ),
+                    )),
+                );
+                continue;
+            }
             if req.method == ai_protocol::method::SHUTDOWN {
                 // shutdown 也走串行链：应答必须排在先到达请求的全部输出之后；
                 // 随后停止读入，等待在途任务收尾（LSP 语义：shutdown 后退出）
@@ -306,10 +327,31 @@ pub async fn run_stdio(opts: ServerOptions) -> std::io::Result<()> {
     if let Some(prev) = chain_prev {
         let _ = prev.await;
     }
+    // 关闭全部会话：取消后台扫描，使常驻 delta pump 任务退出。
+    //
+    // 为什么必须做：pump 持有出站通道（UnboundedSender）的克隆。若不取消，
+    // 出站通道永不关闭 → writer_task 的 rx.recv() 永不返回 None →
+    // writer.await 永久阻塞 → 客户端 EOF 后引擎进程挂死（只能 kill -9）。
+    cancel_all_dir_sessions(&ctx).await;
     drop(tx);
-    let _ = writer.await;
+    // 正常路径：pump 在下一次轮询（≤150ms）内感知取消 → 退出 → 出站通道关闭 →
+    // writer 自然结束。这里只作"pump 异常卡死"的有界保险（5s），
+    // 不可把它当作正常退出路径（否则"pump 永不退出"的回归会被超时掩盖）。
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(5), writer).await;
     log::info("stdio 服务端退出");
     Ok(())
+}
+
+/// 取消所有目录会话的后台扫描（触发 pump 退出）
+async fn cancel_all_dir_sessions(ctx: &HandlerCtx) {
+    let sessions = ctx.sessions.lock().await;
+    for session in sessions.values() {
+        if let Session::Dir(data) = session {
+            if let Some(model) = &data.model {
+                model.cancel();
+            }
+        }
+    }
 }
 
 /// HandlerCtx 内部均为 Arc，克隆廉价（请求任务需要拥有所有权）
@@ -324,6 +366,11 @@ fn clone_ctx(ctx: &HandlerCtx) -> HandlerCtx {
 }
 
 /// 单个请求的处理：分发 -> 出站入队；panic 捕获为 InternalError 应答。
+///
+/// panic 隔离是硬要求：handler 内的 panic 若不兜底，tokio 任务会带
+/// JoinError::Panic 结束，而 `chain_prev` 的 `let _ = p.await` 会把错误吞掉 ——
+/// 结果该请求**永不应答**，UI 侧只能等到超时。tokio::spawn 把 panic 转成
+/// JoinError，这里统一回 -32603 InternalError。
 async fn process_request(
     req: ai_protocol::RpcRequest,
     ctx: HandlerCtx,
@@ -333,8 +380,39 @@ async fn process_request(
 ) {
     let id = req.id.clone();
     let key = id.cancel_key();
-    let result = dispatch(&req.method, req.params.clone(), &ctx, &ai_dir::CancelFlag(cancel_flag), tx.clone()).await;
+    let method = req.method.clone();
+    let params = req.params.clone();
+    let tx_inner = tx.clone();
+    let method_for_dispatch = method.clone();
+    let outcome = tokio::spawn(std::panic::AssertUnwindSafe(async move {
+        dispatch(
+            &method_for_dispatch,
+            params,
+            &ctx,
+            &ai_dir::CancelFlag(cancel_flag),
+            tx_inner.clone(),
+        )
+        .await
+    }))
+    .await;
     cancels.unregister(&key);
+    let result = match outcome {
+        Ok(r) => r,
+        Err(join_err) => {
+            if join_err.is_panic() {
+                log::warn(format!("{} {} handler panic，已转为 InternalError", method, id));
+                Err(ai_protocol::error_object(
+                    codes::INTERNAL_ERROR,
+                    format!("handler panic: {method}"),
+                ))
+            } else {
+                Err(ai_protocol::error_object(
+                    codes::INTERNAL_ERROR,
+                    format!("handler 任务被取消: {method}"),
+                ))
+            }
+        }
+    };
     match result {
         Ok(Handled::Value(v)) => {
             send_outbound(&tx, Outbound::Response(RpcResponse::success(id, v)));
@@ -346,7 +424,7 @@ async fn process_request(
             }
         }
         Err(err) => {
-            log::warn(format!("{} {} 失败: code={} {}", req.method, id, err.code, err.message));
+            log::warn(format!("{} {} 失败: code={} {}", method, id, err.code, err.message));
             send_outbound(&tx, Outbound::Response(RpcResponse::failure(id, err)));
         }
     }

@@ -13,7 +13,14 @@ use serde::{Deserialize, Serialize};
 // JSON-RPC 封装（信封层；params 在边界处为 Value，分发后转强类型）
 // ---------------------------------------------------------------------------
 
-/// 请求 id：JSON-RPC 允许 number / string（不允许 null 的服务端场景约定）
+/// 请求 id：JSON-RPC 2.0 允许 number / string / null
+///
+/// `null` 的两种用途：
+/// 1. 客户端发出 `"id": null` 的请求 —— 合法 id，应答回 `"id": null`；
+/// 2. 服务端无法确定请求 id（如 JSON 解析失败）—— 按规范应答 `"id": null`。
+///
+/// 此前本类型只有 Number/String 两种，导致 `"id": null` 被当作"有 id 但信封非法"
+/// 而回一条 id=0 的错误（与真实 id=0 的请求撞号）。
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
@@ -22,6 +29,8 @@ pub enum RequestId {
     /// JSON 线上为 number（TS 侧显式映射，避免 ts-rs 默认 bigint）
     Number(#[cfg_attr(feature = "ts", ts(type = "number"))] i64),
     String(String),
+    /// JSON-RPC 2.0 §4：id 无法确定时为 null
+    Null(#[cfg_attr(feature = "ts", ts(type = "null"))] Option<()>),
 }
 
 impl std::fmt::Display for RequestId {
@@ -29,16 +38,18 @@ impl std::fmt::Display for RequestId {
         match self {
             RequestId::Number(n) => write!(f, "#{n}"),
             RequestId::String(s) => write!(f, "#{s}"),
+            RequestId::Null(_) => write!(f, "#null"),
         }
     }
 }
 
 impl RequestId {
-    /// 取消注册表的内部键形式（区分 number/string 两种 id）
+    /// 取消注册表的内部键形式（区分 number/string/null 三种 id）
     pub fn cancel_key(&self) -> String {
         match self {
             RequestId::Number(n) => format!("n:{n}"),
             RequestId::String(s) => format!("s:{s}"),
+            RequestId::Null(_) => "n:null".to_string(),
         }
     }
 }
