@@ -11,7 +11,6 @@
 //! 视图消费：差异块列表即闪烁/并排视图的高亮框数据源；UI 渲染属
 //! P14 视图批次（本模块保持 headless 可全量单测）。
 
-use image::GenericImageView;
 
 /// 图片比较选项（FR-PIC 可配项；对齐 BC Picture Compare 设置子集）
 #[derive(Debug, Clone)]
@@ -108,7 +107,6 @@ pub fn diff_rgba(
     }
 
     let mut blocks = Vec::new();
-    let block_area = u64::from(block) * u64::from(block);
     for (bi, &cnt) in block_counts.iter().enumerate() {
         if cnt == 0 {
             continue;
@@ -219,7 +217,7 @@ mod tests {
         let b = &r.blocks[0];
         assert_eq!((b.x, b.y, b.w, b.h), (32, 0, 32, 32));
         assert!((b.diff_ratio - 0.25).abs() < 0.01, "256/1024 = 0.25");
-        assert_eq!(r.similarity_pct, 96.88); // 4096-256=3840 → 93.75？校准：3840/4096=93.75
+        assert_eq!(r.similarity_pct, 93.75); // 3840/4096 = 93.75
     }
 
     #[test]

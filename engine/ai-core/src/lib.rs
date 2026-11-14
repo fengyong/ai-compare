@@ -38,6 +38,7 @@ pub mod merge;
 pub mod myers;
 pub mod options;
 pub mod patch;
+pub mod picture;
 pub mod patience;
 pub mod pipeline;
 pub mod progressive;
