@@ -366,6 +366,93 @@ try {
   ok(ccNotFound.includes('410'), '未知会话 → 410', ccNotFound);
   await client.request('session/close', { sessionId: 'e2e-dir-cc' });
 
+  // 2c. R3-17：子会话保存 → 父目录行回传（FR-SES-004）
+  // 回传走父会话既有重扫入口 dir/filter rescan:true（与右键「刷新」同一条路径，
+  // UI 侧由 parentRescanParams 构造）；重扫后引擎推 dir/delta，父会话缓存是
+  // 会话级订阅，父标签不在前台也追平。
+  // 父会话必须带 lazyScan（真实 UI 恒传）：dir/filter 只对 P2 会话模型开放。
+  writeFileSync(join(L, 'wb.txt'), 'old\n');
+  writeFileSync(join(R, 'wb.txt'), 'new content\n');
+  const WB_PARENT = 'e2e-dir-wb';
+  const wbFilter = {
+    sessionId: WB_PARENT,
+    nameFilter: null,
+    otherFilter: null,
+    displayFilter: null,
+    suppress: null,
+    flat: null,
+    rescan: true,
+  };
+  const wbSince = (from) => {
+    const m = new Map();
+    for (const d of deltas.slice(from)) {
+      if (d.sessionId !== WB_PARENT) continue;
+      for (const u of d.upserts) m.set(u.id, u);
+    }
+    return m;
+  };
+  const wbWait = async (from, pred) => {
+    const until = Date.now() + 5000;
+    while (Date.now() < until) {
+      if (pred(wbSince(from))) return wbSince(from);
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    return wbSince(from);
+  };
+  const wbMark0 = deltas.length;
+  await client.request('dir/open', {
+    sessionId: WB_PARENT,
+    left: L,
+    right: R,
+    depth: null,
+    lazyScan: true,
+    criteria: { mtimeToleranceSec: 2, contentCompare: 'auto' },
+  });
+  const wbOpen = await wbWait(wbMark0, (m) => m.get('wb.txt')?.status === 'contentDiff');
+  ok(
+    wbOpen.get('wb.txt')?.status === 'contentDiff',
+    'R3-17 父会话初扫判定 wb.txt 为 contentDiff',
+    wbOpen.get('wb.txt')?.status,
+  );
+  await client.request('text/open', {
+    sessionId: 'e2e-wb-child',
+    left: join(L, 'wb.txt'),
+    right: join(R, 'wb.txt'),
+    options: null,
+  });
+  await client.request('text/edit', {
+    sessionId: 'e2e-wb-child',
+    edits: [{ side: 'left', start: 0, end: 1, text: 'new content' }],
+  });
+  const wbSave = await client.request('text/save', { sessionId: 'e2e-wb-child' });
+  ok(
+    wbSave?.saved?.length === 1 && readFileSync(join(L, 'wb.txt'), 'utf8') === 'new content\n',
+    'R3-17 子会话保存把左侧改成与右侧一致',
+    JSON.stringify(wbSave?.saved?.map((e) => e.path)),
+  );
+  // 回传前父行仍是 contentDiff（证明追平不是"顺便"发生的，必须显式重扫）
+  ok(
+    wbSince(wbMark0).get('wb.txt')?.status === 'contentDiff',
+    'R3-17 未回传前父行保持旧判定',
+    wbSince(wbMark0).get('wb.txt')?.status,
+  );
+  const wbMark1 = deltas.length;
+  await client.request('dir/filter', wbFilter);
+  const wbBack = await wbWait(wbMark1, (m) => m.get('wb.txt')?.status === 'same');
+  ok(
+    wbBack.get('wb.txt')?.status === 'same',
+    'R3-17 回传后父目录行追平为 same',
+    wbBack.get('wb.txt')?.status,
+  );
+  ok(
+    Number(wbBack.get('wb.txt')?.left?.size) === 12 &&
+      Number(wbOpen.get('wb.txt')?.left?.size) === 4,
+    'R3-17 回传同时刷新元数据（左侧 size 4 → 12）',
+    `${wbOpen.get('wb.txt')?.left?.size} → ${wbBack.get('wb.txt')?.left?.size}`,
+  );
+  await client.request('session/close', { sessionId: 'e2e-wb-child' });
+  await client.request('session/close', { sessionId: WB_PARENT });
+
   // 3. text/open + text/sections
   const text = await client.request('text/open', {
     sessionId: 'e2e-text-1',

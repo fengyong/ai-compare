@@ -77,7 +77,7 @@ export interface TextTabData {
   sessionId: string;
   left: FileRef;
   right: FileRef;
-  /** 父目录标签（差异回传链路 docs/03 §5.1 的 UI 侧关联；引擎侧写回属 P1） */
+  /** 父目录标签（子会话保存后回传父目录行，FR-SES-004 / R3-17） */
   parentTabId?: string;
   parentFolderSessionId?: string;
 }

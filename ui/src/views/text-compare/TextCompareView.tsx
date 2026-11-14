@@ -4,6 +4,7 @@ import type { Tab } from '../../shell/store';
 import {
   closeSession,
   editText,
+  filterDir,
   getEngineCapabilities,
   openText,
   requestInlineDiff,
@@ -104,6 +105,7 @@ import {
   type TextSessionModel,
 } from './textModel';
 import { applySavedEntries, runTextSave, saveRequestsFor, type SaveRequest } from './textSave';
+import { parentRescanParams } from './parentWriteback';
 import { AlignedPane, type AlignedPaneHandle, type PaneContentInput } from './AlignedPane';
 import { FindPanel, type FindPanelState } from './FindPanel';
 import { OverviewBar } from './OverviewBar';
@@ -513,6 +515,11 @@ export function TextCompareView({ tab }: { tab: Tab }) {
             ? `${S.text.saved}：${paths}（${S.text.savedBackupSuffix} ${backups}）`
             : `${S.text.saved}：${paths}`,
         );
+        // 子会话保存 → 父目录行回传（FR-SES-004）：父会话重扫后推 dir/delta，
+        // 父标签即使不在前台也追平。父会话可能已被关闭，失败不得掩盖已成功的保存，
+        // 也不阻塞保存反馈（大目录重扫耗时）。
+        const parentParams = parentRescanParams(refs?.parentFolderSessionId);
+        if (parentParams) void filterDir(parentParams).catch(() => undefined);
       } finally {
         setSaving(false);
       }
