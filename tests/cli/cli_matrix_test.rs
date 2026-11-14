@@ -369,6 +369,29 @@ fn merge_fixtures() -> MergeFixtures {
     }
 }
 
+/// 冲突码不得占用既有语义码（0 相同 / 2 错误 / 11 二进制差异 / 12 相似 / 13 规则差异），
+/// 否则 VCS/CI 会把"有冲突"误判为其它结果。1 与 14 必须放行。
+#[test]
+fn merge_conflict_exit_code_rejects_reserved_codes() {
+    let f = merge_fixtures();
+    for reserved in ["0", "2", "11", "12", "13"] {
+        let out = run(
+            &aic(),
+            &["merge", &s(&f.base), &s(&f.left), &s(&f.right), "--conflict-exit-code", reserved],
+        );
+        assert_eq!(exit_code(&out), 2, "保留码 {reserved} 应被拒绝");
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(err.contains("--conflict-exit-code"), "应说明拒绝原因: {err}");
+    }
+    for allowed in ["1", "14", "3", "200"] {
+        let out = run(
+            &aic(),
+            &["merge", &s(&f.base), &s(&f.left), &s(&f.right), "--conflict-exit-code", allowed],
+        );
+        assert_eq!(exit_code(&out), allowed.parse::<i32>().unwrap(), "非保留码 {allowed} 应生效");
+    }
+}
+
 #[test]
 fn merge_exit_matrix() {
     let f = merge_fixtures();
