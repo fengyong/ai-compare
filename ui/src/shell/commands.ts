@@ -4,12 +4,14 @@ import { useShell } from './store';
 import { S } from '../strings';
 import { captureClipboard, compareLatestClipboard, comparePathWithClipboard } from './clipboardActions';
 import { activeTextView } from '../views/text-compare/textViewBus';
+import { activeFolderView } from '../views/folder-compare/folderViewBus';
 
 /**
  * 命令注册表（docs/03 §3.4.2：菜单/工具栏/快捷键统一来源，对齐 SRS 附录 F 命令矩阵）。
  *
- * P4 口径：注册"骨架"命令集——会话/窗口/标签/设置命令全量可用；视图专属命令
- * （复制到对侧、空格标记等）先注册占位并注明交付阶段，P5/P6 各视图接入后替换实现。
+ * 会话/窗口/标签/设置命令全量可用；视图专属命令（复制到对侧、空格标记、换行、
+ * 书签等）经视图总线（folderViewBus / textViewBus）调用视图内真实操作——选择集
+ * 与光标是视图内状态，不提升到全局 store。
  */
 
 export type CommandCategory = '会话' | '视图' | '窗口' | '工具';
@@ -229,16 +231,15 @@ export function registerBuiltinCommands(reg: CommandRegistry): void {
     },
   });
 
-  // ---- 视图专属占位命令（附录 G 明示键位；实现属 P6/P9） ----
+  // ---- 目录视图命令（附录 G 明示键位；经 folderViewBus 调用视图内真实操作） ----
 
   reg.register({
     id: 'folder.copyToLeft',
     title: '复制到左侧',
     category: '视图',
     defaultKeys: 'Ctrl+L',
-    phaseNote: '文件复制操作属 P6（文件操作队列）',
     when: (ctx) => ctx.activeTabKind === 'folder',
-    run: async (ctx) => ctx.notice('复制到左侧属 P6 文件操作阶段交付'),
+    run: () => activeFolderView()?.copyToLeft(),
   });
 
   reg.register({
@@ -246,9 +247,8 @@ export function registerBuiltinCommands(reg: CommandRegistry): void {
     title: '复制到右侧',
     category: '视图',
     defaultKeys: 'Ctrl+R',
-    phaseNote: '文件复制操作属 P6（文件操作队列）',
     when: (ctx) => ctx.activeTabKind === 'folder',
-    run: async (ctx) => ctx.notice('复制到右侧属 P6 文件操作阶段交付'),
+    run: () => activeFolderView()?.copyToRight(),
   });
 
   reg.register({
@@ -256,9 +256,8 @@ export function registerBuiltinCommands(reg: CommandRegistry): void {
     title: '标记选择（比较不同名文件）',
     category: '视图',
     defaultKeys: 'Space',
-    phaseNote: '选择模型属 P6（DIR-050）',
     when: (ctx) => ctx.activeTabKind === 'folder',
-    run: async (ctx) => ctx.notice('空格标记选择属 P6 选择模型阶段交付'),
+    run: () => activeFolderView()?.markSelection(),
   });
 
   reg.register({
