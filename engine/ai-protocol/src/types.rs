@@ -184,6 +184,10 @@ pub struct CompareCriteria {
     pub mtime_tolerance_sec: u32,
     /// 快速测试不一致时是否做内容比较
     pub content_compare: ContentCompareMode,
+    /// 内容比较用哪种方法（FR-DIR-011：CRC / 二进制 / 基于规则）。
+    /// 缺省 CRC = 历史行为；旧客户端不带此键时按 CRC 处理。
+    #[serde(default)]
+    pub content_method: ContentCompareMethod,
     /// 忽略正好 1 小时（±3600s）的 mtime 差异（FR-DIR-010 夏令时；BC 默认开启）
     #[serde(default = "default_true")]
     pub ignore_dst_hour: bool,
@@ -218,6 +222,7 @@ impl Default for CompareCriteria {
         CompareCriteria {
             mtime_tolerance_sec: 2,
             content_compare: ContentCompareMode::Auto,
+            content_method: ContentCompareMethod::Crc,
             ignore_dst_hour: true,
             ignore_tz_hour: false,
             compare_case: true,
@@ -240,6 +245,78 @@ pub enum ContentCompareMode {
     Auto,
     /// 全部做内容比较（分块哈希）
     Always,
+}
+
+/// 内容比较方法（FR-DIR-011 三方式；与"何时比较"的 [`ContentCompareMode`] 正交）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub enum ContentCompareMethod {
+    /// CRC-32 分块哈希（快；zip 等预计算 CRC 直接复用）
+    #[default]
+    Crc,
+    /// 逐字节精确比较
+    Binary,
+    /// 基于规则：按重要性模型忽略行尾/空白/大小写等不重要差异
+    RulesBased,
+}
+
+/// 手动内容比较结果（FR-DIR-012 四态 + 二进制相同/差异细分）。
+/// CRC 与二进制方法只产出 `BinarySame`/`BinaryDiff`；基于规则方法额外
+/// 产出 `RulesSame`（仅编码/行尾等可忽略差异）、`UnimportantDiff`、`ImportantDiff`。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub enum ContentCompareResult {
+    /// 二进制相同（字节全等）
+    BinarySame,
+    /// 二进制差异
+    BinaryDiff,
+    /// 基于规则相同（字节不同，但差异全部可忽略）
+    RulesSame,
+    /// 不重要的差异（BC contentsimilar）
+    UnimportantDiff,
+    /// 重要差异
+    ImportantDiff,
+}
+
+/// dir/compareContent 入参（FR-DIR-012：对选定项执行内容比较）
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase", default)]
+pub struct DirCompareContentParams {
+    pub session_id: String,
+    /// 待比较的行 id（DirRow.id = 相对路径）；空 = 全部已展开的文件行
+    pub ids: Vec<String>,
+    /// 缺省用会话 criteria.contentMethod；显式给出则本次覆盖（不改会话判据）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub method: Option<ContentCompareMethod>,
+}
+
+/// 单行内容比较结果
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct DirContentCompareRow {
+    pub id: String,
+    pub result: ContentCompareResult,
+    /// 比较后该行的新状态（与 dir/delta 推送一致）
+    pub status: DirEntryStatus,
+}
+
+/// dir/compareContent 应答
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct DirCompareContentResult {
+    pub results: Vec<DirContentCompareRow>,
+    /// 比较后重算的统计（含 similar 计数）
+    pub stats: DirStats,
 }
 
 /// 扫描状态
@@ -400,6 +477,11 @@ pub struct EngineCapabilities {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub merge_save: Option<bool>,
+    /// R3-16：手动内容比较（dir/compareContent，三方式 + 五态结果）。
+    /// 缺省 **false**（旧引擎无此入口，UI 应隐藏"比较内容"命令）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub dir_compare_content: Option<bool>,
 }
 
 /// 许可能力（ADR-009：开源/自用默认全能力；字段为后续门控留位）
@@ -479,6 +561,11 @@ pub struct DirOpenParams {
     #[cfg_attr(feature = "ts", ts(optional))]
 
     pub format_aware: Option<bool>,
+    /// R3-16：基于规则内容比较的重要性模型（criteria.contentMethod=rulesBased 时生效）。
+    /// 与 text/open params.rules 同形；缺省 = 引擎默认（差异恒重要）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub rules: Option<RulesSpec>,
 }
 
 impl Default for DirOpenParams {
@@ -496,6 +583,7 @@ impl Default for DirOpenParams {
             display_filter: None,
             manual_align: None,
             format_aware: None,
+            rules: None,
         }
     }
 }
@@ -525,6 +613,9 @@ pub enum DirEntryStatus {
     QuickDiff,
     /// 内容比较判定不同（含 size 不同这一确定性判异）
     ContentDiff,
+    /// R3-16：基于规则比较判定"仅不重要差异"（BC contentsimilar 图标；
+    /// 行色仍按差异红，中间列图标区分）。CRC/二进制方法不会产生此状态。
+    Similar,
     /// 仅左侧存在（orphan）
     LeftOnly,
     /// 仅右侧存在（orphan）
@@ -599,6 +690,9 @@ pub struct DirStats {
     /// P2：聚合出差异的目录数（0 时省略，旧载荷字节级兼容）
     #[serde(default, skip_serializing_if = "is_zero_u32")]
     pub dir_diff: u32,
+    /// R3-16：基于规则比较判"仅不重要差异"的行数（0 时省略，旧载荷字节级兼容）
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub similar: u32,
 }
 
 /// serde skip_serializing_if 辅助：u32 为 0 时不输出（协议向后兼容）
@@ -3506,6 +3600,11 @@ mod tests {
         let v: CompareCriteria = serde_json::from_str("{}").unwrap();
         assert_eq!(v, CompareCriteria::default());
         assert_eq!(v.mtime_tolerance_sec, 2);
+        assert_eq!(
+            v.content_method,
+            ContentCompareMethod::Crc,
+            "R3-16 缺省方法 = CRC"
+        );
     }
 
     #[test]
@@ -3519,10 +3618,64 @@ mod tests {
         assert!(!v.compare_attributes);
         assert!(v.attribute_letters.is_none());
         assert!(!v.unix_meta);
+        assert_eq!(
+            v.content_method,
+            ContentCompareMethod::Crc,
+            "旧载荷不带 contentMethod -> CRC"
+        );
         // 序列化新增布尔字段始终输出（P0 客户端按未知字段忽略）——属性字母 None 时省略
         let s = serde_json::to_string(&v).unwrap();
         assert!(s.contains("ignoreDstHour"));
+        assert!(
+            s.contains(r#""contentMethod":"crc""#),
+            "新方法始终输出: {s}"
+        );
         assert!(!s.contains("attributeLetters"));
+    }
+
+    /// R3-16：dir/compareContent 入参——method 可省略（用会话判据），
+    /// ids 空数组 = 全部已配对文件行；结果五态可往返。
+    #[test]
+    fn dir_compare_content_params_and_result_roundtrip() {
+        let minimal = r#"{"sessionId":"d1","ids":[]}"#;
+        let p: DirCompareContentParams = serde_json::from_str(minimal).unwrap();
+        assert!(
+            p.method.is_none(),
+            "省略 method = 用会话 criteria.contentMethod"
+        );
+        assert_eq!(
+            serde_json::to_string(&p).unwrap(),
+            minimal,
+            "None 不序列化为 null"
+        );
+        let p: DirCompareContentParams =
+            serde_json::from_str(r#"{"sessionId":"d1","ids":["a.txt"],"method":"rulesBased"}"#)
+                .unwrap();
+        assert_eq!(p.method, Some(ContentCompareMethod::RulesBased));
+        assert_eq!(p.ids, vec!["a.txt".to_string()]);
+
+        let row = DirContentCompareRow {
+            id: "a.txt".into(),
+            result: ContentCompareResult::UnimportantDiff,
+            status: DirEntryStatus::Similar,
+        };
+        let s = serde_json::to_string(&row).unwrap();
+        assert_eq!(
+            s,
+            r#"{"id":"a.txt","result":"unimportantDiff","status":"similar"}"#
+        );
+        let back: DirContentCompareRow = serde_json::from_str(&s).unwrap();
+        assert_eq!(back, row);
+        // 五态枚举全部可序列化（UI 据此区分 BC 的四种内容比较结论）
+        for (r, wire) in [
+            (ContentCompareResult::BinarySame, "binarySame"),
+            (ContentCompareResult::BinaryDiff, "binaryDiff"),
+            (ContentCompareResult::RulesSame, "rulesSame"),
+            (ContentCompareResult::UnimportantDiff, "unimportantDiff"),
+            (ContentCompareResult::ImportantDiff, "importantDiff"),
+        ] {
+            assert_eq!(serde_json::to_string(&r).unwrap(), format!("\"{wire}\""));
+        }
     }
 
     #[test]
@@ -3539,9 +3692,27 @@ mod tests {
     fn dir_stats_dir_diff_omitted_when_zero() {
         let s = serde_json::to_string(&DirStats::default()).unwrap();
         assert!(!s.contains("dirDiff"));
-        let st = DirStats { dir_diff: 3, ..Default::default() };
+        assert!(
+            !s.contains("similar"),
+            "R3-16 similar 为 0 时省略（旧载荷字节级兼容）"
+        );
+        let st = DirStats {
+            dir_diff: 3,
+            ..Default::default()
+        };
         let s = serde_json::to_string(&st).unwrap();
         assert!(s.contains("dirDiff"));
+        let st = DirStats {
+            similar: 2,
+            ..Default::default()
+        };
+        let s = serde_json::to_string(&st).unwrap();
+        assert!(s.contains(r#""similar":2"#));
+        let old: DirStats = serde_json::from_str(
+            r#"{"total":1,"same":1,"quickDiff":0,"contentDiff":0,"leftOnly":0,"rightOnly":0,"dirSame":0}"#,
+        )
+        .unwrap();
+        assert_eq!(old.similar, 0, "旧载荷不带 similar -> 0");
     }
 
     #[test]
@@ -3593,6 +3764,7 @@ mod tests {
             text_edit: Some(true),
             text_save: Some(true),
             merge_save: Some(true),
+            dir_compare_content: Some(true),
             format_rules: None,
         };
         let s = serde_json::to_string(&c).unwrap();
@@ -3914,6 +4086,7 @@ mod tests {
             text_edit: None,
             text_save: None,
             merge_save: None,
+            dir_compare_content: None,
         };
         let s = serde_json::to_string(&c).unwrap();
         assert!(!s.contains("tableCompare") && !s.contains("hexCompare"), "{s}");
@@ -4062,6 +4235,7 @@ mod tests {
             text_edit: Some(true),
             text_save: Some(true),
             merge_save: Some(true),
+            dir_compare_content: Some(true),
         };
         let s = serde_json::to_string(&c).unwrap();
         assert!(s.contains("threeWayMerge"));

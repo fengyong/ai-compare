@@ -8,6 +8,7 @@ description = "ai-compare 目录比较引擎（M03）：两树扫描、按名对
 
 [dependencies]
 ai-protocol = { workspace = true }
+ai-core = { workspace = true }
 ai-vfs = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }

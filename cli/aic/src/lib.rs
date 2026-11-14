@@ -251,108 +251,29 @@ fn display_rel(n: &DirNode) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// quick 判定（P3：rules 模式接入 ai-core 重要性判等，替换 P2 二进制占位）
+// quick 判定：权威在 ai_dir::verdict（R3-16 统一 CLI/脚本/引擎三处口径），
+// 本层只保留退出码与标签的 CLI 呈现映射。
 // ---------------------------------------------------------------------------
 
-/// quick 比较判定（P3 细分退出码的数据源）
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum QuickVerdict {
-    /// 相同（退出码 0）
-    Same,
-    /// 二进制差异（size/crc/binary 模式差异，退出码 11）
-    BinaryDiff,
-    /// 相似：仅有不重要差异（rules 模式，退出码 12）
-    Similar,
-    /// 基于规则的差异：存在重要差异（rules 模式，退出码 13）
-    RulesDiff,
-}
+pub use ai_dir::{aggregate_verdicts, rules_classify_file, QuickVerdict};
 
-impl QuickVerdict {
-    /// 映射为退出码（0 / 11 / 12 / 13）
-    pub fn exit_code(self) -> u8 {
-        match self {
-            QuickVerdict::Same => EXIT_SAME,
-            QuickVerdict::BinaryDiff => EXIT_BINARY_DIFF,
-            QuickVerdict::Similar => EXIT_SIMILAR,
-            QuickVerdict::RulesDiff => EXIT_RULES_DIFF,
-        }
-    }
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            QuickVerdict::Same => "same",
-            QuickVerdict::BinaryDiff => "differ",
-            QuickVerdict::Similar => "similar",
-            QuickVerdict::RulesDiff => "differ(rules)",
-        }
+/// 判定 → 退出码（0 / 11 / 12 / 13，见本文件顶部退出码契约）
+pub fn verdict_exit_code(v: QuickVerdict) -> u8 {
+    match v {
+        QuickVerdict::Same => EXIT_SAME,
+        QuickVerdict::BinaryDiff => EXIT_BINARY_DIFF,
+        QuickVerdict::Similar => EXIT_SIMILAR,
+        QuickVerdict::RulesDiff => EXIT_RULES_DIFF,
     }
 }
 
-/// 多项判定的聚合（目录 rules 模式）：重要差异 > 二进制差异 > 相似 > 相同
-pub fn aggregate_verdicts(vs: impl IntoIterator<Item = QuickVerdict>) -> QuickVerdict {
-    let mut agg = QuickVerdict::Same;
-    for v in vs {
-        agg = match (agg, v) {
-            (_, QuickVerdict::RulesDiff) => QuickVerdict::RulesDiff,
-            (QuickVerdict::RulesDiff, _) => QuickVerdict::RulesDiff,
-            (_, QuickVerdict::BinaryDiff) => QuickVerdict::BinaryDiff,
-            (QuickVerdict::BinaryDiff, _) => QuickVerdict::BinaryDiff,
-            (_, QuickVerdict::Similar) => QuickVerdict::Similar,
-            (QuickVerdict::Similar, _) => QuickVerdict::Similar,
-            _ => QuickVerdict::Same,
-        };
-    }
-    agg
-}
-
-/// 基于规则的两文件判定（FR-CLI /qc 缺省模式；FR-TXT-010 重要性判等）：
-/// 1. 任一侧不是合法 UTF-8 文本 -> 二进制比较（Same / BinaryDiff）；
-/// 2. 全部 section 相等 -> Same；
-/// 3. 任一差异 section 重要性为 Important -> RulesDiff；
-/// 4. 其余（差异全部 Unimportant/Ignored）-> Similar。
-///
-/// `imp` 为重要性模型（FR-CLI-003 /iu 语义的开关面；ai-core 默认模型下
-/// 差异恒重要，Similar 仅在空白/大小写不重要开关开启时可达）；
-/// 规则库自定义（FR-SEL-001）属 P10 接入面。
-pub async fn rules_classify_file(
-    vfs: &dyn ai_vfs::VfsProvider,
-    left: &ai_vfs::VfsPath,
-    right: &ai_vfs::VfsPath,
-    imp: &ai_core::ImportanceOptions,
-) -> Result<QuickVerdict, String> {
-    use ai_core::sections::{Importance, SectionKind};
-
-    let l_text = vfs.read_file_text(left).await;
-    let r_text = vfs.read_file_text(right).await;
-    let (lt, rt) = match (l_text, r_text) {
-        (Ok(l), Ok(r)) => (l, r),
-        // 非文本（或读取失败）：回退二进制判等（BC 语义：规则比较不适用于二进制）
-        _ => {
-            let same = ai_dir::content_same(vfs, left, right, ai_dir::ContentHashMode::Binary)
-                .await
-                .map_err(|e| e.to_string())?;
-            return Ok(if same { QuickVerdict::Same } else { QuickVerdict::BinaryDiff });
-        }
-    };
-
-    let ltab = ai_core::LineTable::from_text(&lt);
-    let rtab = ai_core::LineTable::from_text(&rt);
-    let cfg = ai_core::DiffConfig { importance: imp.clone(), ..ai_core::DiffConfig::default() };
-    let keyed = ai_core::diff_config(&ltab, &rtab, &cfg).map_err(|e| e.to_string())?;
-    let has_diff = keyed.output.sections.iter().any(|s| s.kind != SectionKind::Equal);
-    if !has_diff {
-        return Ok(QuickVerdict::Same);
-    }
-    let any_important = keyed
-        .output
-        .sections
-        .iter()
-        // Equal section 恒 Important（不是差异），不参与判定
-        .any(|s| s.kind != SectionKind::Equal && s.important == Importance::Important);
-    if any_important {
-        Ok(QuickVerdict::RulesDiff)
-    } else {
-        Ok(QuickVerdict::Similar)
+/// 判定 → 人类可读标签（quick 命令输出）
+pub fn verdict_label(v: QuickVerdict) -> &'static str {
+    match v {
+        QuickVerdict::Same => "same",
+        QuickVerdict::BinaryDiff => "differ",
+        QuickVerdict::Similar => "similar",
+        QuickVerdict::RulesDiff => "differ(rules)",
     }
 }
 
@@ -453,20 +374,18 @@ mod tests {
 
     #[test]
     fn verdict_exit_codes() {
-        assert_eq!(QuickVerdict::Same.exit_code(), 0);
-        assert_eq!(QuickVerdict::BinaryDiff.exit_code(), 11);
-        assert_eq!(QuickVerdict::Similar.exit_code(), 12);
-        assert_eq!(QuickVerdict::RulesDiff.exit_code(), 13);
+        assert_eq!(verdict_exit_code(QuickVerdict::Same), 0);
+        assert_eq!(verdict_exit_code(QuickVerdict::BinaryDiff), 11);
+        assert_eq!(verdict_exit_code(QuickVerdict::Similar), 12);
+        assert_eq!(verdict_exit_code(QuickVerdict::RulesDiff), 13);
     }
 
     #[test]
-    fn aggregate_prioritizes_important_diff() {
-        use QuickVerdict::*;
-        assert_eq!(aggregate_verdicts([Same, Same]), Same);
-        assert_eq!(aggregate_verdicts([Same, Similar]), Similar);
-        assert_eq!(aggregate_verdicts([Similar, BinaryDiff]), BinaryDiff);
-        assert_eq!(aggregate_verdicts([BinaryDiff, RulesDiff]), RulesDiff);
-        assert_eq!(aggregate_verdicts([RulesDiff, Same]), RulesDiff);
+    fn verdict_labels() {
+        assert_eq!(verdict_label(QuickVerdict::Same), "same");
+        assert_eq!(verdict_label(QuickVerdict::BinaryDiff), "differ");
+        assert_eq!(verdict_label(QuickVerdict::Similar), "similar");
+        assert_eq!(verdict_label(QuickVerdict::RulesDiff), "differ(rules)");
     }
 }
 
@@ -523,98 +442,5 @@ mod dir_diff_tests {
         // 无差异 -> 空串
         let clean = [node("x", "x", EntryKind::File, DirEntryStatus::Same)];
         assert_eq!(render_dir_diff("L", "R", &[node("", "", EntryKind::Dir, DirEntryStatus::DirSame), clean[0].clone()]), "");
-    }
-}
-
-#[cfg(test)]
-mod rules_tests {
-    use super::*;
-
-    async fn write_pair(
-        dir: &std::path::Path,
-        l: &str,
-        r: &str,
-    ) -> (ai_vfs::VfsPath, ai_vfs::VfsPath) {
-        let lp = dir.join("L.txt");
-        let rp = dir.join("R.txt");
-        std::fs::write(&lp, l).unwrap();
-        std::fs::write(&rp, r).unwrap();
-        (
-            ai_vfs::VfsPath::parse(lp.to_str().unwrap()).unwrap(),
-            ai_vfs::VfsPath::parse(rp.to_str().unwrap()).unwrap(),
-        )
-    }
-
-    #[tokio::test]
-    async fn rules_same_text() {
-        let dir = tempfile::tempdir().unwrap();
-        let (l, r) = write_pair(dir.path(), "a\nb\n", "a\nb\n").await;
-        let vfs = ai_vfs::LocalFs::new();
-        let v = rules_classify_file(&vfs, &l, &r, &ai_core::ImportanceOptions::default()).await.unwrap();
-        assert_eq!(v, QuickVerdict::Same);
-    }
-
-    #[tokio::test]
-    async fn rules_important_diff() {
-        let dir = tempfile::tempdir().unwrap();
-        let (l, r) = write_pair(dir.path(), "alpha\n", "beta\n").await;
-        let vfs = ai_vfs::LocalFs::new();
-        let v = rules_classify_file(&vfs, &l, &r, &ai_core::ImportanceOptions::default()).await.unwrap();
-        assert_eq!(v, QuickVerdict::RulesDiff);
-    }
-
-    #[tokio::test]
-    async fn rules_whitespace_importance_switches() {
-        let dir = tempfile::tempdir().unwrap();
-        let vfs = ai_vfs::LocalFs::new();
-        // 默认模型：尾随空白重要 -> RulesDiff（FR-TXT-010 默认全重要）
-        let (l, r) = write_pair(dir.path(), "alpha   \nbeta\n", "alpha\nbeta\n").await;
-        let v = rules_classify_file(&vfs, &l, &r, &ai_core::ImportanceOptions::default()).await.unwrap();
-        assert_eq!(v, QuickVerdict::RulesDiff);
-        // 尾随空白不重要（/iu 类开关）-> 仅不重要差异 = Similar（退出码 12 语义）
-        let imp = ai_core::ImportanceOptions { trailing_ws_unimportant: true, ..Default::default() };
-        let v = rules_classify_file(&vfs, &l, &r, &imp).await.unwrap();
-        assert_eq!(v, QuickVerdict::Similar);
-        // 大小写不重要 -> "Hello" vs "hello" 判相似
-        let (l, r) = write_pair(dir.path(), "Hello\n", "hello\n").await;
-        let imp = ai_core::ImportanceOptions { case_unimportant: true, ..Default::default() };
-        let v = rules_classify_file(&vfs, &l, &r, &imp).await.unwrap();
-        assert_eq!(v, QuickVerdict::Similar);
-    }
-
-    #[tokio::test]
-    async fn rules_eol_style_only_is_same() {
-        let dir = tempfile::tempdir().unwrap();
-        // 行尾风格差异（CRLF vs LF）：默认模型下行尾不重要 -> Same
-        let (l, r) = write_pair(dir.path(), "alpha\r\nbeta\r\n", "alpha\nbeta\n").await;
-        let vfs = ai_vfs::LocalFs::new();
-        let v = rules_classify_file(&vfs, &l, &r, &ai_core::ImportanceOptions::default()).await.unwrap();
-        assert_eq!(v, QuickVerdict::Same);
-    }
-
-    #[tokio::test]
-    async fn rules_binary_fallback() {
-        let dir = tempfile::tempdir().unwrap();
-        let bytes: Vec<u8> = (0..64u8).collect();
-        let lp = dir.path().join("L.bin");
-        let rp = dir.path().join("R.bin");
-        std::fs::write(&lp, &bytes).unwrap();
-        let mut rb = bytes.clone();
-        rb[0] ^= 0xff;
-        std::fs::write(&rp, &rb).unwrap();
-        let vfs = ai_vfs::LocalFs::new();
-        let l = ai_vfs::VfsPath::parse(lp.to_str().unwrap()).unwrap();
-        let r = ai_vfs::VfsPath::parse(rp.to_str().unwrap()).unwrap();
-        let v = rules_classify_file(&vfs, &l, &r, &ai_core::ImportanceOptions::default()).await.unwrap();
-        assert_eq!(v, QuickVerdict::BinaryDiff, "非文本回退二进制判等");
-        // 二进制相同
-        let lp = dir.path().join("S1.bin");
-        let rp = dir.path().join("S2.bin");
-        std::fs::write(&lp, &bytes).unwrap();
-        std::fs::write(&rp, &bytes).unwrap();
-        let l = ai_vfs::VfsPath::parse(lp.to_str().unwrap()).unwrap();
-        let r = ai_vfs::VfsPath::parse(rp.to_str().unwrap()).unwrap();
-        let v = rules_classify_file(&vfs, &l, &r, &ai_core::ImportanceOptions::default()).await.unwrap();
-        assert_eq!(v, QuickVerdict::Same);
     }
 }

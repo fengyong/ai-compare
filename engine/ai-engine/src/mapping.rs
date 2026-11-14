@@ -35,6 +35,9 @@ pub fn dir_scan_error_to_rpc(err: &ai_dir::DirScanError) -> ai_protocol::RpcErro
             ai_protocol::error_object(codes::REQUEST_CANCELLED, "扫描被取消")
         }
         ai_dir::DirScanError::Vfs(e) => vfs_error_to_rpc(e),
+        ai_dir::DirScanError::Content(m) => {
+            ai_protocol::error_object(codes::INTERNAL_ERROR, format!("内容比较失败: {m}"))
+        }
     }
 }
 
@@ -996,6 +999,7 @@ pub fn dir_row_to_report_row(row: &ai_protocol::DirRow) -> ai_core::DirReportRow
             ai_protocol::DirEntryStatus::Same => ai_core::ReportEntryStatus::Same,
             ai_protocol::DirEntryStatus::QuickDiff => ai_core::ReportEntryStatus::QuickDiff,
             ai_protocol::DirEntryStatus::ContentDiff => ai_core::ReportEntryStatus::ContentDiff,
+            ai_protocol::DirEntryStatus::Similar => ai_core::ReportEntryStatus::Similar,
             ai_protocol::DirEntryStatus::LeftOnly => ai_core::ReportEntryStatus::LeftOnly,
             ai_protocol::DirEntryStatus::RightOnly => ai_core::ReportEntryStatus::RightOnly,
             ai_protocol::DirEntryStatus::DirSame => ai_core::ReportEntryStatus::DirSame,

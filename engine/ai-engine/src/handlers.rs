@@ -73,6 +73,7 @@ pub async fn dispatch(
         ai_protocol::method::DIR_FILTER => dir_filter(params, ctx, out).await,
         ai_protocol::method::DIR_ALIGN => dir_align(params, ctx, out).await,
         ai_protocol::method::DIR_OPERATE => dir_operate(params, ctx).await,
+        ai_protocol::method::DIR_COMPARE_CONTENT => dir_compare_content(params, ctx, out).await,
         ai_protocol::method::TEXT_OPEN => text_open(params, ctx).await,
         ai_protocol::method::TEXT_SECTIONS => text_sections(params, ctx, out).await,
         ai_protocol::method::TEXT_LINES => text_lines(params, ctx).await,
@@ -152,6 +153,8 @@ fn initialize() -> Result<Handled, RpcErrorObject> {
             text_save: Some(true),
             // R3-20：三向合并输出落盘入口开放（text/merge3/save）
             merge_save: Some(true),
+            // R3-16：手动内容比较入口开放（dir/compareContent）
+            dir_compare_content: Some(true),
             dir_background_scan: true,
             dir_filters: true,
             dir_operate: true,
@@ -205,6 +208,15 @@ async fn dir_open(
     dir_open_model(params, left, right, ctx, cancel, out).await
 }
 
+/// 目录会话的重要性模型（R3-16：criteria.contentMethod=rulesBased 时生效）。
+/// 与 text/open 同一 rules 载荷口径；缺省 = 引擎默认（差异恒重要）。
+fn dir_importance(rules: &Option<ai_protocol::RulesSpec>) -> ai_core::ImportanceOptions {
+    match rules {
+        Some(spec) => mapping::rules_spec_to_core(spec).0,
+        None => ai_core::ImportanceOptions::default(),
+    }
+}
+
 /// P0 同步路径（行为不变；golden/回放契约锚点）
 async fn dir_open_sync(
     params: ai_protocol::DirOpenParams,
@@ -217,7 +229,11 @@ async fn dir_open_sync(
         ctx.vfs.as_ref(),
         &left,
         &right,
-        &ai_dir::DirScanOptions { depth: params.depth, criteria: params.criteria.clone() },
+        &ai_dir::DirScanOptions {
+            depth: params.depth,
+            criteria: params.criteria.clone(),
+            importance: dir_importance(&params.rules),
+        },
         &ai_dir::ByNameAligner,
         cancel,
     )
@@ -282,6 +298,7 @@ async fn dir_open_model(
         target_depth.unwrap_or(u32::MAX)
     };
     let mut opts = ai_dir::DirSessionOptions::new(params.criteria.clone(), Arc::new(ai_dir::ByNameAligner));
+    opts.importance = dir_importance(&params.rules);
     opts.target_depth = target_depth;
     opts.visible_depth = visible_depth;
     opts.name_filter = params.name_filter.clone();
@@ -553,6 +570,38 @@ async fn dir_operate(
         plan,
     };
     Ok(Handled::Value(serde_json::to_value(&response).expect("dir/operate 结果可序列化")))
+}
+
+/// dir/compareContent：手动内容比较（R3-16，FR-DIR-012 三方式 + 五态结果）
+async fn dir_compare_content(
+    params: Option<serde_json::Value>,
+    ctx: &HandlerCtx,
+    out: tokio::sync::mpsc::UnboundedSender<crate::server::Outbound>,
+) -> Result<Handled, RpcErrorObject> {
+    let params: ai_protocol::DirCompareContentParams = parse_params(params)?;
+    let model = dir_model(&ctx.sessions, &params.session_id).await?;
+    let method = params
+        .method
+        .unwrap_or_else(|| model.options().criteria.content_method);
+    let rows = model
+        .compare_content(&params.ids, method)
+        .await
+        .map_err(|e| mapping::dir_scan_error_to_rpc(&e))?;
+    let delta = model.take_delta().await;
+    let stats = model.stats_snapshot();
+    if let Some(d) = &delta {
+        push_delta(&out, &params.session_id, d, ctx.max_batch_rows);
+    }
+    let response = ai_protocol::DirCompareContentResult {
+        results: rows
+            .into_iter()
+            .map(|(id, result, status)| ai_protocol::DirContentCompareRow { id, result, status })
+            .collect(),
+        stats,
+    };
+    Ok(Handled::Value(
+        serde_json::to_value(&response).expect("dir/compareContent 结果可序列化"),
+    ))
 }
 
 /// 获取目录模型会话（P2 路径）；同步路径会话返回明确错误
@@ -2932,6 +2981,272 @@ mod p2_tests {
         };
         assert_eq!(resp["updatedRows"], 2, "对齐后两侧重判: {}", resp);
         drop(rx);
+    }
+
+    // ------------------------------------------------------------------
+    // R3-16：dir/compareContent（FR-DIR-012 三方式 + 五态结果）
+    // ------------------------------------------------------------------
+
+    async fn open_cc(
+        c: &HandlerCtx,
+        tx: &tokio::sync::mpsc::UnboundedSender<Outbound>,
+        id: &str,
+        l: &std::path::Path,
+        r: &std::path::Path,
+        extra: serde_json::Value,
+    ) {
+        let mut params = json!({
+            "sessionId": id, "left": l.to_string_lossy(), "right": r.to_string_lossy(),
+            "depth": 1, "lazyScan": true,
+            "criteria": {"mtimeToleranceSec": 0, "contentCompare": "always"},
+        });
+        for (k, v) in extra.as_object().unwrap() {
+            params[k] = v.clone();
+        }
+        dispatch(
+            "dir/open",
+            Some(params),
+            c,
+            &ai_dir::CancelFlag::new(),
+            tx.clone(),
+        )
+        .await
+        .unwrap();
+    }
+
+    async fn compare_cc(
+        c: &HandlerCtx,
+        tx: &tokio::sync::mpsc::UnboundedSender<Outbound>,
+        id: &str,
+        extra: serde_json::Value,
+    ) -> serde_json::Value {
+        let mut params = json!({"sessionId": id});
+        for (k, v) in extra.as_object().unwrap() {
+            params[k] = v.clone();
+        }
+        match dispatch(
+            "dir/compareContent",
+            Some(params),
+            c,
+            &ai_dir::CancelFlag::new(),
+            tx.clone(),
+        )
+        .await
+        .unwrap()
+        {
+            Handled::Value(v) => v,
+            _ => panic!("dir/compareContent 应答形态"),
+        }
+    }
+
+    fn eol_trees() -> (tempfile::TempDir, std::path::PathBuf, std::path::PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let l = dir.path().join("L");
+        let r = dir.path().join("R");
+        std::fs::create_dir_all(&l).unwrap();
+        std::fs::create_dir_all(&r).unwrap();
+        std::fs::write(l.join("eol.txt"), b"a\r\nb\r\n").unwrap();
+        std::fs::write(r.join("eol.txt"), b"a\nb\n").unwrap();
+        (dir, l, r)
+    }
+
+    /// 三方式必须真的分派：CRLF/LF 对在 CRC/二进制下判异，规则下判同；
+    /// 结果回写行状态并推送 delta（BC：规则比较忽略行尾差异）。
+    #[tokio::test]
+    async fn compare_content_methods_are_not_interchangeable() {
+        let (_dir, l, r) = eol_trees();
+        let c = ctx();
+        let (tx, rx) = chan();
+        open_cc(&c, &tx, "cc1", &l, &r, json!({})).await;
+        for (method, result, status) in [
+            ("crc", "binaryDiff", "contentDiff"),
+            ("binary", "binaryDiff", "contentDiff"),
+            ("rulesBased", "rulesSame", "same"),
+        ] {
+            let v = compare_cc(
+                &c,
+                &tx,
+                "cc1",
+                json!({"ids": ["eol.txt"], "method": method}),
+            )
+            .await;
+            assert_eq!(v["results"][0]["id"], "eol.txt", "{method}: {v}");
+            assert_eq!(v["results"][0]["result"], result, "{method}: {v}");
+            assert_eq!(v["results"][0]["status"], status, "{method}: {v}");
+        }
+        let msgs = collect(rx).await;
+        let deltas: Vec<&serde_json::Value> =
+            msgs.iter().filter(|m| m["method"] == "dir/delta").collect();
+        assert!(!deltas.is_empty(), "比较后应推送 delta: {msgs:?}");
+        let last = deltas.last().unwrap();
+        let row = last["params"]["upserts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["id"] == "eol.txt")
+            .expect("delta 含被比较行");
+        assert_eq!(row["status"], "same", "规则判同后行状态回写: {last}");
+    }
+
+    /// 规则模式的重要性来自会话 rules：默认尾随空白重要 -> 重要差异；
+    /// 开启 trailingWsUnimportant -> 仅不重要差异（similar 行 + 统计）。
+    #[tokio::test]
+    async fn compare_content_rules_importance_from_session_rules() {
+        let dir = tempfile::tempdir().unwrap();
+        let l = dir.path().join("L");
+        let r = dir.path().join("R");
+        std::fs::create_dir_all(&l).unwrap();
+        std::fs::create_dir_all(&r).unwrap();
+        std::fs::write(l.join("ws.txt"), b"alpha   \n").unwrap();
+        std::fs::write(r.join("ws.txt"), b"alpha\n").unwrap();
+        let c = ctx();
+        let (tx, _rx) = chan();
+        open_cc(&c, &tx, "cc2", &l, &r, json!({})).await;
+        let v = compare_cc(
+            &c,
+            &tx,
+            "cc2",
+            json!({"ids": ["ws.txt"], "method": "rulesBased"}),
+        )
+        .await;
+        assert_eq!(
+            v["results"][0]["result"], "importantDiff",
+            "默认全重要: {v}"
+        );
+        assert_eq!(v["results"][0]["status"], "contentDiff");
+
+        let c2 = ctx();
+        let (tx2, _rx2) = chan();
+        open_cc(
+            &c2,
+            &tx2,
+            "cc3",
+            &l,
+            &r,
+            json!({"rules": {"trailingWsUnimportant": true}}),
+        )
+        .await;
+        let v = compare_cc(
+            &c2,
+            &tx2,
+            "cc3",
+            json!({"ids": ["ws.txt"], "method": "rulesBased"}),
+        )
+        .await;
+        assert_eq!(
+            v["results"][0]["result"], "unimportantDiff",
+            "尾随空白不重要: {v}"
+        );
+        assert_eq!(v["results"][0]["status"], "similar");
+        assert_eq!(v["stats"]["similar"], 1, "similar 计数: {v}");
+    }
+
+    /// 省略 method 时用会话 criteria.contentMethod（不是硬编码 CRC）。
+    #[tokio::test]
+    async fn compare_content_defaults_to_session_method() {
+        let (_dir, l, r) = eol_trees();
+        let c = ctx();
+        let (tx, _rx) = chan();
+        open_cc(
+            &c,
+            &tx,
+            "cc4",
+            &l,
+            &r,
+            json!({"criteria": {"mtimeToleranceSec": 0, "contentCompare": "always", "contentMethod": "rulesBased"}}),
+        )
+        .await;
+        let v = compare_cc(&c, &tx, "cc4", json!({"ids": ["eol.txt"]})).await;
+        assert_eq!(
+            v["results"][0]["result"], "rulesSame",
+            "缺省方法取会话判据: {v}"
+        );
+        // 显式 method 覆盖会话判据（本次生效，不改会话）
+        let v = compare_cc(
+            &c,
+            &tx,
+            "cc4",
+            json!({"ids": ["eol.txt"], "method": "binary"}),
+        )
+        .await;
+        assert_eq!(v["results"][0]["result"], "binaryDiff");
+        let v = compare_cc(&c, &tx, "cc4", json!({"ids": ["eol.txt"]})).await;
+        assert_eq!(
+            v["results"][0]["result"], "rulesSame",
+            "显式覆盖不应污染会话判据: {v}"
+        );
+    }
+
+    /// ids 为空 = 全部已配对文件行；目录行与孤立项跳过（BC 语义）。
+    #[tokio::test]
+    async fn compare_content_empty_ids_skips_dirs_and_orphans() {
+        let dir = tempfile::tempdir().unwrap();
+        let l = dir.path().join("L");
+        let r = dir.path().join("R");
+        std::fs::create_dir_all(l.join("sub")).unwrap();
+        std::fs::create_dir_all(r.join("sub")).unwrap();
+        std::fs::write(l.join("same.txt"), b"x").unwrap();
+        std::fs::write(r.join("same.txt"), b"x").unwrap();
+        std::fs::write(l.join("diff.txt"), b"x").unwrap();
+        std::fs::write(r.join("diff.txt"), b"yy").unwrap();
+        std::fs::write(l.join("orphan.txt"), b"o").unwrap();
+        let c = ctx();
+        let (tx, _rx) = chan();
+        open_cc(&c, &tx, "cc5", &l, &r, json!({})).await;
+        let v = compare_cc(&c, &tx, "cc5", json!({"ids": []})).await;
+        let mut got: Vec<(&str, &str)> = v["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| (r["id"].as_str().unwrap(), r["result"].as_str().unwrap()))
+            .collect();
+        got.sort();
+        assert_eq!(
+            got,
+            vec![("diff.txt", "binaryDiff"), ("same.txt", "binarySame")],
+            "目录/孤立项不参与内容比较: {v}"
+        );
+    }
+
+    /// 未知会话 -> 410；同步路径会话（无模型）-> 明确参数错误。
+    #[tokio::test]
+    async fn compare_content_rejects_unknown_and_sync_sessions() {
+        let (_dir, l, r) = eol_trees();
+        let c = ctx();
+        let (tx, _rx) = chan();
+        let err = dispatch(
+            "dir/compareContent",
+            Some(json!({"sessionId": "nope", "ids": []})),
+            &c,
+            &ai_dir::CancelFlag::new(),
+            tx.clone(),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.code, ai_protocol::error::codes::SESSION_NOT_FOUND);
+
+        dispatch(
+            "dir/open",
+            Some(json!({
+                "sessionId": "cc6", "left": l.to_string_lossy(), "right": r.to_string_lossy(),
+                "depth": 1, "criteria": {"contentCompare": "always"}
+            })),
+            &c,
+            &ai_dir::CancelFlag::new(),
+            tx.clone(),
+        )
+        .await
+        .unwrap();
+        let err = dispatch(
+            "dir/compareContent",
+            Some(json!({"sessionId": "cc6", "ids": []})),
+            &c,
+            &ai_dir::CancelFlag::new(),
+            tx,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.code, ai_protocol::error::codes::INVALID_PARAMS);
     }
 }
 

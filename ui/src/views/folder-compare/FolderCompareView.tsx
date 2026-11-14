@@ -1,10 +1,24 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { DEFAULT_DIR_CRITERIA, type DirExecuteOp, type DirExecuteResult, type DirRow, type SyncPreset } from '../../protocol/types';
+import {
+  type DirExecuteOp,
+  type DirExecuteResult,
+  type DirRow,
+  type SyncPreset,
+} from '../../protocol/types';
 import type { Tab } from '../../shell/store';
 import { useShell } from '../../shell/store';
 import { ContextMenu, type ContextMenuItem } from '../../shell/ContextMenu';
-import { executeOperations, expandDir, filterDir, openFolder, planOperations, trackSession } from '../../ipc/engineProcess';
+import {
+  compareDirContent,
+  executeOperations,
+  expandDir,
+  filterDir,
+  getEngineCapabilities,
+  openFolder,
+  planOperations,
+  trackSession,
+} from '../../ipc/engineProcess';
 import { formatSize, formatTime } from '../../lib/env';
 import { S } from '../../strings';
 import { ensureDirCacheAttached } from './dirRowCache';
@@ -28,6 +42,13 @@ import { clearSelection, emptySelection, invertSelection, onRowClick, runEditSel
 import { ConfirmOpsDialog, PlanPreviewDialog, RenameDialog, type ConfirmOpsDialogState, type PlanPreviewDialogState, type RenameDialogState } from './DirOpsDialogs';
 import { BatchRenameDialog, type BatchRenameDialogState } from './BatchRenameDialog';
 import { QuickCompareDialog, type QuickCompareDialogState } from './QuickCompareDialog';
+import { ContentCompareDialog, type ContentCompareDialogState } from './ContentCompareDialog';
+import { effectiveDirCriteria, effectiveDirRules } from './dirCriteria';
+import {
+  buildCompareContentParams,
+  compareTargetIds,
+  contentCompareSupported,
+} from './contentCompare';
 import { BasePathBar } from './BasePathBar';
 import { renamesToOps } from './renameTemplate';
 import { copyText } from './clipboard';
@@ -156,6 +177,9 @@ export function FolderCompareView({ tab }: { tab: Tab }) {
   const [sortSpec, setSortSpec] = useState<DirSortSpec | null>(null);
   const [batchRenameState, setBatchRenameState] = useState<BatchRenameDialogState | null>(null);
   const [quickCompareState, setQuickCompareState] = useState<QuickCompareDialogState | null>(null);
+  const [contentCompareState, setContentCompareState] = useState<ContentCompareDialogState | null>(
+    null,
+  );
 
   // 活动窗格的选择集 = 工具栏/键盘/右键操作的默认目标
   const selection = paneSel[activeSide];
@@ -171,6 +195,9 @@ export function FolderCompareView({ tab }: { tab: Tab }) {
   // ---- 会话建立（ensureOpened 幂等：StrictMode 双调用安全；P6 惰性会话） ----
   useEffect(() => {
     let disposed = false;
+    // R3-16：判据来自生效设置（含内容比较方法），不再硬编码默认值
+    const criteria = effectiveDirCriteria(tab.sessionLink?.sessionId);
+    const rules = effectiveDirRules(tab.sessionLink?.sessionId);
     void cache
       .ensureOpened(() =>
         openFolder({
@@ -178,7 +205,8 @@ export function FolderCompareView({ tab }: { tab: Tab }) {
           left: folder.left,
           right: folder.right,
           depth: 1,
-          criteria: DEFAULT_DIR_CRITERIA,
+          criteria,
+          rules,
           // P6：惰性会话 —— 顶层立即应答，目录展开经 dir/expand 惰性补推
           lazyScan: true,
           flat: null,
@@ -194,7 +222,8 @@ export function FolderCompareView({ tab }: { tab: Tab }) {
             left: folder.left,
             right: folder.right,
             depth: 1,
-            criteria: DEFAULT_DIR_CRITERIA,
+            criteria,
+            rules,
             lazyScan: true,
             flat: null,
             nameFilter: null,
@@ -212,7 +241,7 @@ export function FolderCompareView({ tab }: { tab: Tab }) {
     return () => {
       disposed = true;
     };
-  }, [cache, folder.left, folder.right]);
+  }, [cache, folder.left, folder.right, tab.sessionLink?.sessionId]);
 
   // ---- 可见行（树形 DFS 序 / 平铺名称序；表头排序 + 仅显示标记过滤；版本号触发重算） ----
   const allRows = cache.getRows();
@@ -468,6 +497,46 @@ export function FolderCompareView({ tab }: { tab: Tab }) {
     setQuickCompareState({ rows: target, onClose: () => setQuickCompareState(null) });
   };
 
+  // ---- R3-16：手动内容比较（FR-DIR-012「操作 > 比较内容」） ----
+  const runContentCompare = async (): Promise<void> => {
+    const { rows, ids } = targetRows();
+    const targets = compareTargetIds(rows, ids);
+    const method = effectiveDirCriteria(tab.sessionLink?.sessionId).contentMethod;
+    const scopeLabel =
+      targets.length > 0 ? F.contentCompareScopeSelected(targets.length) : F.contentCompareScopeAll;
+    const onClose = () => setContentCompareState(null);
+    if (!contentCompareSupported(getEngineCapabilities())) {
+      setContentCompareState({
+        method,
+        scopeLabel,
+        results: null,
+        error: F.contentCompareUnsupported,
+        onClose,
+      });
+      return;
+    }
+    setContentCompareState({ method, scopeLabel, results: null, error: null, onClose });
+    try {
+      const result = await compareDirContent(
+        buildCompareContentParams(cache.sessionId, targets, method),
+      );
+      // null = 旧引擎无该入口（能力位缺失或 METHOD_NOT_FOUND）：不得当成"已比较"
+      setContentCompareState(
+        result === null
+          ? { method, scopeLabel, results: null, error: F.contentCompareUnsupported, onClose }
+          : { method, scopeLabel, results: result.results, error: null, onClose },
+      );
+    } catch (err: unknown) {
+      setContentCompareState({
+        method,
+        scopeLabel,
+        results: null,
+        error: F.contentCompareFailed(err instanceof Error ? err.message : String(err)),
+        onClose,
+      });
+    }
+  };
+
   // ---- 同步预设（dir/operate 计划预览 -> 确认执行） ----
   const openPreset = async (preset: SyncPreset): Promise<void> => {
     try {
@@ -522,6 +591,11 @@ export function FolderCompareView({ tab }: { tab: Tab }) {
       onSelect: () => openQuickCompare(),
     });
     items.push({ label: F.batchRename, disabled: pickedFiles.length === 0 && !row, onSelect: () => openBatchRename() });
+    items.push({
+      label: F.contentCompare,
+      disabled: pickedFiles.length === 0,
+      onSelect: () => void runContentCompare(),
+    });
     items.push(sep);
     // ---- P6b：复制文件名/完整路径/相对路径（FR-DIR-066） ----
     items.push({ label: F.ctxCopyName, disabled: !row, onSelect: () => void copyRowText(F.ctxCopyName, (r) => r.name) });
@@ -889,6 +963,15 @@ export function FolderCompareView({ tab }: { tab: Tab }) {
             </>
           )}
         </span>
+        {/* R3-16：手动内容比较（FR-DIR-012「操作 > 比较内容」），方法取自生效设置 */}
+        <button
+          className="mini"
+          disabled={!ready}
+          title={F.contentCompareHint}
+          onClick={() => void runContentCompare()}
+        >
+          {F.contentCompare}
+        </button>
         <button className="mini" disabled={!ready} onClick={() => setSelection(selectAll(visibleIds))}>
           {S.folder.selectAll}
         </button>
@@ -984,6 +1067,7 @@ export function FolderCompareView({ tab }: { tab: Tab }) {
       {renameState && <RenameDialog state={renameState} />}
       {batchRenameState && <BatchRenameDialog state={batchRenameState} />}
       {quickCompareState && <QuickCompareDialog state={quickCompareState} />}
+      {contentCompareState && <ContentCompareDialog state={contentCompareState} />}
     </div>
   );
 

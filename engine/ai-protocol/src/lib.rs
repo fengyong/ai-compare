@@ -48,6 +48,8 @@ pub mod method {
     pub const DIR_ALIGN: &str = "dir/align";
     /// 生成同步操作计划（P2 数据层，不执行）
     pub const DIR_OPERATE: &str = "dir/operate";
+    /// 手动内容比较（R3-16，FR-DIR-012：操作 > 比较内容，CRC/二进制/基于规则）
+    pub const DIR_COMPARE_CONTENT: &str = "dir/compareContent";
     /// 后台扫描进度通知（引擎 -> UI，P2）
     pub const DIR_PROGRESS: &str = "dir/progress";
     /// 打开文本比较会话

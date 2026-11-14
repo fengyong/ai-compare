@@ -1,5 +1,10 @@
 import type {
+  ContentCompareMethod,
+  ContentCompareResult,
   DiffSummary,
+  DirCompareContentParams,
+  DirCompareContentResult,
+  DirContentCompareRow,
   DirDelta,
   DirEntryStatus,
   DirExecuteOp,
@@ -119,6 +124,10 @@ interface MockDirSession {
   displayFilter: DisplayFilterSpec;
   suppress: boolean;
   flat: boolean;
+  /** 会话判据的内容比较方法（R3-16：dir/compareContent 省略 method 时的缺省） */
+  contentMethod: ContentCompareMethod;
+  /** 手动内容比较后的行状态覆盖（平铺行 id 与树行不同，故按 id 记） */
+  contentOverrides: Map<string, DirEntryStatus>;
 }
 
 interface MockTextSession {
@@ -247,6 +256,8 @@ export class MockEngine {
         return this.dirFilter(params as DirFilterParams);
       case 'dir/operate':
         return { result: this.dirOperate(params as DirOperateParams), notifications: [] };
+      case 'dir/compareContent':
+        return this.dirCompareContent(params as DirCompareContentParams);
       case 'dir/execute':
         return this.dirExecute(params as { sessionId: string; ops: DirExecuteOp[]; dryRun?: boolean | null });
       case 'dir/mergeScan':
@@ -331,6 +342,8 @@ export class MockEngine {
         textSave: true,
         // R3-20：text/merge3/save 已同形实现（合并输出落盘）
         mergeSave: true,
+        // R3-16：dir/compareContent 已同形实现（三方式 + 五态结果）
+        dirCompareContent: true,
       },
       license: { proUnlocked: true },
     };
@@ -353,6 +366,8 @@ export class MockEngine {
       displayFilter: p.displayFilter ?? SHOW_ALL_DISPLAY_FILTER,
       suppress: false,
       flat: p.flat === true,
+      contentMethod: p.criteria?.contentMethod ?? 'crc',
+      contentOverrides: new Map(),
     };
     applyNameFilter(session);
     refreshDisplayFlags(session);
@@ -528,6 +543,65 @@ export class MockEngine {
     const visible = currentRows(s).filter((r) => !r.hidden);
     const plan = mockPlanOperations(visible, p.preset ?? null, p.paths ?? null);
     return { sessionId: s.id, plan, total: plan.length };
+  }
+
+  // ---------------- R3-16：dir/compareContent（手动内容比较） ----------------
+
+  /**
+   * dir/compareContent 同形演示（FR-DIR-012 三方式 + 五态结果）。
+   *
+   * 演示模型不持有文件字节，判定口径按元数据近似：size+mtime 全等 = 二进制
+   * 相同；规则模式下二进制扩展名的差异记为"重要差异"，文本扩展名按大小是否
+   * 相同记为"基于规则相同"/"不重要的差异"（真实引擎读内容按重要性模型分类，
+   * 见 ai-dir::verdict）。行状态回写后经 dir/delta 重推，与引擎一致。
+   */
+  private dirCompareContent(p: DirCompareContentParams): {
+    result: DirCompareContentResult;
+    notifications: DirDelta[];
+  } {
+    const s = this.requireDir(p.sessionId);
+    const method: ContentCompareMethod = p.method ?? s.contentMethod;
+    const rows = currentRows(s);
+    const wanted = p.ids.length > 0 ? new Set(p.ids) : null;
+    const targets = rows.filter(
+      (r) =>
+        r.kind === 'file' &&
+        r.left !== null &&
+        r.right !== null &&
+        (wanted === null || wanted.has(r.id)),
+    );
+    const results: DirContentCompareRow[] = targets.map((row) => {
+      const l = row.left!;
+      const r = row.right!;
+      const metaSame = l.size === r.size && l.mtimeMs === r.mtimeMs;
+      let result: ContentCompareResult;
+      if (method !== 'rulesBased') {
+        result = metaSame ? 'binarySame' : 'binaryDiff';
+      } else if (metaSame) {
+        result = 'binarySame';
+      } else {
+        const ext = row.name.split('.').pop()?.toLowerCase() ?? '';
+        // 演示无字节：文本扩展名 + 大小相同（仅时间戳不同）近似"规则判同"，
+        // 大小不同近似"仅不重要差异"，二进制扩展名一律"重要差异"
+        result = !TEXT_EXTS.includes(ext)
+          ? 'importantDiff'
+          : l.size === r.size
+            ? 'rulesSame'
+            : 'unimportantDiff';
+      }
+      const status: DirEntryStatus =
+        result === 'binarySame' || result === 'rulesSame'
+          ? 'same'
+          : result === 'unimportantDiff'
+            ? 'similar'
+            : 'contentDiff';
+      s.contentOverrides.set(row.id, status);
+      const tree = s.treeRows.find((t) => t.id === row.id);
+      if (tree) tree.status = status;
+      return { id: row.id, result, status };
+    });
+    const stats = computeStats(currentRows(s));
+    return { result: { results, stats }, notifications: this.deltaBatchesFor(s.id, s) };
   }
 
   // ---------------- P6 提案：dir/execute（操作执行，同形模拟） ----------------
@@ -1555,7 +1629,12 @@ export class MockEngine {
 
 /** 当前表示（平铺 = 派生行；树 = 名称过滤后的树行） */
 function currentRows(s: MockDirSession): DirRow[] {
-  return s.flat ? deriveFlatRows(s) : s.treeRows;
+  const rows = s.flat ? deriveFlatRows(s) : s.treeRows;
+  if (s.contentOverrides.size === 0) return rows;
+  return rows.map((r) => {
+    const status = s.contentOverrides.get(r.id);
+    return status ? { ...r, status } : r;
+  });
 }
 
 /** 名称过滤（FR-DIR-031 子集：include/exclude 文件掩码 + 排除目录掩码） */
@@ -2104,6 +2183,7 @@ function computeStats(rows: DirRow[]): DirStats {
     rightOnly: 0,
     dirSame: 0,
     dirDiff: 0,
+    similar: 0,
   };
   for (const row of rows) {
     switch (row.status) {
@@ -2115,6 +2195,9 @@ function computeStats(rows: DirRow[]): DirStats {
         break;
       case 'contentDiff':
         stats.contentDiff++;
+        break;
+      case 'similar':
+        stats.similar++;
         break;
       case 'leftOnly':
         stats.leftOnly++;

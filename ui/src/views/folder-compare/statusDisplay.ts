@@ -26,12 +26,24 @@ export function statusVisual(status: DirEntryStatus): StatusVisual {
     case 'quickDiff':
       // 快速测试判异（mtime 超容差）且未做内容复核：按"疑似不同"展示
       return { tone: 'diff', label: S.folder.status.quickDiff, centerGlyph: '≈', centerClass: 'diff' };
+    case 'similar':
+      // R3-16：基于规则比较判"仅不重要差异"。BC 行色仍按差异红，
+      // 靠中间列 contentsimilar 图标区分（附录 C.1 无独立的"相似"行色）
+      return {
+        tone: 'diff',
+        label: S.folder.status.similar,
+        centerGlyph: '≈',
+        centerClass: 'diff',
+      };
     case 'leftOnly':
       return { tone: 'orphan', label: S.folder.status.leftOnly, centerGlyph: '', centerClass: '' };
     case 'rightOnly':
       return { tone: 'orphan', label: S.folder.status.rightOnly, centerGlyph: '', centerClass: '' };
     case 'dirSame':
       return { tone: 'same', label: S.folder.status.dirSame, centerGlyph: '', centerClass: '' };
+    case 'dirDiff':
+      // 聚合出差异的目录：BC 按差异红显示（此前落到 default 被当成"未知"灰）
+      return { tone: 'diff', label: S.folder.status.dirDiff, centerGlyph: '', centerClass: '' };
     default:
       return { tone: 'unknown', label: S.folder.status.unknown, centerGlyph: '', centerClass: '' };
   }

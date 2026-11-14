@@ -30,6 +30,7 @@ const zeroStats = (): DirStats => ({
   rightOnly: 0,
   dirSame: 0,
   dirDiff: 0,
+  similar: 0,
 });
 
 export class DirRowCache {
@@ -142,7 +143,9 @@ export class DirRowCache {
         this.marks.delete(id); // 行已消失，标记同步清除（防悬挂 id：仅显示标记过滤出空行）
       }
     }
-    this.stats = d.stats ?? this.stats;
+    // 引擎对 0 值计数器省略键（dirDiff/similar 的 skip_serializing_if），
+    // 故用零值兜底合并，避免 UI 读到 undefined
+    this.stats = d.stats ? { ...zeroStats(), ...d.stats } : this.stats;
     this.progress = d.progress ?? null;
     // 首批携带当前全量错误（引擎每条 delta 链路都在 batch 0 回传）：先清后收，
     // 重扫后已恢复可读的路径不会留下陈旧错误；后续批次为空，不得清掉首批事实。

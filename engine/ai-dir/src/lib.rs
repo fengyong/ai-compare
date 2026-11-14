@@ -27,6 +27,7 @@ pub mod merge3way;
 pub mod quick;
 pub mod session;
 pub mod sync;
+pub mod verdict;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -49,6 +50,10 @@ pub use session::{DirDeltaData, DirModel, DirSessionOptions};
 pub use sync::{
     apply_strategy, plan_operations, plan_with_strategy, run_sync, BatchRunReport, BatchStats, ConflictPolicy,
     OpRecord, RecordStatus, SyncPlan, SyncReport, SyncRequest, SyncStrategy,
+};
+pub use verdict::{
+    aggregate_verdicts, content_compare_result, content_verdict_stats, result_to_status,
+    rules_classify_file, verdict_to_status, QuickVerdict,
 };
 
 pub use execute::{
@@ -81,11 +86,17 @@ pub struct DirScanOptions {
     /// None = 全递归；Some(k) = 展开 k 层（1 = 仅顶层；P0 默认）
     pub depth: Option<u32>,
     pub criteria: CompareCriteria,
+    /// 基于规则内容比较的重要性模型（FR-DIR-011 rulesBased；其余方法忽略）
+    pub importance: ai_core::ImportanceOptions,
 }
 
 impl Default for DirScanOptions {
     fn default() -> Self {
-        DirScanOptions { depth: Some(1), criteria: CompareCriteria::default() }
+        DirScanOptions {
+            depth: Some(1),
+            criteria: CompareCriteria::default(),
+            importance: ai_core::ImportanceOptions::default(),
+        }
     }
 }
 
@@ -136,6 +147,9 @@ pub enum DirScanError {
     Cancelled,
     #[error(transparent)]
     Vfs(#[from] VfsError),
+    /// 内容比较失败（IO 或规则判定；R3-16 三方式统一走 String 错误面）
+    #[error("内容比较失败: {0}")]
+    Content(String),
 }
 
 /// 对齐输入侧条目（list_dir 产物排序后）
@@ -222,6 +236,7 @@ pub async fn scan(
                             &re[ri as usize].stat,
                             &pair.name,
                             &options.criteria,
+                            &options.importance,
                         )
                         .await?
                     }
@@ -304,6 +319,7 @@ pub fn aggregate_children(dir: &DirNode, arena: &[DirNode]) -> DirEntryStatus {
         if matches!(
             child.status,
             DirEntryStatus::ContentDiff
+                | DirEntryStatus::Similar
                 | DirEntryStatus::QuickDiff
                 | DirEntryStatus::DirDiff
                 | DirEntryStatus::LeftOnly
@@ -350,6 +366,7 @@ pub fn compute_stats(arena: &[DirNode]) -> DirStats {
             DirEntryStatus::Same => s.same += 1,
             DirEntryStatus::QuickDiff => s.quick_diff += 1,
             DirEntryStatus::ContentDiff => s.content_diff += 1,
+            DirEntryStatus::Similar => s.similar += 1,
             DirEntryStatus::LeftOnly => s.left_only += 1,
             DirEntryStatus::RightOnly => s.right_only += 1,
             DirEntryStatus::DirSame => s.dir_same += 1,
@@ -367,6 +384,7 @@ pub(crate) fn side_info_gated(stat: &ai_vfs::StatInfo, criteria: &CompareCriteri
 
 /// 文件判等：快速测试（size/case/attr/unix/mtime）-> 内容比较
 /// （docs/03 §3.1.3 + FR-DIR-010/011；P2 无缓存版，缓存见 [`session::DirModel`]）
+#[allow(clippy::too_many_arguments)] // R3-16 追加重要性模型；两侧 stat/路径/判据均为必需上下文
 pub(crate) async fn file_verdict(
     vfs: &dyn VfsProvider,
     lp: &VfsPath,
@@ -375,6 +393,7 @@ pub(crate) async fn file_verdict(
     rs: &ai_vfs::StatInfo,
     name: &str,
     criteria: &CompareCriteria,
+    importance: &ai_core::ImportanceOptions,
 ) -> Result<DirEntryStatus, DirScanError> {
     let tester = quick::QuickTest::new(criteria);
     match tester.verdict(ls, rs, name, name) {
@@ -386,25 +405,38 @@ pub(crate) async fn file_verdict(
             _ => DirEntryStatus::ContentDiff,
         }),
         quick::QuickOutcome::NeedContent => {
-            resolve_content(vfs, lp, rp, ls, rs, criteria).await
+            resolve_content(vfs, lp, rp, ls, rs, criteria, importance).await
         }
     }
 }
 
-/// 内容比较解析（NeedContent 时）：Never -> QuickDiff；Auto/Always -> 哈希判等
+/// 内容比较解析（NeedContent 时）：Never -> QuickDiff；
+/// Auto/Always -> 按 criteria.content_method 三方式判等（R3-16）
 pub(crate) async fn resolve_content(
     vfs: &dyn VfsProvider,
     lp: &VfsPath,
     rp: &VfsPath,
-    _ls: &ai_vfs::StatInfo,
-    _rs: &ai_vfs::StatInfo,
+    ls: &ai_vfs::StatInfo,
+    rs: &ai_vfs::StatInfo,
     criteria: &CompareCriteria,
+    importance: &ai_core::ImportanceOptions,
 ) -> Result<DirEntryStatus, DirScanError> {
     match criteria.content_compare {
         ContentCompareMode::Never => Ok(DirEntryStatus::QuickDiff),
         ContentCompareMode::Auto | ContentCompareMode::Always => {
-            let same = compare::content_same(vfs, lp, rp, compare::ContentHashMode::Crc).await?;
-            Ok(if same { DirEntryStatus::Same } else { DirEntryStatus::ContentDiff })
+            let verdict = verdict::content_verdict_stats(
+                vfs,
+                lp,
+                rp,
+                compare::FileStatSummary::new(ls.size, ls.mtime_ms),
+                compare::FileStatSummary::new(rs.size, rs.mtime_ms),
+                criteria.content_method,
+                importance,
+                None,
+            )
+            .await
+            .map_err(DirScanError::Content)?;
+            Ok(verdict::verdict_to_status(verdict))
         }
     }
 }

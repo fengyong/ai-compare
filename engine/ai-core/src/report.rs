@@ -59,6 +59,8 @@ pub enum ReportEntryStatus {
     Same,
     QuickDiff,
     ContentDiff,
+    /// 基于规则比较：仅不重要差异（R3-16）
+    Similar,
     LeftOnly,
     RightOnly,
     DirSame,
@@ -72,6 +74,7 @@ impl ReportEntryStatus {
             ReportEntryStatus::Same => "same",
             ReportEntryStatus::QuickDiff => "quickDiff",
             ReportEntryStatus::ContentDiff => "contentDiff",
+            ReportEntryStatus::Similar => "similar",
             ReportEntryStatus::LeftOnly => "leftOnly",
             ReportEntryStatus::RightOnly => "rightOnly",
             ReportEntryStatus::DirSame => "dirSame",
@@ -85,7 +88,10 @@ impl ReportEntryStatus {
 pub fn status_is_diff(s: ReportEntryStatus) -> bool {
     matches!(
         s,
-        ReportEntryStatus::QuickDiff | ReportEntryStatus::ContentDiff | ReportEntryStatus::DirDiff
+        ReportEntryStatus::QuickDiff
+            | ReportEntryStatus::ContentDiff
+            | ReportEntryStatus::Similar
+            | ReportEntryStatus::DirDiff
     )
 }
 
@@ -1926,7 +1932,10 @@ pub struct TreeRenderer;
 pub fn status_mark(s: ReportEntryStatus) -> &'static str {
     match s {
         ReportEntryStatus::Same | ReportEntryStatus::DirSame => "=",
-        ReportEntryStatus::QuickDiff | ReportEntryStatus::ContentDiff | ReportEntryStatus::DirDiff => "!",
+        ReportEntryStatus::QuickDiff
+        | ReportEntryStatus::ContentDiff
+        | ReportEntryStatus::Similar
+        | ReportEntryStatus::DirDiff => "!",
         ReportEntryStatus::LeftOnly => "<",
         ReportEntryStatus::RightOnly => ">",
         ReportEntryStatus::Unknown => "?",

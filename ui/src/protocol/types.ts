@@ -85,7 +85,12 @@ export type { CharRange } from './generated/CharRange';
 export type { ClientInfo } from './generated/ClientInfo';
 export type { CompareCriteria } from './generated/CompareCriteria';
 export type { ContentCompareMode } from './generated/ContentCompareMode';
+export type { ContentCompareMethod } from './generated/ContentCompareMethod';
+export type { ContentCompareResult } from './generated/ContentCompareResult';
 export type { DiffSummary } from './generated/DiffSummary';
+export type { DirCompareContentParams } from './generated/DirCompareContentParams';
+export type { DirCompareContentResult } from './generated/DirCompareContentResult';
+export type { DirContentCompareRow } from './generated/DirContentCompareRow';
 export type { DirDelta } from './generated/DirDelta';
 export type { DirEntryStatus } from './generated/DirEntryStatus';
 export type { DirExpandParams } from './generated/DirExpandParams';
@@ -213,6 +218,7 @@ export type SessionCloseResult = null;
 export const DEFAULT_DIR_CRITERIA: CompareCriteria = {
   mtimeToleranceSec: 2,
   contentCompare: 'auto',
+  contentMethod: 'crc',
   ignoreDstHour: true,
   ignoreTzHour: false,
   compareCase: true,
