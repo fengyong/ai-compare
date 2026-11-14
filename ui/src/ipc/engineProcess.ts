@@ -34,6 +34,8 @@ import type {
   SessionCloseResult,
   TextInlineDiffParams,
   TextInlineDiffResult,
+  TextEditParams,
+  TextEditResult,
   TextLinesParams,
   TextLinesResult,
   TextOpenParams,
@@ -583,6 +585,24 @@ export async function openText(params: TextOpenParams): Promise<TextOpenResult> 
 export async function getTextSections(params: TextSectionsParams): Promise<TextSectionsResult> {
   const c = await getEngineClient();
   return c.request<TextSectionsResult>('text/sections', params, 120_000);
+}
+
+/**
+ * text/edit：提交编辑增量，取回引擎权威 sections（R3-18）。
+ *
+ * 能力位缺失（旧引擎）或入口不存在（-32601）→ null，调用方回落客户端重 diff；
+ * 其余错误（区间越界 / 会话不存在 / 断连）**抛出**，由调用方整侧重放收敛，
+ * 不得静默吞掉（吞掉会让引擎态与 UI 态长期分叉）。
+ */
+export async function editText(params: TextEditParams): Promise<TextEditResult | null> {
+  if (!getEngineCapabilities()?.textEdit) return null;
+  const c = await getEngineClient();
+  try {
+    return await c.request<TextEditResult>('text/edit', params, 60_000);
+  } catch (err) {
+    if (isMethodNotFound(err)) return null;
+    throw err;
+  }
 }
 
 export async function closeSession(params: SessionCloseParams): Promise<SessionCloseResult> {

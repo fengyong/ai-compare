@@ -1,7 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { EditorSelection, type Extension } from '@codemirror/state';
 import type { Tab } from '../../shell/store';
-import { closeSession, getEngineCapabilities, openText, requestInlineDiff, trackSession } from '../../ipc/engineProcess';
+import {
+  closeSession,
+  editText,
+  getEngineCapabilities,
+  openText,
+  requestInlineDiff,
+  trackSession,
+} from '../../ipc/engineProcess';
 import { RpcError } from '../../protocol/client';
 import { S } from '../../strings';
 import { sessionService } from '../../session/service';
@@ -54,7 +61,7 @@ import { diffLinesOps, summarizeSections, toSections } from '../../lib/lineDiffC
 import { buildInlineMarks, mergeDmpMarks, type InlineMark } from '../../lib/inlineDiffCore';
 import { buildAlignedDocs, findDiffSectionAtLine, type AlignedDoc, type AlignedRow } from './alignment';
 import { loadTextSession, loadTextSessionReuse } from './textSession';
-import type { Importance, RulesSpec, Section } from '../../protocol/types';
+import type { Importance, RulesSpec, Section, TextEditOp } from '../../protocol/types';
 import {
   allCollapsibleKeys,
   computeFolds,
@@ -65,10 +72,12 @@ import {
 } from './folding';
 import {
   applySidePatches,
+  opsFromPatches,
   patchSideFromDocEdit,
   patchesFromLineReplacement,
   type SidePatch,
 } from './editPatch';
+import { flushEdits, newEditSyncState, type EditSyncState } from './editSync';
 import {
   emptyUndoState,
   popRedo,
@@ -110,7 +119,8 @@ type FindInfo = { matches: FindMatch[]; compiled: CompiledQuery; error: string |
  * 文本比较视图（docs/03 §3.4.3 M32 的 P5 交付：FR-TXT-001~004/013/014/020~023/030、
  * FIND-001、UNDO-001、ENC-001）：
  * - CM6 双窗格可编辑（对齐文档 1:1 行 + 占位填充行），编辑实时重 diff
- *   （P3 引擎 text/edit 就绪前走客户端全量重算降级——lib/lineDiffCore）；
+ *   （R3-18：引擎 text/edit 权威重算，保留重要性分级；无能力位时回落
+ *   客户端全量重算——lib/lineDiffCore）；
  * - 会话级撤销/重做（UNDO-001，跨窗格同栈，独立于 CM history）；
  * - 等值区折叠（上下文 N 行可配）+ 全部展开/折叠 + 跨折叠差异导航 +
  *   差异列表当前位置同步高亮（FR-TXT-020~023/030）；
@@ -393,11 +403,54 @@ export function TextCompareView({ tab }: { tab: Tab }) {
     paneR.current?.setContent(buildInput('right'));
   }, [computeFind]);
 
-  // ---- 客户端重 diff（P5 降级路径；P3 text/edit 引擎入口开放后经能力位切换）----
+  // ---- 客户端重 diff（降级路径：旧引擎无 text/edit 能力位，或行表分叉兜底）----
   const rediffModel = useCallback((model: TextSessionModel): void => {
     model.sections = toSections(diffLinesOps(model.leftLines, model.rightLines));
     model.summary = summarizeSections(model.sections);
   }, []);
+
+  /** 每会话一份编辑同步状态（队列 + 单飞行）：切换会话后旧队列不得混入新会话 */
+  const editSyncRef = useRef(new Map<string, EditSyncState>());
+  const [rediffNotice, setRediffNotice] = useState<string | null>(null);
+
+  /**
+   * 编辑后重 diff（R3-18）：补丁交引擎重算，采纳其权威 sections 与重要性。
+   * 队列合并、分叉收敛与重放上限见 editSync.ts；无能力位时回落客户端全量重算。
+   */
+  const rediffAndRender = useCallback(
+    async (model: TextSessionModel, ops: TextEditOp[]): Promise<void> => {
+      // 会话已切走时只追平缓存，不回灌当前窗格（避免覆盖新会话内容）
+      const active = () => modelRef.current?.sessionId === model.sessionId;
+      const clientFallback = async () => {
+        rediffModel(model);
+        putTextSession(model);
+        if (active()) await rebuildAndRender(model);
+      };
+      if (!getEngineCapabilities()?.textEdit) {
+        await clientFallback();
+        return;
+      }
+      let st = editSyncRef.current.get(model.sessionId);
+      if (!st) {
+        st = newEditSyncState();
+        editSyncRef.current.set(model.sessionId, st);
+      }
+      await flushEdits(st, ops, {
+        edit: (edits) => editText({ sessionId: model.sessionId, edits }),
+        lines: () => ({ left: model.leftLines, right: model.rightLines }),
+        adopt: async (res) => {
+          model.sections = res.sections;
+          model.summary = res.summary;
+          putTextSession(model);
+          setRediffNotice(null);
+          if (active()) await rebuildAndRender(model);
+        },
+        fallback: clientFallback,
+        diverged: () => setRediffNotice(S.text.rediffResyncFailed),
+      });
+    },
+    [rediffModel, rebuildAndRender]
+  );
 
   const applySideContent = useCallback((model: TextSessionModel, side: 'left' | 'right', lines: string[]): void => {
     if (side === 'left') model.leftLines = lines;
@@ -478,19 +531,19 @@ export function TextCompareView({ tab }: { tab: Tab }) {
       if (!res) return;
       model.undo = tryCoalesce(model.undo, { side, patches: res.patches, lastAt: Date.now() }, Date.now());
       applySideContent(model, side, res.newLines);
-      rediffModel(model);
-      void rebuildAndRender(model);
+      void rediffAndRender(model, opsFromPatches(side, res.patches));
     },
-    [applySideContent, rediffModel, rebuildAndRender]
+    [applySideContent, rediffAndRender]
   );
 
   // ---- 会话级撤销 / 重做（UNDO-001）----
   const applyUndoEntry = useCallback(
-    (entry: UndoEntry, patches: SidePatch[]) => {
+    (entry: UndoEntry, patches: SidePatch[]): TextEditOp[] => {
       const model = modelRef.current;
-      if (!model) return;
+      if (!model) return [];
       const cur = entry.side === 'left' ? model.leftLines : model.rightLines;
       applySideContent(model, entry.side, applySidePatches(cur, patches));
+      return opsFromPatches(entry.side, patches);
     },
     [applySideContent]
   );
@@ -501,10 +554,8 @@ export function TextCompareView({ tab }: { tab: Tab }) {
     const popped = popUndo(model.undo);
     if (!popped) return;
     model.undo = popped.state;
-    applyUndoEntry(popped.entry, undoPatches(popped.entry));
-    rediffModel(model);
-    void rebuildAndRender(model);
-  }, [applyUndoEntry, rediffModel, rebuildAndRender]);
+    void rediffAndRender(model, applyUndoEntry(popped.entry, undoPatches(popped.entry)));
+  }, [applyUndoEntry, rediffAndRender]);
 
   const doRedo = useCallback(() => {
     const model = modelRef.current;
@@ -512,10 +563,8 @@ export function TextCompareView({ tab }: { tab: Tab }) {
     const popped = popRedo(model.undo);
     if (!popped) return;
     model.undo = popped.state;
-    applyUndoEntry(popped.entry, redoPatches(popped.entry));
-    rediffModel(model);
-    void rebuildAndRender(model);
-  }, [applyUndoEntry, rediffModel, rebuildAndRender]);
+    void rediffAndRender(model, applyUndoEntry(popped.entry, redoPatches(popped.entry)));
+  }, [applyUndoEntry, rediffAndRender]);
 
   // ---- 滚动同步（镜像 + 视口上报 + 当前差异段同步高亮）----
   const onPaneScroll = useCallback(
@@ -718,6 +767,7 @@ export function TextCompareView({ tab }: { tab: Tab }) {
     const q = findStateRef.current;
     const panes: Array<'left' | 'right'> = q.side === 'both' ? ['left', 'right'] : [q.side];
     let changed = false;
+    const ops: TextEditOp[] = [];
     for (const pane of panes) {
       const cur = pane === 'left' ? model.leftLines : model.rightLines;
       const newLines = cur.map((ln) => replaceAllInLine(ln, findInfo.compiled, q.replacement, q.regex) ?? ln);
@@ -725,14 +775,12 @@ export function TextCompareView({ tab }: { tab: Tab }) {
       if (patches) {
         model.undo = pushUndo(model.undo, { side: pane, patches, lastAt: Date.now() });
         applySideContent(model, pane, newLines);
+        ops.push(...opsFromPatches(pane, patches));
         changed = true;
       }
     }
-    if (changed) {
-      rediffModel(model);
-      void rebuildAndRender(model);
-    }
-  }, [findInfo, applySideContent, rediffModel, rebuildAndRender]);
+    if (changed) void rediffAndRender(model, ops);
+  }, [findInfo, applySideContent, rediffAndRender]);
 
   const onSelectAllMatchedLines = useCallback(() => {
     const derived = derivedRef.current;
@@ -884,6 +932,9 @@ export function TextCompareView({ tab }: { tab: Tab }) {
   const inlineSource = getEngineCapabilities()?.inlineDiff
     ? S.text.inlineSourceRpc
     : S.text.inlineSourceClient;
+  const rediffSource = getEngineCapabilities()?.textEdit
+    ? S.text.rediffSourceRpc
+    : S.text.rediffSourceClient;
 
   return (
     <div className={`aic-text${wrap ? ' wrap-on' : ''}`} onKeyDown={onKeyDown}>
@@ -1049,6 +1100,8 @@ export function TextCompareView({ tab }: { tab: Tab }) {
           {S.text.dmpCleanup}
         </button>
         <span className="meta dim">{inlineSource}</span>
+        <span className="meta dim">{rediffSource}</span>
+        {rediffNotice && <span className="meta warn">{rediffNotice}</span>}
       </div>
 
       {findOpen && (

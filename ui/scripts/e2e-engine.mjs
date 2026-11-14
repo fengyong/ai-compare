@@ -155,6 +155,7 @@ try {
     protocolVersion: '1.0',
   });
   ok(!!init?.capabilities?.dirCompare && !!init?.capabilities?.textCompare, 'initialize 返回能力位', `engine=${init.engine?.name} ${init.engine?.version}`);
+  ok(init?.capabilities?.textEdit === true, 'initialize 宣告 textEdit 能力位（R3-18）', `textEdit=${init?.capabilities?.textEdit}`);
 
   // 2. dir/open + 收 delta 批次（收集器已在上方注册）
   const dirOpen = await client.request('dir/open', {
@@ -207,6 +208,59 @@ try {
   } else {
     ok(hasFull, '替换段带行内差异区间（inline=full）');
   }
+
+  // 3b. R3-18：text/edit 编辑增量重 diff —— 重要性必须由引擎规则判定，
+  //     不得像客户端全量重算那样把编辑后的所有差异一律置为 important。
+  writeFileSync(join(L, 'ws.txt'), 'alpha\nbeta one  \ngamma\n');
+  writeFileSync(join(R, 'ws.txt'), 'alpha\nbeta one\ngamma\n');
+  const wsOpen = await client.request('text/open', {
+    sessionId: 'e2e-text-edit-1',
+    left: join(L, 'ws.txt'),
+    right: join(R, 'ws.txt'),
+    options: null,
+    // 真实 UI 口径：重要性经 text/open 的 rules 链下发（settings「比较规则」）
+    rules: { trailingWsUnimportant: true },
+  });
+  ok(wsOpen?.leftLineCount === 3 && wsOpen?.rightLineCount === 3, 'text/open（尾随空白语料）行数', `left=${wsOpen?.leftLineCount}`);
+  const wsSecs0 = await client.request('text/sections', { sessionId: 'e2e-text-edit-1', offset: 0, count: 100 });
+  const wsChange0 = (wsSecs0?.sections ?? []).find((s) => s.kind === 'change');
+  ok(wsChange0?.important === 'unimportant', '编辑前：尾随空白差异判为不重要', wsChange0?.important);
+
+  const wsEdit = await client.request('text/edit', {
+    sessionId: 'e2e-text-edit-1',
+    edits: [{ side: 'left', start: 1, end: 2, text: 'beta one   ' }],
+  });
+  ok(Number(wsEdit?.rev) === 1 && wsEdit?.leftLineCount === 3 && wsEdit?.sectionCount === wsEdit?.sections?.length, 'text/edit 应答 rev/行数/段数', `rev=${wsEdit?.rev}`);
+  const wsChange1 = (wsEdit?.sections ?? []).find((s) => s.kind === 'change');
+  ok(wsChange1?.important === 'unimportant', 'R3-18 编辑后仍为不重要（引擎权威，不变红）', wsChange1?.important);
+
+  // 反向：真实内容改动必须升为重要（恒 unimportant 的实现同样要红）
+  const wsEdit2 = await client.request('text/edit', {
+    sessionId: 'e2e-text-edit-1',
+    edits: [{ side: 'left', start: 1, end: 2, text: 'beta TWO' }],
+  });
+  ok((wsEdit2?.sections ?? []).find((s) => s.kind === 'change')?.important === 'important', 'R3-18 真实内容改动升为重要');
+
+  // 批次原子性：任一 op 越界 → 整批不落地（行表不得半应用）
+  const wsBefore = await client.request('text/lines', { sessionId: 'e2e-text-edit-1', side: 'left', start: 0, count: 100 });
+  let wsRejected = false;
+  try {
+    await client.request('text/edit', {
+      sessionId: 'e2e-text-edit-1',
+      edits: [
+        { side: 'left', start: 0, end: 1, text: 'X' },
+        { side: 'left', start: 99, end: 100, text: 'Y' },
+      ],
+    });
+  } catch {
+    wsRejected = true;
+  }
+  const wsAfter = await client.request('text/lines', { sessionId: 'e2e-text-edit-1', side: 'left', start: 0, count: 100 });
+  ok(
+    wsRejected && JSON.stringify(wsBefore?.lines) === JSON.stringify(wsAfter?.lines),
+    'R3-18 越界批次原子拒绝（行表未半应用）',
+    `rejected=${wsRejected}`
+  );
 
   // 4. P7：三向文本合并四方法（text/merge3/open|sections|decide|output）
   const m3 = await client.request('text/merge3/open', {

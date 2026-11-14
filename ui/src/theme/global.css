@@ -711,6 +711,9 @@ input:focus {
   color: var(--aic-text-dim);
   font-size: 12px;
 }
+.aic-text-toolbar .meta.warn {
+  color: var(--aic-status-unscanned);
+}
 .aic-text-toolbar .nav {
   color: var(--aic-text);
 }

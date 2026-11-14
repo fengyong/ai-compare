@@ -22,6 +22,7 @@
         "reports": true,
         "tableCompare": true,
         "textCompare": true,
+        "textEdit": true,
         "threeWayMerge": true
       },
       "engine": {

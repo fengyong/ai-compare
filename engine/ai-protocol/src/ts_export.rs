@@ -76,6 +76,10 @@ pub fn export_all_to_ui() -> Result<usize, Box<dyn std::error::Error>> {
     TextAlignAnchor::export()?;
     SideLineRange::export()?;
     TextManualAlignSpec::export()?;
+    // R3-18 新增（text/edit 编辑增量重 diff）
+    TextEditOp::export()?;
+    TextEditParams::export()?;
+    TextEditResult::export()?;
     // P7 新增（text/merge3/* 三向合并）
     MergeChunkOrigin::export()?;
     MergeConflictKind::export()?;

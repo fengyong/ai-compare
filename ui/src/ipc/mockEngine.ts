@@ -37,6 +37,8 @@ import type {
   ShutdownResult,
   SideInfo,
   SyncPreset,
+  TextEditParams,
+  TextEditResult,
   TextLinesParams,
   TextLinesResult,
   TextOpenParams,
@@ -120,6 +122,8 @@ interface MockTextSession {
   rightLines: string[];
   sections: Section[];
   summary: DiffSummary;
+  /** 会话版本号（text/edit 每次成功 +1；与引擎 TextSessionData.rev 同口径） */
+  rev: number;
 }
 
 /** P8：mock 三路合并会话（扫描行快照 + 计划/执行的落盘对象） */
@@ -240,6 +244,8 @@ export class MockEngine {
         return { result: this.textSections(params as TextSectionsParams), notifications: [] };
       case 'text/lines':
         return { result: this.textLines(params as TextLinesParams), notifications: [] };
+      case 'text/edit':
+        return { result: this.textEdit(params as TextEditParams), notifications: [] };
       case 'picture/open':
         return { result: this.pictureOpen(params as PictureOpenParams), notifications: [] };
       case 'hex/open':
@@ -299,6 +305,8 @@ export class MockEngine {
         threeWayMerge: true,
         // P11：report/generate 已同形实现
         reports: true,
+        // R3-18：text/edit 已同形实现（编辑增量重 diff）
+        textEdit: true,
       },
       license: { proUnlocked: true },
     };
@@ -829,6 +837,7 @@ export class MockEngine {
       rightLines: gen.rightLines,
       sections: gen.sections,
       summary,
+      rev: 0,
     });
     return {
       sessionId: p.sessionId,
@@ -850,6 +859,57 @@ export class MockEngine {
       total,
       hasMore: end < total,
       sections: s.sections.slice(start, end),
+    };
+  }
+
+  /**
+   * text/edit 同形实现（R3-18）：按序应用行区间补丁 -> 重 diff -> 应答权威 sections。
+   * 与引擎 handlers.rs::text_edit 同口径：先整批校验区间（原子语义），
+   * 任一越界则整批不落会话；end 省略 = 到该侧末尾（整侧重放）。
+   */
+  private textEdit(p: TextEditParams): TextEditResult {
+    const s = this.requireText(p.sessionId);
+    if (!Array.isArray(p.edits) || p.edits.length === 0) {
+      throw new InvalidParams('edits 不能为空');
+    }
+    const lens: Record<'left' | 'right', number> = {
+      left: s.leftLines.length,
+      right: s.rightLines.length,
+    };
+    const spans: Array<{ side: 'left' | 'right'; start: number; end: number; lines: string[] }> = [];
+    for (const op of p.edits) {
+      if (op.side !== 'left' && op.side !== 'right') {
+        throw new InvalidParams(`非法 side: ${String(op.side)}`);
+      }
+      const cur = lens[op.side];
+      const start = op.start;
+      const end = op.end ?? cur;
+      if (!Number.isInteger(start) || start < 0 || start > end || end > cur) {
+        throw new InvalidParams(
+          `编辑区间越界: side=${op.side} start=${start} end=${end} 当前行数=${cur}`
+        );
+      }
+      // 与引擎 LineTable::from_text 同口径：结尾换行不产生空行；空串 = 零行
+      const parts = op.text === '' ? [] : op.text.split('\n');
+      if (parts.length > 1 && parts[parts.length - 1] === '') parts.pop();
+      lens[op.side] = cur - (end - start) + parts.length;
+      spans.push({ side: op.side, start, end, lines: parts });
+    }
+    for (const sp of spans) {
+      const arr = sp.side === 'left' ? s.leftLines : s.rightLines;
+      arr.splice(sp.start, sp.end - sp.start, ...sp.lines);
+    }
+    s.sections = toSections(diffLinesOps(s.leftLines, s.rightLines));
+    s.summary = summarize(s.sections);
+    s.rev += 1;
+    return {
+      sessionId: s.id,
+      rev: s.rev as unknown as bigint,
+      leftLineCount: s.leftLines.length,
+      rightLineCount: s.rightLines.length,
+      sectionCount: s.sections.length,
+      summary: s.summary,
+      sections: s.sections,
     };
   }
 
