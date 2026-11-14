@@ -196,3 +196,14 @@
 1. **表格比较 UI 视图**（table RPC 已有）→ 2. **Hex UI 视图** → 3. **三向合并 UI 视图** → 4. 剪贴板比较入口（小件）→ 5. 报告对话框 → 6. 文本书签/自动换行 → 7. 图片闪烁/缩放同步 → 8. P13 菜单栏/工具栏/自动更新 → 9. P14 后半（媒体/版本/注册表）
 
 - 2026-11-14 20:1x：**P14d 表格比较视图交付**：TableCompareView（比较列网格/沟槽点 BC 语义/单元格着色/滚动分页/统计栏）+ mock table 同形 + 全接线（Tab/主页/registry/CommandContext）+ 图片/表格双视图 CSS；**迭代队列 1 完成**（队列 2：Hex UI 视图）；UI 400 全绿、e2e 过；git 72 提交
+- 2026-11-14 20:3x：**P14e 十六进制比较视图交付**：HexCompareView（左右双栏 16B 行+ASCII 侧栏+逐字节状态着色+滚动分页+0x 偏移跳转+统计栏）+ mock hex/open|bytes 同形（bigint offset 适配）+ 全接线（Tab hex kind/openHexTab/viewRegistry/主页/CommandContext 联合）；**迭代队列 2 完成**；UI 400+引擎 822+clippy 零警+e2e 全过；git 73 提交
+
+## ⚠️ 额度紧张交接节点（2026-11-14 20:4x）
+
+**当前额度即将耗尽。现场状态（工作树干净、全绿）：**
+- 引擎 822/0 + UI 400/0 + clippy 零警 + e2e 过；git 73 提交
+- **迭代队列已完成 1（表格视图）/2（Hex 视图）**
+- **队列 3（下一接手项）：三向合并 UI 视图**——消费 merge3 RPC（P7 已交付：text/merge3/open|sections|decide|output），参照 picture-compare 视图接线模式（Tab kind/sessionId/主页/registry/mock 同形）；数据面 = 块序列着色（stable/leftOnly/rightOnly/conflict/bothChanged）+ 冲突行决策按钮（takeLeft/Right/Base/Manual）+ 输出预览
+- 其余排队：队列 4 剪贴板入口（小件）、5 报告对话框、6 书签/自动换行、P13 菜单栏/自动更新、P14 后半（媒体/版本/注册表——需额外引擎工作）
+- 已知遗留：引擎 picture_compare 能力位未入 handler initialize 字面量（已有字段+e2e 通过，补一行 `picture_compare: Some(true)` 即可）、SNAPSHOT 全量格式（P16）、FTPS 验证/SFTP（需真实服务器）
+- 接手指南：读 PROGRESS 本节 + docs/04 队列；接线模式参照 picture-compare/table-compare/hex-compare 三个先例（Tab kind→store→viewRegistry→主页→mock 同形→组件）
