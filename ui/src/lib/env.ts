@@ -63,7 +63,7 @@ export function formatSize(bytes: number | undefined): string {
   if (bytes === undefined) return '';
   if (bytes < 1024) return `${bytes} B`;
   const units = ['KB', 'MB', 'GB', 'TB'];
-  let v = bytes;
+  let v = bytes / 1024;
   let u = 0;
   while (v >= 1024 && u < units.length - 1) {
     v /= 1024;
