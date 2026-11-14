@@ -649,6 +649,50 @@ try {
   }
   ok(rptGhostMsg.includes('410'), 'report/generate 未知会话报 SESSION_NOT_FOUND(410)', rptGhostMsg);
 
+  // 6.5 R3-10：table/hex 重复 open（切回标签 / StrictMode 双挂载）→ 411 → close → reopen
+  // 引擎只有一张 sessions 表，故同句柄二次 open 必被拒；UI 的幂等封装靠 close→reopen 恢复。
+  const tblL = join(dir, 'a.csv');
+  const tblR = join(dir, 'b.csv');
+  writeFileSync(tblL, 'id,name,qty\n1,a,10\n2,b,20\n');
+  writeFileSync(tblR, 'id,name,qty\n1,a,10\n2,B,25\n3,c,30\n');
+  const binL = join(dir, 'a.bin');
+  const binR = join(dir, 'b.bin');
+  writeFileSync(binL, Buffer.from([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]));
+  writeFileSync(binR, Buffer.from([0, 1, 2, 99, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]));
+  const rpcCode = async (method, params) => {
+    try {
+      await client.request(method, params);
+      return 'resolved';
+    } catch (e) {
+      return String(e?.message ?? e);
+    }
+  };
+
+  const tblArgs = { sessionId: 'e2e-table-1', left: tblL, right: tblR, options: null };
+  const tblFirst = await client.request('table/open', tblArgs);
+  ok(tblFirst.rowCount > 0, 'table/open 首次成功', `rowCount=${tblFirst.rowCount}`);
+  ok((await rpcCode('table/open', tblArgs)).includes('411'), 'table/open 同句柄二次 open 报 411');
+  ok((await client.request('session/close', { sessionId: 'e2e-table-1' })) === null, 'table 会话 close 幂等');
+  const tblAgain = await client.request('table/open', tblArgs);
+  ok(tblAgain.rowCount === tblFirst.rowCount, 'close→reopen 后 table 统计一致');
+  const tblSecs = await client.request('table/sections', { sessionId: 'e2e-table-1', offset: 0, count: 10 });
+  ok(tblSecs.rows.length > 0, 'reopen 后 table/sections 可取数据', `rows=${tblSecs.rows.length}`);
+
+  const hexArgs = { sessionId: 'e2e-hex-1', left: binL, right: binR, options: null };
+  const hexFirst = await client.request('hex/open', hexArgs);
+  ok(hexFirst.leftSize === 17 && hexFirst.rightSize === 16, 'hex/open 首次成功', `${hexFirst.leftSize}/${hexFirst.rightSize}B`);
+  ok((await rpcCode('hex/open', hexArgs)).includes('411'), 'hex/open 同句柄二次 open 报 411');
+  await client.request('session/close', { sessionId: 'e2e-hex-1' });
+  const hexAgain = await client.request('hex/open', hexArgs);
+  ok(hexAgain.leftSize === hexFirst.leftSize, 'close→reopen 后 hex 尺寸一致');
+  const hexPage = await client.request('hex/bytes', { sessionId: 'e2e-hex-1', side: 'left', offset: 0, length: 16 });
+  ok(hexPage.lines.length === 1, 'reopen 后 hex/bytes 可取数据', `lines=${hexPage.lines.length}`);
+
+  // 跨种类占用同一句柄同样 411（证明 sessions 命名空间全局唯一）
+  ok((await rpcCode('hex/open', { ...hexArgs, sessionId: 'e2e-table-1' })).includes('411'), '句柄跨种类冲突也报 411');
+  await client.request('session/close', { sessionId: 'e2e-table-1' });
+  await client.request('session/close', { sessionId: 'e2e-hex-1' });
+
   // 7. 会话清理 + shutdown
   ok((await client.request('session/close', { sessionId: 'e2e-dir-1' })) === null, 'session/close dir 会话');
   ok((await client.request('session/close', { sessionId: 'e2e-text-1' })) === null, 'session/close text 会话');

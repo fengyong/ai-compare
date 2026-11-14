@@ -554,36 +554,33 @@ export async function generateReport(params: ReportParams): Promise<ReportGenera
 /**
  * 会话已存在（411）时幂等重建：先 `session/close` 再重新 open。
  *
- * 两个真实场景：① React StrictMode 双挂载使 effect 里的 open 执行两次；
- * ② 图片容差滑杆变化触发重比较（复用同一 sessionId）。此前两者都会
- * 被引擎 411 拒绝，导致视图显示错误。close 是幂等的（会话不存在也返回 null）。
+ * 三个真实场景：① React StrictMode 双挂载使 effect 里的 open 执行两次；
+ * ② 切回标签导致视图重挂载（引擎侧会话仍存活）；③ 图片容差滑杆变化触发
+ * 重比较（复用同一 sessionId）。引擎的 sessions 表为全部会话种类共用一个
+ * 命名空间，故任何重复 open 都会被 411 拒绝。close 是幂等的（不存在也返回 null）。
  */
 function isSessionExists(err: unknown): boolean {
   return typeof err === 'object' && err !== null && (err as { code?: number }).code === 411;
 }
 
-type PictureOpenArgs = Parameters<typeof openPicture>[0];
-type PictureOpenReply = Awaited<ReturnType<typeof openPicture>>;
-
-export async function openPictureIdempotent(params: PictureOpenArgs): Promise<PictureOpenReply> {
-  try {
-    return await openPicture(params);
-  } catch (err) {
-    if (!isSessionExists(err)) throw err;
-    await closeSession({ sessionId: params.sessionId });
-    return openPicture(params);
-  }
+function idempotentOpen<P extends { sessionId: string }, R>(
+  open: (params: P) => Promise<R>,
+): (params: P) => Promise<R> {
+  return async (params) => {
+    try {
+      return await open(params);
+    } catch (err) {
+      if (!isSessionExists(err)) throw err;
+      await closeSession({ sessionId: params.sessionId });
+      return open(params);
+    }
+  };
 }
 
-export async function merge3OpenIdempotent(params: MergeOpenParams): Promise<MergeOpenResult> {
-  try {
-    return await merge3Open(params);
-  } catch (err) {
-    if (!isSessionExists(err)) throw err;
-    await closeSession({ sessionId: params.sessionId });
-    return merge3Open(params);
-  }
-}
+export const openPictureIdempotent = idempotentOpen(openPicture);
+export const merge3OpenIdempotent = idempotentOpen(merge3Open);
+export const openTableIdempotent = idempotentOpen(openTable);
+export const openHexIdempotent = idempotentOpen(openHex);
 
 // ==================================================================
 // P8：文件夹三路合并方法集（提案协议，见 protocol/types.ts 第 4 节）

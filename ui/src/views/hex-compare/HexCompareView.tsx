@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { getEngineCapabilities, hexBytes, openHex, trackSession } from '../../ipc/engineProcess';
+import {
+  getEngineCapabilities,
+  hexBytes,
+  openHexIdempotent,
+  trackSession,
+} from '../../ipc/engineProcess';
 import { S } from '../../strings';
 import type { Tab } from '../../shell/store';
 
@@ -178,7 +183,12 @@ export function HexCompareView({ tab }: { tab: Tab & { kind: 'hex'; hex: { left:
 
   useEffect(() => {
     let disposed = false;
-    openHex({ sessionId: tab.hex.sessionId, left: tab.hex.left, right: tab.hex.right, options: null })
+    openHexIdempotent({
+      sessionId: tab.hex.sessionId,
+      left: tab.hex.left,
+      right: tab.hex.right,
+      options: null,
+    })
       .then((r) => {
         if (!disposed) {
           trackSession(tab.hex.sessionId, 'hex', {

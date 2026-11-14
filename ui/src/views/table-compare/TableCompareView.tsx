@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   getEngineCapabilities,
-  openTable,
+  openTableIdempotent,
   tableSections,
   trackSession,
 } from '../../ipc/engineProcess';
@@ -89,7 +89,7 @@ export function TableCompareView({ tab }: { tab: Tab & { kind: 'table'; table: {
 
   useEffect(() => {
     let disposed = false;
-    openTable({
+    openTableIdempotent({
       sessionId: tab.table.sessionId,
       left: tab.table.left,
       right: tab.table.right,
