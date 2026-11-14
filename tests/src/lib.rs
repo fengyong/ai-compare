@@ -23,6 +23,72 @@ pub fn engine_bin() -> PathBuf {
     p
 }
 
+/// 确保引擎二进制不早于引擎源码。
+///
+/// 为什么需要：`cargo test -p ai-compare-tests` 只构建测试目标与其依赖，
+/// **不会**重建 `ai-engine` 的 bin。于是单跑某个测试目标时，进程级用例
+/// （p9_e2e / protocol_conformance）实际执行的是**上一次的旧二进制** ——
+/// 回归测试因此形同虚设（本次深度 review 的变异验证即踩中此坑：禁用修复后
+/// 用例仍全绿）。这里按 mtime 比对，必要时现场重建一次。
+static ENGINE_FRESH: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+
+pub fn ensure_engine_fresh() {
+    ENGINE_FRESH.get_or_init(|| {
+        let bin = engine_bin();
+        let Ok(bin_meta) = bin.metadata() else { return };
+        let Ok(bin_time) = bin_meta.modified() else { return };
+        let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let root = manifest.parent().expect("workspace root");
+        let mut newest = bin_time;
+        for crate_dir in ["ai-engine", "ai-protocol", "ai-core", "ai-vfs", "ai-dir"] {
+            let src = root.join("engine").join(crate_dir).join("src");
+            collect_newest(&src, &mut newest);
+        }
+        for f in ["Cargo.toml", "Cargo.lock"] {
+            if let Ok(md) = root.join(f).metadata() {
+                if let Ok(t) = md.modified() {
+                    if t > newest {
+                        newest = t;
+                    }
+                }
+            }
+        }
+        if newest > bin_time {
+            eprintln!(
+                "[harness] 引擎二进制早于源码（{} < {:?}），现场重建…",
+                bin.display(),
+                newest
+            );
+            let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
+            let status = Command::new(&cargo)
+                .args(["build", "-p", "ai-engine", "--bin", "ai-engine", "--quiet"])
+                .current_dir(root)
+                .status();
+            match status {
+                Ok(s) if s.success() => {}
+                Ok(s) => panic!("重建 ai-engine 失败（exit {s}）"),
+                Err(e) => panic!("重建 ai-engine 失败: {e}"),
+            }
+        }
+    });
+}
+
+/// 递归收集目录内最新的修改时间
+fn collect_newest(dir: &Path, newest: &mut std::time::SystemTime) {
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Ok(md) = entry.metadata() else { continue };
+        if md.is_dir() {
+            collect_newest(&path, newest);
+        } else if let Ok(t) = md.modified() {
+            if t > *newest {
+                *newest = t;
+            }
+        }
+    }
+}
+
 /// CLI 二进制路径（aic / aicc；workspace 内同 profile 目录）
 ///
 /// 注意：`cargo test --workspace` 会先构建全部 workspace 目标（含 aic/aicc bin）
@@ -50,6 +116,7 @@ pub fn cli_bin(name: &str) -> PathBuf {
 /// 与引擎跑一轮 stdio 会话：写入请求行（逐行 NDJSON）-> 读全部输出行。
 /// 输入应以 shutdown 请求收尾（引擎处理后退出）。
 pub fn run_engine(inputs: &[serde_json::Value], record: Option<&Path>) -> Vec<serde_json::Value> {
+    ensure_engine_fresh();
     let bin = engine_bin();
     assert!(
         bin.exists(),

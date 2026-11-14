@@ -411,6 +411,11 @@ pub fn cmd_merge(args: &[String]) -> ExitCode {
             "--marker" => kind = MergeOutputKind::Marker,
             "--diff3" => marker_style = MarkerStyle::Diff3,
             "--conflict-exit-code" => match next(&mut i).and_then(|v| v.parse::<u8>().ok()) {
+                // 0 恒表示"相同/成功"（见 lib.rs 退出码契约），冲突码不得为 0，
+                // 否则 VCS/CI 会把"有冲突"误判为合并成功。
+                Some(0) => {
+                    return arg_error("--conflict-exit-code 不可为 0（0 恒表示\"相同/成功\"）")
+                }
                 Some(n) => conflict_exit_code = n,
                 None => return arg_error("--conflict-exit-code 需要数字参数（默认 1；14 = FR-CLI-004 冲突码）"),
             },
@@ -1153,8 +1158,11 @@ pub fn cmd_patch(args: &[String]) -> ExitCode {
                 EXIT_SAME.into()
             }
             Err(msg) => {
+                // 补丁应用失败属"错误"（上下文不匹配/文件不可写），不是"文件不同"：
+                // 退出码契约 1 = 不同、2 = 错误（见 lib.rs）。返回 1 会让 CI
+                // 把一次失败的补丁当成"存在差异"。
                 eprintln!("aic patch: 应用失败: {msg}");
-                EXIT_DIFF.into()
+                EXIT_ERROR.into()
             }
         };
     }
@@ -1178,10 +1186,21 @@ pub fn cmd_patch(args: &[String]) -> ExitCode {
                 let _ = writeln!(lock, "{}\t{}\tfuzz={}\toffset={}\t{}", status, r.path, r.fuzz_used, r.offset_applied, r.detail.clone().unwrap_or_default());
             }
             let _ = lock.flush();
-            if report.all_applied() {
-                EXIT_SAME.into()
+            // 退出码语义（lib.rs 契约）：patch apply 是"执行"而非"比较"，
+            // 没有"文件不同"这一结果。
+            // - 有文件失败（Failed）或已应用（AlreadyApplied，git apply 同语义拒绝）→ 2 错误
+            // - 全部成功（Applied/NoOp）或仅二进制跳过（SkippedBinary，设计语义）→ 0 成功
+            let rejected = report.results.iter().any(|r| {
+                matches!(
+                    r.status,
+                    ai_core::patch::FileApplyStatus::Failed
+                        | ai_core::patch::FileApplyStatus::AlreadyApplied
+                )
+            });
+            if rejected {
+                EXIT_ERROR.into()
             } else {
-                EXIT_DIFF.into()
+                EXIT_SAME.into()
             }
         }
         Err(e) => {

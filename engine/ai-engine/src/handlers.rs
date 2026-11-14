@@ -1022,6 +1022,34 @@ async fn merge3_open(
     if params.session_id.is_empty() {
         return Err(bad_params("sessionId 不能为空"));
     }
+
+    // 幂等打开：同 sessionId + 同三路路径 → 直接返回既有会话统计。
+    //
+    // 为什么必须幂等：标签重挂载与 React StrictMode 双挂载都会重复 open。
+    // 若一律回 411 让调用方先 close 再重建，引擎侧已提交的冲突决策
+    // （decisions 表）会被清空 —— 用户切走再切回标签就丢掉全部决策（FR-TMRG-004/005）。
+    {
+        let sessions = ctx.sessions.lock().await;
+        if let Some(Session::Merge(data)) = sessions.get(&params.session_id) {
+            if data.labels.0 == params.base
+                && data.labels.1 == params.left
+                && data.labels.2 == params.right
+            {
+                let result = ai_protocol::MergeOpenResult {
+                    session_id: params.session_id.clone(),
+                    base_line_count: data.model.base_len,
+                    left_line_count: data.model.left_len,
+                    right_line_count: data.model.right_len,
+                    chunk_count: u32::try_from(data.model.chunks.len()).unwrap_or(u32::MAX),
+                    conflict_count: data.model.conflict_count(),
+                    rev: data.rev,
+                };
+                return Ok(Handled::Value(
+                    serde_json::to_value(&result).expect("merge3/open 结果可序列化"),
+                ));
+            }
+        }
+    }
     let base_path = VfsPath::parse(&params.base).map_err(|e| mapping::vfs_error_to_rpc(&e))?;
     let left_path = VfsPath::parse(&params.left).map_err(|e| mapping::vfs_error_to_rpc(&e))?;
     let right_path = VfsPath::parse(&params.right).map_err(|e| mapping::vfs_error_to_rpc(&e))?;

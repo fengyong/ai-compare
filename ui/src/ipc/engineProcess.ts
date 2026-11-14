@@ -196,9 +196,14 @@ async function doConnect(): Promise<RpcClient> {
  * 自动重启一次 → initialize → 会话恢复；超出次数则失败横幅（可手动重试）。
  */
 function handleTransportCrash(reason?: string): void {
+  const old = client;
   client = null;
   connectPromise = null;
   engineCapabilities = null;
+  // 释放旧客户端：其 Tauri 事件监听（stdout/stderr/exit）必须注销，
+  // 否则每次崩溃重启净增 3 个监听器，且旧监听仍把 stdout 行投喂给已死客户端
+  //（造成同一行被两个客户端各处理一次 → 幽灵 id 报错）。
+  void old?.close();
   if (forcedMock || !isTauriRuntime()) {
     setSnapshot({ status: 'connecting', message: '演示引擎已关闭', phase: 'ok' });
     return;
@@ -238,6 +243,8 @@ async function resyncTrackedSessions(c: RpcClient): Promise<void> {
       }
       const newId = newSessionId(tracked.kind);
       trackedSessions.delete(sessionId);
+      // 新句柄必须重新登记：否则第二次引擎崩溃时该会话不再被恢复/重建。
+      trackedSessions.set(newId, tracked);
       const outcome: ResyncOutcome = { oldSessionId: sessionId, newSessionId: newId, kind: tracked.kind, mode: 'replay' };
       for (const fn of resyncListeners) fn(outcome);
     }
@@ -268,7 +275,14 @@ function wireNotifications(c: RpcClient): void {
     const delta = params as DirDelta;
     const subs = deltaSubs.get(delta.sessionId);
     if (subs) {
-      for (const fn of subs) fn(delta);
+      for (const fn of subs) {
+        try {
+          fn(delta);
+        } catch (err) {
+          // 一个订阅者抛错不得中断其余订阅者（否则整批 delta 丢失）
+          console.warn('[dir/delta] 订阅回调异常', err);
+        }
+      }
     }
   });
 }
@@ -282,6 +296,11 @@ export function retryEngine(): void {
   connectPromise = null;
   void old?.close();
   setSnapshot({ status: 'connecting', message: '正在连接引擎…', phase: 'reconnecting' });
+  // 必须真正发起连接：此前只清状态不连接，用户点「重试」会永远停在"正在连接引擎…"，
+  // 直到下一次 RPC 调用才会间接触发连接。
+  void getEngineClient().catch(() => {
+    // 失败横幅已由 doConnect 内部落（phase=failed）
+  });
 }
 
 /**

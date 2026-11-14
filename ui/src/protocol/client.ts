@@ -191,7 +191,18 @@ export class RpcClient {
       }
       const set = this.handlers.get(m.method);
       if (set) {
-        for (const h of set) h(m.params);
+        for (const h of set) {
+          try {
+            h(m.params);
+          } catch (err) {
+            // 单个订阅者抛错不得中断其余订阅者，也不得把异常抛回传输层
+            //（否则会冒泡成未捕获异常，并让后续通知全部丢失）
+            this.opts.onProtocolError?.(
+              err instanceof Error ? err : new Error(String(err)),
+              `[notify] ${m.method}`
+            );
+          }
+        }
       }
       return;
     }

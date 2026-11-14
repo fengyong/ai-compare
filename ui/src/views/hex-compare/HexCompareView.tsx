@@ -85,9 +85,13 @@ function HexPane({
   const hostRef = useRef<HTMLDivElement | null>(null);
   const offsetRef = useRef(0);
   const jumpRequested = useRef<number | null>(null);
+  // 分页在途标记放 ref：loading 是 state，进 useCallback 依赖会重建闭包，
+  // 而滚动回调持有的旧闭包读到恒为 false 的 loading → 并发同 offset 拉页 → 重复行 + 偏移漂移
+  const inFlightRef = useRef(false);
 
   const loadNext = useCallback(async () => {
-    if (loading || done) return;
+    if (inFlightRef.current || done) return;
+    inFlightRef.current = true;
     setLoading(true);
     try {
       const r = await hexBytes({ sessionId, side, offset: offsetRef.current, length: PAGE_BYTES });
@@ -102,9 +106,9 @@ function HexPane({
         jumpRequested.current = null;
       }
     } finally {
+      inFlightRef.current = false;
       setLoading(false);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId, side, done]);
 
   useEffect(() => {
@@ -155,7 +159,7 @@ function HexPane({
               </tr>
             );
           })}
-          {!done && (
+          {!done && loading && (
             <tr>
               <td colSpan={18} className="hx-loading">{S.hex.loading}</td>
             </tr>
@@ -205,7 +209,7 @@ export function HexCompareView({ tab }: { tab: Tab & { kind: 'hex'; hex: { left:
     <div className="aic-hex">
       <div className="aic-hex-toolbar">
         <span className="aic-hex-title">{S.hex.title}: {tab.title.replace('十六进制比较：', '')}</span>
-        {!getEngineCapabilities()?.tableCompare && <span className="aic-hex-cap">（{S.hex.capNote}）</span>}
+        {!getEngineCapabilities()?.hexCompare && <span className="aic-hex-cap">（{S.hex.capNote}）</span>}
         <label>
           {S.hex.jump}
           <input
