@@ -54,7 +54,7 @@
 | 2026-11-14 04:0x | Agent「M3/P7 三向合并引擎」（ai-core merge3 + ai-protocol 本波协议权 + ai-engine + aic merge + diff3/git 对拍） | ✅ 完成并波次联合验收通过（04:3x）：workspace **420/0 全绿**、clippy 零警、e2e 过；**git merge-file 对拍 28/28 逐字节一致（100%）**，GNU diff3 18/28（差异归类：GNU -A bracketed 语义 vs git 语义，以 git 一致为准）；重要性开关冲突缩小行为有测试；提交入库 |
 | 2026-11-14 04:3x | Agent「M3/P9 表格/十六进制引擎」（ai-core 表格列模型+hex 字节视图模型 + ai-protocol 本波协议权 + ai-engine + cli） | ✅ 完成并波次联合验收通过（05:4x）：workspace **603/0 全绿**（+183）、clippy 零警、e2e 过；对拍 csv 18/18、xxd 6/6、git apply 11/11 结论一致（5 差异全归类）；**dir/execute 接线完成（P6 积压清偿）**；提交入库 |
 | 2026-11-14 05:5x | Agent「M3/P10 文件格式与规则体系」（引擎 formats/rules 注册表+检测+持久化+协议+设置 UI；strings.ts 归 P10） | ✅ **全部完成并验收**（07:4x）：引擎侧（主会话接手收尾，699 全绿）+ UI 侧（SendMessage 续跑成功，383 测试 +22、build/lint/e2e 全绿、浏览器冒烟含持久化还原）；已提交；遗留——设置→text/open rules 运行时接线（入口在 text-compare 视图，权限外）移交下波协调 |
-| 2026-11-14 07:5x | Agent「M3/P11 报告引擎与脚本处理器」（ai-core report 8 布局 + 脚本处理器 31 命令 + 协议权 + aic report/script） | 运行中（09:00 巡检存活，实现段推进中） |
+| 2026-11-14 07:5x | Agent「M3/P11 报告引擎与脚本处理器」（ai-core report 8 布局 + 脚本处理器 31 命令 + 协议权 + aic report/script） | ⚠️ 10:01 配额中断（12:08 重置）于「报告矩阵测试」前（脚本 21 测试已过）；▶️ 12:21 SendMessage 原地续跑（配额已重置，磁盘产出齐全：report.rs/aiscript bin/report_cmd/script） |
 | 2026-11-14 09:00 | 看护定时任务第三次重建（模型切换；新任务并入 P11 权限边界与「中断点接近完成时主会话接手」规则） | active |
 | 2026-11-14 09:21 | 新看护任务首轮巡检：P11 活跃（7s 前有进展，近 15 分钟无落盘——处于设计/构建段）；不干预 | - |
 | 2026-11-14 09:41 | 第 2 轮巡检：P11 活跃（9s 前有进展）；不干预 | - |
