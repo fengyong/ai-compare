@@ -89,11 +89,76 @@ fn collect_newest(dir: &Path, newest: &mut std::time::SystemTime) {
     }
 }
 
+/// 确保 CLI 二进制不早于其源码（与 [`ensure_engine_fresh`] 同理）。
+///
+/// 为什么需要：`cargo test -p ai-compare-tests --test cli_matrix` 不会重建
+/// `aic`/`aicc` 的 bin，单跑该目标时退出码用例执行的是旧二进制 → 假绿。
+static CLI_FRESH: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+
+pub fn ensure_cli_fresh() {
+    CLI_FRESH.get_or_init(|| {
+        let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let root = manifest.parent().expect("workspace root");
+        let mut newest = std::time::SystemTime::UNIX_EPOCH;
+        let mut bin_time = None;
+        for name in ["aic", "aicc"] {
+            let bin = cli_bin_unchecked(name);
+            if let Ok(md) = bin.metadata() {
+                if let Ok(t) = md.modified() {
+                    bin_time = Some(match bin_time {
+                        Some(prev) if prev < t => prev,
+                        _ => t,
+                    });
+                }
+            }
+        }
+        let Some(bin_time) = bin_time else { return };
+        collect_newest(&root.join("cli").join("aic").join("src"), &mut newest);
+        for crate_dir in ["ai-protocol", "ai-core", "ai-vfs", "ai-dir"] {
+            collect_newest(&root.join("engine").join(crate_dir).join("src"), &mut newest);
+        }
+        for f in ["Cargo.toml", "Cargo.lock"] {
+            if let Ok(md) = root.join(f).metadata() {
+                if let Ok(t) = md.modified() {
+                    if t > newest {
+                        newest = t;
+                    }
+                }
+            }
+        }
+        if newest > bin_time {
+            eprintln!("[harness] CLI 二进制早于源码，现场重建 aic/aicc…");
+            let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
+            let status = Command::new(&cargo)
+                .args(["build", "-p", "aic", "--quiet"])
+                .current_dir(root)
+                .status();
+            match status {
+                Ok(s) if s.success() => {}
+                Ok(s) => panic!("重建 aic 失败（exit {s}）"),
+                Err(e) => panic!("重建 aic 失败: {e}"),
+            }
+        }
+    });
+}
+
 /// CLI 二进制路径（aic / aicc；workspace 内同 profile 目录）
 ///
 /// 注意：`cargo test --workspace` 会先构建全部 workspace 目标（含 aic/aicc bin）
 /// 再运行测试，因此断言仅在漏构建时触发并给出指引。
 pub fn cli_bin(name: &str) -> PathBuf {
+    ensure_cli_fresh();
+    let p = cli_bin_unchecked(name);
+    assert!(
+        p.is_file(),
+        "{name} 二进制不存在: {}（先 `cargo build -p aic`，或跑 `cargo test --workspace` 触发全量构建）",
+        p.display()
+    );
+    p
+}
+
+/// 仅计算路径，不做存在性断言 / 新鲜度检查（供 [`ensure_cli_fresh`] 取 mtime）
+fn cli_bin_unchecked(name: &str) -> PathBuf {
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let root = manifest.parent().expect("workspace root");
     let target = std::env::var("CARGO_TARGET_DIR")
@@ -105,11 +170,6 @@ pub fn cli_bin(name: &str) -> PathBuf {
     if cfg!(windows) {
         p.set_extension("exe");
     }
-    assert!(
-        p.is_file(),
-        "{name} 二进制不存在: {}（先 `cargo build -p aic`，或跑 `cargo test --workspace` 触发全量构建）",
-        p.display()
-    );
     p
 }
 

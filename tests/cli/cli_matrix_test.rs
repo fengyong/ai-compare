@@ -505,3 +505,70 @@ fn aicc_merge_subcommand_passthrough() {
     assert_eq!(exit_code(&out), 1, "aicc merge 冲突 -> 1（透传）");
     assert!(stdout(&out).contains("<<<<<<<"));
 }
+
+/// `patch apply` 是"执行"而非"比较"：退出码只有 0（成功）/ 2（错误），
+/// 没有 1（文件不同）。锁定第一轮 review 的 F-07 / F-08（此前无回归覆盖）。
+///
+/// - F-07：单文件应用失败旧实现退 1 → CI/VCS 会误判为"有差异"而非"出错"；
+/// - F-08：--dir 多文件模式 alreadyApplied 属拒绝（git apply 同语义）→ 2，
+///   skippedBinary 属设计语义（二进制不参与文本补丁）→ 0。
+#[test]
+fn patch_apply_exit_matrix() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let tree = root.join("tree");
+    std::fs::create_dir_all(&tree).unwrap();
+    let target = tree.join("f.txt");
+    std::fs::write(&target, "a\nb\nc\n").unwrap();
+    // 非 UTF-8 目标 → 按二进制跳过
+    std::fs::write(tree.join("bin.dat"), [0xff, 0xfe, 0x00, b'x']).unwrap();
+
+    let good = root.join("good.patch");
+    std::fs::write(&good, "--- a/f.txt\n+++ b/f.txt\n@@ -1,3 +1,3 @@\n a\n-b\n+B\n c\n").unwrap();
+    let bad = root.join("bad.patch");
+    std::fs::write(&bad, "--- a/f.txt\n+++ b/f.txt\n@@ -1,3 +1,3 @@\n a\n-XX\n+YY\n c\n").unwrap();
+    let binp = root.join("bin.patch");
+    std::fs::write(&binp, "--- a/bin.dat\n+++ b/bin.dat\n@@ -1,1 +1,1 @@\n-x\n+y\n").unwrap();
+    let out_file = root.join("out.txt");
+
+    // 单文件：上下文不匹配 → 2（不是 1）
+    let out = run(
+        &aic(),
+        &["patch", "apply", &s(&bad), "--input", &s(&target), "-o", &s(&out_file)],
+    );
+    assert_eq!(exit_code(&out), 2, "应用失败必须是错误(2)，实际: {}", stdout(&out));
+    assert!(!out_file.exists(), "失败不得产出输出文件");
+
+    // 单文件：成功 → 0
+    let out = run(
+        &aic(),
+        &["patch", "apply", &s(&good), "--input", &s(&target), "-o", &s(&out_file)],
+    );
+    assert_eq!(exit_code(&out), 0, "应用成功应退 0，实际: {}", stdout(&out));
+    assert_eq!(std::fs::read_to_string(&out_file).unwrap(), "a\nB\nc\n");
+
+    // --dir：首次应用 → 0
+    let out = run(&aic(), &["patch", "apply", &s(&good), "--dir", &s(&tree)]);
+    assert_eq!(exit_code(&out), 0, "首次应用应退 0，实际: {}", stdout(&out));
+    assert!(stdout(&out).starts_with("applied\tf.txt"), "实际: {}", stdout(&out));
+
+    // --dir：重复应用 → alreadyApplied 属拒绝 → 2（旧实现误判为差异 1）
+    let out = run(&aic(), &["patch", "apply", &s(&good), "--dir", &s(&tree)]);
+    assert_eq!(exit_code(&out), 2, "alreadyApplied 应退 2，实际: {}", stdout(&out));
+    assert!(stdout(&out).starts_with("alreadyApplied\tf.txt"), "实际: {}", stdout(&out));
+
+    // --dir：仅二进制跳过 → 0（设计语义，不是错误也不是差异）
+    let out = run(&aic(), &["patch", "apply", &s(&binp), "--dir", &s(&tree)]);
+    assert_eq!(exit_code(&out), 0, "skippedBinary 应退 0，实际: {}", stdout(&out));
+    assert!(stdout(&out).starts_with("skippedBinary\tbin.dat"), "实际: {}", stdout(&out));
+
+    // --dir：文本失败 + 二进制跳过混合 → 有失败即 2
+    let mixed = root.join("mixed.patch");
+    std::fs::write(
+        &mixed,
+        format!("{}{}", std::fs::read_to_string(&bad).unwrap(), std::fs::read_to_string(&binp).unwrap()),
+    )
+    .unwrap();
+    let out = run(&aic(), &["patch", "apply", &s(&mixed), "--dir", &s(&tree)]);
+    assert_eq!(exit_code(&out), 2, "任一文件失败即错误(2)，实际: {}", stdout(&out));
+}
