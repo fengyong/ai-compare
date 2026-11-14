@@ -35,7 +35,62 @@ pub fn plan_operations(
             None => apply_preset(row, preset, &mut plan),
         }
     }
-    plan
+    reorder_case_collisions(plan)
+}
+
+/// 大小写不敏感文件系统上，左孤 `A.txt` 与右孤 `a.txt` 实为同一条目：镜像计划
+/// 若先 copy 后 delete，copy 原地覆写 `a.txt`，随后 delete 把刚写入的内容删掉
+/// → 目标侧清空（数据丢失且退出码 0）。把碰撞的 delete 提前到对应 copy 之前：
+/// 不敏感卷上删后按左名重建、敏感卷上两独立文件各自正确，两种语义下结果都对。
+fn reorder_case_collisions(plan: Vec<PlannedOperation>) -> Vec<PlannedOperation> {
+    fn fold(s: &str) -> String {
+        s.chars().flat_map(|c| c.to_lowercase()).collect()
+    }
+    fn copy_dest(op: PlannedOpKind) -> Option<Side> {
+        match op {
+            PlannedOpKind::CopyLeftToRight => Some(Side::Right),
+            PlannedOpKind::CopyRightToLeft => Some(Side::Left),
+            _ => None,
+        }
+    }
+    fn del_side(op: PlannedOpKind) -> Option<Side> {
+        match op {
+            PlannedOpKind::DeleteRight => Some(Side::Right),
+            PlannedOpKind::DeleteLeft => Some(Side::Left),
+            _ => None,
+        }
+    }
+    let mut before: std::collections::BTreeMap<usize, Vec<usize>> = Default::default();
+    let mut moved: BTreeSet<usize> = BTreeSet::new();
+    for (ci, c) in plan.iter().enumerate() {
+        let Some(cs) = copy_dest(c.op) else { continue };
+        let cf = fold(&c.path);
+        for (di, d) in plan.iter().enumerate().skip(ci + 1) {
+            if moved.contains(&di) {
+                continue;
+            }
+            if del_side(d.op) == Some(cs) && d.path != c.path && fold(&d.path) == cf {
+                before.entry(ci).or_default().push(di);
+                moved.insert(di);
+            }
+        }
+    }
+    if moved.is_empty() {
+        return plan;
+    }
+    let mut out = Vec::with_capacity(plan.len());
+    for (i, p) in plan.iter().enumerate() {
+        if moved.contains(&i) {
+            continue;
+        }
+        if let Some(ds) = before.get(&i) {
+            for &di in ds {
+                out.push(plan[di].clone());
+            }
+        }
+        out.push(p.clone());
+    }
+    out
 }
 
 /// 是否"配对存在且状态为差异"（含目录聚合差异）
@@ -736,6 +791,31 @@ mod tests {
         // Mirror 语义=使两侧一致，仍允许整树复制
         let m = plan_operations(&rows, Some(SyncPreset::MirrorLeftToRight), None, None);
         assert!(ops(&m).contains(&(PlannedOpKind::CopyLeftToRight, "sub")));
+    }
+
+    #[test]
+    fn mirror_case_variant_delete_runs_before_copy() {
+        // 不敏感卷上 A.txt/a.txt 同一条目：先 copy 后 delete 会清空目标侧。
+        let rows = vec![
+            row("A.txt", DirEntryStatus::LeftOnly, 0, 0),
+            row("a.txt", DirEntryStatus::RightOnly, 0, 0),
+        ];
+        let plan = plan_operations(&rows, Some(SyncPreset::MirrorLeftToRight), None, None);
+        assert_eq!(
+            ops(&plan),
+            vec![(PlannedOpKind::DeleteRight, "a.txt"), (PlannedOpKind::CopyLeftToRight, "A.txt")],
+            "大小写碰撞的 delete 必须先于 copy"
+        );
+        // 非碰撞（不同名）不重排，保持原序
+        let rows2 = vec![
+            row("x.txt", DirEntryStatus::LeftOnly, 0, 0),
+            row("y.txt", DirEntryStatus::RightOnly, 0, 0),
+        ];
+        let p2 = plan_operations(&rows2, Some(SyncPreset::MirrorLeftToRight), None, None);
+        assert_eq!(
+            ops(&p2),
+            vec![(PlannedOpKind::CopyLeftToRight, "x.txt"), (PlannedOpKind::DeleteRight, "y.txt")]
+        );
     }
 
     fn mirror_rows() -> Vec<DirRow> {
