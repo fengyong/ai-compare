@@ -93,7 +93,9 @@ export const createSessionSlice: StateCreator<ShellStore, [], [], SessionSlice> 
           ? 'folder-sync'
           : tab.kind === 'merge'
             ? 'folder-merge'
-            : 'folder-compare';
+            : tab.kind === 'merge3'
+              ? 'text-merge'
+              : 'folder-compare';
     const node = await sessionService.saveSession({ kind, name: trimmed, specs: specsOfTab(tab) });
     const link = { sessionId: node.id, name: node.name, kind: node.kind, locked: node.locked };
     set((st) => ({
@@ -200,6 +202,7 @@ function specsOfTab(tab: Tab): { left: string; right: string } {
   if (tab.kind === 'folder' && tab.folder) return { left: tab.folder.left, right: tab.folder.right };
   if (tab.kind === 'sync' && tab.sync) return { left: tab.sync.left, right: tab.sync.right };
   if (tab.kind === 'merge' && tab.merge) return { left: tab.merge.base, right: tab.merge.right };
+  if (tab.kind === 'merge3' && tab.merge3) return { left: tab.merge3.base, right: tab.merge3.right };
   if (tab.kind === 'text' && tab.text) return { left: tab.text.left.path, right: tab.text.right.path };
   return { left: '', right: '' };
 }

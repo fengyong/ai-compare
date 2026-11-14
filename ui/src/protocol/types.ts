@@ -46,6 +46,27 @@ export type { TableColumnAlign } from './generated/TableColumnAlign';
 export type { TableSummary } from './generated/TableSummary';
 export type { TableRowAlign } from './generated/TableRowAlign';
 
+/* P7：三向文本合并（text/merge3/open|sections|decide|output）生成类型 */
+export type { Merge3OptionsSpec } from './generated/Merge3OptionsSpec';
+export type { MergeChunkDto } from './generated/MergeChunkDto';
+export type { MergeChunkOrigin } from './generated/MergeChunkOrigin';
+export type { MergeConflictDefault } from './generated/MergeConflictDefault';
+export type { MergeConflictKind } from './generated/MergeConflictKind';
+export type { MergeConflictRowDto } from './generated/MergeConflictRowDto';
+export type { MergeDecideParams } from './generated/MergeDecideParams';
+export type { MergeDecideResult } from './generated/MergeDecideResult';
+export type { MergeDecisionDto } from './generated/MergeDecisionDto';
+export type { MergeDecisionKind } from './generated/MergeDecisionKind';
+export type { MergeFavorSide } from './generated/MergeFavorSide';
+export type { MergeMarkerStyle } from './generated/MergeMarkerStyle';
+export type { MergeOpenParams } from './generated/MergeOpenParams';
+export type { MergeOpenResult } from './generated/MergeOpenResult';
+export type { MergeOutputMode } from './generated/MergeOutputMode';
+export type { MergeOutputParams } from './generated/MergeOutputParams';
+export type { MergeOutputResult } from './generated/MergeOutputResult';
+export type { MergeSectionsParams } from './generated/MergeSectionsParams';
+export type { MergeSectionsResult } from './generated/MergeSectionsResult';
+
 export type { CancelParams } from './generated/CancelParams';
 export type { CharRange } from './generated/CharRange';
 export type { ClientInfo } from './generated/ClientInfo';

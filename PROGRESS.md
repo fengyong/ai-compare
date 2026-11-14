@@ -176,7 +176,7 @@
 | 文件夹比较（双窗格/树/过滤/同步/操作/标记） | ✅ P6c 后 | 复制到文件夹三路径、属性对话框、回收站删除（P6 后续批次） |
 | 目录双窗格 | ✅ P6c | — |
 | 会话体系（树/作用域/持久化/锁定） | ✅ P4 | 三路会话格式（P11） |
-| 三向文本合并（diff3 引擎/重要性/决策） | ✅ 引擎 | **合并 UI 视图（消费 merge3 RPC）——BC 招牌功能，优先级高** |
+| 三向文本合并（diff3 引擎/重要性/决策 + 合并视图） | ✅ 队列 3 | 冲突导航工具栏、输出直接保存为文件路径（后续批次） |
 | 表格比较引擎 | ✅ P9 | **表格 UI 视图（消费 table/open|sections）——优先级高** |
 | 十六进制比较引擎 | ✅ P9 | **Hex UI 视图（消费 hex/open|bytes）——优先级高** |
 | 图片比较 | ✅ P14a/b/c | 闪烁模式、缩放同步、对角放大镜（后续批次） |
@@ -193,26 +193,25 @@
 | 媒体比较（MP3/音频） | ✗ | P14 后半（需音频解码） |
 
 ## 迭代队列（BC 忠实度驱动）
-1. **表格比较 UI 视图**（table RPC 已有）→ 2. **Hex UI 视图** → 3. **三向合并 UI 视图** → 4. 剪贴板比较入口（小件）→ 5. 报告对话框 → 6. 文本书签/自动换行 → 7. 图片闪烁/缩放同步 → 8. P13 菜单栏/工具栏/自动更新 → 9. P14 后半（媒体/版本/注册表）
+1. **表格比较 UI 视图**（table RPC 已有）✅ → 2. **Hex UI 视图** ✅ → 3. **三向合并 UI 视图** ✅ → **4. 剪贴板比较入口（下一项，小件）** → 5. 报告对话框 → 6. 文本书签/自动换行 → 7. 图片闪烁/缩放同步 → 8. P13 菜单栏/工具栏/自动更新 → 9. P14 后半（媒体/版本/注册表）
 
 - 2026-11-14 20:1x：**P14d 表格比较视图交付**：TableCompareView（比较列网格/沟槽点 BC 语义/单元格着色/滚动分页/统计栏）+ mock table 同形 + 全接线（Tab/主页/registry/CommandContext）+ 图片/表格双视图 CSS；**迭代队列 1 完成**（队列 2：Hex UI 视图）；UI 400 全绿、e2e 过；git 72 提交
 - 2026-11-14 20:3x：**P14e 十六进制比较视图交付**：HexCompareView（左右双栏 16B 行+ASCII 侧栏+逐字节状态着色+滚动分页+0x 偏移跳转+统计栏）+ mock hex/open|bytes 同形（bigint offset 适配）+ 全接线（Tab hex kind/openHexTab/viewRegistry/主页/CommandContext 联合）；**迭代队列 2 完成**；UI 400+引擎 822+clippy 零警+e2e 全过；git 73 提交
+- 2026-11-14 20:4x：**P14f 三向合并视图交付 / 迭代队列 3 完成**：Merge3View（三源窗格含可隐藏的中间公共祖先窗格 + 块序列按 FR-TMRG-002 着色 + 显示过滤器五项组合语义 + 冲突块六动作采用族与批量 decide + plain/marker 输出预览/复制/导出 + 合并统计）+ 全接线（Tab `merge3` kind/Merge3TabData/openMerge3Tab/viewRegistry `text-merge` 插件/KIND_META/主页三路输入与拖放/CommandContext/mock 四方法同形）；**顺带修复 P14e 期间 `picture/open` 落穿 `hexOpen` 的 mock dispatch 回归**；**修复真实引擎空区间省略行内容字段导致的视图崩溃风险**（`paneLines` 兜底 + 回归测试）；e2e:engine 新增 merge3 四方法链路（open→sections→decide 幂等→output marker/plain）；引擎 **822/0** + UI **419**（+19）+ clippy `-D warnings` 零警 + e2e + build/lint 全绿；git 88 提交
 
-## ⚠️ 额度紧张交接节点（2026-11-14 20:4x）
+## ⚠️ 额度紧张交接节点（2026-11-14 20:4x；队列 3 已完成）
 
-**当前额度即将耗尽。现场状态（工作树干净、全绿）：**
-- 引擎 822/0 + UI 400/0 + clippy 零警 + e2e 过；git 73 提交
-- **迭代队列已完成 1（表格视图）/2（Hex 视图）**
-- **队列 3（下一接手项）：三向合并 UI 视图**——消费 merge3 RPC（P7 已交付：text/merge3/open|sections|decide|output），参照 picture-compare 视图接线模式（Tab kind/sessionId/主页/registry/mock 同形）；数据面 = 块序列着色（stable/leftOnly/rightOnly/conflict/bothChanged）+ 冲突行决策按钮（takeLeft/Right/Base/Manual）+ 输出预览
-- 其余排队：队列 4 剪贴板入口（小件）、5 报告对话框、6 书签/自动换行、P13 菜单栏/自动更新、P14 后半（媒体/版本/注册表——需额外引擎工作）
-- 已知遗留：引擎 picture_compare 能力位未入 handler initialize 字面量（已有字段+e2e 通过，补一行 `picture_compare: Some(true)` 即可）、SNAPSHOT 全量格式（P16）、FTPS 验证/SFTP（需真实服务器）
-- 接手指南：读 PROGRESS 本节 + docs/04 队列；接线模式参照 picture-compare/table-compare/hex-compare 三个先例（Tab kind→store→viewRegistry→主页→mock 同形→组件）
+**现场状态（工作树干净、全部门禁全绿）：**
+- 引擎 **822/0** + UI **419/0**（原 400，队列 3 新增 19 测试）+ clippy `-D warnings` 零警 + `pnpm e2e:engine`（含 merge3 四方法链路）+ `pnpm build` + `pnpm lint` 全绿；git 88 提交
+- **迭代队列已完成 1（表格视图）/2（Hex 视图）/3（三向合并 UI 视图）**
+- **队列 4（下一接手项）：剪贴板比较入口**（小件：主页/会话树的 `text` 会话带剪贴板路径即可）
+- 队列 3 交付面：消费 P7 的 `text/merge3/open|sections|decide|output`；接线模式完全照抄 picture/table/hex 三先例（Tab kind→store `openMerge3Tab`→viewRegistry→主页按钮与拖放→mock 同形→组件）；**颜色以 docs/01 FR-TMRG-002 / §2.3 为准**（仅左改青、仅右改洋红、左右不同更改=冲突红、相同更改不冲突自动合并绿、输出手动编辑黄），未采用交接草图的「蓝/绿/黄」简写
+- 其余排队：队列 5 报告对话框、6 书签/自动换行、P13 菜单栏/自动更新、P14 后半（媒体/版本/注册表——需额外引擎工作）
+- 已知遗留：引擎 `picture_compare` 能力位未入 handler initialize 字面量（已有字段+e2e 通过，补一行 `picture_compare: Some(true)` 即可）、SNAPSHOT 全量格式（P16）、FTPS 验证/SFTP（需真实服务器）；真实引擎空区间会省略 `baseLines`/`leftLines`（ts-rs 仍声明必填数组）——UI 已用 `paneLines` 兜底并有回归测试，后续新视图需注意
+- 接手指南：读 PROGRESS 本节 + docs/01 对应 FR；接线模板参照 picture-compare/table-compare/hex-compare/merge3 四个已验收先例
 
-## ⏸ 暂停状态 2（2026-11-14 20:5x，额度即将耗尽，用户指令）
+## ✅ 暂停状态 2 断点已消化（2026-11-14 20:4x）
 
-**当前断点（接手 AI 从这里继续）：**
-- **迭代队列 3「三向合并 UI 视图」：尚未开工**（仅完成协议形态侦察——generated/ 下 18 个 Merge3*.ts 类型齐全：MergeChunkDto 含三方行内容/冲突类别/子对齐/决策状态/输出行；RPC 四方法 text/merge3/open|sections|decide|output 已在引擎交付）
-- 接手步骤：① engineProcess 加 4 个封装（merge3Open/Sections/Decide/Output，参数形态见 generated/Merge*.ts）② newSessionId 加 'merge3' ③ mockEngine 四方法同形实现（确定性三路演示）④ shellState Tab kind 加 'merge3' + Merge3TabData + slice openMerge3Tab ⑤ Merge3View 组件（块序列着色：stable 灰/leftOnly 蓝/rightOnly 绿/conflict 红/bothChanged 黄；冲突块决策按钮 takeLeft/Right/Base/Manual→decide 批量提交→output 预览）⑥ AppShell 挂载 + viewRegistry 插件 + KIND_META implemented:true + viewRegistry.test 期望序更新 ⑦ 门禁全绿提交
-- 接线模板：picture-compare / table-compare / hex-compare 三个已验收先例（Tab kind→store→registry→主页/mock→组件）
-- 工作树干净（git 73 提交，HEAD=ca3ec89）；引擎 822 + UI 400 全绿
-- **剩余迭代队列**：队列 3 合并 UI（本断点）→ 4 剪贴板入口 → 5 报告对话框 → 6 书签/自动换行 → P13 菜单栏/自动更新 → P14 后半
+- 「暂停状态 2」登记的迭代队列 3「三向合并 UI 视图」**已完成并验收提交**（步骤 ①~⑦ 全部落地，详见 P14f 事件日志）
+- 相对三个先例新增的接线点：`session/model.ts` 的 `SessionKind`/`SESSION_KINDS`/`KIND_META` 加 `text-merge`（主页大按钮由 registry 驱动）、`SettingsDialog` 的 `Record<SessionKind, string>` 同步补齐、`sliceSessionUi` 保存会话规格覆盖 `merge3`、`cleanupTabEngines` 关闭标签时释放 merge3 会话
+- **剩余迭代队列**：4 剪贴板入口 → 5 报告对话框 → 6 书签/自动换行 → P13 菜单栏/自动更新 → P14 后半

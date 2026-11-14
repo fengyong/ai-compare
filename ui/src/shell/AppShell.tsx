@@ -10,6 +10,7 @@ import { FolderMergeView } from '../views/folder-merge/FolderMergeView';
 import { PictureCompareView } from '../views/picture-compare/PictureCompareView';
 import { TableCompareView } from '../views/table-compare/TableCompareView';
 import { HexCompareView } from '../views/hex-compare/HexCompareView';
+import { Merge3View } from '../views/merge3/Merge3View';
 import type { Tab } from './store';
 import { TextCompareView } from '../views/text-compare/TextCompareView';
 import { applyTheme } from '../theme/palette';
@@ -179,6 +180,9 @@ export function AppShell() {
         )}
         {activeTab?.kind === 'hex' && activeTab.hex && (
           <HexCompareView key={activeTab.id} tab={activeTab as Tab & { kind: 'hex'; hex: { left: string; right: string; sessionId: string } }} />
+        )}
+        {activeTab?.kind === 'merge3' && activeTab.merge3 && (
+          <Merge3View key={activeTab.id} tab={activeTab as Tab & { kind: 'merge3'; merge3: { base: string; left: string; right: string; sessionId: string } }} />
         )}
       </div>
 

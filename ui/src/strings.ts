@@ -4,6 +4,80 @@
  * 在此之前所有用户可见字符串从这里引用，键名保持稳定以便平滑迁移。
  */
 export const S = {
+  /** 队列 3：三向文本合并（FR-TMRG-001~007） */
+  merge3: {
+    title: '文本合并',
+    loadFail: '三向合并加载失败',
+    loading: '正在加载合并块…',
+    capNote: '演示引擎数据',
+    // 窗格（FR-TMRG-001：左/右/可选中间=公共祖先 + 下方输出）
+    basePane: '中间（公共祖先）',
+    leftPane: '左侧',
+    rightPane: '右侧',
+    outputPane: '输出（可编辑）',
+    hideBase: '隐藏中间窗格',
+    showBase: '显示中间窗格',
+    // 主页入口（BC：3 个文件 left right center，center 可选）
+    basePath: '中间（祖先）',
+    basePlaceholder: '/path/to/base（可留空）',
+    pathsRequired: '请先输入（或拖入）左右两个文件路径',
+    // 统计（FR-TMRG-007 合并信息）
+    chunks: '块',
+    conflicts: '冲突',
+    unresolved: '未决',
+    decided: '已决策',
+    rev: '版本',
+    lineCounts: '行数 中/左/右',
+    // 显示过滤器（FR-TMRG-002）
+    filter: '显示',
+    filterAll: '显示全部',
+    filterChanges: '只显示更改',
+    filterConflicts: '只显示冲突',
+    filterLeftChanges: '只显示左侧更改',
+    filterRightChanges: '只显示右侧更改',
+    // 块状态与来源（FR-TMRG-002 颜色语义）
+    legend: '图例',
+    originStable: '未更改',
+    originLeftOnly: '仅左侧更改',
+    originRightOnly: '仅右侧更改',
+    originBothChanged: '相同更改（自动合并）',
+    originConflict: '冲突（左右不同更改）',
+    stateUnresolved: '冲突未决',
+    stateDecided: '已采用',
+    stateAutoResolved: '自动采用',
+    stateManual: '手动编辑',
+    stateUnimportant: '不重要冲突',
+    conflictModifyModify: '两侧修改',
+    conflictDeleteModify: '删除/修改',
+    conflictAddAdd: '两侧新增',
+    // 采用命令族（FR-TMRG-004）
+    takeLeft: '取左侧',
+    takeRight: '取右侧',
+    allTakeLeft: '全部取左',
+    allTakeRight: '全部取右',
+    takeBase: '取中间',
+    takeLeftThenRight: '先左后右',
+    takeRightThenLeft: '先右后左',
+    manual: '手动编辑',
+    manualHint: '直接编辑本块输出内容（提交 manual 决策）',
+    manualApply: '提交编辑',
+    manualCancel: '取消',
+    clearDecision: '清除决策',
+    // 输出（FR-TMRG-005/006）
+    outputTitle: '合并输出',
+    outputPlain: '合成文本',
+    outputMarker: '冲突标记',
+    markerMerge: 'Merge（git 风格）',
+    markerDiff3: 'Diff3（含 base 段）',
+    refresh: '刷新输出',
+    copyOutput: '复制输出',
+    copied: '合并输出已复制到剪贴板',
+    copyFailed: '复制失败（浏览器剪贴板不可用）',
+    exportOutput: '导出输出',
+    exported: '合并输出已导出',
+    unresolvedHint: '仍有未决冲突，输出中这些部分保持中间内容',
+    decideFailed: '决策提交失败',
+  },
   hex: {
     title: '十六进制比较',
     loadFail: '加载失败',
@@ -367,6 +441,7 @@ export const S = {
     pictureTitleSuffix: '图片比较',
     syncTitleSuffix: '文件夹同步',
     mergeTitleSuffix: '文件夹合并',
+    merge3TitleSuffix: '文本合并',
   },
 
   // ---- P8：文件夹同步视图（FR-SYNC-001~005） ----

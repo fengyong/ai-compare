@@ -20,6 +20,7 @@ export function HomeView() {
   const openPictureTab = useShell((st) => st.openPictureTab);
   const openTableTab = useShell((st) => st.openTableTab);
   const openHexTab = useShell((st) => st.openHexTab);
+  const openMerge3Tab = useShell((st) => st.openMerge3Tab);
   const openFolderMergeTab = useShell((st) => st.openFolderMergeTab);
   const openTextTab = useShell((st) => st.openTextTab);
   const setNotice = useShell((st) => st.setNotice);
@@ -27,6 +28,8 @@ export function HomeView() {
   const [mruPaths, setMruPaths] = useState(() => sessionService.getMruPaths('folder-compare'));
   const [left, setLeft] = useState('');
   const [right, setRight] = useState('');
+  /** 三向文本合并的公共祖先（中间文件；BC 允许缺省） */
+  const [base, setBase] = useState('');
   const [dragOver, setDragOver] = useState(false);
 
   useEffect(() => {
@@ -99,6 +102,12 @@ export function HomeView() {
       else setNotice(S.home.pathRequired);
       return;
     }
+    // 队列 3：三向文本合并（FR-TMRG-001：left right center 三文件，中间可缺省）
+    if (kind === 'text-merge') {
+      if (left.trim() && right.trim()) openMerge3Tab(base.trim(), left.trim(), right.trim());
+      else setNotice(S.merge3.pathsRequired);
+      return;
+    }
   };
 
   const onDrop = async (e: React.DragEvent, kind?: SessionKind) => {
@@ -117,6 +126,7 @@ export function HomeView() {
       else if (kind === 'hex-compare') openHexTab(pair.left, pair.right);
       else if (kind === 'folder-sync') openFolderSyncTab(pair.left, pair.right);
       else if (kind === 'folder-merge') openFolderMergeTab(pair.left, pair.left, pair.right);
+      else if (kind === 'text-merge') openMerge3Tab(base.trim(), pair.left, pair.right);
       else openFolderTab(pair.left, pair.right);
     }
   };
@@ -175,6 +185,15 @@ export function HomeView() {
             value={right}
             placeholder={S.home.rightPlaceholder}
             onChange={(e) => setRight(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && start()}
+          />
+        </div>
+        <div className="aic-home-row" title={S.merge3.basePath}>
+          <label style={{ width: 84, alignSelf: 'center' }}>{S.merge3.basePath}</label>
+          <input
+            value={base}
+            placeholder={S.merge3.basePlaceholder}
+            onChange={(e) => setBase(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && start()}
           />
         </div>

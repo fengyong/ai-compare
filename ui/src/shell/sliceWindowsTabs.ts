@@ -99,6 +99,30 @@ export function titleOf(tabId: string | undefined, tabs: Tab[]): string {
 }
 
 export const createTabsSlice: StateCreator<ShellStore, [], [], TabsSlice> = (set, get) => ({
+  /** 队列 3：三向文本合并标签（FR-TMRG-001：base=公共祖先 + left/right 两侧） */
+  openMerge3Tab(base, left, right, opts: OpenTabOpts = {}) {
+    const id = nextTabId('merge3');
+    const title = `${S.tab.merge3TitleSuffix}：${basename(left)} + ${basename(right)}`;
+    const tab: Tab = {
+      id,
+      kind: 'merge3',
+      title,
+      merge3: { base, left, right, sessionId: engine.newSessionId('merge3') },
+      sessionLink: opts.sessionLink,
+    };
+    set((st) => {
+      const targetId = opts.windowId ?? st.activeWindowId;
+      const activate = opts.activate !== false;
+      return {
+        windows: st.windows.map((w) =>
+          w.id === targetId
+            ? { ...w, tabs: [...w.tabs, tab], activeTabId: activate ? id : w.activeTabId, title: activate ? title : w.title }
+            : w
+        ),
+        activeWindowId: opts.windowId ? targetId : st.activeWindowId,
+      };
+    });
+  },
   /** 文件夹同步标签（P8，FR-SYNC-001）：复用目录会话句柄，视图承载同步方法/策略/计划/报告 */
   /** P14：十六进制比较标签（FR-HEX）：两侧二进制路径 + hex/open 会话句柄 */
   openHexTab(left, right, opts: OpenTabOpts = {}) {
@@ -445,5 +469,14 @@ export async function cleanupTabEngines(tab: Tab): Promise<void> {
       console.warn('[session/close] 失败', err);
     }
     releaseDirCache(tab.folder.sessionId);
+  }
+  // 队列 3：三向合并会话（引擎 Session::Merge）关闭时同样释放
+  if (tab.merge3?.sessionId) {
+    engine.untrackSession(tab.merge3.sessionId);
+    try {
+      await engine.closeSession({ sessionId: tab.merge3.sessionId });
+    } catch (err) {
+      console.warn('[session/close] 失败', err);
+    }
   }
 }

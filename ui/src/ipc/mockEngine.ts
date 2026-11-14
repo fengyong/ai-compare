@@ -50,6 +50,22 @@ import type {
   TableSectionsParams,
   HexOpenParams,
   HexBytesParams,
+  LineRange,
+  MergeChunkDto,
+  MergeChunkOrigin,
+  MergeConflictKind,
+  MergeConflictRowDto,
+  MergeDecideParams,
+  MergeDecideResult,
+  MergeDecisionDto,
+  MergeDecisionKind,
+  MergeMarkerStyle,
+  MergeOpenParams,
+  MergeOpenResult,
+  MergeOutputParams,
+  MergeOutputResult,
+  MergeSectionsParams,
+  MergeSectionsResult,
 } from '../protocol/types';
 import type { InlineSpanDto } from '../protocol/generated/InlineSpanDto';
 import { wordDiff } from '../lib/inlineDiffCore';
@@ -133,6 +149,8 @@ export class MockEngine {
   private readonly mergeSessions = new Map<string, MockMergeSession>();
   private readonly tableSessions = new Map<string, { seed: number; columns: Array<{ name: string; ty: string; left: number | null; right: number | null }>; rowCount?: number }>();
   private readonly hexSessions = new Map<string, { seed: number; leftSize: number; rightSize: number }>();
+  /** P7：三向文本合并会话（块模板 + 显式决策表 + rev） */
+  private readonly merge3Sessions = new Map<string, MockMerge3Session>();
   /** dir/filter 差分基线（会话 id -> 上次发出的行 id 集） */
   private readonly lastIds = new Map<string, string[]>();
   private disposed = false;
@@ -216,6 +234,7 @@ export class MockEngine {
       case 'text/lines':
         return { result: this.textLines(params as TextLinesParams), notifications: [] };
       case 'picture/open':
+        return { result: this.pictureOpen(params as PictureOpenParams), notifications: [] };
       case 'hex/open':
         return { result: this.hexOpen(params as HexOpenParams), notifications: [] };
       case 'hex/bytes':
@@ -224,7 +243,15 @@ export class MockEngine {
         return { result: this.tableOpen(params as TableOpenParams), notifications: [] };
       case 'table/sections':
         return { result: this.tableSections(params as TableSectionsParams), notifications: [] };
-        return { result: this.pictureOpen(params as PictureOpenParams), notifications: [] };
+      // P7：三向文本合并四方法（同形演示；与 handlers.rs merge3_* 语义一致）
+      case 'text/merge3/open':
+        return { result: this.merge3Open(params as MergeOpenParams), notifications: [] };
+      case 'text/merge3/sections':
+        return { result: this.merge3Sections(params as MergeSectionsParams), notifications: [] };
+      case 'text/merge3/decide':
+        return { result: this.merge3Decide(params as MergeDecideParams), notifications: [] };
+      case 'text/merge3/output':
+        return { result: this.merge3Output(params as MergeOutputParams), notifications: [] };
       case 'text/inlineDiff':
         return { result: this.textInlineDiff(params as TextInlineDiffParams), notifications: [] };
       case 'session/close':
@@ -258,6 +285,8 @@ export class MockEngine {
         // P6：dir/filter / dir/operate mock 同形实现（演示树展开/过滤器/同步计划）
         dirFilters: true,
         dirOperate: true,
+        // P7：text/merge3/* 四方法已同形实现
+        threeWayMerge: true,
       },
       license: { proUnlocked: true },
     };
@@ -1073,10 +1102,143 @@ export class MockEngine {
     return { lines, done: start + lines.length * 16 >= total };
   }
 
+  // ---------------- P7：三向文本合并（text/merge3/*） ----------------
+
+  /** text/merge3/open：确定性三路演示模型 + 会话（同形于 handlers.rs merge3_open） */
+  private merge3Open(p: MergeOpenParams): MockMerge3OpenResult {
+    if (!p || typeof p.sessionId !== 'string' || p.sessionId === '') {
+      throw new InvalidParams('sessionId 不能为空');
+    }
+    if (this.hasAnySession(p.sessionId)) {
+      throw new RpcErr(CODE.SESSION_EXISTS, `会话已存在: ${p.sessionId}`);
+    }
+    const chunks = [...MERGE3_TEMPLATE];
+    this.merge3Sessions.set(p.sessionId, {
+      id: p.sessionId,
+      chunks,
+      decisions: new Map(),
+      rev: 0,
+      labels: { base: p.base ?? '', left: p.left ?? '', right: p.right ?? '' },
+    });
+    return {
+      sessionId: p.sessionId,
+      baseLineCount: Math.max(...chunks.map((c) => c.base.end)),
+      leftLineCount: Math.max(...chunks.map((c) => c.left.end)),
+      rightLineCount: Math.max(...chunks.map((c) => c.right.end)),
+      chunkCount: chunks.length,
+      conflictCount: chunks.filter((c) => c.origin === 'conflict').length,
+      rev: 0,
+    };
+  }
+
+  /** text/merge3/sections：块清单分批窗口（决策状态实时派生） */
+  private merge3Sections(p: MergeSectionsParams): MockMerge3SectionsResult {
+    const s = this.requireMerge3(p.sessionId);
+    const start = Math.max(0, Math.min(Number(p.offset), s.chunks.length));
+    const end = Math.min(start + Math.max(0, Number(p.count)), s.chunks.length);
+    return {
+      sessionId: p.sessionId,
+      offset: start,
+      total: s.chunks.length,
+      hasMore: end < s.chunks.length,
+      rev: s.rev,
+      chunks: s.chunks.slice(start, end).map((t) => deriveMergeChunk(t, s.decisions)),
+    };
+  }
+
+  /** text/merge3/decide：整批校验 + 幂等提交（决策内容不变时 rev 不递增） */
+  private merge3Decide(p: MergeDecideParams): MockMerge3DecideResult {
+    const s = this.requireMerge3(p.sessionId);
+    const list = Array.isArray(p.decisions) ? p.decisions : [];
+    for (const d of list) {
+      if (!Number.isInteger(d.chunkId) || d.chunkId < 0 || d.chunkId >= s.chunks.length) {
+        throw new InvalidParams(`块不存在: ${String(d.chunkId)}`);
+      }
+      if (!MERGE3_ACTIONS.includes(d.action)) {
+        throw new InvalidParams(`未知决策动作: ${String(d.action)}`);
+      }
+      if (d.action === 'manual' && (d.text === null || d.text === undefined)) {
+        throw new InvalidParams('manual 决策必须提供 text');
+      }
+    }
+    let changed = false;
+    for (const d of list) {
+      const next: MergeDecisionDto = { chunkId: d.chunkId, action: d.action, text: d.text ?? null };
+      const prev = s.decisions.get(d.chunkId);
+      if (!prev || prev.action !== next.action || (prev.text ?? null) !== next.text) {
+        s.decisions.set(d.chunkId, next);
+        changed = true;
+      }
+    }
+    if (changed) s.rev += 1;
+    return {
+      sessionId: p.sessionId,
+      rev: s.rev,
+      decided: list.length,
+      conflictCount: s.chunks.filter((c) => c.origin === 'conflict').length,
+      unresolvedChunks: merge3UnresolvedIds(s),
+    };
+  }
+
+  /** text/merge3/output：plain 合成 / marker（Merge 与 Diff3 两种风格） */
+  private merge3Output(p: MergeOutputParams): MergeOutputResult {
+    const s = this.requireMerge3(p.sessionId);
+    const marker = p.mode === 'marker';
+    const style: MergeMarkerStyle = p.markerStyle ?? 'merge';
+    const lines: string[] = [];
+    for (const t of s.chunks) {
+      const chunk = deriveMergeChunk(t, s.decisions);
+      if (marker && chunk.unresolved) {
+        lines.push(`<<<<<<< ${s.labels.left}`);
+        lines.push(...chunk.leftLines);
+        if (style === 'diff3') {
+          lines.push(`||||||| ${s.labels.base}`);
+          lines.push(...chunk.baseLines);
+        }
+        lines.push('=======');
+        lines.push(...chunk.rightLines);
+        lines.push(`>>>>>>> ${s.labels.right}`);
+      } else {
+        lines.push(...chunk.outputLines);
+      }
+    }
+    const unresolved = merge3UnresolvedIds(s);
+    return {
+      sessionId: p.sessionId,
+      text: lines.length > 0 ? `${lines.join('\n')}\n` : '',
+      conflictCount: s.chunks.filter((c) => c.origin === 'conflict').length,
+      unresolvedChunks: unresolved,
+      hasConflicts: unresolved.length > 0,
+      decidedCount: s.decisions.size,
+    };
+  }
+
+  private requireMerge3(id: string): MockMerge3Session {
+    const s = this.merge3Sessions.get(id);
+    if (!s) {
+      if (this.hasAnySession(id)) throw new InvalidParams(`会话不是三向合并会话: ${id}`);
+      throw new RpcErr(CODE.SESSION_NOT_FOUND, `会话不存在: ${id}`);
+    }
+    return s;
+  }
+
+  /** 会话句柄全局唯一（客户端分配；所有会话表共用命名空间） */
+  private hasAnySession(id: string): boolean {
+    return (
+      this.dirSessions.has(id) ||
+      this.textSessions.has(id) ||
+      this.mergeSessions.has(id) ||
+      this.tableSessions.has(id) ||
+      this.hexSessions.has(id) ||
+      this.merge3Sessions.has(id)
+    );
+  }
+
   private sessionClose(p: SessionCloseParams): null {
     this.dirSessions.delete(p.sessionId);
     this.textSessions.delete(p.sessionId);
     this.mergeSessions.delete(p.sessionId);
+    this.merge3Sessions.delete(p.sessionId);
     this.lastIds.delete(p.sessionId);
     return null;
   }
@@ -1880,4 +2042,199 @@ function summarize(sections: Section[]): DiffSummary {
     }
   }
   return summary;
+}
+
+// ==================================================================
+// P7：mock 三向文本合并演示模型（确定性；与 ai-core::merge3 的块序列、
+//      handlers.rs text/merge3/* 的决策/合成语义同形）
+// ==================================================================
+//
+// 三方行区间各自完备划分全表（插入块 base 为空区间占位）；决策不落模板，
+// 只记 decisions 表，sections/output 每次实时派生 → 幂等天然成立。
+// 块来源覆盖 FR-TMRG-002 全部状态：stable / leftOnly / rightOnly /
+// bothChanged（相同更改自动合并）/ conflict（含 addAdd、不重要冲突自动采用）。
+
+/** u64 rev 在 NDJSON 上是 number（bigint 无法 JSON.stringify）；仅应答类型收窄 */
+type MockMerge3OpenResult = Omit<MergeOpenResult, 'rev'> & { rev: number };
+type MockMerge3SectionsResult = Omit<MergeSectionsResult, 'rev'> & { rev: number };
+type MockMerge3DecideResult = Omit<MergeDecideResult, 'rev'> & { rev: number };
+
+type Merge3Template = Omit<
+  MergeChunkDto,
+  'decided' | 'decision' | 'autoResolved' | 'unresolved' | 'outputLines'
+> & {
+  autoResolved: boolean;
+  /** 无显式决策时的输出（FR-TMRG-004：非冲突自动采用；冲突保持中间内容） */
+  defaultOutput: string[];
+};
+
+interface MockMerge3Session {
+  id: string;
+  chunks: Merge3Template[];
+  decisions: Map<number, MergeDecisionDto>;
+  rev: number;
+  labels: { base: string; left: string; right: string };
+}
+
+const MERGE3_ACTIONS: readonly MergeDecisionKind[] = [
+  'left',
+  'right',
+  'base',
+  'leftThenRight',
+  'rightThenLeft',
+  'manual',
+];
+
+const rg = (start: number, end: number): LineRange => ({ start, end });
+
+function merge3Tpl(
+  id: number,
+  origin: MergeChunkOrigin,
+  base: LineRange,
+  left: LineRange,
+  right: LineRange,
+  baseLines: string[],
+  leftLines: string[],
+  rightLines: string[],
+  opts: {
+    conflictKind?: MergeConflictKind;
+    conflictRows?: MergeConflictRowDto[];
+    unimportant?: boolean;
+    autoResolved?: boolean;
+    defaultOutput?: string[];
+  } = {}
+): Merge3Template {
+  const defaultOutput =
+    opts.defaultOutput ??
+    (origin === 'leftOnly' || origin === 'bothChanged'
+      ? leftLines
+      : origin === 'rightOnly'
+        ? rightLines
+        : baseLines);
+  return {
+    id,
+    origin,
+    base,
+    left,
+    right,
+    conflictKind: opts.conflictKind ?? null,
+    conflictRows: opts.conflictRows ?? null,
+    conflictUnimportant: opts.unimportant ?? null,
+    baseLines,
+    leftLines,
+    rightLines,
+    autoResolved: opts.autoResolved ?? false,
+    defaultOutput: [...defaultOutput],
+  };
+}
+
+const SAME_HEAD = ['// ai-compare 三向合并演示', 'export function boot() {'];
+const SAME_BODY = ['  const label = "boot";'];
+const SAME_TAIL = ['  return run(label, retries, timeout);'];
+const SAME_END = ['}'];
+
+/** 10 个块：base 10 行 / left 11 行 / right 11 行；冲突 3（其中 1 个不重要自动采用） */
+const MERGE3_TEMPLATE: Merge3Template[] = [
+  merge3Tpl(0, 'stable', rg(0, 2), rg(0, 2), rg(0, 2), SAME_HEAD, SAME_HEAD, SAME_HEAD),
+  merge3Tpl(
+    1, 'leftOnly', rg(2, 3), rg(2, 3), rg(2, 3),
+    ['  const retries = 2;'], ['  const retries = 5;'], ['  const retries = 2;']
+  ),
+  merge3Tpl(2, 'stable', rg(3, 4), rg(3, 4), rg(3, 4), SAME_BODY, SAME_BODY, SAME_BODY),
+  merge3Tpl(
+    3, 'conflict', rg(4, 5), rg(4, 5), rg(4, 5),
+    ['  const mode = "safe";'], ['  const mode = "fast";'], ['  const mode = "strict";'],
+    {
+      conflictKind: 'modifyModify',
+      conflictRows: [{ left: 4, right: 4, unimportant: false }],
+      unimportant: false,
+    }
+  ),
+  merge3Tpl(
+    4, 'rightOnly', rg(5, 6), rg(5, 6), rg(5, 6),
+    ['  const timeout = 30;'], ['  const timeout = 30;'], ['  const timeout = 60;']
+  ),
+  merge3Tpl(
+    5, 'bothChanged', rg(6, 7), rg(6, 7), rg(6, 7),
+    ['  const tag = "v0";'], ['  const tag = "v1";'], ['  const tag = "v1";']
+  ),
+  merge3Tpl(6, 'stable', rg(7, 8), rg(7, 8), rg(7, 8), SAME_TAIL, SAME_TAIL, SAME_TAIL),
+  merge3Tpl(
+    7, 'conflict', rg(8, 8), rg(8, 9), rg(8, 9),
+    [], ['  // 本地新增：灰度开关'], ['  // 远端新增：熔断开关'],
+    {
+      conflictKind: 'addAdd',
+      conflictRows: [{ left: 8, right: 8, unimportant: false }],
+      unimportant: false,
+    }
+  ),
+  merge3Tpl(
+    8, 'conflict', rg(8, 9), rg(9, 10), rg(9, 10),
+    ['  log("done");'], ['  log("done" );'], ['  log("done");'],
+    {
+      conflictKind: 'modifyModify',
+      conflictRows: [{ left: 9, right: 9, unimportant: true }],
+      unimportant: true,
+      autoResolved: true,
+      defaultOutput: ['  log("done" );'],
+    }
+  ),
+  merge3Tpl(9, 'stable', rg(9, 10), rg(10, 11), rg(10, 11), SAME_END, SAME_END, SAME_END),
+];
+
+/** 未决冲突块 id（升序）：冲突且无显式决策、也未自动采用 */
+function merge3UnresolvedIds(s: MockMerge3Session): number[] {
+  return s.chunks
+    .filter((t) => t.origin === 'conflict' && !s.decisions.has(t.id) && !t.autoResolved)
+    .map((t) => t.id)
+    .sort((a, b) => a - b);
+}
+
+/** 与引擎 LineTable::from_text 同口径：结尾换行不产生空行，去掉行尾 \r */
+function merge3SplitLines(text: string): string[] {
+  if (text === '') return [];
+  const parts = text.split('\n');
+  if (parts[parts.length - 1] === '') parts.pop();
+  return parts.map((l) => (l.endsWith('\r') ? l.slice(0, -1) : l));
+}
+
+/** 采用命令 → 输出行（FR-TMRG-004 六动作族） */
+function merge3OutputForDecision(t: Merge3Template, d: MergeDecisionDto): string[] {
+  switch (d.action) {
+    case 'left':
+      return [...t.leftLines];
+    case 'right':
+      return [...t.rightLines];
+    case 'base':
+      return [...t.baseLines];
+    case 'leftThenRight':
+      return [...t.leftLines, ...t.rightLines];
+    case 'rightThenLeft':
+      return [...t.rightLines, ...t.leftLines];
+    case 'manual':
+      return merge3SplitLines(d.text ?? '');
+  }
+}
+
+/** 模板 + 决策表 → 引擎 MergeChunkDto（sections/output 共用派生口径） */
+function deriveMergeChunk(t: Merge3Template, decisions: Map<number, MergeDecisionDto>): MergeChunkDto {
+  const d = decisions.get(t.id);
+  return {
+    id: t.id,
+    origin: t.origin,
+    base: t.base,
+    left: t.left,
+    right: t.right,
+    conflictKind: t.conflictKind,
+    conflictRows: t.conflictRows,
+    conflictUnimportant: t.conflictUnimportant,
+    baseLines: t.baseLines,
+    leftLines: t.leftLines,
+    rightLines: t.rightLines,
+    decided: d !== undefined,
+    decision: d?.action ?? null,
+    autoResolved: t.autoResolved,
+    unresolved: t.origin === 'conflict' && d === undefined && !t.autoResolved,
+    outputLines: d ? merge3OutputForDecision(t, d) : [...t.defaultOutput],
+  };
 }

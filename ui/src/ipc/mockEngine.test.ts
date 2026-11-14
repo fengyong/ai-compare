@@ -153,4 +153,25 @@ describe('MockEngine P0 协议面', () => {
     ).rejects.toMatchObject({ code: 410 });
     await client.close();
   });
+
+  it('picture/open 返回图片形态（P14 dispatch 落穿回归锚定）', async () => {
+    const client = await newClient();
+    const pic = await client.request<{ width: number; blocks: unknown[]; similarityPct: number }>(
+      'picture/open',
+      { sessionId: 'pic-1', left: '/demo/a.png', right: '/demo/b.png', options: null }
+    );
+    expect(pic.width).toBeGreaterThan(0);
+    expect(Array.isArray(pic.blocks)).toBe(true);
+    expect(pic.similarityPct).toBeGreaterThan(0);
+    // 同一 dispatch 内 hex/open 仍返回 hex 形态，两者不得互相落穿
+    const hex = await client.request<{ leftSize: number; blockCount: number }>('hex/open', {
+      sessionId: 'hex-open-1',
+      left: '/demo/a.bin',
+      right: '/demo/b.bin',
+      options: null,
+    });
+    expect(hex.leftSize).toBeGreaterThan(0);
+    expect(hex.blockCount).toBeGreaterThan(0);
+    await client.close();
+  });
 });

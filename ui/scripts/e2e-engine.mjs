@@ -122,6 +122,10 @@ writeFileSync(join(L, 'diff.txt'), 'line1\nline2 OLD\nline3\nline4\n');
 writeFileSync(join(R, 'diff.txt'), 'line1\nline2 NEW\nline3\nline4\nline5 extra\n');
 writeFileSync(join(L, 'leftOnly.txt'), 'only on left\n');
 writeFileSync(join(R, 'rightOnly.txt'), 'only on right\n');
+// P7 三向合并语料：base 5 行；左改两处；右改两处 + 尾部插入 1 行
+writeFileSync(join(dir, 'base.txt'), 'h\na\nb\nc\nt\n');
+writeFileSync(join(dir, 'left.txt'), 'h\nL1\nb\nL2\nt\n');
+writeFileSync(join(dir, 'right.txt'), 'h\nR1\nb\nR2\nt\nR3\n');
 
 const client = new EngineClient();
 await client.ready;
@@ -192,9 +196,82 @@ try {
     ok(hasFull, '替换段带行内差异区间（inline=full）');
   }
 
-  // 4. 会话清理 + shutdown
+  // 4. P7：三向文本合并四方法（text/merge3/open|sections|decide|output）
+  const m3 = await client.request('text/merge3/open', {
+    sessionId: 'e2e-merge3-1',
+    base: join(dir, 'base.txt'),
+    left: join(dir, 'left.txt'),
+    right: join(dir, 'right.txt'),
+    options: null,
+  });
+  ok(
+    m3?.baseLineCount === 5 && m3?.leftLineCount === 5 && m3?.rightLineCount === 6 && m3?.conflictCount === 2,
+    'text/merge3/open 三方行数与冲突数',
+    `base=${m3?.baseLineCount} left=${m3?.leftLineCount} right=${m3?.rightLineCount} conflicts=${m3?.conflictCount}`
+  );
+
+  const m3secs = await client.request('text/merge3/sections', {
+    sessionId: 'e2e-merge3-1', offset: 0, count: 100,
+  });
+  const m3chunks = m3secs?.chunks ?? [];
+  ok(
+    m3secs?.total === m3?.chunkCount && m3secs?.hasMore === false && m3chunks.length === m3?.chunkCount,
+    'text/merge3/sections 块清单收齐',
+    `total=${m3secs?.total} chunks=${m3chunks.length}`
+  );
+  // 空区间的行内容字段由引擎省略（skip_serializing_if），UI 侧按空数组兜底
+  const linesOk = (v) => v === undefined || Array.isArray(v);
+  ok(
+    m3chunks.length > 0 && m3chunks.every((c) =>
+      c.base && c.left && c.right &&
+      linesOk(c.baseLines) && linesOk(c.leftLines) && linesOk(c.rightLines) &&
+      Array.isArray(c.outputLines) && typeof c.unresolved === 'boolean'
+    ) && m3chunks.some((c) => Array.isArray(c.baseLines)),
+    'merge3 块形态同形（三区间 + 行内容可缺省 + 决策状态 + 输出行）'
+  );
+  const unresolved0 = m3chunks.filter((c) => c.unresolved).map((c) => c.id);
+  ok(unresolved0.length === 2 && m3chunks.some((c) => c.origin === 'conflict'), 'merge3 冲突块与未决清单');
+
+  const marker = await client.request('text/merge3/output', {
+    sessionId: 'e2e-merge3-1', mode: 'marker',
+  });
+  ok(
+    marker?.hasConflicts === true && (marker.text.match(/<<<<<<</g) ?? []).length === 2,
+    'text/merge3/output marker 渲染未决冲突',
+    `hasConflicts=${marker?.hasConflicts}`
+  );
+
+  const decisions = [
+    { chunkId: unresolved0[0], action: 'left' },
+    { chunkId: unresolved0[1], action: 'right' },
+  ];
+  const decided = await client.request('text/merge3/decide', {
+    sessionId: 'e2e-merge3-1', decisions,
+  });
+  ok(
+    Number(decided?.rev) === 1 && decided?.unresolvedChunks?.length === 0,
+    'text/merge3/decide 决策清空未决冲突',
+    `rev=${decided?.rev}`
+  );
+  const again = await client.request('text/merge3/decide', {
+    sessionId: 'e2e-merge3-1', decisions,
+  });
+  ok(Number(again?.rev) === Number(decided?.rev), 'text/merge3/decide 幂等（重复提交 rev 不变）');
+
+  const plain = await client.request('text/merge3/output', {
+    sessionId: 'e2e-merge3-1', mode: 'plain',
+  });
+  ok(
+    plain?.hasConflicts === false &&
+      plain.text.includes('L1') && plain.text.includes('R2') && !plain.text.includes('<<<<<<<'),
+    'text/merge3/output plain 合成决策结果',
+    `hasConflicts=${plain?.hasConflicts}`
+  );
+
+  // 5. 会话清理 + shutdown
   ok((await client.request('session/close', { sessionId: 'e2e-dir-1' })) === null, 'session/close dir 会话');
   ok((await client.request('session/close', { sessionId: 'e2e-text-1' })) === null, 'session/close text 会话');
+  ok((await client.request('session/close', { sessionId: 'e2e-merge3-1' })) === null, 'session/close merge3 会话');
   ok((await client.request('shutdown', null)) === null, 'shutdown 应答 null');
   const exitCode = await client.close();
   ok(exitCode === 0, '引擎进程随 shutdown 退出', `exit=${exitCode}`);
