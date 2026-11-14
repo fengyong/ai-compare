@@ -1254,7 +1254,8 @@ Binary files a/img.png and b/img.png differ\n";
         assert_eq!(std::fs::read_to_string(root.join("t.txt")).unwrap(), "1\n2\n3\n", "dry run 未写盘");
 
         let report = apply_patch(&StdFs, root, patch, &OPTS).unwrap();
-        assert!(!report.all_applied() || true); // 二进制跳过不算失败
+        assert!(!report.all_applied(), "二进制跳过 → 不是全部应用");
+        assert!(report.results.iter().all(|r| !matches!(r.status, FileApplyStatus::Failed)), "二进制跳过不算失败");
         assert_eq!(report.results[0].status, FileApplyStatus::Applied);
         assert_eq!(std::fs::read_to_string(root.join("t.txt")).unwrap(), "1\nTWO\n3\n");
         assert_eq!(report.results[1].status, FileApplyStatus::SkippedBinary);
