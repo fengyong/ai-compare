@@ -120,9 +120,13 @@ export function TableCompareView({ tab }: { tab: Tab & { kind: 'table'; table: {
   useEffect(() => {
     if (!ready) return;
     let disposed = false;
-    loadPage(0).then((first) => {
-      if (!disposed) setRows(first);
-    });
+    loadPage(0)
+      .then((first) => {
+        if (!disposed) setRows(first);
+      })
+      .catch((err) => {
+        if (!disposed) setError(err instanceof Error ? err.message : String(err));
+      });
     return () => {
       disposed = true;
     };
