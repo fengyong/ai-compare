@@ -115,7 +115,8 @@ export function defaultReportForm(kind: ReportKind): ReportForm {
 /** 表单 → report/generate 参数（引擎忽略不适用的布局级选项） */
 export function buildReportParams(form: ReportForm, sessionId: string, kind: ReportKind): ReportParams {
   const p: ReportParams = { sessionId, layout: form.layout };
-  if (form.title.trim()) p.title = form.title.trim();
+  // 标题会进入 HTML 报告（layout=html）与打印窗口，去掉 HTML 敏感字符防止注入
+  if (form.title.trim()) p.title = form.title.trim().replace(/[&<>"']/g, '');
   p.display = form.display;
   p.dirDisplay = form.dirDisplay;
   p.ignoreUnimportant = form.ignoreUnimportant;
@@ -124,7 +125,8 @@ export function buildReportParams(form: ReportForm, sessionId: string, kind: Rep
   p.patchStyle = form.patchStyle;
   p.delimiter = form.delimiter;
   p.color = form.color;
-  p.wrap = form.wrap;
+  // FR-RPT-001：HTML 仅支持 wrap-none / wrap-word，character 归一到 word
+  p.wrap = form.layout === 'html' && form.wrap === 'character' ? 'word' : form.wrap;
   p.wrapColumns = Math.max(1, Math.trunc(form.wrapColumns));
   p.includeFileLinks = form.includeFileLinks;
   if (kind === 'folder' || kind === 'sync' || kind === 'merge') p.columns = { ...form.columns };
@@ -192,6 +194,24 @@ export function sessionIdOfTab(tab: Tab): string | null {
 /** 报告分块大小（字符数；引擎按 Unicode 标量切块） */
 export const REPORT_CHUNK = 64 * 1024;
 
+/** HTML 输出用转义（防止报告内容里的 <、& 被当标签解析） */
+export function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+/**
+ * 非 html 布局却选择 HTML 输出目标时，包装成合法 HTML 并用 <pre> 保留换行；
+ * layout=html 时引擎已产出完整 HTML，原样输出。
+ */
+export function reportHtmlBody(text: string, layout: ReportLayout): string {
+  if (layout === 'html') return text;
+  return `<!doctype html><html><head><meta charset="utf-8"></head><body><pre>${escapeHtml(text)}</pre></body></html>`;
+}
+
 /** FR-RPT-001 输出目标落地 */
 export async function deliverReport(
   text: string,
@@ -200,7 +220,6 @@ export async function deliverReport(
   notice: (msg: string) => void
 ): Promise<void> {
   if (target === 'preview') return;
-  const html = isHtmlTarget(target, layout);
   if (target === 'textClipboard' || target === 'htmlClipboard') {
     try {
       await navigator.clipboard.writeText(text);
@@ -211,7 +230,10 @@ export async function deliverReport(
     return;
   }
   if (target === 'textFile' || target === 'htmlFile') {
-    const blob = new Blob([text], { type: html ? 'text/html;charset=utf-8' : 'text/plain;charset=utf-8' });
+    const isHtmlFile = target === 'htmlFile';
+    const blob = new Blob([isHtmlFile ? reportHtmlBody(text, layout) : text], {
+      type: isHtmlFile ? 'text/html;charset=utf-8' : 'text/plain;charset=utf-8',
+    });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -228,7 +250,7 @@ export async function deliverReport(
       notice('浏览器拦截了新窗口，请允许弹窗后重试');
       return;
     }
-    w.document.write(html ? text : `<pre>${text.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</pre>`);
+    w.document.write(reportHtmlBody(text, layout));
     w.document.close();
     if (target === 'printer') w.print();
     notice(target === 'printer' ? '已打开打印预览' : '已在浏览器中查看报告');

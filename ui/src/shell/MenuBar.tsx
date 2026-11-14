@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { sessionService } from '../session/service';
 import { S } from '../strings';
 import { commandRegistry, type CommandContext } from './commands';
-import { groupCommands, type MenuId } from './menuModel';
+import { groupCommands, runCommandSafely, type MenuId } from './menuModel';
 import { useShell } from './store';
 import { createViewCtx } from './viewRegistry';
 
@@ -46,7 +46,8 @@ export function MenuBar() {
     setOpenId(null);
     if (!id || !enabled) return;
     const def = commandRegistry.get(id);
-    if (def) void def.run(ctx);
+    // 用点击时刻的上下文，避免菜单展开期间标签切换导致 when/run 使用过期 ctx
+    if (def) void runCommandSafely(def, buildCommandContext(), notice);
   };
 
   return (

@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { activeTextView, setActiveTextView, type TextViewActions } from './textViewBus';
+import {
+  activeTextView,
+  registerTextView,
+  resetTextViewBusForTest,
+  setActiveTextView,
+  type TextViewActions,
+} from './textViewBus';
 import {
   BOOKMARK_SLOTS,
   bookmarkLabel,
@@ -81,6 +87,26 @@ describe('文本视图命令总线', () => {
     activeTextView()?.gotoBookmark(1);
     expect(hits).toBe(2);
     setActiveTextView(null);
+    expect(activeTextView()).toBeNull();
+  });
+
+  it('注册栈：多文本视图并存时卸载其一不影响另一个', () => {
+    resetTextViewBusForTest();
+    const make = (): TextViewActions => ({
+      toggleWrap: () => undefined,
+      toggleBookmark: () => undefined,
+      gotoBookmark: () => undefined,
+      clearBookmarks: () => undefined,
+      setBookmarkAtCursor: () => undefined,
+    });
+    const a = make();
+    const b = make();
+    const disposeA = registerTextView(a);
+    const disposeB = registerTextView(b);
+    expect(activeTextView()).toBe(b);
+    disposeB();
+    expect(activeTextView()).toBe(a); // 后挂载卸载后回退到先挂载
+    disposeA();
     expect(activeTextView()).toBeNull();
   });
 });

@@ -50,12 +50,10 @@ export function autoScaleGeometry(
   right: { w: number; h: number }
 ): { left: number; right: number } {
   if (left.w <= 0 || left.h <= 0 || right.w <= 0 || right.h <= 0) return { left: 1, right: 1 };
+  // 以两侧最大宽度作为统一目标画布：两图缩放后宽度一致，高度按各自
+  // 比例保持（避免分别取 max 造成宽高比失真，FR-PIX-003「匹配较大图像比例」）。
   const maxW = Math.max(left.w, right.w);
-  const maxH = Math.max(left.h, right.h);
-  return {
-    left: Math.max(maxW / left.w, maxH / left.h),
-    right: Math.max(maxW / right.w, maxH / right.h),
-  };
+  return { left: maxW / left.w, right: maxW / right.w };
 }
 
 /** 平移量钳制：避免把画布拖出视图（允许小幅留白） */

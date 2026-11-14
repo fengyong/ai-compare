@@ -58,8 +58,10 @@ describe('几何对齐（FR-PIX-003）', () => {
 
   it('非等比尺寸取宽高较大因子；非法尺寸回退 1', () => {
     const g = autoScaleGeometry({ w: 100, h: 50 }, { w: 200, h: 200 });
-    expect(g.left).toBe(4);
+    // 按统一目标宽度对齐：两图缩放后宽度一致，高度按各自比例
+    expect(g.left).toBe(2);
     expect(g.right).toBe(1);
+    expect(g.left * 100).toBe(g.right * 200);
     expect(autoScaleGeometry({ w: 0, h: 0 }, { w: 1, h: 1 })).toEqual({ left: 1, right: 1 });
   });
 });

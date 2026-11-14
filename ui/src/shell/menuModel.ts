@@ -81,3 +81,19 @@ export function nextToolbarLayout(current: ToolbarLayout): ToolbarLayout {
 export function toolbarLabel(def: CommandDef, layout: ToolbarLayout): string {
   return layout === 'compact' ? def.title.slice(0, 2) : def.title;
 }
+
+/**
+ * 统一命令执行入口：命令 run 可能是 async 且抛错，菜单/工具栏若直接
+ * `void def.run(ctx)` 会产生未捕获的 Promise rejection（静默失败）。
+ */
+export async function runCommandSafely(
+  def: CommandDef,
+  ctx: CommandContext,
+  notice: (msg: string) => void
+): Promise<void> {
+  try {
+    await def.run(ctx);
+  } catch (err) {
+    notice(`命令执行失败：${err instanceof Error ? err.message : String(err)}`);
+  }
+}

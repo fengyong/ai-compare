@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, WheelEvent as ReactWheelEvent } from 'react';
-import { openPicture } from '../../ipc/engineProcess';
+import { openPictureIdempotent } from '../../ipc/engineProcess';
 import { S } from '../../strings';
 import type { Tab } from '../../shell/store';
 import {
@@ -111,27 +111,35 @@ export function PictureCompareView({ tab }: { tab: PictureTab }) {
   const leftCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const rightCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const diffCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  /** 容差快速拖动时串行化 open 请求，且只应用最后一次结果 */
+  const requestSeqRef = useRef(0);
+  const requestQueueRef = useRef<Promise<void>>(Promise.resolve());
   const demoSeed = tab.picture.left.length + tab.picture.right.length;
   const isDemo = tab.picture.left.startsWith('/demo/') || tab.picture.right.startsWith('/demo/');
 
   useEffect(() => {
     let disposed = false;
-    openPicture({
-      sessionId: tab.picture.sessionId,
-      left: tab.picture.left,
-      right: tab.picture.right,
-      options: { tolerance, block: 32 },
-    })
-      .then((r) => {
-        if (!disposed) setData(r);
-      })
-      .catch((err) => {
-        if (!disposed) setError(err instanceof Error ? err.message : String(err));
-      });
+    const seq = ++requestSeqRef.current;
+    // 串行化：容差滑杆快速拖动时多个 open 不会交错出 411，且只应用最后一次结果
+    requestQueueRef.current = requestQueueRef.current.then(async () => {
+      try {
+        const r = await openPictureIdempotent({
+          sessionId: tab.picture.sessionId,
+          left: tab.picture.left,
+          right: tab.picture.right,
+          options: { tolerance, block: 32 },
+        });
+        if (!disposed && seq === requestSeqRef.current) setData(r);
+      } catch (err) {
+        if (!disposed && seq === requestSeqRef.current) {
+          setError(err instanceof Error ? err.message : String(err));
+        }
+      }
+    });
     return () => {
       disposed = true;
     };
-    // 容差变化触发重比较（sessionId 复用会被 411 拒——演示模式忽略）
+    // 容差变化触发重比较；openPictureIdempotent 处理 411（先 close 再 open）
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab.picture.sessionId, tolerance]);
 

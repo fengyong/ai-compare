@@ -79,6 +79,26 @@ describe('ClipboardStore 单例行为', () => {
     off();
   });
 
+  it('历史已满时 add 仍返回新增条目（裁剪不会误判为过滤）', () => {
+    const s = new ClipboardStore('unit-clip-full');
+    s.setLimits({ maxEntries: 3 });
+    s.add('a'); s.add('b'); s.add('c');
+    const fourth = s.add('d');
+    expect(fourth?.text).toBe('d');
+    expect(s.list().map((e) => e.text)).toEqual(['b', 'c', 'd']);
+  });
+
+  it('registerText 边界：空历史/空文本/相邻重复都返回可用规格', async () => {
+    const s = new ClipboardStore('unit-clip-register');
+    const p1 = s.registerText('');
+    expect(parseClipSpec(p1)).not.toBeNull();
+    expect(s.getText(parseClipSpec(p1)!)).toBe('');
+    const p2 = s.registerText('hello');
+    expect(s.getText(parseClipSpec(p2)!)).toBe('hello');
+    expect(s.registerText('hello')).toBe(p2); // 相邻重复复用同一编号
+    await expect(s.materialize(p2)).resolves.toBe(p2);
+  });
+
   it('非 Tauri 环境 materialize 保留规格；未知 id 抛错', async () => {
     const s = new ClipboardStore('unit-clip-store-2');
     const spec = s.registerText('hello');

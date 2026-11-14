@@ -227,6 +227,22 @@ describe('MockEngine P7：text/merge3/output（plain / marker）', () => {
 });
 
 describe('MockEngine P7：错误路径与会话清理', () => {
+  it('会话 411 → session/close → 重新 open（StrictMode 幂等重建基础）', async () => {
+    const client = await newClient();
+    const p = {
+      sessionId: 'm3-idem',
+      base: '/demo/base.txt',
+      left: '/demo/left.txt',
+      right: '/demo/right.txt',
+      options: null,
+    };
+    await client.request('text/merge3/open', p);
+    await expect(client.request('text/merge3/open', p)).rejects.toMatchObject({ code: 411 });
+    expect(await client.request('session/close', { sessionId: 'm3-idem' })).toBeNull();
+    const again = await client.request<MergeOpenResult>('text/merge3/open', p);
+    expect(again.chunkCount).toBeGreaterThan(0);
+    await client.close();
+  });
   it('会话不存在报 410；重复 open 报 411；close 幂等', async () => {
     const client = await newClient();
     await expect(sections(client, 'ghost', 0, 5)).rejects.toMatchObject({ code: 410 });
