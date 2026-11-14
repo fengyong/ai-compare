@@ -70,6 +70,8 @@ export type SettingsTree = { [group: string]: { [key: string]: unknown } };
 export interface SessionSpecs {
   left: string;
   right: string;
+  /** 三路会话（folder-merge/text-merge）的公共祖先；两路会话不写该字段 */
+  base?: string;
 }
 
 /** 会话实例状态（退出时自动保存的那部分；锁定会话跳过写入，FR-SES-001） */
@@ -198,10 +200,12 @@ function isRecord(v: unknown): v is Record<string, unknown> {
 /** 规范化 specs：两侧均为非空字符串；缺失补空串（保存会话前由 UI 校验非空） */
 function normalizeSpecs(raw: unknown): SessionSpecs {
   const r = isRecord(raw) ? raw : {};
-  return {
+  const specs: SessionSpecs = {
     left: typeof r.left === 'string' ? r.left : '',
     right: typeof r.right === 'string' ? r.right : '',
   };
+  if (typeof r.base === 'string' && r.base !== '') specs.base = r.base;
+  return specs;
 }
 
 function normalizeOverrides(raw: unknown): SettingsTree {

@@ -126,3 +126,29 @@ describe('session/model', () => {
     expect(doc.kinds['bogus' as never]).toBeUndefined();
   });
 });
+
+describe('session/model：三路会话的 base 路径位（R3-08）', () => {
+  const doc = (specs: unknown) =>
+    JSON.stringify({
+      version: 1,
+      sessions: [{ id: 's1', kind: 'folder-merge', name: '三路', specs }],
+    });
+
+  it('base 与 left/right 一起往返（重开时 base 不再被 left 顶替）', () => {
+    const parsed = parseSessionsDoc(doc({ base: '/B', left: '/L', right: '/R' }));
+    expect(parsed.sessions[0].specs).toEqual({ base: '/B', left: '/L', right: '/R' });
+  });
+
+  it('两路会话不写 base：解析后不得凭空补出 base', () => {
+    const parsed = parseSessionsDoc(doc({ left: '/L', right: '/R' }));
+    expect(parsed.sessions[0].specs).toEqual({ left: '/L', right: '/R' });
+    expect(parsed.sessions[0].specs.base).toBeUndefined();
+  });
+
+  it('base 为空串/非字符串按缺省处理（旧文件与手改文件容错）', () => {
+    for (const base of ['', 42, null]) {
+      const parsed = parseSessionsDoc(doc({ base, left: '/L', right: '/R' }));
+      expect(parsed.sessions[0].specs.base).toBeUndefined();
+    }
+  });
+});

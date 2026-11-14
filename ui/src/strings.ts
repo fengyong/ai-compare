@@ -303,7 +303,6 @@ export const S = {
   session: {
     savedPrefix: '会话已保存：',
     notFound: '会话不存在（可能已被删除）',
-    kindNotImplemented: '该会话类型的视图尚未实现（见主页大按钮阶段标注）',
     lockedNoticePrefix: '会话已锁定：',
     lockedNoticeSuffix: '（锁定会话不保存显示过滤器等状态修改）',
     lockedSaveDenied: '会话已锁定，保存被拒绝：',

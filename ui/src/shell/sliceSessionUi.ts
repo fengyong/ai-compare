@@ -1,13 +1,13 @@
 import type { StateCreator } from 'zustand';
 import { sessionService } from '../session/service';
-import type { SessionKind } from '../session/model';
 import { S } from '../strings';
-import type { SessionSlice, ShellStore, Tab } from './shellState';
+import type { SessionSlice, ShellStore } from './shellState';
 import { sessionIdOfTab } from '../views/report/reportModel';
 import { nextToolbarLayout } from './menuModel';
 import { closeGuardKind, firstPendingGuard, remainingSides } from './closeGuard';
 import { applySavedEntries, runTextSave, saveRequestsFor } from '../views/text-compare/textSave';
 import { getTextSession } from '../views/text-compare/textModel';
+import { sessionKindOfTab, specsOfTab } from './sessionSpecs';
 import * as engine from '../ipc/engineProcess';
 
 /** 会话 slice（SES-001~006）：打开已保存会话 / 保存 / 另存 / 锁定 / 关闭确认 */
@@ -29,18 +29,34 @@ export const createSessionSlice: StateCreator<ShellStore, [], [], SessionSlice> 
       get().setNotice(`${S.session.lockedNoticePrefix}「${node.name}」${S.session.lockedNoticeSuffix}`);
     }
     const link = { sessionId: node.id, name: node.name, kind: node.kind, locked: node.locked };
-    if (node.kind === 'folder-compare') {
-      get().openFolderTab(node.specs.left, node.specs.right, { sessionLink: link });
-    } else if (node.kind === 'text-compare') {
-      await get().openTextTab(node.specs.left, node.specs.right, { sessionLink: link });
-    } else if (node.kind === 'folder-sync') {
-      get().openFolderSyncTab(node.specs.left, node.specs.right, { sessionLink: link });
-    } else if (node.kind === 'folder-merge') {
-      // 三路会话以 left 作为 base 的回退（保存的 specs 只有 left/right 两个路径位）
-      get().openFolderMergeTab(node.specs.left, node.specs.left, node.specs.right, { sessionLink: link });
-    } else {
-      get().setNotice(S.session.kindNotImplemented);
-      return;
+    const { left, right } = node.specs;
+    // 三路会话的 base：旧会话文件只存了 left/right 两位，缺 base 时以 left 兼作
+    const base = node.specs.base ?? left;
+    switch (node.kind) {
+      case 'folder-compare':
+        get().openFolderTab(left, right, { sessionLink: link });
+        break;
+      case 'text-compare':
+        await get().openTextTab(left, right, { sessionLink: link });
+        break;
+      case 'folder-sync':
+        get().openFolderSyncTab(left, right, { sessionLink: link });
+        break;
+      case 'picture-compare':
+        get().openPictureTab(left, right, { sessionLink: link });
+        break;
+      case 'table-compare':
+        get().openTableTab(left, right, { sessionLink: link });
+        break;
+      case 'hex-compare':
+        get().openHexTab(left, right, { sessionLink: link });
+        break;
+      case 'folder-merge':
+        get().openFolderMergeTab(base, left, right, { sessionLink: link });
+        break;
+      case 'text-merge':
+        get().openMerge3Tab(base, left, right, { sessionLink: link });
+        break;
     }
     await sessionService.recordOpened(node.kind, node.specs, node.id);
   },
@@ -94,16 +110,7 @@ export const createSessionSlice: StateCreator<ShellStore, [], [], SessionSlice> 
       return;
     }
     const tab = found.tab;
-    const kind: SessionKind =
-      tab.kind === 'text'
-        ? 'text-compare'
-        : tab.kind === 'sync'
-          ? 'folder-sync'
-          : tab.kind === 'merge'
-            ? 'folder-merge'
-            : tab.kind === 'merge3'
-              ? 'text-merge'
-              : 'folder-compare';
+    const kind = sessionKindOfTab(tab.kind);
     const node = await sessionService.saveSession({ kind, name: trimmed, specs: specsOfTab(tab) });
     const link = { sessionId: node.id, name: node.name, kind: node.kind, locked: node.locked };
     set((st) => ({
@@ -282,16 +289,6 @@ export const createSessionSlice: StateCreator<ShellStore, [], [], SessionSlice> 
     set({ exitHandler: fn });
   },
 });
-
-/** 标签 → 会话规格（保存用；三路合并会话 base 落 left 位、right 落 right 位） */
-function specsOfTab(tab: Tab): { left: string; right: string } {
-  if (tab.kind === 'folder' && tab.folder) return { left: tab.folder.left, right: tab.folder.right };
-  if (tab.kind === 'sync' && tab.sync) return { left: tab.sync.left, right: tab.sync.right };
-  if (tab.kind === 'merge' && tab.merge) return { left: tab.merge.base, right: tab.merge.right };
-  if (tab.kind === 'merge3' && tab.merge3) return { left: tab.merge3.base, right: tab.merge3.right };
-  if (tab.kind === 'text' && tab.text) return { left: tab.text.left.path, right: tab.text.right.path };
-  return { left: '', right: '' };
-}
 
 // ------------------------------------------------------------------
 // ui slice：状态栏提示 + 对话框编排

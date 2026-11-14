@@ -4,6 +4,7 @@ import { KIND_META, type SessionKind } from '../../session/model';
 import { viewRegistry, type ViewPlugin } from '../../shell/viewRegistry';
 import { useShell } from '../../shell/store';
 import { extractPathsFromDataTransfer, pickTwoPaths } from './dropPaths';
+import { resolveMergeBase } from '../../shell/sessionSpecs';
 import { SessionTreePanel } from './SessionTreePanel';
 import { S } from '../../strings';
 import { isMockEngineActive } from '../../ipc/engineProcess';
@@ -108,7 +109,7 @@ export function HomeView() {
       else setNotice(S.home.textPathRequired);
       return;
     }
-    // P8：文件夹同步复用左右两路径；文件夹合并三路以左路径兼任基准
+    // P8：文件夹同步复用左右两路径；文件夹合并三路 base 取「基准路径」输入，留空以左路径兼作
     if (kind === 'hex-compare') {
       if (left.trim() && right.trim()) openHexTab(left.trim(), right.trim());
       else setNotice(S.home.pathRequired);
@@ -130,7 +131,8 @@ export function HomeView() {
       return;
     }
     if (kind === 'folder-merge') {
-      if (left.trim() && right.trim()) openFolderMergeTab(left.trim(), left.trim(), right.trim());
+      if (left.trim() && right.trim())
+        openFolderMergeTab(resolveMergeBase(base, left), left.trim(), right.trim());
       else setNotice(S.home.pathRequired);
       return;
     }
@@ -157,7 +159,8 @@ export function HomeView() {
       else if (kind === 'table-compare') openTableTab(pair.left, pair.right);
       else if (kind === 'hex-compare') openHexTab(pair.left, pair.right);
       else if (kind === 'folder-sync') openFolderSyncTab(pair.left, pair.right);
-      else if (kind === 'folder-merge') openFolderMergeTab(pair.left, pair.left, pair.right);
+      else if (kind === 'folder-merge')
+        openFolderMergeTab(resolveMergeBase(base, pair.left), pair.left, pair.right);
       else if (kind === 'text-merge') openMerge3Tab(base.trim(), pair.left, pair.right);
       else openFolderTab(pair.left, pair.right);
     }
