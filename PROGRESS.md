@@ -139,3 +139,14 @@
 - 2026-11-14 14:3x：**P12-c FTP 段主会话完成并提交**：FtpFs provider（suppaftp 12 tokio-rustls 纯 Rust/连接惰性复用/MLSD→LIST 回退解析/write-through STOR/递归删/set_mtime 需 MFMT 如实 Unsupported）；ftp:// 接入 RouteFs；rust-version 升 1.88（suppaftp 12 要求）；FTPS 暂缓（rustls 验证需真实服务器）、SFTP 留后半；ai-vfs 40/40、workspace 810/0；git 64 提交
 - 2026-11-14 14:4x：**协调积压清偿：设置→rules 运行时接线**（P10 遗留）：TextCompareView 两处 openText 注入 effectiveRulesFor（kindDefaults compareRules + 全局 fileFormats 组装 RulesSpec；失败静默回退引擎默认）；UI 384 测试（+1）全绿；git 66 提交
 - 2026-11-14 14:5x：**积压清偿：脚本 RENAME regexpr 正则改名**（P11 遗留）：regex crate + BC 模板适配层（$2_ 组名边界→${2}，防 regex 命名组吞下划线——历史 bug 有回归测试锁定）；手工复现 beta_alpha.txt 全通；script_matrix 22 测试（+1）；workspace **811/0** + clippy 零警（顺带清 4 处机械告警）；git 68 提交。积压剩余：SNAPSHOT 全量格式（P16）、FTPS/SFTP 后半（11-18 agent 恢复）
+
+## ⏸ 暂停状态（2026-11-14 用户指令）
+
+**用户指示：其他模型接手开发，本会话暂停，23 点后恢复。**
+
+- 看护任务暂停期守则变更：**只巡检记录、不启动新开发、不接手收尾**（避免与其他模型冲突）；异常（构建失败/冲突）仅登记不处置
+- 暂停前现场（已提交，工作树干净）：
+  - P14a 图片比较引擎底座完成：ai-core 267 测试（+6 picture：容差 diff/网格块聚合/尺寸不同左上对齐/PNG roundtrip），workspace 817 全绿（2553a03）
+  - **并行合并说明**：其他模型曾有 P9 picture WIP（f5777d2，267 行未接线）——本会话版本为独立重写并接线+测试覆盖，如其他模型在制品有独有逻辑请其在恢复后基于当前 HEAD 续作
+  - 其他模型同期交付已在历史：P6c 双窗格（fcf065b，UI 400 测试）
+- 23 点后恢复入口：从「M4 断点」继续——P12-c 后半（FTPS/SFTP）、P13、P14 视图批次、积压（SNAPSHOT 全量格式）
