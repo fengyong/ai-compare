@@ -176,6 +176,8 @@ export function TextCompareView({ tab }: { tab: Tab }) {
   // 非响应式会话数据（textModel 缓存 + refs）
   // ------------------------------------------------------------------
   const modelRef = useRef<TextSessionModel | null>(null);
+  /** 视图当前绑定的会话：差异文件跳转原地换会话，旧会话的在途重建不得回灌（FR-DIR-071） */
+  const liveSessionRef = useRef<string | null>(null);
   const derivedRef = useRef<{
     left: AlignedDoc;
     right: AlignedDoc;
@@ -307,6 +309,8 @@ export function TextCompareView({ tab }: { tab: Tab }) {
       const marks = await computeInlineMarks(model);
       const langId = syntaxOnRef.current ? detectLangId(model.leftName) : null;
       const ext = await loadLangExtension(langId);
+      // 在途重建可能属于已被跳转替换掉的旧会话：提交前核对，否则新文件显示旧文件内容
+      if (liveSessionRef.current !== model.sessionId) return;
       langExtRef.current = ext;
       derivedRef.current = { ...derived, marks };
       // 折叠状态持久化（会话级，标签切换恢复）
@@ -548,6 +552,22 @@ export function TextCompareView({ tab }: { tab: Tab }) {
   // ---- 初始加载（缓存水合优先，避免引擎重开覆盖 UI 侧编辑）----
   useEffect(() => {
     let disposed = false;
+    // 差异文件跳转在同一标签内换会话：旧模型不得继续以"就绪"呈现（FR-DIR-071）
+    const sessionChanged = liveSessionRef.current !== text.sessionId;
+    liveSessionRef.current = text.sessionId;
+    setReady(false);
+    setError(null);
+    if (sessionChanged) {
+      // 位置/书签/查找序号/提示都属于旧文件；显示偏好（换行/语法/上下文）跨文件保留。
+      // 另存为只改路径不换会话：那条路径上不得清掉刚给出的保存反馈与书签。
+      modelRef.current = null;
+      setNavIndex(-1);
+      syncCurrentSection(null);
+      setBookmarks({});
+      setFindIdx(0);
+      setSaveNotice(null);
+      setRediffNotice(null);
+    }
     void (async () => {
       try {
         const cached = getTextSession(text.sessionId);
@@ -1212,6 +1232,39 @@ export function TextCompareView({ tab }: { tab: Tab }) {
           {S.text.nextDiff}
           {navIndex >= 0 ? `（${navIndex + 1}/${diffCount}）` : ''}
         </button>
+        {text.parentFolderSessionId && (
+          <>
+            <span className="meta sep">|</span>
+            <button
+              className="nav"
+              title={S.text.prevDiffFile}
+              onClick={() => void useShell.getState().navigateDiffFile(tab.id, 'prev')}
+            >
+              {S.text.navPrevShort}
+            </button>
+            <button
+              className="nav"
+              title={S.text.nextDiffFile}
+              onClick={() => void useShell.getState().navigateDiffFile(tab.id, 'next')}
+            >
+              {S.text.navNextShort}
+            </button>
+            <button
+              className="nav"
+              title={S.text.copyRightNext}
+              onClick={() => void useShell.getState().navigateDiffFile(tab.id, 'next', 'right')}
+            >
+              {S.text.navCopyRightShort}
+            </button>
+            <button
+              className="nav"
+              title={S.text.copyLeftNext}
+              onClick={() => void useShell.getState().navigateDiffFile(tab.id, 'next', 'left')}
+            >
+              {S.text.navCopyLeftShort}
+            </button>
+          </>
+        )}
         <span className="meta sep">|</span>
         <button className="nav" onClick={onFoldAll}>
           {S.text.foldAll}

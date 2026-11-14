@@ -14,7 +14,7 @@ import { activeFolderView } from '../views/folder-compare/folderViewBus';
  * 与光标是视图内状态，不提升到全局 store。
  */
 
-export type CommandCategory = '会话' | '视图' | '窗口' | '工具';
+export type CommandCategory = '会话' | '搜索' | '视图' | '窗口' | '工具';
 
 export interface CommandDef {
   id: string;
@@ -73,6 +73,12 @@ export class CommandRegistry {
   defaultKeyConflicts(): BindingConflict[] {
     return findConflicts(this.defaultBindings());
   }
+}
+
+/** 子会话门控：只有从文件夹会话打开的文件视图才有"差异文件"可遍历（FR-SES-004） */
+function isChildFileTab(ctx: CommandContext): boolean {
+  if (ctx.activeTabKind !== 'text' || !ctx.activeTabId) return false;
+  return !!useShell.getState().findTab(ctx.activeTabId)?.tab.text?.parentFolderSessionId;
 }
 
 // ------------------------------------------------------------------
@@ -258,6 +264,46 @@ export function registerBuiltinCommands(reg: CommandRegistry): void {
     defaultKeys: 'Space',
     when: (ctx) => ctx.activeTabKind === 'folder',
     run: () => activeFolderView()?.markSelection(),
+  });
+
+  // ---- 搜索菜单：子会话差异文件遍历（FR-DIR-071，仅文件夹子会话可用） ----
+
+  const childDiffNav = (ctx: CommandContext, dir: 'next' | 'prev', copyTo?: 'left' | 'right') => {
+    if (ctx.activeTabId) void useShell.getState().navigateDiffFile(ctx.activeTabId, dir, copyTo);
+  };
+
+  reg.register({
+    id: 'search.nextDiffFile',
+    title: '下一个差异文件',
+    category: '搜索',
+    defaultKeys: 'Ctrl+Alt+Down',
+    when: isChildFileTab,
+    run: (ctx) => childDiffNav(ctx, 'next'),
+  });
+
+  reg.register({
+    id: 'search.prevDiffFile',
+    title: '上一个差异文件',
+    category: '搜索',
+    defaultKeys: 'Ctrl+Alt+Up',
+    when: isChildFileTab,
+    run: (ctx) => childDiffNav(ctx, 'prev'),
+  });
+
+  reg.register({
+    id: 'search.copyToRightNext',
+    title: '复制文件到右侧并打开下一个差异',
+    category: '搜索',
+    when: isChildFileTab,
+    run: (ctx) => childDiffNav(ctx, 'next', 'right'),
+  });
+
+  reg.register({
+    id: 'search.copyToLeftNext',
+    title: '复制文件到左侧并打开下一个差异',
+    category: '搜索',
+    when: isChildFileTab,
+    run: (ctx) => childDiffNav(ctx, 'next', 'left'),
   });
 
   reg.register({

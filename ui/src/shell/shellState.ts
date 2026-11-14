@@ -168,6 +168,8 @@ export interface TabsSlice {
   activate(tabId: string): void;
   /** 另存文件为后改指标签上的该侧路径/名称/标题（R3-04：会话保存与关闭守卫据此取正确目标） */
   retargetTextSide(tabId: string, side: 'left' | 'right', path: string): void;
+  /** 子会话差异文件遍历（FR-DIR-071）：跳到父会话下一/上一差异文件对，可先整文件复制到对侧 */
+  navigateDiffFile(tabId: string, dir: 'next' | 'prev', copyTo?: 'left' | 'right'): Promise<void>;
   /** 记录三向合并的"合并到"目标（R3-20：下次保存默认预填该路径） */
   setMerge3OutputPath(tabId: string, path: string): void;
   /** 关闭（命名会话有未保存修改时转 closeGuard；引擎会话幂等清理） */

@@ -10,6 +10,7 @@ import {
   runCommandSafely,
   toolbarCommands,
   toolbarLabel,
+  type MenuId,
 } from './menuModel';
 
 const def = (id: string, category: CommandDef['category'], when?: CommandDef['when']): CommandDef => ({
@@ -29,10 +30,11 @@ const ctx = (kind: CommandContext['activeTabKind'] = null): CommandContext => ({
 });
 
 describe('菜单栏分组（附录 F 命令矩阵）', () => {
-  it('五个菜单按 category 分组，help 无注册命令', () => {
+  it('六个菜单按 category 分组，help 无注册命令', () => {
     const groups = groupCommands(
       [
         def('session.save', '会话'),
+        def('search.nextDiffFile', '搜索'),
         def('text.toggleWrap', '视图'),
         def('app.newTab', '窗口'),
         def('app.report', '工具'),
@@ -40,16 +42,20 @@ describe('菜单栏分组（附录 F 命令矩阵）', () => {
       ctx()
     );
     expect(groups.map((g) => g.id)).toEqual(MENU_IDS);
-    expect(groups[0].entries.map((e) => e.def.id)).toEqual(['session.save']);
-    expect(groups[1].entries.map((e) => e.def.id)).toEqual(['text.toggleWrap']);
-    expect(groups[4].entries).toHaveLength(0);
+    // 按 id 取组：菜单顺序调整不应让断言错位
+    const idsOf = (id: MenuId): string[] =>
+      groups.find((g) => g.id === id)!.entries.map((e) => e.def.id);
+    expect(idsOf('session')).toEqual(['session.save']);
+    expect(idsOf('search')).toEqual(['search.nextDiffFile']);
+    expect(idsOf('view')).toEqual(['text.toggleWrap']);
+    expect(idsOf('help')).toEqual([]);
   });
 
   it('when 门控：不适用命令灰显而非隐藏', () => {
     const d = def('text.only', '视图', (c) => c.activeTabKind === 'text');
     expect(commandEnabled(d, ctx('text'))).toBe(true);
     expect(commandEnabled(d, ctx('folder'))).toBe(false);
-    const g = groupCommands([d], ctx('folder'))[1];
+    const g = groupCommands([d], ctx('folder')).find((x) => x.id === 'view')!;
     expect(g.entries).toHaveLength(1);
     expect(g.entries[0].enabled).toBe(false);
   });

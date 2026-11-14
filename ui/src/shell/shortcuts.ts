@@ -25,6 +25,8 @@ function normalizeKeyName(raw: string): string {
   if (k === 'esc') return 'escape';
   if (k === 'return') return 'enter';
   if (k === 'spacebar') return 'space';
+  // DOM 方向键名是 ArrowUp/ArrowDown…，绑定串写 Up/Down：不归一就永远命不中
+  if (k.startsWith('arrow')) return k.slice(5);
   return k;
 }
 
@@ -139,6 +141,9 @@ export const DEFAULT_BINDINGS: Record<string, string> = {
   'session.lock': 'Ctrl+Alt+L',
   'app.settings': 'Ctrl+K',
   'app.showSessionPanel': 'F9',
+  // 子会话差异文件遍历（FR-DIR-071）
+  'search.nextDiffFile': 'Ctrl+Alt+Down',
+  'search.prevDiffFile': 'Ctrl+Alt+Up',
 };
 
 /** 默认键位表自检：构建期即断言无冲突（冲突检测的单测同时覆盖） */

@@ -20,6 +20,7 @@ export function buildCommandContext(): CommandContext {
 
 const MENU_LABELS: Record<MenuId, string> = {
   session: S.menu.session,
+  search: S.menu.search,
   view: S.menu.view,
   window: S.menu.window,
   tools: S.menu.tools,
