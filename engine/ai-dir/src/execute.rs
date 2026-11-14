@@ -260,6 +260,11 @@ async fn execute_one(vfs: &dyn VfsProvider, roots: &(VfsPath, VfsPath), op: &Fil
     if let Err(msg) = sanitize_rel(op.path()) {
         return mk(OpStatus::Failed, Some(msg));
     }
+    // 符号链接逃逸护栏必须在此公共路径上：validate 只在 dry_run 与 copy_path
+    // 内被调用，真实落盘的 delete/rename/touch/mkdir 根本不经过它。
+    if let Err(msg) = reject_symlink_escape(vfs, roots, op).await {
+        return mk(OpStatus::Failed, Some(msg));
+    }
 
     // 2. dry_run：只做存在性/冲突校验，产出将执行清单
     if opts.dry_run {
@@ -309,6 +314,66 @@ fn parent_rel(rel: &str) -> String {
     match rel.rsplit_once('/') {
         Some((parent, _)) => parent.to_string(),
         None => String::new(),
+    }
+}
+
+/// 符号链接逃逸护栏（FR-DIR-063）。
+///
+/// `sanitize_rel` 只做词法校验，其「通过护栏后不可能逃出根」的断言仅对词法路径
+/// 成立：符号链接分量会在文件系统层解析到比较根之外，使 copy 覆写、delete 销毁
+/// 根外数据。`vfs.stat` 为 lstat 语义，逐分量检查即可拦住。
+///
+/// 只检查**祖先**分量：删除符号链接本身是安全的 unlink（不跟随），必须继续放行。
+async fn reject_symlink_ancestors(vfs: &dyn VfsProvider, root: &VfsPath, rel: &str) -> Result<(), String> {
+    let mut segs = rel.split('/').peekable();
+    let mut cur = root.clone();
+    while let Some(seg) = segs.next() {
+        cur = cur.join(seg);
+        if segs.peek().is_none() {
+            break; // 末分量交由各操作自行判定
+        }
+        if let Ok(st) = vfs.stat(&cur).await {
+            if st.kind == EntryKind::Symlink {
+                return Err(format!("拒绝符号链接目录分量（{rel}）：会越过比较根"));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// 写入型操作的目标末分量若为符号链接，写入会跟随它落到根外，必须拒绝。
+async fn reject_symlink_target(vfs: &dyn VfsProvider, root: &VfsPath, rel: &str) -> Result<(), String> {
+    if let Ok(st) = vfs.stat(&root.join(rel)).await {
+        if st.kind == EntryKind::Symlink {
+            return Err(format!("拒绝写入符号链接目标（{rel}）：会越过比较根"));
+        }
+    }
+    Ok(())
+}
+
+/// 对一项操作涉及的全部侧做祖先分量护栏；写入型操作再加末分量护栏。
+async fn reject_symlink_escape(vfs: &dyn VfsProvider, roots: &(VfsPath, VfsPath), op: &FileOp) -> Result<(), String> {
+    let targets: Vec<(Side, &str)> = match op {
+        FileOp::Copy { path, from, to } | FileOp::Move { path, from, to } => {
+            vec![(*from, path.as_str()), (*to, path.as_str())]
+        }
+        FileOp::Rename { path, side, .. }
+        | FileOp::Delete { path, side }
+        | FileOp::Touch { path, side, .. }
+        | FileOp::Mkdir { path, side } => vec![(*side, path.as_str())],
+    };
+    for (side, rel) in &targets {
+        reject_symlink_ancestors(vfs, side_root(roots, *side), rel).await?;
+    }
+    // 写入会跟随末分量符号链接落到根外；删除符号链接本身是安全 unlink，放行。
+    match op {
+        FileOp::Copy { path, to, .. } | FileOp::Move { path, to, .. } => {
+            reject_symlink_target(vfs, side_root(roots, *to), path).await
+        }
+        FileOp::Touch { path, side, .. } => {
+            reject_symlink_target(vfs, side_root(roots, *side), path).await
+        }
+        _ => Ok(()),
     }
 }
 
@@ -688,6 +753,43 @@ mod tests {
         assert_eq!(report.succeeded.len(), 1, "{report:?}");
         assert!(std::fs::symlink_metadata(&esc_path).is_err(), "链接已删");
         assert!(vfs.stat(&r.join("same.txt")).await.is_ok(), "链接目标（右根）完好无损");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn copy_through_destination_symlink_is_rejected() {
+        use std::os::unix::fs::symlink;
+        let (dir, l, r) = make_trees().await;
+        let outside = dir.path().join("OUTSIDE");
+        std::fs::create_dir_all(&outside).unwrap();
+        let precious = outside.join("precious.txt");
+        std::fs::write(&precious, "PRECIOUS-OUTSIDE").unwrap();
+        std::fs::write(std::path::Path::new(l.as_str()).join("notes.txt"), "LEFT-CONTENT").unwrap();
+        symlink(&precious, std::path::Path::new(r.as_str()).join("notes.txt")).unwrap();
+        let vfs = LocalFs::new();
+        let roots = (l.clone(), r.clone());
+        let op = FileOp::Copy { path: "notes.txt".into(), from: Side::Left, to: Side::Right };
+        let report = execute_ops(&vfs, &roots, &[op], &opts(false), None, &CancelFlag::new()).await;
+        assert_eq!(report.succeeded.len(), 0, "不得穿过目标符号链接写出根外: {report:?}");
+        assert_eq!(std::fs::read_to_string(&precious).unwrap(), "PRECIOUS-OUTSIDE", "根外文件必须完好");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn delete_through_symlinked_parent_is_rejected() {
+        use std::os::unix::fs::symlink;
+        let (dir, l, r) = make_trees().await;
+        let outside = dir.path().join("OUTSIDE2");
+        std::fs::create_dir_all(&outside).unwrap();
+        let victim = outside.join("victim.txt");
+        std::fs::write(&victim, "victim").unwrap();
+        symlink(&outside, std::path::Path::new(r.as_str()).join("sub")).unwrap();
+        let vfs = LocalFs::new();
+        let roots = (l.clone(), r.clone());
+        let op = FileOp::Delete { path: "sub/victim.txt".into(), side: Side::Right };
+        let report = execute_ops(&vfs, &roots, &[op], &opts(false), None, &CancelFlag::new()).await;
+        assert_eq!(report.succeeded.len(), 0, "不得穿过符号链接父目录删除根外文件: {report:?}");
+        assert!(victim.exists(), "根外文件必须完好");
     }
 
     #[tokio::test]
