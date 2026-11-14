@@ -1,10 +1,10 @@
 sections=2
 equalSections=1
-insertSections=1
+insertSections=0
 deleteSections=0
-changeSections=0
-equalLines=2
-insertedLines=1
-deletedLines=0
+changeSections=1
+equalLines=1
+insertedLines=2
+deletedLines=1
 unimportantSections=0
 hasDifferences=true

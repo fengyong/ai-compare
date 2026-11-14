@@ -1405,6 +1405,67 @@ mod tests {
     // 重复行歧义：结果仍须自洽（完备划分 + 重放正确）
     // ------------------------------------------------------------------
 
+    // ------------------------------------------------------------------
+    // R3-06：末行行尾符的有无是内容差异，一侧的尾换行变更不得被丢弃
+    // （对拍 oracle：git merge-file / GNU diff3 的 "\ No newline at end of file"）
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn eof_newline_added_by_right_is_kept() {
+        let base = t("x\ny");
+        let left = t("x\ny");
+        let right = t("x\ny\n");
+        let m = merge3(&base, &left, &right, &opts());
+        assert_eq!(m.conflict_count(), 0, "仅右侧加尾换行不是冲突");
+        let out = auto_merge_text(&m, &base, &left, &right, &marker_policy(MarkerStyle::Merge));
+        assert_eq!(out.text, "x\ny\n");
+    }
+
+    #[test]
+    fn eof_newline_removed_by_right_is_kept() {
+        let base = t("x\ny\n");
+        let left = t("x\ny\n");
+        let right = t("x\ny");
+        let m = merge3(&base, &left, &right, &opts());
+        assert_eq!(m.conflict_count(), 0);
+        let out = auto_merge_text(&m, &base, &left, &right, &marker_policy(MarkerStyle::Merge));
+        assert_eq!(out.text, "x\ny");
+    }
+
+    #[test]
+    fn eof_newline_change_conflicts_with_content_change() {
+        // 左改末行内容 + 右改末行尾换行：git merge-file 判冲突（exit 1）
+        let base = t("x\ny");
+        let left = t("x\nz");
+        let right = t("x\ny\n");
+        let m = merge3(&base, &left, &right, &opts());
+        assert_eq!(m.conflict_count(), 1);
+        let out = auto_merge_text(&m, &base, &left, &right, &marker_policy(MarkerStyle::Merge));
+        assert_eq!(out.unresolved, vec![m.chunks.iter().find(|c| c.origin == ChunkOrigin::Conflict).unwrap().id]);
+        assert!(out.text.contains("<<<<<<<") && out.text.contains(">>>>>>>"));
+    }
+
+    #[test]
+    fn eof_newline_change_keeps_taken_side_crlf_style() {
+        let base = t("x\r\ny");
+        let left = t("x\r\ny");
+        let right = t("x\r\ny\r\n");
+        let m = merge3(&base, &left, &right, &opts());
+        let out = auto_merge_text(&m, &base, &left, &right, &marker_policy(MarkerStyle::Merge));
+        assert_eq!(out.text, "x\r\ny\r\n", "尾换行风格随被采用侧");
+    }
+
+    #[test]
+    fn eof_newline_both_sides_same_change_is_clean() {
+        let base = t("x\ny");
+        let left = t("x\ny\n");
+        let right = t("x\ny\n");
+        let m = merge3(&base, &left, &right, &opts());
+        assert_eq!(m.conflict_count(), 0);
+        let out = auto_merge_text(&m, &base, &left, &right, &marker_policy(MarkerStyle::Merge));
+        assert_eq!(out.text, "x\ny\n");
+    }
+
     #[test]
     fn repeated_lines_ambiguity_stays_well_formed() {
         let base = t("x\nrep\nrep\nrep\nx\n");

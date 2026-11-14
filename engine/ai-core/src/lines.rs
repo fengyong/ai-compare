@@ -146,7 +146,9 @@ impl LineTable {
 
     /// 规范化比较键：diff 在键上运算、在原文上渲染（docs/03 §3.1.1）。
     ///
-    /// - `ignore_eol_style`（默认 true）：行尾风格不参与比较；
+    /// - `ignore_eol_style`（默认 true）：行尾**风格**（LF/CRLF/CR）不参与比较；
+    ///   但末行**有无**行尾符始终参与（git/diff3 的 "\ No newline at end of file"
+    ///   属内容结构差异；忽略它会让三向合并丢掉一侧的尾换行变更）；
     /// - `ignore_case`：Unicode 简单大小写折叠；
     /// - `whitespace`：三类空白语义（有效 / 忽略数量 / 忽略全部）。
     ///
@@ -159,7 +161,8 @@ impl LineTable {
 impl LineEntry {
     /// 规范化比较键（见 [`LineTable::compare_key`]）
     pub fn compare_key(&self, opts: &TextDiffOptions) -> Cow<'_, str> {
-        let needs_eol = !opts.ignore_eol_style && self.ending != LineEnding::Lf;
+        let needs_eol = self.ending == LineEnding::None
+            || (!opts.ignore_eol_style && self.ending != LineEnding::Lf);
         let needs_ws = opts.whitespace != crate::options::WhitespaceMode::Significant;
         if !opts.ignore_case && !needs_ws && !needs_eol {
             return Cow::Borrowed(self.text.as_str());
@@ -343,7 +346,11 @@ mod tests {
     #[test]
     fn default_options_borrowed_key_no_alloc() {
         let opts = crate::options::TextDiffOptions::default();
-        let lt = t("plain line");
+        let lt = t("plain line\n");
         assert!(matches!(lt.compare_key(0, &opts), Cow::Borrowed(_)));
+        // 末行缺行尾符必须带标记（内容结构差异），因此走 owned 键
+        let eof = t("plain line");
+        assert!(matches!(eof.compare_key(0, &opts), Cow::Owned(_)));
+        assert_ne!(eof.compare_key(0, &opts), lt.compare_key(0, &opts));
     }
 }
