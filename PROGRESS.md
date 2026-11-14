@@ -298,3 +298,54 @@
 - **体验路径**：主页「填充示例路径」→ 真实引擎下自动在 `~/Library/Application Support/ai-compare/demo/` 落盘真实演示目录 → 「开始比较」得真实目录 diff；或直接把两个真实目录/文件拖入窗口。
 - **已知边界（如实登记）**：签名仍为 ad-hoc（无公证/notarization）；打包脚本仅 macOS（Windows/Linux 的 `.exe`/`.deb` 路径未验证）；发行包内引擎缺失时的兜底是前端降级横幅（可切演示引擎），不自动从网络补齐。
 - **后续断点**：队列 9 与 P13 后半（平台/发布能力项：媒体/版本/注册表比较、主题 i18n 壳集成、命令面板、设置>命令自定义页、自动更新与公证安装程序）、各队列已登记的未闭环 FR（详见各节）；看门狗遇异常自动从本节断点续作，续作时仍须「门禁全绿 → commit → 更新本文件」。
+
+## 深度 Review（2026-11-14 22:0x~23:0x；用户指令「做一次全面的深度 review」）
+
+**评审报告**：仓库根 `REVIEW.md`（19 项已修 + 21 项登记 + 风险矩阵 + 变异验证矩阵 + 排期建议）。
+
+**方法**：静态走查 + 双路并行子代理深挖（引擎协议/CLI 边界 + UI 会话与进程管理）+ **变异验证**（逐条把修复回退，确认回归测试确实变红）。
+
+### 已修 19 项（全部含回归测试；7 项经变异验证）
+
+**引擎侧 9 项**
+1. **P0 引擎 EOF 后进程永挂死**：`pump` 常驻任务持有出站通道克隆 → `writer.await` 永久阻塞（只能 kill -9）。修复：退出前 `cancel_all_dir_sessions` 取消全部 DirModel 令牌，pump ≤150ms 内退出。
+2. **P0 协议边界无 panic 隔离**：注释声称有、实现全仓 `catch_unwind` 命中 0 → handler panic 时该请求**永不应答**（UI 只能等超时）。修复：`tokio::spawn(AssertUnwindSafe(..))` → `-32603`。
+3. `"id": null` 被误判为非法信封 → `RequestId` 增补 `Null` 变体（JSON-RPC 2.0 §4）。
+4. 解析失败/信封非法应答 id 固定为 `0` → 与真实 id=0 撞号（幽灵应答）→ 改回 `null` / 回显原 id。
+5. 不校验 `jsonrpc` 版本 → 非 `"2.0"` 回 `-32600`。
+6. **P1 `text/merge3/open` 非幂等 → 标签重挂载清空全部已提交冲突决策** → 引擎侧同参数幂等返回（保留 decisions/rev）。
+7. `aic patch` 应用失败退出码 1 → 2（错误，非「文件不同」）。
+8. `aic patch --dir` 的 `AlreadyApplied`/`SkippedBinary` 误判为差异 → 按「执行」语义重定义（失败/已应用 → 2，其余 → 0）。
+9. `--conflict-exit-code 0` 未校验 → 显式拒绝（破坏「0 = 相同」不变量）。
+
+**UI 侧 9 项**
+10. 横幅「重试」**不发起连接**（只清状态）→ 补 `getEngineClient()`。
+11. 关闭标签未释放 picture/table/hex/sync/merge 引擎会话（引擎侧只增不减 → 泄漏）→ 全覆盖清单。
+12. `rebindSession` 只覆盖 folder/text → 崩溃后其余标签持失效句柄（410/411）→ 全覆盖。
+13. resync 降级重放后新句柄未登记 `trackedSessions` → 第二次崩溃不再恢复。
+14. 崩溃重启后旧 Tauri 监听器不回收（每次崩溃净增 3 个 + 重复投喂 stdout）→ `old?.close()`。
+15. 单个通知订阅者抛错中断整条分发链 → 逐个 try/catch（client.ts + dir/delta）。
+16. Hex 视图 `loading` 陈旧闭包恒为 false → 并发同 offset 拉页（重复行 + 偏移漂移）→ 改用 ref 在途标记。
+17. Hex 视图判错能力位（`tableCompare` → `hexCompare`）。
+18. 关闭窗口/关闭其他标签静默丢弃脏的命名会话（违反 FR-SES-001）→ 先走关闭确认。
+
+**测试基建 1 项**
+19. **单跑测试目标时引擎二进制不重建 → 回归测试形同虚设**（本次变异验证踩中：禁用修复后用例仍全绿）→ `ensure_engine_fresh()` 按 mtime 现场重建。
+
+### 门禁（修复后全量复跑）
+
+- 引擎 `cargo test --workspace` **829/0**（+7）、`cargo clippy --workspace --all-targets -- -D warnings` 零警
+- UI `pnpm test` **484/0**（49 文件，+7）、`pnpm lint` 零警告、`pnpm build` 通过、`pnpm e2e:engine` 全绿
+
+**新增测试**：`tests/protocol_conformance/protocol_test.rs`（7 条：EOF 退出 ×2、id=null、解析错误 id=null、信封非法回显 id、jsonrpc 版本、merge3 幂等保决策）、`ui/src/shell/sessionLifecycle.test.ts`（7 条）。
+
+### 未修登记（21 项，见 REVIEW.md §4）
+
+- **P1 10 项**：ts-rs 导出与 serde 语义脱节（169 处 `Option`）、u64→bigint 与线上 number 不符、原子写缺 fsync + `.bak` 由 rename 产生、临时名按 PID + 持久化无串行化、mock 与真引擎在 `dir/merge*` 三方法分叉、`deleteFile` 不清 `.bak` 导致删除的会话复活、`trackSession` 未覆盖 picture/table/hex/merge3、合并决策仍为视图内状态、panic 隔离缺回归、**无 CI**。
+- **P2 13 项**：能力位 `cancel: true` 过度承诺、工具链未钉版本、MSRV 不一致 + 壳层脱离 workspace 覆盖、cargo-deny 与 rsproxy 镜像可能冲突、出站通道无背压、`--record` 静默失效、取消注册表用 `std::sync::Mutex`、无行长上限、客户端只接受 number id、`aic report` 退出码语义待确认、书签/换行未持久化、hex 跳转索引算式可疑、`deleteFile` 调用面。
+- **P3 6 项**：并发连接竞态、`TrackedSession.kind` 收窄、通知方法名与请求同名、Python 语料生成器未声明依赖、增量 diff 边界吸收缺性质测试、行内 diff 超时降级语义待核实。
+
+### 后续断点（看门狗续作入口）
+
+优先批次：① P1-07+P1-08（崩溃恢复登记 + 合并决策持久化，与本次 F-11/F-12 同族）→ ② P1-05（mock/真引擎分叉，直接影响 UI 测试可信度）→ ③ P1-09（panic 隔离回归）→ ④ P1-03+P1-04（持久化原子性）→ ⑤ P1-01+P1-02（协议类型可信度）→ ⑥ P1-10（CI）。
+
