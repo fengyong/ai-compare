@@ -80,6 +80,27 @@ export type { TextSectionsNotification } from './generated/TextSectionsNotificat
 export type { TextSectionsParams } from './generated/TextSectionsParams';
 export type { TextSectionsResult } from './generated/TextSectionsResult';
 export type { WhitespaceMode } from './generated/WhitespaceMode';
+export type { CompareRulesSpec } from './generated/CompareRulesSpec';
+export type { DetectedFileKind } from './generated/DetectedFileKind';
+export type { EffectiveRulesSpec } from './generated/EffectiveRulesSpec';
+export type { FileFormatSpec } from './generated/FileFormatSpec';
+export type { FormatPackSpec } from './generated/FormatPackSpec';
+export type { FormatViewKind } from './generated/FormatViewKind';
+export type { FormatsListResult } from './generated/FormatsListResult';
+export type { FormatsLoadParams } from './generated/FormatsLoadParams';
+export type { FormatsLoadResult } from './generated/FormatsLoadResult';
+export type { FormatsSaveParams } from './generated/FormatsSaveParams';
+export type { FormatsSaveResult } from './generated/FormatsSaveResult';
+export type { GrammarElementSpec } from './generated/GrammarElementSpec';
+export type { GrammarItemKind } from './generated/GrammarItemKind';
+export type { GrammarItemSpec } from './generated/GrammarItemSpec';
+export type { RuleFormatBindingSpec } from './generated/RuleFormatBindingSpec';
+export type { RuleScope } from './generated/RuleScope';
+export type { RulesGetParams } from './generated/RulesGetParams';
+export type { RulesGetResult } from './generated/RulesGetResult';
+export type { RulesSetParams } from './generated/RulesSetParams';
+export type { RulesSetResult } from './generated/RulesSetResult';
+export type { RulesSpec } from './generated/RulesSpec';
 
 /* ============================================================
  * 2. UI 侧本地辅助类型
