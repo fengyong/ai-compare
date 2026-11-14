@@ -682,7 +682,7 @@ fn find_match_window(
         // 严格模式：补丁行的 CRLF 标记须与目标行行尾风格一致
         if !opts.crlf_tolerant {
             let ok = (0..expected.len())
-                .all(|j| want_cr.get(j).map_or(true, |w| lines[p + j].1.contains('\r') == *w));
+                .all(|j| want_cr.get(j).is_none_or(|w| lines[p + j].1.contains('\r') == *w));
             if !ok {
                 continue;
             }

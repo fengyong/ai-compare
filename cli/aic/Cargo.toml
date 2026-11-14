@@ -30,6 +30,7 @@ ai-vfs = { workspace = true }
 ai-dir = { workspace = true }
 ai-protocol = { workspace = true }
 tokio = { workspace = true }
+regex = "1.13.1"
 
 [dev-dependencies]
 tempfile = { workspace = true }

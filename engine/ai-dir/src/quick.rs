@@ -116,7 +116,7 @@ impl<'a> QuickTest<'a> {
         if criteria.ignore_dst_hour && d == HOUR_MS {
             return true;
         }
-        if criteria.ignore_tz_hour && d % HOUR_MS == 0 {
+        if criteria.ignore_tz_hour && d.is_multiple_of(HOUR_MS) {
             return true;
         }
         false

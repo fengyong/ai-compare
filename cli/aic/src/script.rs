@@ -1868,16 +1868,93 @@ async fn exec_mkdir(
     run_ops(state, &ops, outcome).await
 }
 
+/// BC `$n` 模板适配：`$<数字>` 后紧跟 [A-Za-z0-9_] 时补 `{}` 边界
+/// （`$2_$1.txt` -> `${2}_${1}.txt`；已带花括号的不动）
+pub(crate) fn adapt_bc_template(template: &str) -> String {
+    let mut out = String::with_capacity(template.len() + 8);
+    let b = template.as_bytes();
+    let mut i = 0usize;
+    while i < b.len() {
+        if b[i] == b'$' && i + 1 < b.len() && b[i + 1].is_ascii_digit() {
+            let mut j = i + 1;
+            while j < b.len() && b[j].is_ascii_digit() {
+                j += 1;
+            }
+            // 后一字符是组名字符（字母/数字/下划线）则需要花括号边界
+            if j < b.len() && (b[j].is_ascii_alphanumeric() || b[j] == b'_') {
+                // `$2` 后跟组名字符 -> `${2}`（花括号内只放组号，去掉 $ 前缀）
+                out.push_str("${");
+                out.push_str(&template[i + 1..j]);
+                out.push('}');
+                i = j;
+                continue;
+            }
+        }
+        // 其他字符（含 `${n}`、`$$`）原样复制到下一个字符
+        let ch_len = template[i..].chars().next().map(|c| c.len_utf8()).unwrap_or(1);
+        out.push_str(&template[i..i + ch_len]);
+        i += ch_len;
+    }
+    out
+}
+
+async fn exec_rename_regex(
+    state: &mut ScriptState,
+    re: &regex::Regex,
+    template: &str,
+    outcome: &mut ScriptOutcome,
+) -> Result<(), ScriptError> {
+    let arena = match &state.session {
+        Some(LoadedSession::Dir { arena, .. }) => arena.clone(),
+        _ => return Err(ScriptError::Runtime("RENAME 需要先 LOAD 文件夹对".into())),
+    };
+    let selected = selected_indices(state, &arena);
+    let mut ops = Vec::new();
+    for &i in &selected {
+        let row = &arena[i];
+        if row.rel_path.is_empty() {
+            continue;
+        }
+        // 正则不匹配的文件名跳过（保留原名，不计入操作）；模板 $1.. 捕获组引用
+        let new_name = re.replace(&row.name, template).to_string();
+        if new_name == row.name || new_name.is_empty() {
+            continue;
+        }
+        for side in [ai_dir::execute::Side::Left, ai_dir::execute::Side::Right] {
+            let has = match side {
+                ai_dir::execute::Side::Left => row.left.is_some(),
+                ai_dir::execute::Side::Right => row.right.is_some(),
+            };
+            if !has {
+                continue;
+            }
+            ops.push(FileOp::Rename {
+                path: row.rel_path.clone(),
+                side,
+                new_name: new_name.clone(),
+            });
+        }
+    }
+    run_ops(state, &ops, outcome).await
+}
+
 async fn exec_rename(
     state: &mut ScriptState,
     regexpr: Option<String>,
     pattern: &str,
     outcome: &mut ScriptOutcome,
 ) -> Result<(), ScriptError> {
-    if regexpr.is_some() {
-        return Err(ScriptError::Runtime(
-            "rename regexpr 暂未支持（正则重命名推迟；DOS 掩码重命名已可用）".into(),
-        ));
+    if let Some(rx_pat) = regexpr {
+        // 正则重命名（FR-DIR-064 regexpr 形态）：旧掩码 = 文件名正则（捕获组），
+        // 新名模板 = regex crate 替换语法（$1/$2 组引用，与 BC $2$1.txt 一致）。
+        // 不匹配的文件名跳过（保留原名，不计入操作）。
+        let re = regex::Regex::new(&rx_pat).map_err(|e| {
+            ScriptError::Runtime(format!("regexpr 非法（{rx_pat}）: {e}"))
+        })?;
+        // BC 模板适配：regex crate 把 `$2_` 解析为命名组 "2_"（下划线并入组名），
+        // BC 语义是「组2 + 字面下划线」——把后跟组名字符的 $<数字> 转成 ${<数字>}
+        let template = adapt_bc_template(pattern);
+        return exec_rename_regex(state, &re, &template, outcome).await;
     }
     let arena = match &state.session {
         Some(LoadedSession::Dir { arena, .. }) => arena.clone(),
