@@ -260,3 +260,24 @@
 - **看门狗**：IDE automation `ai-compare-10` ACTIVE（`FREQ=HOURLY;INTERVAL=1`，cwd 本工作区）；本地 `scripts/watchdog.sh` 后台存活，每 600 秒心跳 `target/watchdog/heartbeat.json`、异常信号 `target/watchdog/SIGNAL.md`、巡检流水 `target/watchdog/check.log`。IDE 调度最小粒度 1 小时，故 10 分钟检查由本地守护承担、AI 自动继续最长 1 小时接续延迟（已如实登记）。
 - **交付面**：迭代队列 1~8 的 UI 交互面全部闭环（1~3 由前序会话完成，4 剪贴板 / 5 报告对话框 / 6 书签与自动换行 / 7 图片闪烁缩放 / 8 菜单栏工具栏由本会话完成），三轮自审修复 12 项真实缺陷。
 - **后续断点**：队列 9 与 P13 后半（平台/发布能力项）、各队列已登记的未闭环 FR（详见各节）；看门狗遇异常自动从本节断点续作，续作时仍须「门禁全绿 → commit → 更新本文件」。
+
+## 可体验桌面版构建（2026-11-14 21:4x）
+
+用户要求「build 一个可用的版本体验」→ 产出可双击运行的 `.app` 与 `.dmg`，并修复两个真实可用性缺陷。
+
+**打包产物**
+- `scripts/build-app.sh [--dmg]`：引擎 release → 前端 → `tauri build --bundles app` → **随包放入引擎**（`ai-engine` 复制进 `ai-compare.app/Contents/MacOS/`）→ 重新 ad-hoc 签名；`--dmg` 时用 `hdiutil create` 以该 `.app` 为源打 DMG。
+- 产物：`ui/src-tauri/target/release/bundle/macos/ai-compare.app`、`.../bundle/dmg/ai-compare_0.1.0_aarch64-apple-darwin.dmg`。
+- **为何不用 `tauri build --bundles dmg`**：① 它会重建 `bundle/macos/*.app`，把随包放入的引擎覆盖掉；② 其 `bundle_dmg.sh` 需挂载/卸载卷，无头环境下以 `hdiutil couldn't unmount "disk4" - 资源忙` 失败。改用 `hdiutil create -srcfolder`（不挂载卷）。
+
+**缺陷 1：桌面版「填充示例路径」必报「根路径不存在（left）: /demo/project-v1」**
+- 根因：`/demo/project-v1` 是 `strings.ts` 的**演示引擎占位路径**——内置 mock 引擎不触碰文件系统，任意路径都渲染合成目录树；而桌面版走真实引擎，`dir/open` 真的扫文件系统 → `ai_dir::DirScanError::RootNotFound`（`engine/ai-engine/src/mapping.rs:29`）。引擎报错如实，缺陷在 UI 把 mock 占位路径喂给真实引擎。
+- 修复：新增 `ui/src/lib/demoSeed.ts`（演示文件清单 + `seedDemoDirs` 落盘，状态覆盖相同/不同/仅左/仅右）；`engineProcess` 导出 `isMockEngineActive()`；主页按钮按环境分流——mock 仍填占位路径，真实引擎改为在**应用数据目录**（`<baseDir>/demo/project-v1|project-v2`）落盘真实演示目录再填入。写前先删同名文件与 `.bak`（`settings_write` 对已存在目标会留 `.bak`，会污染目录 diff）。
+- 实证：真实引擎对含空格路径（`Application Support`）正常；`aic diff` 退出码 1 且差异正确；JSON-RPC `dir/open` 返回 8 行，状态分布 `same 2 / contentDiff 2 / leftOnly 2 / dirDiff 1 / rightOnly 1`。
+
+**缺陷 2：发行包缺引擎 → 桌面用户被指引去「仓库根执行 cargo build」**
+- 根因：Tauri bundle 不携带引擎，而壳在 release 下按「与可执行文件同目录」解析；DMG 由 Tauri 生成时 app 被重建，引擎丢失 → 用户从 DMG 启动即报「未找到引擎可执行文件」。
+- 修复：打包流程固化「随包放入引擎 + 重签名」（新增可执行文件会使原签名失效）；`ui/src-tauri/src/lib.rs` 的缺引擎文案按 `debug_assertions` 分流，release 改为「当前安装包不完整，请重新获取完整安装包」。
+- 实证：从 DMG 挂载启动 → `ai-engine --stdio` 子进程正常拉起（进程路径在 `.app/Contents/MacOS/` 内）。
+
+**门禁**：`pnpm test` **477/0**（48 文件，+7 新增 demoSeed 测试）、`pnpm build`、`pnpm lint` 零警告、`pnpm e2e:engine` 全绿。
