@@ -4,6 +4,21 @@
  * 在此之前所有用户可见字符串从这里引用，键名保持稳定以便平滑迁移。
  */
 export const S = {
+  hex: {
+    title: '十六进制比较',
+    loadFail: '加载失败',
+    loading: '加载中…',
+    capNote: 'mock 演示数据',
+    same: '相同',
+    changed: '变化',
+    inserted: '插入',
+    deleted: '删除',
+    sizes: '大小',
+    jump: '跳转',
+    jumpGo: 'GO',
+    leftPane: '左侧',
+    rightPane: '右侧',
+  },
   table: {
     title: '表格比较',
     loadFail: '加载失败',
@@ -348,6 +363,7 @@ export const S = {
     folderTitleSuffix: '文件夹比较',
     textTitleSuffix: '文本比较',
     tableTitleSuffix: '表格比较',
+    hexTitleSuffix: '十六进制比较',
     pictureTitleSuffix: '图片比较',
     syncTitleSuffix: '文件夹同步',
     mergeTitleSuffix: '文件夹合并',

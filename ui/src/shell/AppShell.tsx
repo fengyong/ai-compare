@@ -9,6 +9,7 @@ import { FolderSyncView } from '../views/folder-sync/FolderSyncView';
 import { FolderMergeView } from '../views/folder-merge/FolderMergeView';
 import { PictureCompareView } from '../views/picture-compare/PictureCompareView';
 import { TableCompareView } from '../views/table-compare/TableCompareView';
+import { HexCompareView } from '../views/hex-compare/HexCompareView';
 import type { Tab } from './store';
 import { TextCompareView } from '../views/text-compare/TextCompareView';
 import { applyTheme } from '../theme/palette';
@@ -175,6 +176,9 @@ export function AppShell() {
         )}
         {activeTab?.kind === 'table' && activeTab.table && (
           <TableCompareView key={activeTab.id} tab={activeTab as Tab & { kind: 'table'; table: { left: string; right: string; sessionId: string } }} />
+        )}
+        {activeTab?.kind === 'hex' && activeTab.hex && (
+          <HexCompareView key={activeTab.id} tab={activeTab as Tab & { kind: 'hex'; hex: { left: string; right: string; sessionId: string } }} />
         )}
       </div>
 

@@ -44,6 +44,13 @@ export interface TableTabData {
   sessionId: string;
 }
 
+/** P14：十六进制比较标签数据 */
+export interface HexTabData {
+  left: string;
+  right: string;
+  sessionId: string;
+}
+
 /** 文件夹合并标签数据（P8：三路 base/left/right） */
 export interface MergeTabData {
   base: string;
@@ -75,7 +82,7 @@ export interface SessionLink {
 export interface Tab {
   id: string;
   /** home 主页 / folder 目录比较 / text 文本比较 / sync 文件夹同步 / merge 文件夹合并（P8） */
-  kind: 'home' | 'folder' | 'text' | 'sync' | 'merge' | 'picture' | 'table';
+  kind: 'home' | 'folder' | 'text' | 'sync' | 'merge' | 'picture' | 'table' | 'hex';
   title: string;
   /** 固定标签（右键菜单"固定"，FR-WIN-001） */
   pinned?: boolean;
@@ -87,6 +94,7 @@ export interface Tab {
   sync?: SyncTabData;
   picture?: PictureTabData;
   table?: TableTabData;
+  hex?: HexTabData;
   merge?: MergeTabData;
 }
 
@@ -132,6 +140,7 @@ export interface TabsSlice {
   openFolderSyncTab(left: string, right: string, opts?: OpenTabOpts): void;
   openPictureTab(left: string, right: string, opts?: OpenTabOpts): void;
   openTableTab(left: string, right: string, opts?: OpenTabOpts): void;
+  openHexTab(left: string, right: string, opts?: OpenTabOpts): void;
   /** 文件夹合并标签（P8，FR-DMRG-001：三路 base/left/right） */
   openFolderMergeTab(base: string, left: string, right: string, opts?: OpenTabOpts): void;
   /** 独立文本比较（主页文本大按钮入口；子会话路径见 openTextChild） */
