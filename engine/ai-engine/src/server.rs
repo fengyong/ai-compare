@@ -508,4 +508,66 @@ mod tests {
         assert!(lines[0].starts_with(r#"{"dir":"in""#));
         assert!(lines[1].starts_with(r#"{"dir":"out""#));
     }
+
+    /// panic 隔离边界（F-02 / P1-09）：handler panic 必须转成 -32603 应答。
+    ///
+    /// 没有隔离时 tokio 任务带 JoinError::Panic 结束，而串行链的
+    /// `let _ = p.await` 会吞掉它 —— 该请求永不应答，UI 只能等超时。
+    async fn call(
+        ctx: &HandlerCtx,
+        cancels: &Arc<CancelRegistry>,
+        method: &str,
+        id: ai_protocol::RequestId,
+    ) -> Vec<Outbound> {
+        let (tx, mut rx) = mpsc::unbounded_channel::<Outbound>();
+        let flag = cancels.register(&id.cancel_key());
+        let req = ai_protocol::RpcRequest {
+            jsonrpc: ai_protocol::JSONRPC_VERSION.to_string(),
+            id,
+            method: method.to_string(),
+            params: None,
+        };
+        process_request(req, clone_ctx(ctx), Arc::clone(cancels), flag, tx).await;
+        let mut out = Vec::new();
+        while let Ok(msg) = rx.try_recv() {
+            out.push(msg);
+        }
+        out
+    }
+
+    fn response_json(out: &[Outbound]) -> serde_json::Value {
+        assert_eq!(out.len(), 1, "必须恰好应答一次（永不应答即为缺陷）");
+        match &out[0] {
+            Outbound::Response(r) => serde_json::to_value(r).unwrap(),
+            other => panic!("期望 Response，实际 {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn handler_panic_is_answered_as_internal_error() {
+        let ctx = HandlerCtx::new(crate::batch::DEFAULT_MAX_BATCH_ROWS);
+        let cancels = Arc::new(CancelRegistry::new());
+        let out = call(&ctx, &cancels, "test/panic", ai_protocol::RequestId::Number(7)).await;
+        let v = response_json(&out);
+        assert_eq!(v["id"], 7, "必须回显原请求 id");
+        assert_eq!(v["error"]["code"], codes::INTERNAL_ERROR);
+        assert!(v.get("result").is_none(), "error 与 result 不得并存");
+        assert!(cancels.is_empty(), "panic 路径也必须注销取消旗标（否则注册表泄漏）");
+    }
+
+    #[tokio::test]
+    async fn handler_panic_does_not_poison_shared_state() {
+        // 隔离的意义是"只坏这一个请求"：同一 ctx / 取消注册表在 panic 之后
+        // 仍须能正常服务后续请求（会话锁未被毒化、注册表未泄漏）。
+        let ctx = HandlerCtx::new(crate::batch::DEFAULT_MAX_BATCH_ROWS);
+        let cancels = Arc::new(CancelRegistry::new());
+        let bad = call(&ctx, &cancels, "test/panic", ai_protocol::RequestId::Number(1)).await;
+        assert_eq!(response_json(&bad)["error"]["code"], codes::INTERNAL_ERROR);
+
+        let good = call(&ctx, &cancels, "initialize", ai_protocol::RequestId::Number(2)).await;
+        let v = response_json(&good);
+        assert_eq!(v["id"], 2);
+        assert_eq!(v["result"]["capabilities"]["textCompare"], true);
+        assert!(cancels.is_empty());
+    }
 }

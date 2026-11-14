@@ -93,6 +93,10 @@ pub async fn dispatch(
         ai_protocol::method::REPORT_GENERATE => report_generate(params, ctx).await,
         ai_protocol::method::PICTURE_OPEN => picture_open(params, ctx).await,
         ai_protocol::method::SESSION_CLOSE => session_close(params, ctx).await,
+        // 仅测试构建存在：锁定 server 的 panic 隔离边界（handler panic 必须应答
+        // -32603，而不是让请求永不应答）。生产二进制不含此方法。
+        #[cfg(test)]
+        "test/panic" => panic!("故意 panic：panic 隔离回归"),
         other => Err(RpcErrorObject {
             code: codes::METHOD_NOT_FOUND,
             message: format!("未知方法: {other}"),
