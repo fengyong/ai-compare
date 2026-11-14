@@ -34,7 +34,7 @@
 - [x] **M3 前半（P3/P5）✅ 验收完成（03:5x）**
 - [x] **M3 后半（P6/P6b/P7/P8/P9/P10/P11）✅ 全部验收完成（12:3x V1.0 波次联合验收）**：文件夹操作+遗留批/三向合并/同步/文件夹合并/表格hexpatch/文件格式规则/报告引擎+脚本处理器
 - [x] **V1.0 波次联合验收 ✅（12:3x）**：引擎 791/0 + UI 383 + clippy 零警 + e2e + build 全绿；REVIEW-p11 深度评审清偿（P0-2/P1-10/P2 系由 P11 清偿，**P0-1 崩溃重启由主会话修复**：engine_start 探活清僵尸条目）；评审文档归档 docs/archive/REVIEW-p11.md；**P0 需求全量闭环**
-- [ ] **M4 V2.0（进行中）**：P12（VFS 扩展压缩包/FTP）/P13（主题 i18n Shell 集成）/P14（图片/媒体/版本/注册表视图——Pro 级）依次推进；协调积压随行（设置→text/open rules 运行时接线、SNAPSHOT 全量格式、批量重命名正则模式）
+- [ ] **M4 V2.0（进行中）**：P12（VFS：zip 可写 ✅ / FTP ✅ / FTPS+SFTP 待）/P13（Shell：菜单栏+工具栏 UI ✅，主题 i18n 壳集成/自动更新/安装程序待）/P14（图片 ✅ / 表格 ✅ / Hex ✅ / 三向合并视图 ✅，媒体·版本·注册表待）依次推进；**桌面发行包已可交付**（`.app`/`.dmg`，引擎随包，2026-11-14 21:4x，见文末「可体验桌面版构建」节）；协调积压随行（SNAPSHOT 全量格式、FTPS/SFTP、命令面板、设置>命令自定义页、引擎侧非 UTF-8 解码）
 
 ## 当前阶段与断点
 
@@ -186,7 +186,8 @@
 | VFS：zip 可写 | ✅ P12 | FTPS 验证、SFTP、云（Dropbox/S3——P12 后续） |
 | 主页/会话树/设置框架/快捷键引擎/菜单栏/工具栏 | ✅ 队列 8 | 命令面板、主题 i18n 壳集成、工具栏自定义设置页（FR-UI-003 后半） |
 | 编码切换 | ✅ P5 | 引擎侧非 UTF-8 解码（P10 编码检测链） |
-| 桌面壳 | ✅ 打包可用 | 自动更新、安装程序（P13） |
+| 桌面壳 | ✅ 打包可用 | 自动更新、安装程序（P13）、签名与公证（当前 ad-hoc 签名） |
+| 桌面发行包（.app/.dmg 双击即用、引擎随包） | ✅ 21:4x | Windows/Linux 打包路径未验证（脚本仅 macOS）、公证（notarization）、自动更新 |
 | 剪贴板比较 | ✅ 队列 4 | 系统托盘常驻、全局快捷键注册、FR-CLIP-003 选项页（Web 内以面板/命令替代，见末尾最新状态节） |
 | 版本比较（exe/dll 资源） | ✗ | P14 后半（Windows-only 优先级低） |
 | 注册表比较 | ✗ | P14 后半（Windows-only） |
@@ -280,4 +281,20 @@
 - 修复：打包流程固化「随包放入引擎 + 重签名」（新增可执行文件会使原签名失效）；`ui/src-tauri/src/lib.rs` 的缺引擎文案按 `debug_assertions` 分流，release 改为「当前安装包不完整，请重新获取完整安装包」。
 - 实证：从 DMG 挂载启动 → `ai-engine --stdio` 子进程正常拉起（进程路径在 `.app/Contents/MacOS/` 内）。
 
-**门禁**：`pnpm test` **477/0**（48 文件，+7 新增 demoSeed 测试）、`pnpm build`、`pnpm lint` 零警告、`pnpm e2e:engine` 全绿。
+**门禁**：`pnpm test` **477/0**（48 文件，+7 新增 demoSeed 测试）、`pnpm build`、`pnpm lint` 零警告、`pnpm e2e:engine` 全绿、`ui/src-tauri` 独立 workspace 的 `cargo clippy --all-targets -- -D warnings` 零警。
+
+**提交**：`fe04624` M4-体验版: 桌面版打包脚本(引擎随包+DMG)与两项可用性缺陷修复。
+
+**架构登记**：docs/03 追加 ADR-011（桌面发行形态：引擎随包分发与壳内引擎解析顺序）；`ui/README.md` 追加「桌面发行包」章节（打包命令、产物路径、随包机制、DMG 打包取舍）。
+
+## 最新交付状态（2026-11-14 21:5x；覆盖上文「最终交付状态 21:1x」的数字）
+
+- **HEAD = `fe04624`**（main 单分支，工作树干净；本节文档更新另计一次提交）。
+- **门禁复验（提交后重跑）**：引擎 `cargo test --workspace` **822/0**、UI `pnpm test` **477/0**（48 文件）、`pnpm build`、`pnpm lint` 零警告、`pnpm e2e:engine` 全绿、`ui/src-tauri` 独立 workspace `cargo clippy --all-targets -- -D warnings` 零警。
+- **可体验产物**：
+  - `.app`：`ui/src-tauri/target/release/bundle/macos/ai-compare.app`（双击即用，引擎在 `Contents/MacOS/ai-engine`）
+  - `.dmg`：`ui/src-tauri/target/release/bundle/dmg/ai-compare_0.1.0_aarch64-apple-darwin.dmg`（已实测挂载启动 → `ai-engine --stdio` 正常拉起）
+  - 一键重打包：`scripts/build-app.sh [--dmg]`
+- **体验路径**：主页「填充示例路径」→ 真实引擎下自动在 `~/Library/Application Support/ai-compare/demo/` 落盘真实演示目录 → 「开始比较」得真实目录 diff；或直接把两个真实目录/文件拖入窗口。
+- **已知边界（如实登记）**：签名仍为 ad-hoc（无公证/notarization）；打包脚本仅 macOS（Windows/Linux 的 `.exe`/`.deb` 路径未验证）；发行包内引擎缺失时的兜底是前端降级横幅（可切演示引擎），不自动从网络补齐。
+- **后续断点**：队列 9 与 P13 后半（平台/发布能力项：媒体/版本/注册表比较、主题 i18n 壳集成、命令面板、设置>命令自定义页、自动更新与公证安装程序）、各队列已登记的未闭环 FR（详见各节）；看门狗遇异常自动从本节断点续作，续作时仍须「门禁全绿 → commit → 更新本文件」。
