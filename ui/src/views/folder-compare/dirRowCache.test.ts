@@ -31,6 +31,7 @@ const delta = (over: Partial<DirDelta> & Pick<DirDelta, 'upserts'>): DirDelta =>
     rightOnly: 0,
     dirSame: 0,
     dirDiff: 0,
+    similar: 0,
   },
   progress: { scanned: over.upserts.length, total: over.upserts.length },
   batch: { index: 0, hasMore: false },
@@ -89,6 +90,7 @@ describe('DirRowCache', () => {
           rightOnly: 0,
           dirSame: 0,
           dirDiff: 0,
+          similar: 0,
         },
         progress: { scanned: 2, total: 2 },
       })
@@ -98,6 +100,31 @@ describe('DirRowCache', () => {
     expect(snap.progress).toEqual({ scanned: 2, total: 2 });
     expect(snap.scanState).toBe('running'); // 未见 open 结果前保持 running
     expect(versions.length).toBe(1);
+  });
+
+  it('引擎省略 0 值计数器（skip_serializing_if）时 UI 读到 0 而非 undefined', () => {
+    const c = new DirRowCache('s1');
+    const d = delta({ upserts: [row('a')] });
+    // 线上载荷确实没有 similar/dirDiff 两键（引擎对 0 值省略），故按线上形状构造
+    const wire = {
+      ...d,
+      stats: {
+        total: 1,
+        same: 1,
+        quickDiff: 0,
+        contentDiff: 0,
+        leftOnly: 0,
+        rightOnly: 0,
+        dirSame: 0,
+      },
+    } as unknown as DirDelta;
+    c.applyDelta(wire);
+    expect(c.getStats().stats.similar).toBe(0);
+    expect(c.getStats().stats.dirDiff).toBe(0);
+
+    c.applyDelta(delta({ upserts: [row('a')], stats: { ...d.stats!, similar: 2, dirDiff: 1 } }));
+    expect(c.getStats().stats.similar).toBe(2);
+    expect(c.getStats().stats.dirDiff).toBe(1);
   });
 
   it('applyOpenResult 记录扫描终态；ensureOpened 幂等（只 open 一次）', async () => {

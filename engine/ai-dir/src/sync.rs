@@ -97,7 +97,10 @@ fn reorder_case_collisions(plan: Vec<PlannedOperation>) -> Vec<PlannedOperation>
 fn is_diff(status: DirEntryStatus) -> bool {
     matches!(
         status,
-        DirEntryStatus::ContentDiff | DirEntryStatus::QuickDiff | DirEntryStatus::DirDiff
+        DirEntryStatus::ContentDiff
+            | DirEntryStatus::Similar
+            | DirEntryStatus::QuickDiff
+            | DirEntryStatus::DirDiff
     )
 }
 

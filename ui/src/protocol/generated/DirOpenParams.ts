@@ -4,6 +4,7 @@ import type { DisplayFilterSpec } from "./DisplayFilterSpec";
 import type { ManualAlignPair } from "./ManualAlignPair";
 import type { NameFilterSpec } from "./NameFilterSpec";
 import type { OtherFilterSpec } from "./OtherFilterSpec";
+import type { RulesSpec } from "./RulesSpec";
 
 /**
  * shutdown 请求不携带参数；结果为 null。
@@ -52,4 +53,9 @@ manualAlign: Array<ManualAlignPair> | null,
  * true 时引擎在 dir/open 首批 delta 的 DirRow 上注入 `fileKind`
  * （"text" | "binary"）注解；缺省/false = 不注入（载荷与 P9 完全一致）
  */
-formatAware?: boolean, };
+formatAware?: boolean, 
+/**
+ * R3-16：基于规则内容比较的重要性模型（criteria.contentMethod=rulesBased 时生效）。
+ * 与 text/open params.rules 同形；缺省 = 引擎默认（差异恒重要）。
+ */
+rules?: RulesSpec, };

@@ -50,6 +50,7 @@ fn pb03_scan_throughput_100k() {
             content_compare: ContentCompareMode::Never,
             ..Default::default()
         },
+        importance: Default::default(),
     };
 
     // 预热一次（page cache），计时第二次

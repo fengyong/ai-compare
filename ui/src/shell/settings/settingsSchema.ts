@@ -71,6 +71,17 @@ export const COMPARE_PAGE: SettingsPage = {
       help: '快速相同跳过/覆盖策略（ContentCompareMode）',
     },
     {
+      key: 'contentMethod',
+      label: '内容比较方法',
+      type: 'select',
+      options: [
+        { value: 'crc', label: 'CRC 比较（快；zip 等预计算 CRC 直接复用）' },
+        { value: 'binary', label: '二进制比较（逐字节）' },
+        { value: 'rulesBased', label: '基于规则的比较（忽略行尾/空白/注释等不重要差异）' },
+      ],
+      help: 'FR-DIR-011 三方式；「操作 > 比较内容」也用此方法（ContentCompareMethod）',
+    },
+    {
       key: 'ignoreDst',
       label: '忽略夏令时差异',
       type: 'boolean',

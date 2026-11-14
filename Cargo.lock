@@ -58,6 +58,7 @@ dependencies = [
 name = "ai-dir"
 version = "0.1.0"
 dependencies = [
+ "ai-core",
  "ai-protocol",
  "ai-vfs",
  "async-trait",

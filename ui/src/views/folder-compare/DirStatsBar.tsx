@@ -30,6 +30,12 @@ export function DirStatsBar({ snapshot }: { snapshot: DirStatsSnapshot }) {
           <i className="aic-dot diff" />
           <b>{formatCount(stats.quickDiff)}</b> {S.folder.stats.quickDiff}
         </span>
+        {stats.similar > 0 && (
+          <span className="aic-stat-chip" title={S.folder.status.similar}>
+            <i className="aic-dot diff" />
+            <b>{formatCount(stats.similar)}</b> {S.folder.stats.similar}
+          </span>
+        )}
         <span className="aic-stat-chip">
           <i className="aic-dot orphan" />
           <b>{formatCount(stats.leftOnly)}</b> {S.folder.stats.leftOnly}

@@ -8,6 +8,7 @@
         "deltaBatching": true,
         "dirBackgroundScan": true,
         "dirCompare": true,
+        "dirCompareContent": true,
         "dirExecute": true,
         "dirFilters": true,
         "dirMerge": true,

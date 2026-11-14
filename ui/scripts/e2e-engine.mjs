@@ -256,6 +256,116 @@ try {
   const revs = deltas.map((d) => Number(d.rev));
   ok([...revs].sort((a, b) => a - b).every((v, i) => v === revs[i]), 'rev 单调递增');
 
+  // 2b. R3-16：dir/compareContent 三方式 + 五态结果（FR-DIR-011/012）
+  ok(
+    init?.capabilities?.dirCompareContent === true,
+    'initialize 能力位 dirCompareContent=true（R3-16）',
+    String(init?.capabilities?.dirCompareContent)
+  );
+  const CCL = join(dir, 'CCL');
+  const CCR = join(dir, 'CCR');
+  mkdirSync(CCL);
+  mkdirSync(CCR);
+  const ccPut = (root, name, text) => writeFileSync(join(root, name), text);
+  ccPut(CCL, 'identical.txt', 'x\n');
+  ccPut(CCR, 'identical.txt', 'x\n');
+  ccPut(CCL, 'eol.txt', 'a\r\nb\r\n');
+  ccPut(CCR, 'eol.txt', 'a\nb\n');
+  ccPut(CCL, 'case.txt', 'Hello\n');
+  ccPut(CCR, 'case.txt', 'hello\n');
+  ccPut(CCL, 'ws.txt', 'a \n');
+  ccPut(CCR, 'ws.txt', 'a\n');
+  ccPut(CCL, 'real.txt', 'a\n');
+  ccPut(CCR, 'real.txt', 'b\n');
+  ccPut(CCL, 'orphan.txt', 'only left\n');
+  const ccDeltas = [];
+  client.on('dir/delta', (p) => {
+    if (p.sessionId === 'e2e-dir-cc') ccDeltas.push(p);
+  });
+  const ccOpen = await client.request('dir/open', {
+    sessionId: 'e2e-dir-cc',
+    left: CCL,
+    right: CCR,
+    depth: null,
+    // 与真实 UI 同口径：lazyScan 启用 P2 会话模型（dir/compareContent 挂在该模型上）
+    lazyScan: true,
+    // never：扫描只做快速判定，内容结论完全由手动比较产生（FR-DIR-011）
+    criteria: { mtimeToleranceSec: 2, contentCompare: 'never', contentMethod: 'rulesBased' },
+    rules: { eolStyleUnimportant: true, caseUnimportant: true, trailingWsUnimportant: true },
+  });
+  ok(ccOpen?.rowCount === 6, 'dir/open（内容比较语料）行数', `rowCount=${ccOpen?.rowCount}`);
+  const ccRows = () => {
+    const m = new Map();
+    for (const d of ccDeltas) for (const u of d.upserts) m.set(u.id, u);
+    return m;
+  };
+  const ccDeadline = Date.now() + 5000;
+  while (ccRows().size < ccOpen.rowCount && Date.now() < ccDeadline) {
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  ok(ccRows().size === 6, 'dir/delta（内容比较语料）收齐', `rows=${ccRows().size}`);
+  ok(ccRows().get('orphan.txt')?.status === 'leftOnly', '孤立项为 leftOnly（不参与内容比较）');
+
+  const ccRules = await client.request('dir/compareContent', {
+    sessionId: 'e2e-dir-cc',
+    ids: [],
+    method: 'rulesBased',
+  });
+  const ccBy = Object.fromEntries((ccRules?.results ?? []).map((r) => [r.id, r]));
+  ok(Object.keys(ccBy).length === 5, 'ids 空 = 比较全部已配对文件（孤立项不参与）', `n=${Object.keys(ccBy).length}`);
+  ok(ccBy['identical.txt']?.result === 'binarySame', '字节全等 → binarySame', ccBy['identical.txt']?.result);
+  ok(ccBy['eol.txt']?.result === 'rulesSame', '仅行尾风格差异 → rulesSame（规则比较不按 size 短路）', ccBy['eol.txt']?.result);
+  ok(ccBy['real.txt']?.result === 'importantDiff', '真实内容差异 → importantDiff', ccBy['real.txt']?.result);
+  ok(
+    ccBy['case.txt']?.result === 'unimportantDiff' && ccBy['case.txt']?.status === 'similar',
+    '仅大小写差异 → unimportantDiff + 行状态 similar',
+    `${ccBy['case.txt']?.result}/${ccBy['case.txt']?.status}`
+  );
+  ok(ccBy['ws.txt']?.result === 'unimportantDiff', '仅尾随空白差异 → unimportantDiff', ccBy['ws.txt']?.result);
+  ok(ccRules?.stats?.similar === 2, 'DirStats.similar 新计数器随比较结果更新', String(ccRules?.stats?.similar));
+  ok(ccBy['real.txt']?.status === 'contentDiff', 'importantDiff → 行状态 contentDiff', ccBy['real.txt']?.status);
+  ok(ccBy['eol.txt']?.status === 'same', 'rulesSame → 行状态 same', ccBy['eol.txt']?.status);
+  // 比较结论必须经 dir/delta 回推（UI 只认 delta，不认应答体）
+  const ccAfter = Date.now() + 5000;
+  while (ccRows().get('real.txt')?.status !== 'contentDiff' && Date.now() < ccAfter) {
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  ok(ccRows().get('real.txt')?.status === 'contentDiff', '比较后行状态经 dir/delta 回推', ccRows().get('real.txt')?.status);
+  ok(ccRows().get('eol.txt')?.status === 'same', 'rulesSame 行回推为 same', ccRows().get('eol.txt')?.status);
+
+  const ccBin = await client.request('dir/compareContent', {
+    sessionId: 'e2e-dir-cc',
+    ids: ['eol.txt', 'identical.txt'],
+    method: 'binary',
+  });
+  const binBy = Object.fromEntries((ccBin?.results ?? []).map((r) => [r.id, r]));
+  ok(
+    binBy['eol.txt']?.result === 'binaryDiff' && binBy['identical.txt']?.result === 'binarySame',
+    '二进制方式：行尾差异判异、字节全等判同',
+    JSON.stringify(ccBin?.results)
+  );
+  ok(binBy['eol.txt']?.result !== ccBy['eol.txt']?.result, '三方式不可互换（FR-DIR-011）');
+  const ccCrc = await client.request('dir/compareContent', {
+    sessionId: 'e2e-dir-cc',
+    ids: ['eol.txt'],
+    method: 'crc',
+  });
+  ok(ccCrc?.results?.[0]?.result === 'binaryDiff', 'CRC 方式同样判异', ccCrc?.results?.[0]?.result);
+  const ccDefault = await client.request('dir/compareContent', { sessionId: 'e2e-dir-cc', ids: ['eol.txt'] });
+  ok(
+    ccDefault?.results?.[0]?.result === ccBy['eol.txt']?.result,
+    '省略 method 取会话判据的方法（设置 → dir/open → 比较）',
+    ccDefault?.results?.[0]?.result
+  );
+  let ccNotFound = '';
+  try {
+    await client.request('dir/compareContent', { sessionId: 'no-such-session', ids: [], method: null });
+  } catch (e) {
+    ccNotFound = String(e.message);
+  }
+  ok(ccNotFound.includes('410'), '未知会话 → 410', ccNotFound);
+  await client.request('session/close', { sessionId: 'e2e-dir-cc' });
+
   // 3. text/open + text/sections
   const text = await client.request('text/open', {
     sessionId: 'e2e-text-1',

@@ -57,6 +57,31 @@ export const F = {
   quickCompareSingleVerdict: '单行两侧互相比较（与对面项目成对比较）。',
   quickCompareMissing: '（该侧不存在）',
 
+  // ---- 手动内容比较（R3-16，FR-DIR-012「操作 > 比较内容」） ----
+  contentCompare: '比较内容',
+  contentCompareHint:
+    '对选定项执行内容比较；方法取自 设置 > 比较 > 内容比较方法。未选中任何文件时比较全部已配对文件。',
+  contentCompareTitle: '比较内容',
+  contentCompareMethodLabel: '比较方法',
+  contentCompareMethodCrc: 'CRC 比较',
+  contentCompareMethodBinary: '二进制比较',
+  contentCompareMethodRules: '基于规则的比较',
+  contentCompareScopeSelected: (n: number) => `选定 ${n} 项`,
+  contentCompareScopeAll: '全部已配对文件',
+  contentCompareRunning: '正在比较内容…',
+  contentCompareUnsupported: '当前引擎未开放 dir/compareContent（能力位缺失），无法执行内容比较。',
+  contentCompareFailed: (msg: string) => `内容比较失败：${msg}`,
+  contentCompareEmpty: '无可比较项（目录行与孤立项不参与内容比较）',
+  contentCompareBinarySame: '二进制相同',
+  contentCompareBinaryDiff: '二进制差异',
+  contentCompareRulesSame: '基于规则相同',
+  contentCompareUnimportantDiff: '不重要的差异',
+  contentCompareImportantDiff: '重要差异',
+  contentCompareColId: '项目',
+  contentCompareColResult: '结果',
+  contentCompareColStatus: '行状态',
+  contentCompareDone: (n: number) => `已比较 ${n} 项`,
+
   // ---- 复制文件名/路径（FR-DIR-066 复制文件名） ----
   ctxCopyName: '复制文件名',
   ctxCopyFullPath: '复制完整路径',

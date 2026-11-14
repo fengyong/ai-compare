@@ -3,4 +3,4 @@
 /**
  * 目录行状态（docs/03 §4.2 CellStatus 的 P0 子集 + P2 聚合状态）
  */
-export type DirEntryStatus = "same" | "quickDiff" | "contentDiff" | "leftOnly" | "rightOnly" | "dirSame" | "dirDiff" | "unknown";
+export type DirEntryStatus = "same" | "quickDiff" | "contentDiff" | "similar" | "leftOnly" | "rightOnly" | "dirSame" | "dirDiff" | "unknown";

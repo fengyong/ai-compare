@@ -22,7 +22,10 @@
 use std::io::{IsTerminal, Write as _};
 use std::process::ExitCode;
 
-use crate::{aggregate_verdicts, render_dir_diff, render_unified, rules_classify_file, Palette, QuickVerdict, ANSI, PLAIN};
+use crate::{
+    aggregate_verdicts, render_dir_diff, render_unified, rules_classify_file, verdict_exit_code,
+    verdict_label, Palette, QuickVerdict, ANSI, PLAIN,
+};
 use ai_core::merge::{ConflictDefault, FavorSide, MarkerOptions, MarkerStyle, MergeOptions, SynthesizeOptions, UnresolvedPolicy};
 use ai_core::options::{ImportanceOptions, LineAlignAlgo, TextDiffOptions, WhitespaceMode};
 use ai_core::LineTable;
@@ -350,6 +353,7 @@ async fn run_dir_diff(
                 content_compare: ai_protocol::ContentCompareMode::Always,
                 ..Default::default()
             },
+            importance: Default::default(),
         },
         &ai_dir::ByNameAligner,
         &ai_dir::CancelFlag::new(),
@@ -631,7 +635,7 @@ pub fn cmd_quick(args: &[String]) -> ExitCode {
         .build()
         .expect("tokio 运行时");
     match rt.block_on(run_quick(positional[0], positional[1], mode, &imp)) {
-        Ok(verdict) => verdict.exit_code().into(),
+        Ok(verdict) => verdict_exit_code(verdict).into(),
         Err(msg) => {
             eprintln!("aic quick: {msg}");
             EXIT_ERROR.into()
@@ -674,7 +678,11 @@ async fn run_quick(
             &vfs,
             &left,
             &right,
-            &ai_dir::DirScanOptions { depth: None, criteria },
+            &ai_dir::DirScanOptions {
+                depth: None,
+                criteria,
+                importance: Default::default(),
+            },
             &ai_dir::ByNameAligner,
             &ai_dir::CancelFlag::new(),
         )
@@ -715,7 +723,7 @@ async fn run_quick(
         };
         println!(
             "{}: {left_s} {right_s} (mode={}, rows={}, contentDiff={}, orphans=L{}/R{})",
-            verdict.as_str(),
+            verdict_label(verdict),
             mode.as_str(),
             stats.total,
             stats.content_diff,
@@ -761,7 +769,7 @@ async fn run_quick(
         };
         println!(
             "{}: {left_s} {right_s} (mode={}, size={}B)",
-            verdict.as_str(),
+            verdict_label(verdict),
             mode.as_str(),
             ls.size
         );

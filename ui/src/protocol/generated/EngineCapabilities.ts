@@ -97,4 +97,9 @@ textSave?: boolean,
  * R3-20：三向合并输出落盘（text/merge3/save）。缺省 **false**（旧引擎无此入口，
  * UI 不得把浏览器下载当成"已保存到合并目标"）。
  */
-mergeSave?: boolean, };
+mergeSave?: boolean, 
+/**
+ * R3-16：手动内容比较（dir/compareContent，三方式 + 五态结果）。
+ * 缺省 **false**（旧引擎无此入口，UI 应隐藏"比较内容"命令）。
+ */
+dirCompareContent?: boolean, };

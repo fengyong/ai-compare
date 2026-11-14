@@ -32,7 +32,8 @@ use ai_dir::{
     ExecuteOptions, FileOp, SyncRequest, SyncStrategy,
 };
 use ai_protocol::{
-    CompareCriteria, ContentCompareMode, DirEntryStatus, EntryKind, OtherFilterSpec, SyncPreset,
+    CompareCriteria, ContentCompareMethod, ContentCompareMode, DirEntryStatus, EntryKind,
+    OtherFilterSpec, SyncPreset,
 };
 use ai_vfs::{LocalFs, VfsPath, VfsProvider as _};
 
@@ -959,6 +960,8 @@ struct ScriptState {
     name_filter: Option<NameFilter>,
     other_filter: OtherFilter,
     criteria: CompareCriteria,
+    /// 基于规则内容比较的重要性模型（CRITERIA ignore-unimportant 设置）
+    importance: ai_core::ImportanceOptions,
     stop_on_error: bool,
     confirm: ConfirmMode,
     log_level: LogWord,
@@ -980,6 +983,7 @@ impl ScriptState {
                 content_compare: ContentCompareMode::Always,
                 ..CompareCriteria::default()
             },
+            importance: ai_core::ImportanceOptions::default(),
             stop_on_error: false,
             confirm: ConfirmMode::Prompt,
             log_level: LogWord::None,
@@ -1340,7 +1344,11 @@ async fn exec_load(
             &state.vfs,
             &lp,
             &rp,
-            &DirScanOptions { depth: None, criteria: state.criteria.clone() },
+            &DirScanOptions {
+                depth: None,
+                criteria: state.criteria.clone(),
+                importance: state.importance.clone(),
+            },
             &ai_dir::ByNameAligner,
             &CancelFlag::new(),
         )
@@ -1493,6 +1501,18 @@ fn parse_size_filter(v: &str) -> Option<(char, u64)> {
     Some((op, (n * mult.0) as u64))
 }
 
+/// BC `IGNORE-UNIMPORTANT` / `/iu` 的重要性模型：空白（首/嵌/尾）+ 大小写不重要。
+/// 文本报告与目录规则比较共用，避免两处各写一份开关集。
+fn ignore_unimportant_model() -> ai_core::ImportanceOptions {
+    ai_core::ImportanceOptions {
+        leading_ws_unimportant: true,
+        embedded_ws_unimportant: true,
+        trailing_ws_unimportant: true,
+        case_unimportant: true,
+        ..ai_core::ImportanceOptions::default()
+    }
+}
+
 fn exec_criteria(state: &mut ScriptState, tokens: &[String]) -> Result<(), ScriptError> {
     for tok in tokens {
         let t = tok.to_ascii_lowercase();
@@ -1519,17 +1539,22 @@ fn exec_criteria(state: &mut ScriptState, tokens: &[String]) -> Result<(), Scrip
             }
             "crc" => {
                 state.criteria.content_compare = ContentCompareMode::Always;
+                state.criteria.content_method = ContentCompareMethod::Crc;
                 state.criteria.mtime_tolerance_sec = 0;
             }
             "binary" => {
                 state.criteria.content_compare = ContentCompareMode::Always;
+                state.criteria.content_method = ContentCompareMethod::Binary;
                 state.criteria.mtime_tolerance_sec = 0;
             }
             "rules-based" => {
                 state.criteria.content_compare = ContentCompareMode::Always;
+                state.criteria.content_method = ContentCompareMethod::RulesBased;
                 state.criteria.mtime_tolerance_sec = 0;
             }
-            "ignore-unimportant" => {}
+            "ignore-unimportant" => {
+                state.importance = ignore_unimportant_model();
+            }
             _ => return Err(ScriptError::Syntax(format!("criteria 参数不合法: {tok}"))),
         }
     }
@@ -1544,10 +1569,10 @@ async fn exec_compare(
     let Some(LoadedSession::Dir { arena, .. }) = &mut state.session else {
         return Err(ScriptError::Runtime("COMPARE 需要先 LOAD 文件夹对".into()));
     };
-    let hash_mode = match mode.unwrap_or(CompareWord::Crc) {
-        CompareWord::Crc => ai_dir::ContentHashMode::Crc,
-        CompareWord::Binary => ai_dir::ContentHashMode::Binary,
-        CompareWord::RulesBased => ai_dir::ContentHashMode::Crc,
+    let method = match mode.unwrap_or(CompareWord::Crc) {
+        CompareWord::Crc => ContentCompareMethod::Crc,
+        CompareWord::Binary => ContentCompareMethod::Binary,
+        CompareWord::RulesBased => ContentCompareMethod::RulesBased,
     };
     let mut new_arena = std::mem::take(arena);
     let selected = selected_indices(state, &new_arena);
@@ -1559,28 +1584,26 @@ async fn exec_compare(
         let (Some(l), Some(r)) = (&row.left, &row.right) else {
             continue; // 孤立项跳过
         };
-        if l.size != r.size {
-            new_arena[i].status = DirEntryStatus::ContentDiff;
-            continue;
-        }
         let lp = dir_left_path(state, &new_arena[i]);
         let rp = dir_right_path(state, &new_arena[i]);
-        let same = match mode {
-            Some(CompareWord::RulesBased) => {
-                // 规则比较近似：文本逐行 diff 后全等 -> Same；否则 ContentDiff
-                match (state.vfs.read_file_text(&lp).await, state.vfs.read_file_text(&rp).await) {
-                    (Ok(lt), Ok(rt)) => {
-                        let ltab = ai_core::LineTable::from_text(&lt);
-                        let rtab = ai_core::LineTable::from_text(&rt);
-                        let out = ai_core::diff_text(&ltab, &rtab, &ai_core::TextDiffOptions::default());
-                        matches!(out, Ok(o) if o.sections.iter().all(|s| s.kind == ai_core::SectionKind::Equal))
-                    }
-                    _ => ai_dir::content_same(&state.vfs, &lp, &rp, hash_mode).await.unwrap_or(false),
-                }
-            }
-            _ => ai_dir::content_same(&state.vfs, &lp, &rp, hash_mode).await.unwrap_or(false),
+        // 判定权威在 ai_dir（R3-16）：size 判异、三方式分派、四态结果都在那里，
+        // 脚本不再自写一套"逐行全等"近似（它会把仅不重要差异误判为重要差异）
+        let verdict = ai_dir::content_verdict_stats(
+            &state.vfs,
+            &lp,
+            &rp,
+            ai_dir::compare::FileStatSummary::new(l.size, l.mtime_ms),
+            ai_dir::compare::FileStatSummary::new(r.size, r.mtime_ms),
+            method,
+            &state.importance,
+            None,
+        )
+        .await;
+        new_arena[i].status = match verdict {
+            Ok(v) => ai_dir::verdict_to_status(v),
+            // IO 失败不静默判同（R3-09 口径）：标记未证实
+            Err(_) => DirEntryStatus::QuickDiff,
         };
-        new_arena[i].status = if same { DirEntryStatus::Same } else { DirEntryStatus::ContentDiff };
     }
     // 目录聚合重算 + 统计重算
     ai_dir::aggregate_all(&mut new_arena);
@@ -1621,7 +1644,11 @@ async fn rescan_dir(state: &mut ScriptState) {
         &state.vfs,
         &lp,
         &rp,
-        &DirScanOptions { depth: None, criteria: state.criteria.clone() },
+        &DirScanOptions {
+            depth: None,
+            criteria: state.criteria.clone(),
+            importance: state.importance.clone(),
+        },
         &ai_dir::ByNameAligner,
         &CancelFlag::new(),
     )
@@ -2533,10 +2560,7 @@ async fn build_text_snap(
     let rt = ai_core::LineTable::from_text(&rt_text);
     let mut config = ai_core::DiffConfig::default();
     if ignore_unimportant {
-        config.importance.leading_ws_unimportant = true;
-        config.importance.embedded_ws_unimportant = true;
-        config.importance.trailing_ws_unimportant = true;
-        config.importance.case_unimportant = true;
+        config.importance = ignore_unimportant_model();
     }
     let keyed = ai_core::diff_config(&lt, &rt, &config).map_err(|e| ScriptError::Runtime(e.to_string()))?;
     Ok(ReportSnapshot::Text(TextSnapshot::from_tables(

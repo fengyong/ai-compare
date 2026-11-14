@@ -24,8 +24,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use ai_protocol::{
-    CompareCriteria, ContentCompareMode, DirEntryStatus, DirRow, DirStats, DisplayFilterSpec,
-    EntryKind, NameFilterSpec, OtherFilterSpec, ProgressPhase, ScanProgress, SideInfo,
+    CompareCriteria, ContentCompareMethod, ContentCompareMode, ContentCompareResult,
+    DirEntryStatus, DirRow, DirStats, DisplayFilterSpec, EntryKind, NameFilterSpec,
+    OtherFilterSpec, ProgressPhase, ScanProgress, SideInfo,
 };
 use ai_vfs::{dos_attr, EntryKind as VfsEntryKind, StatInfo as VfsStat, VfsDirEntry, VfsPath, VfsProvider};
 
@@ -49,6 +50,8 @@ pub struct DirSessionOptions {
     /// open 时同步展开层级（可视优先；默认 1 = 顶层）
     pub visible_depth: u32,
     pub criteria: CompareCriteria,
+    /// 基于规则内容比较的重要性模型（FR-DIR-011 rulesBased；其余方法忽略）
+    pub importance: ai_core::ImportanceOptions,
     pub aligner: Arc<dyn NameAligner>,
     pub name_filter: Option<NameFilterSpec>,
     pub other_filter: Option<OtherFilterSpec>,
@@ -69,6 +72,7 @@ impl std::fmt::Debug for DirSessionOptions {
             .field("target_depth", &self.target_depth)
             .field("visible_depth", &self.visible_depth)
             .field("criteria", &self.criteria)
+            .field("importance", &self.importance)
             .field("aligner", &self.aligner.mode_name())
             .field("has_name_filter", &self.name_filter.is_some())
             .field("has_other_filter", &self.other_filter.is_some())
@@ -88,6 +92,7 @@ impl DirSessionOptions {
             target_depth: None,
             visible_depth: 1,
             criteria,
+            importance: ai_core::ImportanceOptions::default(),
             aligner,
             name_filter: None,
             other_filter: None,
@@ -576,19 +581,19 @@ impl DirModel {
                 if opts.criteria.content_compare == ContentCompareMode::Never {
                     return DirEntryStatus::QuickDiff;
                 }
-                let same = crate::compare::content_same_stats(
+                let verdict = crate::verdict::content_verdict_stats(
                     self.vfs.as_ref(),
                     &paths.left,
                     &paths.right,
                     crate::compare::FileStatSummary::new(ls.size, ls.mtime_ms),
                     crate::compare::FileStatSummary::new(rs.size, rs.mtime_ms),
-                    crate::compare::ContentHashMode::Crc,
+                    opts.criteria.content_method,
+                    &opts.importance,
                     opts.cache.as_deref(),
                 )
                 .await;
-                match same {
-                    Ok(true) => DirEntryStatus::Same,
-                    Ok(false) => DirEntryStatus::ContentDiff,
+                match verdict {
+                    Ok(v) => crate::verdict::verdict_to_status(v),
                     Err(_) => DirEntryStatus::QuickDiff, // IO 失败不中断扫描，标记未证实
                 }
             }
@@ -1329,6 +1334,72 @@ impl DirModel {
         Ok(changed)
     }
 
+    /// 手动内容比较（R3-16，FR-DIR-012）：对指定行（空 = 全部已配对文件行）
+    /// 按方法判等，回写状态并上推祖先聚合。返回每行的四态结果。
+    ///
+    /// 目录行与孤立项跳过（BC：内容比较只适用于两侧都存在的文件）。
+    pub async fn compare_content(
+        &self,
+        ids: &[String],
+        method: ContentCompareMethod,
+    ) -> Result<Vec<(String, ContentCompareResult, DirEntryStatus)>, DirScanError> {
+        let opts = self.opts.lock().expect("选项锁").clone();
+        let targets: Vec<NodeId> = {
+            let st = self.state.lock().expect("模型锁");
+            if ids.is_empty() {
+                (1..st.arena.len() as NodeId)
+                    .filter(|&i| {
+                        let n = &st.arena[i as usize];
+                        n.kind == EntryKind::File && n.left.is_some() && n.right.is_some()
+                    })
+                    .collect()
+            } else {
+                ids.iter()
+                    .filter_map(|id| st.index.get(id).copied())
+                    .collect()
+            }
+        };
+        let mut out = Vec::with_capacity(targets.len());
+        for id in targets {
+            let (rel, ls, rs) = {
+                let st = self.state.lock().expect("模型锁");
+                let n = &st.arena[id as usize];
+                if n.kind != EntryKind::File || n.left.is_none() || n.right.is_none() {
+                    continue;
+                }
+                (
+                    n.rel_path.clone(),
+                    n.left.clone().unwrap(),
+                    n.right.clone().unwrap(),
+                )
+            };
+            let lp = self.roots.0.join(&rel);
+            let rp = self.roots.1.join(&rel);
+            let result = crate::verdict::content_compare_result(
+                self.vfs.as_ref(),
+                &lp,
+                &rp,
+                crate::compare::FileStatSummary::new(ls.size, ls.mtime_ms),
+                crate::compare::FileStatSummary::new(rs.size, rs.mtime_ms),
+                method,
+                &opts.importance,
+                opts.cache.as_deref(),
+            )
+            .await
+            .map_err(DirScanError::Content)?;
+            let status = crate::verdict::result_to_status(result);
+            {
+                let mut st = self.state.lock().expect("模型锁");
+                self.set_status(&mut st, id, status);
+            }
+            self.aggregate_after(id);
+            out.push((rel, result, status));
+        }
+        let _ = self.rev.fetch_add(1, Ordering::SeqCst);
+        self.notify.notify_waiters();
+        Ok(out)
+    }
+
     /// 重判一对：aligned=true（对齐生效）合并两侧元数据判定；
     /// false（解除对齐）各侧独立按孤儿/同名恢复判定
     async fn rejudge_pair(&self, a: NodeId, b: NodeId, aligned: bool) -> u32 {
@@ -1612,7 +1683,7 @@ pub(crate) fn proto_side(stat: &VfsStat, criteria: &CompareCriteria) -> SideInfo
 pub fn display_visible(status: DirEntryStatus, left: Option<SideInfo>, right: Option<SideInfo>, df: &DisplayFilterSpec) -> bool {
     match status {
         DirEntryStatus::Same | DirEntryStatus::DirSame => df.show_same,
-        DirEntryStatus::ContentDiff => df.show_content_diff,
+        DirEntryStatus::ContentDiff | DirEntryStatus::Similar => df.show_content_diff,
         DirEntryStatus::DirDiff => df.show_dir_diff,
         DirEntryStatus::QuickDiff => {
             let l = left.map(|s| s.mtime_ms).unwrap_or(0);
@@ -1640,6 +1711,7 @@ pub(crate) fn stats_add(stats: &mut DirStats, status: DirEntryStatus) {
         DirEntryStatus::Same => stats.same += 1,
         DirEntryStatus::QuickDiff => stats.quick_diff += 1,
         DirEntryStatus::ContentDiff => stats.content_diff += 1,
+        DirEntryStatus::Similar => stats.similar += 1,
         DirEntryStatus::LeftOnly => stats.left_only += 1,
         DirEntryStatus::RightOnly => stats.right_only += 1,
         DirEntryStatus::DirSame => stats.dir_same += 1,
@@ -1653,6 +1725,7 @@ pub(crate) fn stats_remove(stats: &mut DirStats, status: DirEntryStatus) {
         DirEntryStatus::Same => stats.same = stats.same.saturating_sub(1),
         DirEntryStatus::QuickDiff => stats.quick_diff = stats.quick_diff.saturating_sub(1),
         DirEntryStatus::ContentDiff => stats.content_diff = stats.content_diff.saturating_sub(1),
+        DirEntryStatus::Similar => stats.similar = stats.similar.saturating_sub(1),
         DirEntryStatus::LeftOnly => stats.left_only = stats.left_only.saturating_sub(1),
         DirEntryStatus::RightOnly => stats.right_only = stats.right_only.saturating_sub(1),
         DirEntryStatus::DirSame => stats.dir_same = stats.dir_same.saturating_sub(1),

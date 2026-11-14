@@ -1,6 +1,8 @@
 import { invoke } from '@tauri-apps/api/core';
 import { RpcClient, RpcError } from '../protocol/client';
 import type {
+  DirCompareContentParams,
+  DirCompareContentResult,
   DirDelta,
   DirExecuteParams,
   DirExecuteResult,
@@ -382,6 +384,26 @@ export async function planOperations(params: DirOperateParams): Promise<DirOpera
 export async function executeOperations(params: DirExecuteParams): Promise<DirExecuteResult> {
   const c = await getEngineClient();
   return c.request<DirExecuteResult>('dir/execute', params, 120_000);
+}
+
+/**
+ * dir/compareContent（R3-16，FR-DIR-012）：对选定行按 CRC/二进制/基于规则
+ * 判等，返回五态结果并回写行状态（增量经 dir/delta 推送）。
+ *
+ * 能力位缺失或入口不存在 → null（调用方必须提示"引擎不支持"，不得把
+ * 未比较当成"已比较/相同"）；其余错误抛出。
+ */
+export async function compareDirContent(
+  params: DirCompareContentParams,
+): Promise<DirCompareContentResult | null> {
+  if (!getEngineCapabilities()?.dirCompareContent) return null;
+  const c = await getEngineClient();
+  try {
+    return await c.request<DirCompareContentResult>('dir/compareContent', params, 120_000);
+  } catch (err) {
+    if (isMethodNotFound(err)) return null;
+    throw err;
+  }
 }
 
 // ==================================================================

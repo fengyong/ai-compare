@@ -426,7 +426,11 @@ async fn build_dir_snapshot(
         vfs,
         left,
         right,
-        &ai_dir::DirScanOptions { depth: None, criteria },
+        &ai_dir::DirScanOptions {
+            depth: None,
+            criteria,
+            importance: Default::default(),
+        },
         &ai_dir::ByNameAligner,
         &ai_dir::CancelFlag::new(),
     )
@@ -477,6 +481,7 @@ pub(crate) fn dir_node_to_report_row(n: &ai_dir::DirNode) -> ai_core::DirReportR
             ai_protocol::DirEntryStatus::Same => ReportEntryStatus::Same,
             ai_protocol::DirEntryStatus::QuickDiff => ReportEntryStatus::QuickDiff,
             ai_protocol::DirEntryStatus::ContentDiff => ReportEntryStatus::ContentDiff,
+            ai_protocol::DirEntryStatus::Similar => ReportEntryStatus::Similar,
             ai_protocol::DirEntryStatus::LeftOnly => ReportEntryStatus::LeftOnly,
             ai_protocol::DirEntryStatus::RightOnly => ReportEntryStatus::RightOnly,
             ai_protocol::DirEntryStatus::DirSame => ReportEntryStatus::DirSame,

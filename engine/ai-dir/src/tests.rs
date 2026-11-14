@@ -29,8 +29,14 @@ fn criteria(tol: u32, mode: ContentCompareMode) -> CompareCriteria {
 
 async fn scan_tops(left: &VfsPath, right: &VfsPath, crit: CompareCriteria) -> crate::DirScanResult {
     let vfs = LocalFs::new();
-    let opts = DirScanOptions { depth: Some(1), criteria: crit };
-    scan(&vfs, left, right, &opts, &ByNameAligner, &CancelFlag::new()).await.expect("scan")
+    let opts = DirScanOptions {
+        depth: Some(1),
+        criteria: crit,
+        ..Default::default()
+    };
+    scan(&vfs, left, right, &opts, &ByNameAligner, &CancelFlag::new())
+        .await
+        .expect("scan")
 }
 
 #[tokio::test]
@@ -143,8 +149,24 @@ async fn depth_controls_recursion_and_rows_deterministic() {
     let vfs = LocalFs::new();
 
     // depth=1：仅顶层
-    let res = scan(&vfs, &left, &right, &DirScanOptions { depth: Some(1), criteria: criteria(2, ContentCompareMode::Auto) }, &ByNameAligner, &CancelFlag::new()).await.unwrap();
-    let ids: Vec<String> = rows_from_arena(&res.arena).iter().map(|r| r.id.clone()).collect();
+    let res = scan(
+        &vfs,
+        &left,
+        &right,
+        &DirScanOptions {
+            depth: Some(1),
+            criteria: criteria(2, ContentCompareMode::Auto),
+            ..Default::default()
+        },
+        &ByNameAligner,
+        &CancelFlag::new(),
+    )
+    .await
+    .unwrap();
+    let ids: Vec<String> = rows_from_arena(&res.arena)
+        .iter()
+        .map(|r| r.id.clone())
+        .collect();
     assert_eq!(ids, vec!["sub", "top.txt"], "BFS 序：字典序");
     let rows = rows_from_arena(&res.arena);
     assert_eq!(rows[0].status, DirEntryStatus::DirSame, "目录两侧存在 -> DirSame（P0 占位，P2 聚合）");
@@ -152,8 +174,24 @@ async fn depth_controls_recursion_and_rows_deterministic() {
     assert!(!ids.iter().any(|i| i.contains('/')), "depth=1 不展开子目录");
 
     // depth=None：全递归
-    let res = scan(&vfs, &left, &right, &DirScanOptions { depth: None, criteria: criteria(2, ContentCompareMode::Auto) }, &ByNameAligner, &CancelFlag::new()).await.unwrap();
-    let ids: Vec<String> = rows_from_arena(&res.arena).iter().map(|r| r.id.clone()).collect();
+    let res = scan(
+        &vfs,
+        &left,
+        &right,
+        &DirScanOptions {
+            depth: None,
+            criteria: criteria(2, ContentCompareMode::Auto),
+            ..Default::default()
+        },
+        &ByNameAligner,
+        &CancelFlag::new(),
+    )
+    .await
+    .unwrap();
+    let ids: Vec<String> = rows_from_arena(&res.arena)
+        .iter()
+        .map(|r| r.id.clone())
+        .collect();
     assert_eq!(
         ids,
         vec!["sub", "top.txt", "sub/deep", "sub/inner.txt", "sub/deep/deeper.txt"],
