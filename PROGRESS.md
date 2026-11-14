@@ -159,3 +159,4 @@
   - 无其他分支/工作树遗漏（main 单分支，工作树干净）
   - 下一步：P14 视图批次（图片比较 UI 消费 picture.rs 数据面）+ P13（i18n/Shell 集成）+ P12-c 后半（agent 恢复后）
 - 2026-11-14 19:3x：**P14b 引擎接线完成并提交**：picture/open RPC（协议+handler+能力位+CLI aic picture）——图片比较引擎→协议→CLI 全链路通（端到端：异图 75% 相似度/1 块/退出码 1）；workspace **822/0** + clippy 零警；golden/replay 重固化仅 pictureCompare 一行；P14 视图批次（UI 图片比较视图消费 picture/open）待续
+- 2026-11-14 19:5x：**P14c 图片比较视图交付**：PictureCompareView（统计栏/容差滑杆/显示侧切换/canvas 差异块叠加+mock 演示合成图案）+ 全接线（Tab picture kind/openPictureTab/viewRegistry/主页按钮启用/CommandContext）；**顺带修复 P6c 期间 mockEngine dispatch 落穿回归**（picture/open case 插错位置吞 text/lines—— PictureCompareView 开发时测试矩阵暴露）；UI 400 全绿、e2e 过；git 71 提交
