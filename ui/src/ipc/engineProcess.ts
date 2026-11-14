@@ -119,7 +119,7 @@ export function getEngineCapabilities(): EngineCapabilities | null {
 }
 
 /** 生成引擎侧会话句柄（客户端分配；前缀便于日志排查） */
-export function newSessionId(kind: 'dir' | 'text' | 'merge' | 'picture' | 'table'): string {
+export function newSessionId(kind: 'dir' | 'text' | 'merge' | 'picture' | 'table' | 'hex'): string {
   const rand =
     typeof crypto !== 'undefined' && 'randomUUID' in crypto
       ? crypto.randomUUID().slice(0, 8)
@@ -332,6 +332,35 @@ export async function executeOperations(params: DirExecuteParams): Promise<DirEx
 // ==================================================================
 // P14：图片比较方法集（picture/open；块清单全量返回）
 // ==================================================================
+
+export async function openHex(params: {
+  sessionId: string;
+  left: string;
+  right: string;
+  options?: { chunkSize?: number; alignMode?: string } | null;
+}): Promise<{
+  sessionId: string;
+  leftSize: number;
+  rightSize: number;
+  blockCount: number;
+  summary: { sameBytes: number; changedBytes: number; insertedBytes: number; deletedBytes: number };
+}> {
+  const c = await getEngineClient();
+  return c.request('hex/open', params, 60_000);
+}
+
+export async function hexBytes(params: {
+  sessionId: string;
+  side: 'left' | 'right';
+  offset: number;
+  length: number;
+}): Promise<{
+  lines: Array<{ addr: number; hex: string; ascii: string; status: string }>;
+  done: boolean;
+}> {
+  const c = await getEngineClient();
+  return c.request('hex/bytes', params, 60_000);
+}
 
 export async function openTable(params: {
   sessionId: string;

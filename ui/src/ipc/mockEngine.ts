@@ -48,6 +48,8 @@ import type {
   PictureOpenParams,
   TableOpenParams,
   TableSectionsParams,
+  HexOpenParams,
+  HexBytesParams,
 } from '../protocol/types';
 import type { InlineSpanDto } from '../protocol/generated/InlineSpanDto';
 import { wordDiff } from '../lib/inlineDiffCore';
@@ -130,6 +132,7 @@ export class MockEngine {
   private readonly textSessions = new Map<string, MockTextSession>();
   private readonly mergeSessions = new Map<string, MockMergeSession>();
   private readonly tableSessions = new Map<string, { seed: number; columns: Array<{ name: string; ty: string; left: number | null; right: number | null }>; rowCount?: number }>();
+  private readonly hexSessions = new Map<string, { seed: number; leftSize: number; rightSize: number }>();
   /** dir/filter 差分基线（会话 id -> 上次发出的行 id 集） */
   private readonly lastIds = new Map<string, string[]>();
   private disposed = false;
@@ -213,6 +216,10 @@ export class MockEngine {
       case 'text/lines':
         return { result: this.textLines(params as TextLinesParams), notifications: [] };
       case 'picture/open':
+      case 'hex/open':
+        return { result: this.hexOpen(params as HexOpenParams), notifications: [] };
+      case 'hex/bytes':
+        return { result: this.hexBytes(params as HexBytesParams), notifications: [] };
       case 'table/open':
         return { result: this.tableOpen(params as TableOpenParams), notifications: [] };
       case 'table/sections':
@@ -1005,6 +1012,65 @@ export class MockEngine {
       });
     }
     return { sessionId: p.sessionId, offset: start, rowCount, hasMore: end < rowCount, rows };
+  }
+
+  /** P14：十六进制比较演示（确定性字节；与引擎 hex/open|bytes 同形） */
+  private hexOpen(p: HexOpenParams): {
+    sessionId: string;
+    leftSize: number;
+    rightSize: number;
+    blockCount: number;
+    summary: { sameBytes: number; changedBytes: number; insertedBytes: number; deletedBytes: number };
+  } {
+    if (!p || typeof p.sessionId !== 'string' || p.sessionId === '') {
+      throw new InvalidParams('sessionId 不能为空');
+    }
+    if (this.dirSessions.has(p.sessionId) || this.textSessions.has(p.sessionId)) {
+      throw new RpcErr(CODE.SESSION_EXISTS, `会话已存在: ${p.sessionId}`);
+    }
+    const seed = (p.left ?? '').length + (p.right ?? '').length;
+    const leftSize = 256 + (seed % 4) * 64;
+    const rightSize = leftSize + 16;
+    this.hexSessions.set(p.sessionId, { seed, leftSize, rightSize });
+    return {
+      sessionId: p.sessionId,
+      leftSize,
+      rightSize,
+      blockCount: 2,
+      summary: { sameBytes: leftSize - 8, changedBytes: 4, insertedBytes: 0, deletedBytes: 0 },
+    };
+  }
+
+  private hexBytes(p: HexBytesParams): {
+    lines: Array<{ addr: number; hex: string; ascii: string; status: string }>;
+    done: boolean;
+  } {
+    const meta = this.hexSessions.get(p.sessionId);
+    if (!meta) {
+      throw new RpcErr(CODE.SESSION_NOT_FOUND, `会话不存在: ${p.sessionId}`);
+    }
+    const total = p.side === 'left' ? meta.leftSize : meta.rightSize;
+    const lines: Array<{ addr: number; hex: string; ascii: string; status: string }> = [];
+    // 16 字节/行；确定性：每第 9 字节 +1（演示 changed），右尾 16 字节 inserted
+    const start = Math.max(0, Math.min(Number(p.offset), total));
+    const len = Math.max(0, Math.min(p.length, total - start));
+    while (len > 0 && lines.length * 16 < len) {
+      const addr = start + lines.length * 16;
+      const rowLen = Math.min(16, total - addr);
+      if (rowLen <= 0) break;
+      const hexParts: string[] = [];
+      let ascii = '';
+      let status = '';
+      for (let k = 0; k < rowLen; k++) {
+        const b = (addr + k) % 256;
+        const changed = b % 16 === 8 && addr + k >= meta.leftSize - 8 ? false : b % 16 === 8;
+        hexParts.push(b.toString(16).padStart(2, '0'));
+        ascii += b >= 0x20 && b < 0x7f ? String.fromCharCode(b) : '.';
+        status += changed ? 'x' : '=';
+      }
+      lines.push({ addr, hex: hexParts.join(' '), ascii, status });
+    }
+    return { lines, done: start + lines.length * 16 >= total };
   }
 
   private sessionClose(p: SessionCloseParams): null {
