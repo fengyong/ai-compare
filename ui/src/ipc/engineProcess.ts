@@ -284,6 +284,17 @@ export function retryEngine(): void {
   setSnapshot({ status: 'connecting', message: '正在连接引擎…', phase: 'reconnecting' });
 }
 
+/**
+ * 当前是否运行在内置演示引擎（mock）上。
+ *
+ * 浏览器环境（无 Tauri）恒为演示引擎；桌面环境只有用户主动降级
+ * （`switchToMockEngine`）或引擎启动失败后切换时才为演示引擎。
+ * 演示引擎不触碰真实文件系统，故「示例路径」在两种模式下的取值不同。
+ */
+export function isMockEngineActive(): boolean {
+  return forcedMock || !isTauriRuntime();
+}
+
 /** 降级为演示引擎（横幅按钮）：重载页面后以 mock 重建所有会话视图 */
 export function switchToMockEngine(): void {
   forcedMock = true;

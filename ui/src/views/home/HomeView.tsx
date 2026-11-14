@@ -6,6 +6,9 @@ import { useShell } from '../../shell/store';
 import { extractPathsFromDataTransfer, pickTwoPaths } from './dropPaths';
 import { SessionTreePanel } from './SessionTreePanel';
 import { S } from '../../strings';
+import { isMockEngineActive } from '../../ipc/engineProcess';
+import { resolveAppDirs, TauriFileStore } from '../../session/storageAdapter';
+import { seedDemoDirs } from '../../lib/demoSeed';
 
 /**
  * 主页视图（FR-HOME-001，BC 风格）：
@@ -47,6 +50,35 @@ export function HomeView() {
       openFolderTab(l, r);
       setLeft('');
       setRight('');
+    }
+  };
+
+  /**
+   * 「填充示例路径」：
+   * - 演示引擎（浏览器 dev / 手动降级）：填占位路径 `/demo/project-v1`，
+   *   mock 不触碰文件系统，任意路径都能渲染合成目录树；
+   * - 真实引擎（桌面）：占位路径在真实文件系统不存在，`dir/open` 会报
+   *   「根路径不存在」，故改为在应用数据目录落盘一对真实演示目录再填入。
+   */
+  const fillSample = async () => {
+    if (isMockEngineActive()) {
+      setLeft(S.home.sampleLeft);
+      setRight(S.home.sampleRight);
+      return;
+    }
+    try {
+      const dirs = await resolveAppDirs();
+      if (!dirs) {
+        setLeft(S.home.sampleLeft);
+        setRight(S.home.sampleRight);
+        return;
+      }
+      const roots = await seedDemoDirs(dirs.baseDir, new TauriFileStore());
+      setLeft(roots.left);
+      setRight(roots.right);
+      setNotice(S.home.sampleSeeded);
+    } catch (err) {
+      setNotice(`${S.home.sampleFailed}: ${err instanceof Error ? err.message : String(err)}`);
     }
   };
 
@@ -199,11 +231,8 @@ export function HomeView() {
         </div>
         <div className="aic-home-actions">
           <button
-            title={S.home.sample}
-            onClick={() => {
-              setLeft(S.home.sampleLeft);
-              setRight(S.home.sampleRight);
-            }}
+            title={isMockEngineActive() ? S.home.sample : S.home.sampleReal}
+            onClick={() => void fillSample()}
           >
             {S.home.sample}
           </button>

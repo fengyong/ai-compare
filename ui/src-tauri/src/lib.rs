@@ -96,8 +96,14 @@ fn resolve_engine_path() -> Result<PathBuf, String> {
     }
 
     Err(format!(
-        "未找到引擎可执行文件（{ENGINE_NAME}）。已尝试：{}\n请先构建引擎：在仓库根执行 `cargo build -p ai-engine`，\n或设置 AI_ENGINE_PATH 指向引擎二进制；浏览器中可用 `pnpm dev` 以内置演示数据运行 UI。",
-        tried.join("；")
+        "未找到引擎可执行文件（{ENGINE_NAME}）。已尝试：{}\n{}",
+        tried.join("；"),
+        if cfg!(debug_assertions) {
+            "请先构建引擎：在仓库根执行 `cargo build -p ai-engine`，或设置 AI_ENGINE_PATH 指向引擎二进制；浏览器中可用 `pnpm dev` 以内置演示数据运行 UI。"
+        } else {
+            // 发行包场景：桌面用户没有仓库可构建，缺引擎说明安装包不完整
+            "当前安装包不完整（缺少随包引擎 ai-engine）——请重新获取完整安装包；开发者可用 AI_ENGINE_PATH 指向引擎二进制。"
+        }
     ))
 }
 
