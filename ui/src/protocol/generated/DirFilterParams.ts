@@ -18,4 +18,8 @@ suppress: boolean | null,
 /**
  * 平铺模式切换（FR-DIR-021）
  */
-flat: boolean | null, };
+flat: boolean | null, 
+/**
+ * 强制重扫（右键「刷新」）：文件系统可能已被外部改动，与过滤器是否变化无关
+ */
+rescan: boolean | null, };

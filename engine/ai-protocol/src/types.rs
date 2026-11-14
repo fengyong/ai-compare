@@ -2507,6 +2507,9 @@ pub struct DirFilterParams {
     /// 平铺模式切换（FR-DIR-021）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub flat: Option<bool>,
+    /// 强制重扫（右键「刷新」）：文件系统可能已被外部改动，与过滤器是否变化无关
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rescan: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

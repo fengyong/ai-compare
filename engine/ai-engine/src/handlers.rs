@@ -453,7 +453,10 @@ async fn dir_filter(
 ) -> Result<Handled, RpcErrorObject> {
     let params: ai_protocol::DirFilterParams = parse_params(params)?;
     let model = dir_model(&ctx.sessions, &params.session_id).await?;
-    if params.name_filter.is_some() || params.other_filter.is_some() {
+    if params.rescan == Some(true) {
+        model.refresh().await.map_err(|e| mapping::dir_scan_error_to_rpc(&e))?;
+        model.start_background();
+    } else if params.name_filter.is_some() || params.other_filter.is_some() {
         model.update_filters(params.name_filter.clone(), params.other_filter.clone()).await
             .map_err(|e| mapping::dir_scan_error_to_rpc(&e))?;
         model.start_background(); // 重扫后的后台推进（幂等）
@@ -1741,12 +1744,13 @@ async fn dir_execute(
         cancelled: report.cancelled,
     };
 
-    // 非 dry_run：rescan 推 delta（模型会话走 update_filters(None,None) 触发重扫；
+    // 非 dry_run：rescan 推 delta（模型会话走 refresh() 强制重扫——落盘后必须重扫，
+    // 不能借道 update_filters：过滤器未变时它是 no-op；
     // P0 同步会话重新全量扫描替换会话数据并推完整 upsert 批次）
     let mut notifications = Vec::new();
     if !dry_run {
         if let Some(model) = &model {
-            model.update_filters(None, None).await.map_err(|e| mapping::dir_scan_error_to_rpc(&e))?;
+            model.refresh().await.map_err(|e| mapping::dir_scan_error_to_rpc(&e))?;
             if let Some(d) = model.take_delta().await {
                 notifications = delta_notifications(&session_id, &d, ctx.max_batch_rows);
             }
@@ -3339,6 +3343,49 @@ mod p9_tests {
         .await
         .unwrap();
         (dir, l.to_string_lossy().into_owned(), r.to_string_lossy().into_owned())
+    }
+
+    #[tokio::test]
+    async fn dir_filter_rescan_flag_picks_up_external_changes() {
+        let c = ctx();
+        let (_d, left, _right) = make_dir_session(&c, "drefresh").await;
+        std::fs::write(std::path::Path::new(&left).join("external.txt"), b"E").unwrap();
+
+        // 不带 rescan（UI 显示类切换的形状：空 nameFilter）-> 过滤器未变即 no-op
+        let (tx, mut rx) = chan();
+        let got = dispatch(
+            "dir/filter",
+            Some(json!({"sessionId": "drefresh", "nameFilter": {}})),
+            &c, &ai_dir::CancelFlag::new(), tx,
+        )
+        .await
+        .unwrap();
+        let v = match got { Handled::Value(v) => v, _ => panic!("形态") };
+        assert_eq!(v["stats"]["total"], 4, "未请求重扫不得改变行集: {v}");
+        while let Ok(_m) = rx.try_recv() {}
+
+        // 右键「刷新」：rescan=true 必须重扫，外部新建文件进入行集并前送
+        let (tx, mut rx) = chan();
+        let got = dispatch(
+            "dir/filter",
+            Some(json!({"sessionId": "drefresh", "nameFilter": {}, "rescan": true})),
+            &c, &ai_dir::CancelFlag::new(), tx,
+        )
+        .await
+        .unwrap();
+        let v = match got { Handled::Value(v) => v, _ => panic!("形态") };
+        assert_eq!(v["stats"]["total"], 5, "刷新后含外部新建文件: {v}");
+        let mut saw_external = false;
+        while let Ok(msg) = rx.try_recv() {
+            if let Outbound::Notification(n) = msg {
+                for row in n.params["upserts"].as_array().unwrap_or(&Vec::new()) {
+                    if row["id"] == "external.txt" {
+                        saw_external = true;
+                    }
+                }
+            }
+        }
+        assert!(saw_external, "刷新须前送新行 dir/delta");
     }
 
     #[tokio::test]

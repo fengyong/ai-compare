@@ -433,6 +433,10 @@ export class MockEngine {
       s.flat = p.flat;
       changed = true;
     }
+    // mock 无文件系统：强制重扫只能重推当前行集（真实引擎会重新扫描磁盘）
+    if (p.rescan) {
+      changed = true;
+    }
     if (!changed) {
       const rows = currentRows(s);
       return {
