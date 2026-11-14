@@ -1,10 +1,17 @@
 import type { StateCreator } from 'zustand';
 import * as engine from '../ipc/engineProcess';
-import { releaseDirCache } from '../views/folder-compare/dirRowCache';
+import { getDirCache, releaseDirCache } from '../views/folder-compare/dirRowCache';
+import { buildOpsForCommand } from '../views/folder-compare/dirOps';
+import {
+  currentDiffIndex,
+  orderedDiffFileRows,
+  pickDiffTarget,
+} from '../views/text-compare/diffFileNav';
+import { parentRescanParams } from '../views/text-compare/parentWriteback';
 import { deleteTextSession } from '../views/text-compare/textModel';
 import { basename, joinPath, looksTextual } from '../lib/env';
 import { S } from '../strings';
-import { firstPendingGuard, guardOf } from './closeGuard';
+import { closeGuardKind, firstPendingGuard, guardOf } from './closeGuard';
 import type { ShellStore, Tab, WindowState, WindowsSlice, TabsSlice, OpenTabOpts } from './shellState';
 
 /** 窗口 slice（FR-WIN-001/002）：多窗口、拖出标签、合并窗口 */
@@ -363,6 +370,107 @@ export const createTabsSlice: StateCreator<ShellStore, [], [], TabsSlice> = (set
     } catch (err) {
       get().setNotice(`${S.folder.openFail}: ${err instanceof Error ? err.message : String(err)}`);
     }
+  },
+
+  /**
+   * 子会话差异文件遍历（FR-DIR-071）：跳到父目录会话的下一/上一差异文件对，
+   * 可先整文件复制到对侧（BC"复制文件到右侧并打开下一个差异"）。
+   *
+   * 目标在复制之前算定：复制 + 回传后当前对会判为 same 并从差异列表消失，
+   * 那时再算就丢了位置。
+   */
+  async navigateDiffFile(tabId, dir, copyTo) {
+    const st = get();
+    const found = st.findTab(tabId);
+    const text = found?.tab.text;
+    if (!found || !text || !text.parentTabId || !text.parentFolderSessionId) return;
+    const parentSessionId = text.parentFolderSessionId;
+    const parent = st.findTab(text.parentTabId)?.tab.folder;
+    if (!parent) return;
+    // 跳转等于丢弃当前会话：未落盘编辑必须先经守卫（与关闭标签同一口径，R3-05）
+    if (closeGuardKind(found.tab)) {
+      st.setNotice(S.text.navDirty);
+      return;
+    }
+    const rows = getDirCache(parentSessionId).getRows();
+    const ordered = orderedDiffFileRows(rows);
+    const current = { leftPath: text.left.path, rightPath: text.right.path };
+    const index = currentDiffIndex(ordered, current, parent);
+    const target = pickDiffTarget(ordered, index, dir);
+    if (!target) {
+      st.setNotice(S.text.noDiffFiles);
+      return;
+    }
+    if (copyTo) {
+      const rowIndex = currentDiffIndex(rows, current, parent);
+      const row = rowIndex >= 0 ? rows[rowIndex] : null;
+      if (row) {
+        const ok = await st.askConfirm({
+          title: S.text.navCopyTitle,
+          message: S.text.navCopyMessage(
+            row.name,
+            copyTo === 'right' ? S.text.paneRight : S.text.paneLeft,
+          ),
+          confirmLabel: S.text.navCopyOk,
+        });
+        if (!ok) return;
+        const ops = buildOpsForCommand(
+          copyTo === 'right' ? 'copyToRight' : 'copyToLeft',
+          [row],
+          new Set([row.id]),
+        );
+        try {
+          const result = await engine.executeOperations({ sessionId: parentSessionId, ops });
+          if (result.failed.length > 0) {
+            st.setNotice(S.text.navCopyFailed(result.failed[0].detail ?? ''));
+            return;
+          }
+        } catch (err) {
+          st.setNotice(S.text.navCopyFailed(err instanceof Error ? err.message : String(err)));
+          return;
+        }
+        const rescan = parentRescanParams(parentSessionId);
+        if (rescan) void engine.filterDir(rescan).catch(() => undefined);
+      }
+    }
+    const left = joinPath(parent.left, target.leftPath);
+    const right = joinPath(parent.right, target.rightPath);
+    if (left === current.leftPath && right === current.rightPath) {
+      st.setNotice(S.text.noMoreDiffFiles);
+      return;
+    }
+    const sessionId = engine.newSessionId('text');
+    try {
+      await engine.openText({ sessionId, left, right, options: null });
+    } catch (err) {
+      st.setNotice(`${S.folder.openFail}: ${err instanceof Error ? err.message : String(err)}`);
+      return;
+    }
+    // 旧会话按关闭标签的同一套清理（句柄注销 + 模型缓存释放 + 幂等 close）
+    engine.untrackSession(text.sessionId);
+    deleteTextSession(text.sessionId);
+    void engine.closeSession({ sessionId: text.sessionId }).catch(() => undefined);
+    const baseName = (rel: string): string => rel.split('/').pop() || rel;
+    const title = `${target.name}（${S.tab.textTitleSuffix}）`;
+    set((state) => ({
+      windows: state.windows.map((w) => {
+        const tabs = w.tabs.map((t) =>
+          t.id === tabId && t.text
+            ? {
+                ...t,
+                title,
+                text: {
+                  ...t.text,
+                  sessionId,
+                  left: { path: left, name: baseName(target.leftPath) },
+                  right: { path: right, name: baseName(target.rightPath) },
+                },
+              }
+            : t,
+        );
+        return { ...w, tabs, title: titleOf(w.activeTabId, tabs) };
+      }),
+    }));
   },
 
   activate(tabId) {

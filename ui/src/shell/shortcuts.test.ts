@@ -120,6 +120,24 @@ describe('shell/shortcuts 键位引擎', () => {
     expect(engine.resolveCommand(fakeEvent('x', {}))).toBeNull();
   });
 
+  it('方向键：DOM 的 ArrowDown/ArrowUp 必须命中 Down/Up 绑定（FR-DIR-071 键位）', () => {
+    const engine = makeEngine();
+    expect(engine.resolveCommand(fakeEvent('ArrowDown', { ctrl: true, alt: true }))).toBe(
+      'search.nextDiffFile',
+    );
+    expect(engine.resolveCommand(fakeEvent('ArrowUp', { ctrl: true, alt: true }))).toBe(
+      'search.prevDiffFile',
+    );
+    expect(eventMatches(fakeEvent('ArrowLeft', {}), parseBinding('Left')!)).toBe(true);
+    expect(
+      eventMatches(fakeEvent('ArrowRight', { shift: true }), parseBinding('Shift+Right')!),
+    ).toBe(true);
+    // 绑定串写全名同样可用（用户自定义键位时两种写法都要认）
+    expect(parseBinding('Ctrl+Alt+ArrowDown')).toEqual(parseBinding('Ctrl+Alt+Down'));
+    // 修饰符不符仍不得命中
+    expect(engine.resolveCommand(fakeEvent('ArrowDown', { ctrl: true }))).toBeNull();
+  });
+
   it('rebind：无冲突生效；冲突经确认后生效、拒绝则不变', () => {
     const engine = makeEngine();
     expect(engine.rebind('session.save', 'Ctrl+Alt+P')).toBe(true);

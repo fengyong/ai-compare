@@ -7,6 +7,7 @@ export const S = {
   /** 队列 8：菜单栏 / 工具栏（附录 F 命令矩阵 + FR-UI-003） */
   menu: {
     session: '会话',
+    search: '搜索',
     view: '视图',
     window: '窗口',
     tools: '工具',
@@ -514,6 +515,23 @@ export const S = {
     firstDiff: '第一处差异',
     prevDiff: '上一处差异',
     nextDiff: '下一处差异',
+    // 子会话差异文件遍历（FR-DIR-071）
+    nextDiffFile: '下一个差异文件',
+    prevDiffFile: '上一个差异文件',
+    copyRightNext: '复制文件到右侧并打开下一个差异',
+    copyLeftNext: '复制文件到左侧并打开下一个差异',
+    navDirty: '当前文件有未保存的修改，请先保存或放弃后再跳转差异文件',
+    noDiffFiles: '父文件夹会话中没有差异文件',
+    noMoreDiffFiles: '没有更多差异文件',
+    navCopyTitle: '复制并打开下一个差异文件',
+    navCopyMessage: (name: string, side: string) =>
+      `将 ${name} 复制到${side}（覆盖目标侧现有文件），然后打开下一个差异文件。`,
+    navCopyOk: '复制并继续',
+    navCopyFailed: (msg: string) => `复制失败：${msg}`,
+    navPrevShort: '上一差异文件',
+    navNextShort: '下一差异文件',
+    navCopyRightShort: '复制到右侧并继续',
+    navCopyLeftShort: '复制到左侧并继续',
     sectionsLabel: '差异部分',
     equalSectionsLabel: '相同部分',
     loading: '正在加载比较结果…',

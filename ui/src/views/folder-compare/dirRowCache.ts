@@ -149,8 +149,6 @@ export class DirRowCache {
     this.progress = d.progress ?? null;
     // 首批携带当前全量错误（引擎每条 delta 链路都在 batch 0 回传）：先清后收，
     // 重扫后已恢复可读的路径不会留下陈旧错误；后续批次为空，不得清掉首批事实。
-    // 首批携带当前全量错误（引擎每条 delta 链路都在 batch 0 回传）：先清后收，
-    // 重扫后已恢复可读的路径不会留下陈旧错误；后续批次为空，不得清掉首批事实。
     if (d.batch?.index === 0) this.scanErrors.clear();
     for (const e of d.scanErrors ?? []) this.scanErrors.set(e.path, e.message);
     this.bump();

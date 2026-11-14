@@ -6,12 +6,13 @@ import type { CommandCategory, CommandContext, CommandDef } from './commands';
  * 灰显，工具栏按收藏 id 顺序取可用命令，布局可循环切换。
  */
 
-export type MenuId = 'session' | 'view' | 'window' | 'tools' | 'help';
+export type MenuId = 'session' | 'search' | 'view' | 'window' | 'tools' | 'help';
 
-export const MENU_IDS: readonly MenuId[] = ['session', 'view', 'window', 'tools', 'help'];
+export const MENU_IDS: readonly MenuId[] = ['session', 'search', 'view', 'window', 'tools', 'help'];
 
 export const MENU_CATEGORIES: Record<MenuId, readonly CommandCategory[]> = {
   session: ['会话'],
+  search: ['搜索'],
   view: ['视图'],
   window: ['窗口'],
   tools: ['工具'],
