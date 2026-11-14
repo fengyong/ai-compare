@@ -45,6 +45,7 @@ import type {
   TextInlineDiffResult,
   TextSectionsParams,
   TextSectionsResult,
+  PictureOpenParams,
 } from '../protocol/types';
 import type { InlineSpanDto } from '../protocol/generated/InlineSpanDto';
 import { wordDiff } from '../lib/inlineDiffCore';
@@ -208,6 +209,8 @@ export class MockEngine {
         return { result: this.textSections(params as TextSectionsParams), notifications: [] };
       case 'text/lines':
         return { result: this.textLines(params as TextLinesParams), notifications: [] };
+      case 'picture/open':
+        return { result: this.pictureOpen(params as PictureOpenParams), notifications: [] };
       case 'text/inlineDiff':
         return { result: this.textInlineDiff(params as TextInlineDiffParams), notifications: [] };
       case 'session/close':
@@ -818,6 +821,66 @@ export class MockEngine {
       state: anyTruncated ? 'partial' : 'full',
       lines,
     };
+  }
+
+  /** P14：图片比较演示（确定性伪随机差异块；不产真实像素——浏览器演示走视图 canvas 合成图） */
+  private pictureOpen(p: PictureOpenParams): {
+    sessionId: string;
+    width: number;
+    height: number;
+    leftWidth: number;
+    leftHeight: number;
+    rightWidth: number;
+    rightHeight: number;
+    diffPixels: number;
+    totalPixels: number;
+    similarityPct: number;
+    blocks: Array<{ x: number; y: number; w: number; h: number; diffRatio: number }>;
+    truncated: boolean;
+  } {
+    if (!p || typeof p.sessionId !== 'string' || p.sessionId === '') {
+      throw new InvalidParams('sessionId 不能为空');
+    }
+    if (this.dirSessions.has(p.sessionId) || this.textSessions.has(p.sessionId)) {
+      throw new RpcErr(CODE.SESSION_EXISTS, `会话已存在: ${p.sessionId}`);
+    }
+    const seed = (p.left ?? '').length + (p.right ?? '').length;
+    const w = 512 + (seed % 3) * 128;
+    const h = 384 + (seed % 2) * 64;
+    const block = p.options?.block ?? 32;
+    const tolerance = p.options?.tolerance ?? 8;
+    const bx = Math.ceil(w / block);
+    const by = Math.ceil(h / block);
+    const blocks: Array<{ x: number; y: number; w: number; h: number; diffRatio: number }> = [];
+    let diffPixels = 0;
+    let rnd = (seed * 2654435761) % 4294967296 || 1;
+    for (let iy = 0; iy < by; iy++) {
+      for (let ix = 0; ix < bx; ix++) {
+        rnd = (rnd * 1103515245 + 12345) % 2147483648;
+        if (rnd % 10 < 2) {
+          const ratio = 0.1 + (rnd % 100) / 250; // 0.1~0.5
+          const cnt = Math.round(ratio * block * block);
+          diffPixels += cnt;
+          blocks.push({ x: ix * block, y: iy * block, w: block, h: block, diffRatio: ratio });
+        }
+      }
+    }
+    const total = w * h;
+    return {
+      sessionId: p.sessionId,
+      width: w,
+      height: h,
+      leftWidth: w,
+      leftHeight: h,
+      rightWidth: w,
+      rightHeight: h,
+      diffPixels,
+      totalPixels: total,
+      similarityPct: Math.round((1 - diffPixels / total) * 10000) / 100,
+      blocks,
+      truncated: false,
+    };
+    void tolerance;
   }
 
   private sessionClose(p: SessionCloseParams): null {

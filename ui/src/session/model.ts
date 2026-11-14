@@ -49,7 +49,7 @@ export const KIND_META: Record<SessionKind, KindMeta> = {
   'text-compare': { title: '文本比较', icon: '📄', phase: 'P0/P5', implemented: true },
   'table-compare': { title: '表格比较', icon: '📊', phase: 'P9', implemented: false },
   'hex-compare': { title: '十六进制比较', icon: '🔢', phase: 'P9', implemented: false },
-  'picture-compare': { title: '图片比较', icon: '🖼️', phase: 'P9', implemented: false },
+  'picture-compare': { title: '图片比较', icon: '🖼️', phase: 'P0/P14', implemented: true },
   'folder-sync': { title: '文件夹同步', icon: '🔄', phase: 'P8', implemented: true },
   'folder-merge': { title: '文件夹合并', icon: '🔀', phase: 'P8', implemented: true },
 };

@@ -100,6 +100,30 @@ export function titleOf(tabId: string | undefined, tabs: Tab[]): string {
 
 export const createTabsSlice: StateCreator<ShellStore, [], [], TabsSlice> = (set, get) => ({
   /** 文件夹同步标签（P8，FR-SYNC-001）：复用目录会话句柄，视图承载同步方法/策略/计划/报告 */
+  /** P14：图片比较标签（FR-PIC）：两侧图片路径 + picture/open 会话句柄 */
+  openPictureTab(left, right, opts: OpenTabOpts = {}) {
+    const id = nextTabId('picture');
+    const title = `${S.tab.pictureTitleSuffix}：${basename(left)} ⇄ ${basename(right)}`;
+    const tab: Tab = {
+      id,
+      kind: 'picture',
+      title,
+      picture: { left, right, sessionId: engine.newSessionId('picture') },
+      sessionLink: opts.sessionLink,
+    };
+    set((st) => {
+      const targetId = opts.windowId ?? st.activeWindowId;
+      const activate = opts.activate !== false;
+      return {
+        windows: st.windows.map((w) =>
+          w.id === targetId
+            ? { ...w, tabs: [...w.tabs, tab], activeTabId: activate ? id : w.activeTabId, title: activate ? title : w.title }
+            : w
+        ),
+        activeWindowId: opts.windowId ? targetId : st.activeWindowId,
+      };
+    });
+  },
   openFolderSyncTab(left, right, opts: OpenTabOpts = {}) {
     const id = nextTabId('sync');
     const title = `${S.tab.syncTitleSuffix}：${basename(left)} ⇄ ${basename(right)}`;

@@ -20,6 +20,11 @@
  * ============================================================ */
 
 export type { BatchInfo } from './generated/BatchInfo';
+export type { PictureBlockDto } from './generated/PictureBlockDto';
+export type { PictureOpenParams } from './generated/PictureOpenParams';
+export type { PictureOptionsSpec } from './generated/PictureOptionsSpec';
+export type { PictureOpenResult } from './generated/PictureOpenResult';
+
 export type { CancelParams } from './generated/CancelParams';
 export type { CharRange } from './generated/CharRange';
 export type { ClientInfo } from './generated/ClientInfo';

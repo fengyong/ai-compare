@@ -119,7 +119,7 @@ export function getEngineCapabilities(): EngineCapabilities | null {
 }
 
 /** 生成引擎侧会话句柄（客户端分配；前缀便于日志排查） */
-export function newSessionId(kind: 'dir' | 'text' | 'merge'): string {
+export function newSessionId(kind: 'dir' | 'text' | 'merge' | 'picture'): string {
   const rand =
     typeof crypto !== 'undefined' && 'randomUUID' in crypto
       ? crypto.randomUUID().slice(0, 8)
@@ -327,6 +327,33 @@ export async function planOperations(params: DirOperateParams): Promise<DirOpera
 export async function executeOperations(params: DirExecuteParams): Promise<DirExecuteResult> {
   const c = await getEngineClient();
   return c.request<DirExecuteResult>('dir/execute', params, 120_000);
+}
+
+// ==================================================================
+// P14：图片比较方法集（picture/open；块清单全量返回）
+// ==================================================================
+
+export async function openPicture(params: {
+  sessionId: string;
+  left: string;
+  right: string;
+  options?: { tolerance?: number; block?: number } | null;
+}): Promise<{
+  sessionId: string;
+  width: number;
+  height: number;
+  leftWidth: number;
+  leftHeight: number;
+  rightWidth: number;
+  rightHeight: number;
+  diffPixels: number;
+  totalPixels: number;
+  similarityPct: number;
+  blocks: Array<{ x: number; y: number; w: number; h: number; diffRatio: number }>;
+  truncated: boolean;
+}> {
+  const c = await getEngineClient();
+  return c.request('picture/open', params, 60_000);
 }
 
 // ==================================================================

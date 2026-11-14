@@ -4,6 +4,20 @@
  * 在此之前所有用户可见字符串从这里引用，键名保持稳定以便平滑迁移。
  */
 export const S = {
+  picture: {
+    title: '图片比较',
+    loading: '比较中…',
+    similarity: '相似度',
+    canvas: '画布',
+    blocks: '差异块',
+    sizes: '两侧尺寸',
+    tolerance: '容差',
+    overlaySide: '显示侧',
+    overlayLeft: '左侧图',
+    overlayRight: '右侧图',
+    truncated: '已截断',
+    loadFail: '加载失败',
+  },
   app: {
     title: 'ai-compare',
     homeTab: '主页',
@@ -324,6 +338,7 @@ export const S = {
   tab: {
     folderTitleSuffix: '文件夹比较',
     textTitleSuffix: '文本比较',
+    pictureTitleSuffix: '图片比较',
     syncTitleSuffix: '文件夹同步',
     mergeTitleSuffix: '文件夹合并',
   },
