@@ -26,6 +26,8 @@ import type {
   MergeOpenResult,
   MergeOutputParams,
   MergeOutputResult,
+  MergeSaveParams,
+  MergeSaveResult,
   MergeSectionsParams,
   MergeSectionsResult,
   ReportGenerateParams,
@@ -504,6 +506,23 @@ export async function merge3Decide(params: MergeDecideParams): Promise<MergeDeci
 export async function merge3Output(params: MergeOutputParams): Promise<MergeOutputResult> {
   const c = await getEngineClient();
   return c.request<MergeOutputResult>('text/merge3/output', params, 60_000);
+}
+
+/**
+ * text/merge3/save：把合成输出写入"合并到"目标（R3-20，FR-TMRG-006）。
+ *
+ * 能力位缺失或入口不存在 → null（调用方必须提示"未保存"，不得把浏览器下载
+ * 当成已落盘）；其余错误抛出（覆盖警示后的写失败/备份失败必须让用户看见）。
+ */
+export async function saveMerge3(params: MergeSaveParams): Promise<MergeSaveResult | null> {
+  if (!getEngineCapabilities()?.mergeSave) return null;
+  const c = await getEngineClient();
+  try {
+    return await c.request<MergeSaveResult>('text/merge3/save', params, 120_000);
+  } catch (err) {
+    if (isMethodNotFound(err)) return null;
+    throw err;
+  }
 }
 
 /**

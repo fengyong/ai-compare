@@ -92,4 +92,9 @@ textEdit?: boolean,
  * R3-04：编辑内容落盘（text/save）。缺省 **false**（旧引擎无此入口，
  * UI 不得把"已保存"当成既成事实）。
  */
-textSave?: boolean, };
+textSave?: boolean, 
+/**
+ * R3-20：三向合并输出落盘（text/merge3/save）。缺省 **false**（旧引擎无此入口，
+ * UI 不得把浏览器下载当成"已保存到合并目标"）。
+ */
+mergeSave?: boolean, };

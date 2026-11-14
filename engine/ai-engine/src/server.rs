@@ -65,6 +65,8 @@ pub struct MergeSessionData {
     pub options: ai_core::merge::MergeOptions,
     /// marker 标签（(base, left, right)，取打开时的路径原串）
     pub labels: (String, String, String),
+    /// 祖先文件是否带 UTF-8 BOM（输出落盘时原样写回，否则编码签名被静默改掉）
+    pub bom: bool,
     /// 块决策表（chunkId -> 决策；显式决策覆盖 auto_decision）
     pub decisions: std::collections::HashMap<u32, ai_core::merge::MergeDecision>,
     /// 会话内单调递增版本号（决策内容变化时 +1）

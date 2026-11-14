@@ -81,6 +81,7 @@ pub async fn dispatch(
         ai_protocol::method::TEXT_MERGE3_SECTIONS => merge3_sections(params, ctx).await,
         ai_protocol::method::TEXT_MERGE3_DECIDE => merge3_decide(params, ctx).await,
         ai_protocol::method::TEXT_MERGE3_OUTPUT => merge3_output(params, ctx).await,
+        ai_protocol::method::TEXT_MERGE3_SAVE => merge3_save(params, ctx).await,
         ai_protocol::method::TABLE_OPEN => table_open(params, ctx).await,
         ai_protocol::method::TABLE_SECTIONS => table_sections(params, ctx).await,
         ai_protocol::method::HEX_OPEN => hex_open(params, ctx).await,
@@ -147,6 +148,8 @@ fn initialize() -> Result<Handled, RpcErrorObject> {
             text_edit: Some(true),
             // R3-04：编辑内容落盘入口开放（text/save，含另存为与自动备份）
             text_save: Some(true),
+            // R3-20：三向合并输出落盘入口开放（text/merge3/save）
+            merge_save: Some(true),
             dir_background_scan: true,
             dir_filters: true,
             dir_operate: true,
@@ -1383,7 +1386,11 @@ async fn merge3_open(
     let left_path = VfsPath::parse(&params.left).map_err(|e| mapping::vfs_error_to_rpc(&e))?;
     let right_path = VfsPath::parse(&params.right).map_err(|e| mapping::vfs_error_to_rpc(&e))?;
 
-    let base_text = ctx.vfs.read_file_text(&base_path).await.map_err(|e| mapping::vfs_error_to_rpc(&e))?;
+    let (base_text, base_bom) = ctx
+        .vfs
+        .read_file_text_bom(&base_path)
+        .await
+        .map_err(|e| mapping::vfs_error_to_rpc(&e))?;
     let left_text = ctx.vfs.read_file_text(&left_path).await.map_err(|e| mapping::vfs_error_to_rpc(&e))?;
     let right_text = ctx.vfs.read_file_text(&right_path).await.map_err(|e| mapping::vfs_error_to_rpc(&e))?;
 
@@ -1420,6 +1427,7 @@ async fn merge3_open(
                 model,
                 options,
                 labels: (params.base.clone(), params.left.clone(), params.right.clone()),
+                bom: base_bom,
                 decisions: HashMap::new(),
                 rev: 0,
             }),
@@ -1539,6 +1547,25 @@ async fn merge3_decide(
     Ok(Handled::Value(serde_json::to_value(&result).expect("merge3/decide 结果可序列化")))
 }
 
+/// 输出合成的策略选择（output/save 共用）：Marker 显式渲染冲突标记，
+/// 缺省 Plain = 未决冲突走会话 conflict_default 策略。
+fn output_syn_options(
+    data: &crate::server::MergeSessionData,
+    mode: Option<ai_protocol::MergeOutputMode>,
+    marker_style: Option<ai_protocol::MergeMarkerStyle>,
+) -> SynthesizeOptions {
+    match mode {
+        Some(ai_protocol::MergeOutputMode::Marker) => {
+            let style = match marker_style.unwrap_or(ai_protocol::MergeMarkerStyle::Merge) {
+                ai_protocol::MergeMarkerStyle::Merge => MarkerStyle::Merge,
+                ai_protocol::MergeMarkerStyle::Diff3 => MarkerStyle::Diff3,
+            };
+            marker_policy_of(data, style)
+        }
+        _ => session_syn_options(data),
+    }
+}
+
 /// text/merge3/output：合成输出（决策生效；未决冲突按模式渲染 + 清单）
 async fn merge3_output(
     params: Option<serde_json::Value>,
@@ -1546,17 +1573,7 @@ async fn merge3_output(
 ) -> Result<Handled, RpcErrorObject> {
     let params: ai_protocol::MergeOutputParams = parse_params(params)?;
     let result = with_merge_session(&ctx.sessions, &params.session_id, |data| {
-        let syn = match params.mode {
-            Some(ai_protocol::MergeOutputMode::Marker) => {
-                let style = match params.marker_style.unwrap_or(ai_protocol::MergeMarkerStyle::Merge) {
-                    ai_protocol::MergeMarkerStyle::Merge => MarkerStyle::Merge,
-                    ai_protocol::MergeMarkerStyle::Diff3 => MarkerStyle::Diff3,
-                };
-                marker_policy_of(data, style)
-            }
-            // 缺省 Plain：未决冲突走会话 conflict_default 策略
-            _ => session_syn_options(data),
-        };
+        let syn = output_syn_options(data, params.mode, params.marker_style);
         let out = ai_core::synthesize(&data.model, &data.base, &data.left, &data.right, &data.decisions, &syn);
         let unresolved = data.model.unresolved_with(&data.decisions);
         let has_conflicts = !unresolved.is_empty();
@@ -1571,6 +1588,103 @@ async fn merge3_output(
     })
     .await?;
     Ok(Handled::Value(serde_json::to_value(&result).expect("merge3/output 结果可序列化")))
+}
+
+/// text/merge3/save：把合成输出写入"合并到"目标文件（R3-20，FR-TMRG-006）。
+///
+/// - 输出由引擎按会话决策现场合成（与 output 同一策略），不经客户端回传，
+///   因此非活动标签与大输出同样可保存；
+/// - 目标文件的先前内容被覆盖（BC 语义：会话前存在或会话中被更改的内容都丢失），
+///   覆盖警示由 UI 给出；
+/// - `backup` 缺省 true：覆盖前把原内容写到 `<path>.bak`（目标不存在则不产生备份）；
+/// - 保存不改决策：`rev` 不递增；祖先文件的 UTF-8 BOM 原样写回。
+async fn merge3_save(
+    params: Option<serde_json::Value>,
+    ctx: &HandlerCtx,
+) -> Result<Handled, RpcErrorObject> {
+    let params: ai_protocol::MergeSaveParams = parse_params(params)?;
+    if params.path.is_empty() {
+        return Err(bad_params("合并输出目标路径不能为空"));
+    }
+
+    // 1. 锁内合成 + 目标解析（IO 不持会话锁）
+    let plan = with_merge_session(&ctx.sessions, &params.session_id, |data| {
+        let path = VfsPath::parse(&params.path).map_err(|e| mapping::vfs_error_to_rpc(&e))?;
+        let syn = output_syn_options(data, params.mode, params.marker_style);
+        let out = ai_core::synthesize(
+            &data.model,
+            &data.base,
+            &data.left,
+            &data.right,
+            &data.decisions,
+            &syn,
+        );
+        let mut bytes =
+            Vec::with_capacity(out.text.len() + if data.bom { ai_vfs::UTF8_BOM.len() } else { 0 });
+        if data.bom {
+            bytes.extend_from_slice(ai_vfs::UTF8_BOM);
+        }
+        bytes.extend_from_slice(out.text.as_bytes());
+        Ok(MergeSavePlan {
+            path,
+            bytes,
+            line_count: out.lines,
+            conflict_count: data.model.conflict_count(),
+            has_conflicts: !out.unresolved.is_empty(),
+            unresolved_chunks: out.unresolved,
+            rev: data.rev,
+        })
+    })
+    .await?;
+
+    // 2. 备份 + 写入（与 text/save 同口径：备份失败即中止，不覆盖目标）
+    let backup_path = if params.backup.unwrap_or(true) {
+        let bak = VfsPath::parse(&format!("{}.bak", plan.path.as_str()))
+            .map_err(|e| mapping::vfs_error_to_rpc(&e))?;
+        match ctx.vfs.read_file_bytes(&plan.path).await {
+            Ok(orig) => {
+                ctx.vfs
+                    .write_file_bytes(&bak, &orig)
+                    .await
+                    .map_err(|e| mapping::vfs_error_to_rpc(&e))?;
+                Some(bak.as_str().to_string())
+            }
+            Err(ai_vfs::VfsError::NotFound { .. }) => None,
+            Err(e) => return Err(mapping::vfs_error_to_rpc(&e)),
+        }
+    } else {
+        None
+    };
+    ctx.vfs
+        .write_file_bytes(&plan.path, &plan.bytes)
+        .await
+        .map_err(|e| mapping::vfs_error_to_rpc(&e))?;
+
+    let result = ai_protocol::MergeSaveResult {
+        session_id: params.session_id,
+        path: plan.path.as_str().to_string(),
+        bytes: plan.bytes.len() as u64,
+        line_count: plan.line_count,
+        backup_path,
+        conflict_count: plan.conflict_count,
+        unresolved_chunks: plan.unresolved_chunks,
+        has_conflicts: plan.has_conflicts,
+        rev: plan.rev,
+    };
+    Ok(Handled::Value(
+        serde_json::to_value(&result).expect("merge3/save 结果可序列化"),
+    ))
+}
+
+/// text/merge3/save 的落盘计划（锁内算好，锁外做 IO）
+struct MergeSavePlan {
+    path: VfsPath,
+    bytes: Vec<u8>,
+    line_count: u32,
+    conflict_count: u32,
+    unresolved_chunks: Vec<u32>,
+    has_conflicts: bool,
+    rev: u64,
 }
 
 // ---------------------------------------------------------------------------
@@ -5943,5 +6057,339 @@ mod text_edit_tests {
         let err = save(&c, "d1", json!({})).await.unwrap_err();
         assert_eq!(err.code, codes::INVALID_PARAMS);
         assert!(err.message.contains("不是文本会话"), "{err:?}");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// R3-20：text/merge3/save（合并输出落盘到"合并到"目标，FR-TMRG-006）
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod merge3_save_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn ctx() -> HandlerCtx {
+        HandlerCtx::new(512)
+    }
+
+    fn chan() -> tokio::sync::mpsc::UnboundedSender<crate::server::Outbound> {
+        tokio::sync::mpsc::unbounded_channel().0
+    }
+
+    async fn call(
+        c: &HandlerCtx,
+        method: &str,
+        params: serde_json::Value,
+    ) -> Result<serde_json::Value, RpcErrorObject> {
+        dispatch(method, Some(params), c, &ai_dir::CancelFlag::new(), chan())
+            .await
+            .map(|h| match h {
+                Handled::Value(v) => v,
+                Handled::WithNotifications { response, .. } => response,
+            })
+    }
+
+    /// 三方语料（与 p7_tests 同形）：两个冲突块（1、3）+ 右侧独有尾部。
+    /// tempdir 由调用方持有——落盘断言需要文件仍在。
+    async fn open_merge(c: &HandlerCtx, id: &str) -> tempfile::TempDir {
+        open_merge_with(
+            c,
+            id,
+            "h\na\nb\nc\nt\n",
+            "h\nL1\nb\nL2\nt\n",
+            "h\nR1\nb\nR2\nt\nR3\n",
+        )
+        .await
+    }
+
+    async fn open_merge_with(
+        c: &HandlerCtx,
+        id: &str,
+        base: &str,
+        left: &str,
+        right: &str,
+    ) -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        for (name, text) in [("base.l", base), ("left.l", left), ("right.l", right)] {
+            std::fs::write(dir.path().join(name), text).unwrap();
+        }
+        call(
+            c,
+            "text/merge3/open",
+            json!({
+                "sessionId": id,
+                "base": dir.path().join("base.l").to_string_lossy(),
+                "left": dir.path().join("left.l").to_string_lossy(),
+                "right": dir.path().join("right.l").to_string_lossy(),
+            }),
+        )
+        .await
+        .unwrap();
+        dir
+    }
+
+    async fn decide(c: &HandlerCtx, id: &str, decisions: serde_json::Value) -> serde_json::Value {
+        call(
+            c,
+            "text/merge3/decide",
+            json!({"sessionId": id, "decisions": decisions}),
+        )
+        .await
+        .unwrap()
+    }
+
+    async fn save(
+        c: &HandlerCtx,
+        id: &str,
+        path: &std::path::Path,
+        extra: serde_json::Value,
+    ) -> Result<serde_json::Value, RpcErrorObject> {
+        let mut p = json!({"sessionId": id, "path": path.to_string_lossy()});
+        if let Some(obj) = extra.as_object() {
+            for (k, v) in obj {
+                p[k] = v.clone();
+            }
+        }
+        call(c, "text/merge3/save", p).await
+    }
+
+    /// 能力位：initialize 必须宣告 mergeSave（UI 据此区分"真落盘"与浏览器下载）
+    #[tokio::test]
+    async fn initialize_advertises_merge_save() {
+        let c = ctx();
+        let v = call(
+            &c,
+            "initialize",
+            json!({"clientInfo": {"name": "t"}, "protocolVersion": "1.0"}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(v["capabilities"]["mergeSave"], true, "{v}");
+    }
+
+    /// 核心闭环：决策后的输出真写到目标文件；.bak 存覆盖前内容；rev 不递增
+    #[tokio::test]
+    async fn save_writes_decided_output_with_backup_and_keeps_rev() {
+        let c = ctx();
+        let dir = open_merge(&c, "ms1").await;
+        let decided = decide(
+            &c,
+            "ms1",
+            json!([{"chunkId": 1, "action": "left"}, {"chunkId": 3, "action": "right"}]),
+        )
+        .await;
+        let out = dir.path().join("out.txt");
+        std::fs::write(&out, "OLD CONTENT\n").unwrap();
+
+        let res = save(&c, "ms1", &out, json!({})).await.unwrap();
+        assert_eq!(res["path"], out.to_string_lossy().to_string());
+        assert_eq!(
+            res["bytes"], 15,
+            "h\\nL1\\nb\\nR2\\nt\\nR3\\n = 15 字节: {res}"
+        );
+        assert_eq!(res["lineCount"], 6);
+        assert_eq!(res["hasConflicts"], false);
+        assert_eq!(res["unresolvedChunks"], json!([]));
+        assert_eq!(res["conflictCount"], 2, "冲突总数不因决策而减少");
+        assert_eq!(res["rev"], decided["rev"], "保存不改决策，rev 不递增");
+        assert_eq!(
+            std::fs::read(&out).unwrap(),
+            b"h\nL1\nb\nR2\nt\nR3\n",
+            "落盘内容必须等于引擎合成输出"
+        );
+        let bak = dir.path().join("out.txt.bak");
+        assert_eq!(res["backupPath"], bak.to_string_lossy().to_string());
+        assert_eq!(
+            std::fs::read(&bak).unwrap(),
+            b"OLD CONTENT\n",
+            ".bak 存覆盖前内容"
+        );
+
+        // 再保存一次：.bak 换成上一次落盘的内容（始终是"覆盖前"镜像）
+        decide(&c, "ms1", json!([{"chunkId": 3, "action": "left"}])).await;
+        let res2 = save(&c, "ms1", &out, json!({})).await.unwrap();
+        assert_eq!(std::fs::read(&out).unwrap(), b"h\nL1\nb\nL2\nt\nR3\n");
+        assert_eq!(std::fs::read(&bak).unwrap(), b"h\nL1\nb\nR2\nt\nR3\n");
+        assert_eq!(res2["rev"], 2, "第二次决策使 rev=2，保存本身仍不递增");
+    }
+
+    /// 手动编辑（Manual 决策）由引擎合成，无需客户端回传文本
+    #[tokio::test]
+    async fn save_includes_manual_decision_text() {
+        let c = ctx();
+        let dir = open_merge(&c, "ms2").await;
+        decide(
+            &c,
+            "ms2",
+            json!([
+                {"chunkId": 1, "action": "manual", "text": "M1\nM2"},
+                {"chunkId": 3, "action": "right"}
+            ]),
+        )
+        .await;
+        let out = dir.path().join("manual.txt");
+        let res = save(&c, "ms2", &out, json!({"backup": false}))
+            .await
+            .unwrap();
+        assert_eq!(std::fs::read(&out).unwrap(), b"h\nM1\nM2\nb\nR2\nt\nR3\n");
+        assert_eq!(res["lineCount"], 7);
+        assert!(
+            !dir.path().join("manual.txt.bak").exists(),
+            "backup=false 不产生备份"
+        );
+    }
+
+    /// marker 模式：未决冲突写进文件，且应答如实报告未决清单
+    #[tokio::test]
+    async fn save_marker_mode_writes_conflicts_and_reports_unresolved() {
+        let c = ctx();
+        let dir = open_merge(&c, "ms3").await;
+        let out = dir.path().join("marker.txt");
+        std::fs::write(&out, "PRE\n").unwrap();
+        let res = save(&c, "ms3", &out, json!({"mode": "marker", "backup": false}))
+            .await
+            .unwrap();
+        let text = std::fs::read_to_string(&out).unwrap();
+        assert_eq!(text.matches("<<<<<<<").count(), 2, "{text}");
+        assert_eq!(res["hasConflicts"], true);
+        assert_eq!(res["unresolvedChunks"], json!([1, 3]));
+        assert!(
+            !dir.path().join("marker.txt.bak").exists(),
+            "关备份后不得动已有目标之外的文件"
+        );
+        assert!(!text.contains("PRE"), "目标先前内容按 BC 语义被覆盖");
+    }
+
+    /// 目标不存在：创建文件且不产生备份（应答不带 backupPath 键）
+    #[tokio::test]
+    async fn save_new_target_creates_file_without_backup() {
+        let c = ctx();
+        let dir = open_merge(&c, "ms4").await;
+        decide(
+            &c,
+            "ms4",
+            json!([{"chunkId": 1, "action": "left"}, {"chunkId": 3, "action": "right"}]),
+        )
+        .await;
+        let out = dir.path().join("fresh.txt");
+        let res = save(&c, "ms4", &out, json!({})).await.unwrap();
+        assert!(out.exists());
+        assert!(
+            res.get("backupPath").is_none(),
+            "None 不得序列化为 null: {res}"
+        );
+        assert!(!dir.path().join("fresh.txt.bak").exists());
+    }
+
+    /// 祖先带 BOM + CRLF：输出原样写回编码签名与行尾（否则文件被静默改编码）
+    #[tokio::test]
+    async fn save_preserves_base_bom_and_crlf() {
+        let c = ctx();
+        let dir = open_merge_with(
+            &c,
+            "ms5",
+            "\u{feff}h\r\na\r\nt\r\n",
+            "h\r\nL\r\nt\r\n",
+            "h\r\nR\r\nt\r\n",
+        )
+        .await;
+        decide(&c, "ms5", json!([{"chunkId": 1, "action": "left"}])).await;
+        let out = dir.path().join("bom.txt");
+        let res = save(&c, "ms5", &out, json!({"backup": false}))
+            .await
+            .unwrap();
+        let bytes = std::fs::read(&out).unwrap();
+        assert!(
+            bytes.starts_with(ai_vfs::UTF8_BOM),
+            "BOM 必须写回: {bytes:?}"
+        );
+        assert_eq!(bytes, "\u{feff}h\r\nL\r\nt\r\n".as_bytes());
+        assert_eq!(res["bytes"], bytes.len() as u64);
+
+        // 祖先无 BOM：不得凭空加 BOM
+        let c2 = ctx();
+        let dir2 = open_merge_with(
+            &c2,
+            "ms6",
+            "h\r\na\r\nt\r\n",
+            "h\r\nL\r\nt\r\n",
+            "h\r\nR\r\nt\r\n",
+        )
+        .await;
+        decide(&c2, "ms6", json!([{"chunkId": 1, "action": "left"}])).await;
+        let out2 = dir2.path().join("nobom.txt");
+        save(&c2, "ms6", &out2, json!({"backup": false}))
+            .await
+            .unwrap();
+        assert_eq!(std::fs::read(&out2).unwrap(), b"h\r\nL\r\nt\r\n");
+    }
+
+    /// 入参与会话校验：空路径 / 未知会话 / 非合并会话都必须明确报错
+    #[tokio::test]
+    async fn save_rejects_empty_path_unknown_and_non_merge_session() {
+        let c = ctx();
+        let dir = open_merge(&c, "ms7").await;
+        let err = save(&c, "ms7", std::path::Path::new(""), json!({}))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, codes::INVALID_PARAMS);
+        assert!(err.message.contains("目标路径"), "{err:?}");
+
+        let err = save(&c, "ghost", &dir.path().join("x.txt"), json!({}))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, codes::SESSION_NOT_FOUND);
+
+        let dl = dir.path().join("dl");
+        let dr = dir.path().join("dr");
+        std::fs::create_dir(&dl).unwrap();
+        std::fs::create_dir(&dr).unwrap();
+        call(
+            &c,
+            "dir/open",
+            json!({"sessionId": "d7", "left": dl.to_string_lossy(), "right": dr.to_string_lossy()}),
+        )
+        .await
+        .unwrap();
+        let err = save(&c, "d7", &dir.path().join("x.txt"), json!({}))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, codes::INVALID_PARAMS);
+        assert!(err.message.contains("不是三向合并会话"), "{err:?}");
+        assert!(
+            !dir.path().join("x.txt").exists(),
+            "报错路径不得留下半成品文件"
+        );
+    }
+
+    /// 主写入失败（父目录不存在）：必须报错，不得报成功
+    #[tokio::test]
+    async fn save_write_failure_is_reported() {
+        let c = ctx();
+        let dir = open_merge(&c, "ms8").await;
+        let out = dir.path().join("missing").join("out.txt");
+        let err = save(&c, "ms8", &out, json!({"backup": false}))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, codes::PATH_NOT_FOUND, "{err:?}");
+        assert!(!out.exists());
+    }
+
+    /// 备份写入失败：中止且**不覆盖目标**（否则原内容既没备份也没了）
+    #[tokio::test]
+    async fn save_backup_failure_aborts_before_overwrite() {
+        let c = ctx();
+        let dir = open_merge(&c, "ms9").await;
+        let out = dir.path().join("guard.txt");
+        std::fs::write(&out, b"PRECIOUS\n").unwrap();
+        // 让 <target>.bak 成为目录 → 备份写入必然失败
+        std::fs::create_dir(dir.path().join("guard.txt.bak")).unwrap();
+        let err = save(&c, "ms9", &out, json!({})).await.unwrap_err();
+        assert!(!err.message.is_empty(), "{err:?}");
+        assert_eq!(
+            std::fs::read(&out).unwrap(),
+            b"PRECIOUS\n",
+            "备份失败时目标必须保持原样: {err:?}"
+        );
     }
 }

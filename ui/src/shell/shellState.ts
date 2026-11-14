@@ -60,6 +60,8 @@ export interface Merge3TabData {
   right: string;
   /** 客户端分配的 text/merge3/* 会话句柄 */
   sessionId: string;
+  /** "合并到"目标文件（FR-TMRG-006）；首次保存前为空，由用户显式指定 */
+  outputPath?: string;
 }
 
 /** 文件夹合并标签数据（P8：三路 base/left/right） */
@@ -166,6 +168,8 @@ export interface TabsSlice {
   activate(tabId: string): void;
   /** 另存文件为后改指标签上的该侧路径/名称/标题（R3-04：会话保存与关闭守卫据此取正确目标） */
   retargetTextSide(tabId: string, side: 'left' | 'right', path: string): void;
+  /** 记录三向合并的"合并到"目标（R3-20：下次保存默认预填该路径） */
+  setMerge3OutputPath(tabId: string, path: string): void;
   /** 关闭（命名会话有未保存修改时转 closeGuard；引擎会话幂等清理） */
   closeTab(tabId: string): Promise<void>;
   /** 关闭其他标签（保留指定标签与各窗口 home） */
@@ -224,6 +228,14 @@ export interface PromptDialogState {
   onSubmit(value: string | null): void;
 }
 
+/** 通用确认对话框（R3-20 覆盖警示等需要"是/否"回答的场景） */
+export interface ConfirmDialogState {
+  title: string;
+  message: string;
+  confirmLabel?: string;
+  onResolve(ok: boolean): void;
+}
+
 export interface UiSlice {
   notice: string | null;
   setNotice(msg: string | null): void;
@@ -233,6 +245,10 @@ export interface UiSlice {
   prompt: PromptDialogState | null;
   openPrompt(init: PromptDialogState): void;
   resolvePrompt(value: string | null): void;
+  confirm: ConfirmDialogState | null;
+  /** 弹出确认框并等待回答；已有未决确认时先按取消结清，避免调用方永久挂起 */
+  askConfirm(init: Omit<ConfirmDialogState, 'onResolve'>): Promise<boolean>;
+  resolveConfirm(ok: boolean): void;
   /** 队列 4：剪贴板历史面板（FR-CLIP-001） */
   clipboardPanelOpen: boolean;
   toggleClipboardPanel(open?: boolean): void;

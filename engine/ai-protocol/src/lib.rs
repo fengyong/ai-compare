@@ -72,6 +72,8 @@ pub mod method {
     pub const TEXT_MERGE3_DECIDE: &str = "text/merge3/decide";
     /// 三向合并：合成输出（含未决冲突清单，P7）
     pub const TEXT_MERGE3_OUTPUT: &str = "text/merge3/output";
+    /// 三向合并：输出落盘到"合并到"目标（R3-20，FR-TMRG-006）
+    pub const TEXT_MERGE3_SAVE: &str = "text/merge3/save";
     /// 表格比较：打开会话（P9，FR-TBL 引擎侧）
     pub const TABLE_OPEN: &str = "table/open";
     /// 表格比较：diff 行清单分批取回（P9）

@@ -448,6 +448,78 @@ try {
     `hasConflicts=${plain?.hasConflicts}`
   );
 
+  // R3-20：合并输出落盘（text/merge3/save）——真实写文件 + 备份 + rev 不递增
+  ok(init?.capabilities?.mergeSave === true, 'initialize 能力位 mergeSave=true（R3-20）');
+  const m3Target = join(dir, 'merged-out.txt');
+  writeFileSync(m3Target, 'PREVIOUS CONTENT\n');
+  const m3save = await client.request('text/merge3/save', {
+    sessionId: 'e2e-merge3-1', path: m3Target, mode: 'plain',
+  });
+  const m3written = readFileSync(m3Target, 'utf8');
+  ok(
+    m3save?.path === m3Target && m3written === plain.text &&
+      Number(m3save?.bytes) === Buffer.byteLength(m3written) &&
+      m3save?.lineCount === plain.text.split('\n').length - 1,
+    'text/merge3/save 写回合成输出（字节数/行数一致）',
+    `bytes=${m3save?.bytes} lineCount=${m3save?.lineCount}`
+  );
+  ok(
+    m3save?.backupPath === `${m3Target}.bak` &&
+      readFileSync(`${m3Target}.bak`, 'utf8') === 'PREVIOUS CONTENT\n',
+    'text/merge3/save 覆盖前备份原内容（.bak）'
+  );
+  ok(
+    Number(m3save?.rev) === Number(again?.rev) && m3save?.hasConflicts === false &&
+      m3save?.unresolvedChunks?.length === 0,
+    'text/merge3/save 不改决策（rev 不递增）且回报未决清单',
+    `rev=${m3save?.rev}`
+  );
+  const afterSave = await client.request('text/merge3/decide', {
+    sessionId: 'e2e-merge3-1', decisions,
+  });
+  ok(Number(afterSave?.rev) === Number(m3save?.rev), 'text/merge3/save 后幂等 decide 不递增 rev');
+
+  // backup:false（BC /nobackups）→ 不产生新备份，原 .bak 保持不变
+  writeFileSync(m3Target, 'SECOND\n');
+  const noBak = await client.request('text/merge3/save', {
+    sessionId: 'e2e-merge3-1', path: m3Target, backup: false,
+  });
+  ok(
+    noBak?.backupPath === undefined && readFileSync(`${m3Target}.bak`, 'utf8') === 'PREVIOUS CONTENT\n',
+    'text/merge3/save backup=false 不写备份'
+  );
+  const fresh = join(dir, 'fresh-out.txt');
+  const freshSave = await client.request('text/merge3/save', {
+    sessionId: 'e2e-merge3-1', path: fresh,
+  });
+  ok(freshSave?.backupPath === undefined && existsSync(fresh), 'text/merge3/save 新目标不产生备份');
+  let emptyErr = null;
+  try {
+    await client.request('text/merge3/save', { sessionId: 'e2e-merge3-1', path: '' });
+  } catch (e) {
+    emptyErr = e.message;
+  }
+  ok(emptyErr !== null && emptyErr.includes('-32602'), 'text/merge3/save 空路径被拒（INVALID_PARAMS）', emptyErr ?? '');
+
+  // marker 模式 + 未决冲突：落盘文件含冲突标记，应答回报未决清单（新会话，未决策）
+  await client.request('text/merge3/open', {
+    sessionId: 'e2e-merge3-2',
+    base: join(dir, 'base.txt'), left: join(dir, 'left.txt'), right: join(dir, 'right.txt'),
+    options: null,
+  });
+  const markerTarget = join(dir, 'marker-out.txt');
+  const markerSave = await client.request('text/merge3/save', {
+    sessionId: 'e2e-merge3-2', path: markerTarget, mode: 'marker', backup: false,
+  });
+  const markerWritten = readFileSync(markerTarget, 'utf8');
+  ok(
+    markerSave?.hasConflicts === true && markerSave?.unresolvedChunks?.length === 2 &&
+      (markerWritten.match(/<<<<<<</g) ?? []).length === 2,
+    'text/merge3/save marker 模式落盘未决冲突并回报清单',
+    `unresolved=${JSON.stringify(markerSave?.unresolvedChunks)}`
+  );
+  await client.request('session/close', { sessionId: 'e2e-merge3-2' });
+
   // 5. R3-07：文件夹三向合并（dir/mergeScan|mergePlan|mergeExecute，真实落盘）
   ok(init?.capabilities?.dirMerge === true, 'initialize 能力位 dirMerge=true');
   const dm = await client.request('dir/mergeScan', {

@@ -64,6 +64,8 @@ export type { MergeOpenResult } from './generated/MergeOpenResult';
 export type { MergeOutputMode } from './generated/MergeOutputMode';
 export type { MergeOutputParams } from './generated/MergeOutputParams';
 export type { MergeOutputResult } from './generated/MergeOutputResult';
+export type { MergeSaveParams } from './generated/MergeSaveParams';
+export type { MergeSaveResult } from './generated/MergeSaveResult';
 export type { MergeSectionsParams } from './generated/MergeSectionsParams';
 export type { MergeSectionsResult } from './generated/MergeSectionsResult';
 

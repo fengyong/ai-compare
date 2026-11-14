@@ -395,6 +395,11 @@ pub struct EngineCapabilities {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub text_save: Option<bool>,
+    /// R3-20：三向合并输出落盘（text/merge3/save）。缺省 **false**（旧引擎无此入口，
+    /// UI 不得把浏览器下载当成"已保存到合并目标"）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub merge_save: Option<bool>,
 }
 
 /// 许可能力（ADR-009：开源/自用默认全能力；字段为后续门控留位）
@@ -1569,6 +1574,53 @@ pub struct MergeOutputResult {
     pub has_conflicts: bool,
     /// 有显式决策的块数
     pub decided_count: u32,
+}
+
+/// text/merge3/save 参数：把合成输出写入"合并到"目标文件（R3-20，FR-TMRG-006）。
+///
+/// 输出由引擎按会话决策现场合成（与 text/merge3/output 同一策略），不经客户端回传，
+/// 因此非活动标签/大输出同样可保存。目标文件的先前内容按 BC 语义被忽略（覆盖），
+/// 覆盖警示由调用方给出；`backup` 缺省 true = 覆盖前把原内容写到 `<path>.bak`
+/// （目标不存在时不产生备份；`/nobackups` 对应 false）。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase", default)]
+pub struct MergeSaveParams {
+    pub session_id: String,
+    /// 合并输出目标路径（必填）
+    pub path: String,
+    /// 缺省 Plain（未决冲突走会话默认策略）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub mode: Option<MergeOutputMode>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub marker_style: Option<MergeMarkerStyle>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub backup: Option<bool>,
+}
+
+/// text/merge3/save 应答。保存不改决策，故 `rev` 为保存时的会话版本（不递增）；
+/// 未决冲突清单随应答返回，调用方据此提示"输出仍含冲突"。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct MergeSaveResult {
+    pub session_id: String,
+    pub path: String,
+    /// 实际写入字节数（含写回的 BOM）
+    pub bytes: u64,
+    pub line_count: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub backup_path: Option<String>,
+    pub conflict_count: u32,
+    pub unresolved_chunks: Vec<u32>,
+    pub has_conflicts: bool,
+    pub rev: u64,
 }
 
 // ---------------------------------------------------------------------------
@@ -3530,6 +3582,7 @@ mod tests {
             dir_merge: Some(true),
             text_edit: Some(true),
             text_save: Some(true),
+            merge_save: Some(true),
             format_rules: None,
         };
         let s = serde_json::to_string(&c).unwrap();
@@ -3818,6 +3871,7 @@ mod tests {
             dir_merge: None,
             text_edit: None,
             text_save: None,
+            merge_save: None,
         };
         let s = serde_json::to_string(&c).unwrap();
         assert!(!s.contains("tableCompare") && !s.contains("hexCompare"), "{s}");
@@ -3941,6 +3995,7 @@ mod tests {
         assert_eq!(v.dir_merge, None, "R3-07 能力位缺省不得为 true");
         assert_eq!(v.text_edit, None, "R3-18 能力位缺省不得为 true");
         assert_eq!(v.text_save, None, "R3-04 能力位缺省不得为 true");
+        assert_eq!(v.merge_save, None, "R3-20 能力位缺省不得为 true");
         // 新引擎序列化携带 threeWayMerge
         let c = EngineCapabilities {
             dir_compare: true,
@@ -3964,6 +4019,7 @@ mod tests {
             dir_merge: Some(true),
             text_edit: Some(true),
             text_save: Some(true),
+            merge_save: Some(true),
         };
         let s = serde_json::to_string(&c).unwrap();
         assert!(s.contains("threeWayMerge"));
@@ -4011,6 +4067,55 @@ mod tests {
         assert!(!s.contains("backupPath"), "None 不应序列化为 null: {s}");
         let back: TextSaveResult = serde_json::from_str(&s).unwrap();
         assert_eq!(back, r);
+    }
+
+    #[test]
+    fn r3_20_merge_save_params_defaults_and_roundtrip() {
+        // 最小载荷：sessionId + path -> Plain 模式、备份由引擎解释为开启
+        let v: MergeSaveParams =
+            serde_json::from_str(r#"{"sessionId":"m1","path":"/tmp/out.txt"}"#).unwrap();
+        assert!(v.mode.is_none() && v.marker_style.is_none() && v.backup.is_none());
+        assert_eq!(
+            serde_json::to_string(&v).unwrap(),
+            r#"{"sessionId":"m1","path":"/tmp/out.txt"}"#
+        );
+        // marker 模式 + diff3 风格 + 关备份（/nobackups）
+        let v: MergeSaveParams = serde_json::from_str(
+            r#"{"sessionId":"m1","path":"/tmp/out.txt","mode":"marker","markerStyle":"diff3","backup":false}"#,
+        )
+        .unwrap();
+        assert_eq!(v.mode, Some(MergeOutputMode::Marker));
+        assert_eq!(v.marker_style, Some(MergeMarkerStyle::Diff3));
+        assert_eq!(v.backup, Some(false));
+        let back: MergeSaveParams =
+            serde_json::from_str(&serde_json::to_string(&v).unwrap()).unwrap();
+        assert_eq!(back, v);
+    }
+
+    #[test]
+    fn r3_20_merge_save_result_optional_backup_path() {
+        let r = MergeSaveResult {
+            session_id: "m1".into(),
+            path: "/tmp/out.txt".into(),
+            bytes: 21,
+            line_count: 4,
+            backup_path: None,
+            conflict_count: 2,
+            unresolved_chunks: vec![3, 7],
+            has_conflicts: true,
+            rev: 5,
+        };
+        let s = serde_json::to_string(&r).unwrap();
+        assert!(!s.contains("backupPath"), "None 不应序列化为 null: {s}");
+        assert!(s.contains("\"unresolvedChunks\":[3,7]"), "{s}");
+        let back: MergeSaveResult = serde_json::from_str(&s).unwrap();
+        assert_eq!(back, r);
+        // 无冲突且无备份的最小应答同样可解析（旧载荷不含 backupPath）
+        let minimal: MergeSaveResult = serde_json::from_str(
+            r#"{"sessionId":"m1","path":"/o","bytes":0,"lineCount":0,"conflictCount":0,"unresolvedChunks":[],"hasConflicts":false,"rev":0}"#,
+        )
+        .unwrap();
+        assert!(minimal.backup_path.is_none() && !minimal.has_conflicts);
     }
 
     // -----------------------------------------------------------------

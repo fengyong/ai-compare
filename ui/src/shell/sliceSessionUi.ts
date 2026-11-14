@@ -301,7 +301,27 @@ export const createUiSlice: StateCreator<
   ShellStore,
   [],
   [],
-  Pick<ShellStore, 'notice' | 'setNotice' | 'settingsDialog' | 'openSettings' | 'closeSettings' | 'prompt' | 'openPrompt' | 'resolvePrompt' | 'clipboardPanelOpen' | 'toggleClipboardPanel' | 'reportDialog' | 'openReportDialog' | 'closeReportDialog' | 'toolbarLayout' | 'cycleToolbarLayout'>
+  Pick<
+    ShellStore,
+    | 'notice'
+    | 'setNotice'
+    | 'settingsDialog'
+    | 'openSettings'
+    | 'closeSettings'
+    | 'prompt'
+    | 'openPrompt'
+    | 'resolvePrompt'
+    | 'confirm'
+    | 'askConfirm'
+    | 'resolveConfirm'
+    | 'clipboardPanelOpen'
+    | 'toggleClipboardPanel'
+    | 'reportDialog'
+    | 'openReportDialog'
+    | 'closeReportDialog'
+    | 'toolbarLayout'
+    | 'cycleToolbarLayout'
+  >
 > = (set, get) => ({
   notice: null,
   setNotice(msg) {
@@ -322,6 +342,19 @@ export const createUiSlice: StateCreator<
     const current = get().prompt;
     set({ prompt: null });
     if (current) current.onSubmit(value);
+  },
+  confirm: null,
+  askConfirm(init) {
+    const pending = get().confirm;
+    if (pending) pending.onResolve(false);
+    return new Promise<boolean>((resolve) => {
+      set({ confirm: { ...init, onResolve: resolve } });
+    });
+  },
+  resolveConfirm(ok) {
+    const current = get().confirm;
+    set({ confirm: null });
+    if (current) current.onResolve(ok);
   },
   clipboardPanelOpen: false,
   toggleClipboardPanel(open) {

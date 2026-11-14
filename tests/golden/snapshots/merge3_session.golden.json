@@ -17,6 +17,7 @@
         "inlineDiff": true,
         "linesRead": true,
         "maxDeltaBatchRows": 512,
+        "mergeSave": true,
         "patchApply": true,
         "pictureCompare": true,
         "reports": true,

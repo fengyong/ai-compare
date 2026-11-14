@@ -391,6 +391,17 @@ export const createTabsSlice: StateCreator<ShellStore, [], [], TabsSlice> = (set
     }));
   },
 
+  setMerge3OutputPath(tabId, path) {
+    set((st) => ({
+      windows: st.windows.map((w) => ({
+        ...w,
+        tabs: w.tabs.map((t) =>
+          t.id === tabId && t.merge3 ? { ...t, merge3: { ...t.merge3, outputPath: path } } : t,
+        ),
+      })),
+    }));
+  },
+
   /** 关闭（未落盘编辑或命名会话有未保存修改时转 closeGuard；引擎会话幂等清理） */
   async closeTab(tabId) {
     const found = get().findTab(tabId);

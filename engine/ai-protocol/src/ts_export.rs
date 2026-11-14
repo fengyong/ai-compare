@@ -105,6 +105,8 @@ pub fn export_all_to_ui() -> Result<usize, Box<dyn std::error::Error>> {
     MergeOutputMode::export()?;
     MergeOutputParams::export()?;
     MergeOutputResult::export()?;
+    MergeSaveParams::export()?;
+    MergeSaveResult::export()?;
     // P9 新增（table/hex/patch + dir/execute）
     TableColumnAlign::export()?;
     TableRowAlign::export()?;
@@ -249,5 +251,9 @@ mod tests {
         assert!(ui_dir.join("RulesGetResult.ts").exists(), "RulesGetResult.ts 应存在");
         assert!(ui_dir.join("ReportGenerateParams.ts").exists(), "ReportGenerateParams.ts 应存在");
         assert!(ui_dir.join("ReportGenerateResult.ts").exists(), "ReportGenerateResult.ts 应存在");
+        assert!(
+            ui_dir.join("MergeSaveResult.ts").exists(),
+            "MergeSaveResult.ts 应存在（R3-20）"
+        );
     }
 }

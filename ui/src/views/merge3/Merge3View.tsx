@@ -5,6 +5,7 @@ import {
   merge3OpenIdempotent,
   merge3Output,
   merge3Sections,
+  saveMerge3,
 } from '../../ipc/engineProcess';
 import type {
   LineRange,
@@ -19,7 +20,9 @@ import type {
   MergeOutputResult,
 } from '../../protocol/types';
 import type { Tab } from '../../shell/store';
+import { useShell } from '../../shell/store';
 import { S } from '../../strings';
+import { runMergeSave } from './mergeSave';
 
 /**
  * 三向文本合并视图（队列 3；消费 P7 的 text/merge3/open|sections|decide|output）。
@@ -257,7 +260,7 @@ const SECTION_PAGE = 200;
 
 type Merge3Tab = Tab & {
   kind: 'merge3';
-  merge3: { base: string; left: string; right: string; sessionId: string };
+  merge3: { base: string; left: string; right: string; sessionId: string; outputPath?: string };
 };
 
 export function Merge3View({ tab }: { tab: Merge3Tab }) {
@@ -275,6 +278,8 @@ export function Merge3View({ tab }: { tab: Merge3Tab }) {
   const [markerStyle, setMarkerStyle] = useState<MergeMarkerStyle>('merge');
   const [manualId, setManualId] = useState<number | null>(null);
   const [manualText, setManualText] = useState('');
+  /** 保存前备份（FR-TMRG-006；关闭 = BC 的 /nobackups） */
+  const [backup, setBackup] = useState(true);
 
   const loadSections = useCallback(async (): Promise<MergeChunkDto[]> => {
     const all: MergeChunkDto[] = [];
@@ -361,15 +366,69 @@ export function Merge3View({ tab }: { tab: Merge3Tab }) {
     }
   };
 
-  const exportOutput = () => {
-    const blob = new Blob([output?.text ?? ''], { type: 'text/plain;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'merge-output.txt';
-    a.click();
-    URL.revokeObjectURL(url);
-    setNotice(S.merge3.exported);
+  /**
+   * 保存输出到"合并到"目标（R3-20，FR-TMRG-006）。
+   * 引擎按会话决策现场合成后直接落盘，不回传预览文本：非活动标签/大输出同样可保存。
+   */
+  const doSaveOutput = useCallback(
+    async (path: string) => {
+      setBusy(true);
+      try {
+        const out = await runMergeSave(
+          sessionId,
+          path,
+          { mode, markerStyle, backup },
+          {
+            save: saveMerge3,
+            confirmOverwrite: (target) =>
+              useShell.getState().askConfirm({
+                title: S.merge3.overwriteTitle,
+                message: `${S.merge3.overwriteBody}：${target}${
+                  backup ? S.merge3.overwriteBackupSuffix : S.merge3.overwriteNoBackupSuffix
+                }`,
+                confirmLabel: S.merge3.saveOutput,
+              }),
+          },
+        );
+        if (out.cancelled) {
+          setNotice(S.merge3.saveCancelled);
+          return;
+        }
+        if (out.unsupported) {
+          setNotice(S.merge3.saveUnsupported);
+          return;
+        }
+        if (out.error !== null) {
+          setNotice(`${S.merge3.saveFail}: ${out.error}`);
+          return;
+        }
+        const res = out.result;
+        if (!res) return;
+        useShell.getState().setMerge3OutputPath(tab.id, res.path);
+        const backupNote =
+          res.backupPath === undefined ? '' : `（${S.merge3.savedBackupSuffix} ${res.backupPath}）`;
+        const conflictNote = res.hasConflicts
+          ? `（${S.merge3.saveConflictHint}：${res.unresolvedChunks.join('、')}）`
+          : '';
+        setNotice(`${S.merge3.saved}：${res.path}${backupNote}${conflictNote}`);
+      } finally {
+        setBusy(false);
+      }
+    },
+    [sessionId, mode, markerStyle, backup, tab.id],
+  );
+
+  const saveOutput = () => {
+    useShell.getState().openPrompt({
+      title: S.merge3.saveTitle,
+      initialValue: tab.merge3.outputPath ?? '',
+      onSubmit: (value) => {
+        if (value === null) return;
+        const path = value.trim();
+        if (!path) return;
+        void doSaveOutput(path);
+      },
+    });
   };
 
   if (error) {
@@ -494,7 +553,13 @@ export function Merge3View({ tab }: { tab: Merge3Tab }) {
             </select>
           )}
           <button onClick={() => void copyOutput()}>{S.merge3.copyOutput}</button>
-          <button onClick={exportOutput}>{S.merge3.exportOutput}</button>
+          <button disabled={busy} onClick={saveOutput}>
+            {S.merge3.saveOutput}
+          </button>
+          <label>
+            <input type="checkbox" checked={backup} onChange={(e) => setBackup(e.target.checked)} />
+            {S.merge3.backup}
+          </label>
           <button disabled={busy} onClick={() => void refreshOutput()}>{S.merge3.refresh}</button>
         </div>
         {output?.hasConflicts && <div className="aic-m3-warn">{S.merge3.unresolvedHint}</div>}
