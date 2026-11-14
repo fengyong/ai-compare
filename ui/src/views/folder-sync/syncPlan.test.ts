@@ -25,6 +25,8 @@ function row(id: string, status: DirRow['status'], lm = 0, rm = 0, kind: DirRow[
     hasChildren: kind === 'dir',
     hidden: false,
     suppressed: false,
+    leftPath: status === 'rightOnly' ? undefined : id,
+    rightPath: status === 'leftOnly' ? undefined : id,
   };
 }
 

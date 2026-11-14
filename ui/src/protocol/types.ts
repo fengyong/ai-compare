@@ -95,6 +95,7 @@ export type { DirOpenResult } from './generated/DirOpenResult';
 export type { DirOperateParams } from './generated/DirOperateParams';
 export type { DirOperateResult } from './generated/DirOperateResult';
 export type { DirRow } from './generated/DirRow';
+export type { DirScanIssue } from './generated/DirScanIssue';
 export type { DirStats } from './generated/DirStats';
 export type { DiffSide } from './generated/DiffSide';
 export type { DisplayFilterSpec } from './generated/DisplayFilterSpec';

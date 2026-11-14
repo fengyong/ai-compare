@@ -100,7 +100,7 @@ describe('renameTemplate', () => {
 
   function row(id: string, name = id.split('/').pop() ?? id): DirRow {
     const side = { size: 1, mtimeMs: 1, attribute: null, unixMode: 0, uid: 0, gid: 0 };
-    return { id, name, kind: 'file', left: side, right: null, status: 'leftOnly', hasChildren: false, hidden: false, suppressed: false };
+    return { id, name, kind: 'file', left: side, right: null, status: 'leftOnly', hasChildren: false, hidden: false, suppressed: false, leftPath: id };
   }
 
   const dos = { mask: 'IMG####.jpg', counterStart: 1 };
@@ -197,7 +197,7 @@ describe('renameTemplate', () => {
 
   it('renamesToOps：side 取存在侧（左优先）且载荷同形 DirExecuteOp', () => {
     const r1 = row('old_a.txt');
-    const r2 = { ...row('old_b.txt'), left: null, right: { size: 1, mtimeMs: 1, attribute: null, unixMode: 0, uid: 0, gid: 0 } };
+    const r2 = { ...row('old_b.txt'), left: null, leftPath: undefined, right: { size: 1, mtimeMs: 1, attribute: null, unixMode: 0, uid: 0, gid: 0 }, rightPath: 'old_b.txt' };
     const plan = planRenames({ rows: [r1, r2], allRows: [r1, r2], mode: 'regex', dos, regex });
     const ops = renamesToOps(plan.renames.map((r) => ({ row: r.row, newName: r.newName! })));
     expect(ops).toEqual([

@@ -314,9 +314,9 @@ export const createTabsSlice: StateCreator<ShellStore, [], [], TabsSlice> = (set
   /**
    * 双击目录行 → 打开文本子会话。
    *
-   * P0 说明（保持原语义）：引擎侧 dir/openChild（FormatRegistry 探测）与父会话
-   * 差异回传均未开放（P1/P2）；UI 以行 id（相对路径）拼出两侧完整路径直接
-   * text/open，视图类型按扩展名近似判定。
+   * 地址必须取 leftPath/rightPath：树形模式 id 恰好等于 rel，但平铺模式 id 是
+   * `name` / `name#i`（显示消歧），手动对齐时左右还可能不同名（R3-03）。
+   * 引擎侧 dir/openChild（FormatRegistry 探测）与父会话差异回传见 R3-17。
    */
   async openTextChild(parentTabId, row) {
     const found = get().findTab(parentTabId);
@@ -326,8 +326,15 @@ export const createTabsSlice: StateCreator<ShellStore, [], [], TabsSlice> = (set
       get().setNotice(S.text.unsupportedView);
       return;
     }
-    const left = joinPath(folder.left, row.id);
-    const right = joinPath(folder.right, row.id);
+    const leftRel = row.leftPath;
+    const rightRel = row.rightPath;
+    if (!leftRel || !rightRel) {
+      get().setNotice(S.text.unsupportedView);
+      return;
+    }
+    const left = joinPath(folder.left, leftRel);
+    const right = joinPath(folder.right, rightRel);
+    const baseName = (rel: string): string => rel.split('/').pop() || rel;
     try {
       const sessionId = engine.newSessionId('text');
       await engine.openText({ sessionId, left, right, options: null });
@@ -338,8 +345,8 @@ export const createTabsSlice: StateCreator<ShellStore, [], [], TabsSlice> = (set
         title: `${row.name}（${S.tab.textTitleSuffix}）`,
         text: {
           sessionId,
-          left: { path: left, name: row.name },
-          right: { path: right, name: row.name },
+          left: { path: left, name: baseName(leftRel) },
+          right: { path: right, name: baseName(rightRel) },
           parentTabId,
           parentFolderSessionId: folder.sessionId,
         },

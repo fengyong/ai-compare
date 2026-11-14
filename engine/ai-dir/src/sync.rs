@@ -614,6 +614,8 @@ mod tests {
             has_children: false,
             hidden: false,
             suppressed: false,
+            left_path: Some(id.into()),
+            right_path: Some(id.into()),
         }
     }
 

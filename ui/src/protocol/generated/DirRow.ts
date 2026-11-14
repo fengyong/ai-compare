@@ -22,4 +22,13 @@ hidden: boolean,
 /**
  * P2：抑制过滤器生效时被隐藏行以 suppressed 标记显示（FR-DIR-035 青绿色语义）
  */
-suppressed: boolean, };
+suppressed: boolean, 
+/**
+ * 左侧真实相对路径。平铺模式 id 是 `name` / `name#i`（显示用消歧 id），
+ * 手动对齐时左右不同名 —— 两者都不能拿 id 当文件地址。该侧不存在时为 None。
+ */
+leftPath?: string, 
+/**
+ * 右侧真实相对路径（语义同 left_path）
+ */
+rightPath?: string, };

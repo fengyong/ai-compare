@@ -13,16 +13,21 @@ import {
 } from './dirOps';
 
 function row(partial: Partial<DirRow> & { id: string }): DirRow {
+  const side = { size: 1, mtimeMs: 1, attribute: null, unixMode: 0, uid: 0, gid: 0 };
+  const left = partial.left !== undefined ? partial.left : side;
+  const right = partial.right !== undefined ? partial.right : side;
   return {
     id: partial.id,
     name: partial.name ?? partial.id.split('/').pop()!,
     kind: partial.kind ?? 'file',
-    left: partial.left !== undefined ? partial.left : { size: 1, mtimeMs: 1, attribute: null, unixMode: 0, uid: 0, gid: 0 },
-    right: partial.right !== undefined ? partial.right : { size: 1, mtimeMs: 1, attribute: null, unixMode: 0, uid: 0, gid: 0 },
+    left,
+    right,
     status: partial.status ?? 'same',
     hasChildren: partial.hasChildren ?? false,
     hidden: partial.hidden ?? false,
     suppressed: partial.suppressed ?? false,
+    leftPath: 'leftPath' in partial ? partial.leftPath : left ? partial.id : undefined,
+    rightPath: 'rightPath' in partial ? partial.rightPath : right ? partial.id : undefined,
   };
 }
 
@@ -90,6 +95,53 @@ describe('dirOps：批次构造（FR-DIR-060 文件夹语义）', () => {
     expect(hasSelectedDescendant('tree', new Set(['tree/inner.txt']))).toBe(true);
     expect(hasSelectedDescendant('tree', new Set(['tree', 'other.txt']))).toBe(false);
     expect(hasSelectedDescendant('tre', new Set(['tree/inner.txt']))).toBe(false);
+  });
+});
+
+/**
+ * R3-03：平铺模式 id 是显示消歧名（`x.txt` / `x.txt#1`），手动对齐时左右还可能
+ * 不同名 —— 操作地址必须取 leftPath/rightPath，拿 id 当路径会操作到错误目标。
+ */
+describe('dirOps：行地址取真实侧路径（R3-03）', () => {
+  const flat = [
+    row({ id: 'x.txt#0', name: 'x.txt', leftPath: 'dup/x.txt', rightPath: 'other/x.txt' }),
+    row({ id: 'x.txt#1', name: 'x.txt', leftPath: 'deep/x.txt', rightPath: undefined, right: noSide, status: 'leftOnly' }),
+  ];
+  const sel = new Set(['x.txt#0', 'x.txt#1']);
+
+  it('copy/move 用源侧真实路径，不用显示 id', () => {
+    expect(buildOpsForCommand('copyToRight', flat, sel)).toEqual([
+      { kind: 'copy', path: 'dup/x.txt', side: 'left', targetSide: 'right' },
+      { kind: 'copy', path: 'deep/x.txt', side: 'left', targetSide: 'right' },
+    ]);
+    expect(buildOpsForCommand('moveToLeft', flat, new Set(['x.txt#0']))).toEqual([
+      { kind: 'move', path: 'other/x.txt', side: 'right', targetSide: 'left' },
+    ]);
+  });
+
+  it('delete 两侧各取本侧真实路径（左右不同名时不串）', () => {
+    expect(buildOpsForCommand('delete', flat, new Set(['x.txt#0']))).toEqual([
+      { kind: 'delete', path: 'dup/x.txt', side: 'left' },
+      { kind: 'delete', path: 'other/x.txt', side: 'right' },
+    ]);
+  });
+
+  it('rename/touch 同样取真实路径', () => {
+    expect(buildOpsForCommand('rename', flat, new Set(['x.txt#0']), { newName: 'y.txt', side: 'right' })).toEqual([
+      { kind: 'rename', path: 'other/x.txt', side: 'right', newName: 'y.txt' },
+    ]);
+    expect(buildOpsForCommand('touch', flat, new Set(['x.txt#1']))).toEqual([
+      { kind: 'touch', path: 'deep/x.txt', side: 'left', mtimeMs: 0 },
+    ]);
+  });
+
+  it('侧路径缺失时不生成 op —— 不得回退到显示 id', () => {
+    const noPath = [row({ id: 'x.txt#0', name: 'x.txt', leftPath: undefined, rightPath: undefined })];
+    const ids = new Set(['x.txt#0']);
+    expect(buildOpsForCommand('copyToRight', noPath, ids)).toEqual([]);
+    expect(buildOpsForCommand('delete', noPath, ids)).toEqual([]);
+    expect(buildOpsForCommand('rename', noPath, ids, { newName: 'y.txt' })).toEqual([]);
+    expect(buildOpsForCommand('touch', noPath, ids)).toEqual([]);
   });
 });
 

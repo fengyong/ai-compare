@@ -487,6 +487,7 @@ mod dir_diff_tests {
             children: Vec::new(),
             expanded: false,
             aligned_with: None,
+            scan_failed: false,
         }
     }
 
@@ -504,6 +505,7 @@ mod dir_diff_tests {
                 children: Vec::new(),
                 expanded: true,
                 aligned_with: None,
+                scan_failed: false,
             },
             node("a.txt", "a.txt", EntryKind::File, DirEntryStatus::ContentDiff),
             node("same.txt", "same.txt", EntryKind::File, DirEntryStatus::Same),

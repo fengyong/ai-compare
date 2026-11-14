@@ -61,8 +61,10 @@ async fn drain(
 ) {
     while let Some(d) = model.take_delta().await {
         let batches = batch::batch_rows(d.upserts, max_batch_rows);
+        // 扫描错误必须回到 UI：读不到的子目录已置 Unknown，但用户还需要知道
+        // 是哪条路径、为什么读不到（权限/IO），否则只看到一个灰色的未知行。
         for (i, b) in batches.into_iter().enumerate() {
-            let delta = batch::make_delta_with_progress(
+            let mut delta = batch::make_delta_with_progress(
                 session_id,
                 d.rev,
                 &b,
@@ -70,6 +72,9 @@ async fn drain(
                 Some(d.progress),
                 if i == 0 { d.removals.clone() } else { Vec::new() },
             );
+            if i == 0 {
+                delta.scan_errors = batch::scan_issues(&d.scan_errors);
+            }
             let _ = out.send(Outbound::Notification(ai_protocol::RpcServerNotification::new(
                 ai_protocol::method::DIR_DELTA,
                 &delta,

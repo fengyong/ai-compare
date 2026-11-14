@@ -17,6 +17,17 @@ export type Side = 'left' | 'right';
 
 export const otherSide = (s: Side): Side => (s === 'left' ? 'right' : 'left');
 
+/**
+ * 行的真实文件地址。
+ *
+ * 为什么不能用 row.id：树形模式 id 恰好等于 rel 路径，但平铺模式 id 是
+ * `name` / `name#i`（显示消歧用），手动对齐时左右还可能不同名。拿 id 当
+ * 路径会操作到错误目标（R3-03）。该侧不存在时返回 null。
+ */
+export function sidePath(row: DirRow, side: Side): string | null {
+  return (side === 'left' ? row.leftPath : row.rightPath) ?? null;
+}
+
 /** 目录行的子项是否也在选择中（FR-DIR-060 忽略文件夹语义） */
 export function hasSelectedDescendant(rowId: string, selectedIds: ReadonlySet<string>): boolean {
   for (const id of selectedIds) {
@@ -56,10 +67,12 @@ export function buildOpsForCommand(
         const row = byId.get(id)!;
         // 源必须存在：源侧孤立项不可复制
         if (!row[sourceSide]) continue;
+        const path = sidePath(row, sourceSide);
+        if (path === null) continue;
         if (hasSelectedDescendant(id, selectedIds)) continue; // 子项覆盖（文件夹语义）
         push({
           kind: isMove ? 'move' : 'copy',
-          path: id,
+          path,
           side: sourceSide,
           targetSide,
         });
@@ -71,11 +84,13 @@ export function buildOpsForCommand(
       for (const id of targetIds) {
         const row = byId.get(id)!;
         if (row.kind === 'dir' && hasSelectedDescendant(id, selectedIds)) continue;
-        if (row.left) {
-          push({ kind: 'delete', path: id, side: 'left' });
+        const lp = sidePath(row, 'left');
+        const rp = sidePath(row, 'right');
+        if (row.left && lp !== null) {
+          push({ kind: 'delete', path: lp, side: 'left' });
         }
-        if (row.right) {
-          push({ kind: 'delete', path: id, side: 'right' });
+        if (row.right && rp !== null) {
+          push({ kind: 'delete', path: rp, side: 'right' });
         }
       }
       break;
@@ -85,14 +100,18 @@ export function buildOpsForCommand(
       if (targetIds.length !== 1 || !arg?.newName) break;
       const row = byId.get(targetIds[0])!;
       const side: Side = arg.side ?? (row.left ? 'left' : 'right');
-      push({ kind: 'rename', path: targetIds[0], side, newName: arg.newName });
+      const path = sidePath(row, side);
+      if (path === null) break;
+      push({ kind: 'rename', path, side, newName: arg.newName });
       break;
     }
     case 'touch': {
       for (const id of targetIds) {
         const row = byId.get(id)!;
-        if (row.left) push({ kind: 'touch', path: id, side: 'left', mtimeMs: 0 });
-        if (row.right) push({ kind: 'touch', path: id, side: 'right', mtimeMs: 0 });
+        const lp = sidePath(row, 'left');
+        const rp = sidePath(row, 'right');
+        if (row.left && lp !== null) push({ kind: 'touch', path: lp, side: 'left', mtimeMs: 0 });
+        if (row.right && rp !== null) push({ kind: 'touch', path: rp, side: 'right', mtimeMs: 0 });
       }
       break;
     }

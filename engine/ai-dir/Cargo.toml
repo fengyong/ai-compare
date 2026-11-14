@@ -16,3 +16,5 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+# 测试用 VFS 包装器（DenyListFs）需要与 VfsProvider 相同的 async_trait 展开
+async-trait = { workspace = true }

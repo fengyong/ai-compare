@@ -117,7 +117,7 @@ describe('dirSelection marks', () => {
 describe('dirSelection edit commands', () => {
   function mkRow(id: string, status: DirRow['status'], lMtime: number, rMtime: number, kind: DirRow['kind'] = 'file'): DirRow {
     const side = (mtime: number | null) => (mtime === null ? null : { size: 1, mtimeMs: mtime, attribute: null, unixMode: 0, uid: 0, gid: 0 });
-    return { id, name: id.split('/').pop() ?? id, kind, left: side(lMtime), right: side(rMtime), status, hasChildren: kind === 'dir', hidden: false, suppressed: false };
+    return { id, name: id.split('/').pop() ?? id, kind, left: side(lMtime), right: side(rMtime), status, hasChildren: kind === 'dir', hidden: false, suppressed: false, leftPath: lMtime === null ? undefined : id, rightPath: rMtime === null ? undefined : id };
   }
 
   const rows = [

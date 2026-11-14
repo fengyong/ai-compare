@@ -23,6 +23,8 @@ function row(id: string, left: boolean, right: boolean): DirRow {
     hasChildren: false,
     hidden: false,
     suppressed: false,
+    leftPath: left ? id : undefined,
+    rightPath: right ? id : undefined,
   };
 }
 

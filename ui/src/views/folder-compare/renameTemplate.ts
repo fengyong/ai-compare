@@ -14,6 +14,12 @@
 
 import type { DirRow } from '../../protocol/types';
 import { parentOf } from './dirTree';
+import { sidePath } from './dirOps';
+
+/** 行的真实 rel（左优先）；两侧都缺失说明该行不可操作 */
+function realPath(row: DirRow): string | null {
+  return sidePath(row, 'left') ?? sidePath(row, 'right');
+}
 
 export type RenameMode = 'dos' | 'regex';
 
@@ -169,7 +175,7 @@ export function planRenames(input: RenamePlanInput): RenamePlan {
   const items: RenamePlanItem[] = [];
   let counter = Math.max(1, Math.floor(input.dos.counterStart || 1));
   for (const row of input.rows) {
-    const parent = parentOf(row.id);
+    const parent = parentOf(realPath(row) ?? row.id);
     let newName: string | null = null;
     let reason: string | null = null;
     if (input.mode === 'dos') {
@@ -264,10 +270,13 @@ function depthOf(id: string): number {
 export function renamesToOps(
   renames: readonly { row: DirRow; newName: string }[]
 ): { kind: 'rename'; path: string; side: 'left' | 'right'; newName: string }[] {
-  return renames.map((it) => ({
-    kind: 'rename' as const,
-    path: it.row.id,
-    side: it.row.left ? ('left' as const) : ('right' as const),
-    newName: it.newName,
-  }));
+  const ops: { kind: 'rename'; path: string; side: 'left' | 'right'; newName: string }[] = [];
+  for (const it of renames) {
+    const side = it.row.left ? ('left' as const) : ('right' as const);
+    // 平铺 id 是显示消歧 id，不是文件地址（R3-03）
+    const path = sidePath(it.row, side);
+    if (path === null) continue;
+    ops.push({ kind: 'rename', path, side, newName: it.newName });
+  }
+  return ops;
 }

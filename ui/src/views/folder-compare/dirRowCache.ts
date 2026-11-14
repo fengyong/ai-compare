@@ -1,4 +1,4 @@
-import type { DirDelta, DirRow, DirStats, ScanProgress, ScanState } from '../../protocol/types';
+import type { DirDelta, DirRow, DirScanIssue, DirStats, ScanProgress, ScanState } from '../../protocol/types';
 import { subscribeDirDelta } from '../../ipc/engineProcess';
 
 /**
@@ -17,6 +17,8 @@ export interface DirStatsSnapshot {
   scanState: ScanState;
   progress: ScanProgress | null;
   total: number;
+  /** 扫描失败的路径（R3-09：读不到 ≠ 相同，必须让用户看见） */
+  scanErrors: readonly DirScanIssue[];
 }
 
 const zeroStats = (): DirStats => ({
@@ -40,6 +42,7 @@ export class DirRowCache {
    */
   private readonly marks = new Set<string>();
   private stats: DirStats = zeroStats();
+  private readonly scanErrors = new Map<string, string>();
   private scanState: ScanState = 'running';
   private progress: ScanProgress | null = null;
   private version = 0;
@@ -67,7 +70,13 @@ export class DirRowCache {
   }
 
   getStats(): DirStatsSnapshot {
-    return { stats: this.stats, scanState: this.scanState, progress: this.progress, total: this.rows.length };
+    return {
+      stats: this.stats,
+      scanState: this.scanState,
+      progress: this.progress,
+      total: this.rows.length,
+      scanErrors: [...this.scanErrors].map(([path, message]) => ({ path, message })),
+    };
   }
 
   // ---- P6b：标记集（会话缓存层持久；变更推版本号触发视图重渲染） ----
@@ -135,6 +144,12 @@ export class DirRowCache {
     }
     this.stats = d.stats ?? this.stats;
     this.progress = d.progress ?? null;
+    // 首批携带当前全量错误（引擎每条 delta 链路都在 batch 0 回传）：先清后收，
+    // 重扫后已恢复可读的路径不会留下陈旧错误；后续批次为空，不得清掉首批事实。
+    // 首批携带当前全量错误（引擎每条 delta 链路都在 batch 0 回传）：先清后收，
+    // 重扫后已恢复可读的路径不会留下陈旧错误；后续批次为空，不得清掉首批事实。
+    if (d.batch?.index === 0) this.scanErrors.clear();
+    for (const e of d.scanErrors ?? []) this.scanErrors.set(e.path, e.message);
     this.bump();
   }
 

@@ -377,3 +377,109 @@ async fn entry_kinds_and_dirs_aggregate_at_finish() {
 fn kind_check(k: EntryKind) {
     let _ = k;
 }
+
+// ---------------------------------------------------------------------------
+// R3-09：读不到的子目录不得被当成「相同」
+// ---------------------------------------------------------------------------
+
+/// 只在指定路径上让 list_dir 失败的 VFS 包装（其余委托 LocalFs）。
+/// 用权限位造 EACCES 在 root 下会失效，包装器让失败确定性可复现。
+struct DenyListFs {
+    inner: LocalFs,
+    deny_suffix: String,
+}
+
+#[async_trait::async_trait]
+impl ai_vfs::VfsProvider for DenyListFs {
+    fn scheme(&self) -> &'static str {
+        "file"
+    }
+    fn capabilities(&self) -> ai_vfs::VfsCaps {
+        self.inner.capabilities()
+    }
+    async fn stat(&self, path: &ai_vfs::VfsPath) -> Result<ai_vfs::StatInfo, ai_vfs::VfsError> {
+        self.inner.stat(path).await
+    }
+    async fn list_dir(&self, path: &ai_vfs::VfsPath) -> Result<Vec<ai_vfs::VfsDirEntry>, ai_vfs::VfsError> {
+        if path.as_str().ends_with(&self.deny_suffix) {
+            return Err(ai_vfs::VfsError::Unsupported(format!("模拟不可读: {}", path.as_str())));
+        }
+        self.inner.list_dir(path).await
+    }
+    async fn read_file_bytes(&self, path: &ai_vfs::VfsPath) -> Result<Vec<u8>, ai_vfs::VfsError> {
+        self.inner.read_file_bytes(path).await
+    }
+}
+
+/// 子目录 list_dir 失败 → 该行 Unknown（不是 DirSame），错误随 delta 回到调用方，
+/// 且祖先目录不得聚合成 DirSame。
+#[tokio::test]
+async fn unreadable_subdir_is_unknown_not_same_and_error_is_surfaced() {
+    let (ld, left) = make_tree(&[("sub/hidden.txt", b"L")]).await;
+    let (rd, right) = make_tree(&[("sub/hidden.txt", b"R")]).await;
+    let vfs = Arc::new(DenyListFs { inner: LocalFs::new(), deny_suffix: "/sub".into() });
+    let mut o = opts();
+    o.target_depth = None;
+    o.visible_depth = 1;
+    let (model, _first) = DirModel::open(vfs, &left, &right, o, crate::CancelFlag::new()).await.unwrap();
+    let handles = model.start_background();
+    let phase = model.wait_until_done(Duration::from_secs(10)).await;
+    assert_eq!(phase, ai_protocol::ProgressPhase::Completed);
+    for h in handles {
+        let _ = h.await;
+    }
+
+    let rows = model.rows_snapshot().await;
+    let sub = rows.iter().find(|r| r.id == "sub").expect("sub 行应存在");
+    assert_eq!(sub.status, DirEntryStatus::Unknown, "读不到的目录不得报 DirSame: {sub:?}");
+
+    let errors = model.scan_errors();
+    assert!(errors.iter().any(|(p, _)| p == "sub"), "扫描错误必须记录 rel: {errors:?}");
+
+    let mut surfaced = Vec::new();
+    while let Some(d) = model.take_delta().await {
+        surfaced.extend(d.scan_errors);
+    }
+    assert!(surfaced.iter().any(|(p, _)| p == "sub"), "错误必须随 delta 回到 UI: {surfaced:?}");
+    drop(ld);
+    drop(rd);
+}
+
+/// 平铺模式：id 是显示用消歧 id（basename 或 `basename#i`），不是文件地址；
+/// 左右必须各自携带真实 rel，否则 UI 拿 id 当路径会操作到错误目标。
+#[tokio::test]
+async fn flat_rows_carry_real_side_paths_not_display_id() {
+    let files = [("a.txt", b"1".as_slice()), ("dup/x.txt", b"1"), ("other/x.txt", b"2")];
+    let (ld, left) = make_tree(&files).await;
+    let (rd, right) = make_tree(&files).await;
+    let vfs = Arc::new(LocalFs::new());
+    let mut o = opts();
+    o.flat = true;
+    o.target_depth = None;
+    o.visible_depth = 1;
+    let (model, _first) = DirModel::open(vfs, &left, &right, o, crate::CancelFlag::new()).await.unwrap();
+    let handles = model.start_background();
+    let _ = model.wait_until_done(Duration::from_secs(10)).await;
+    for h in handles {
+        let _ = h.await;
+    }
+    let rows = model.rows_snapshot().await;
+    let real: std::collections::HashSet<&str> = ["a.txt", "dup/x.txt", "other/x.txt"].into_iter().collect();
+    assert!(!rows.is_empty());
+    for r in &rows {
+        let lp = r.left_path.as_deref().expect("平铺行必须携带左侧真实 rel");
+        let rp = r.right_path.as_deref().expect("平铺行必须携带右侧真实 rel");
+        assert!(real.contains(lp), "left_path 必须是真实 rel: {r:?}");
+        assert!(real.contains(rp), "right_path 必须是真实 rel: {r:?}");
+        assert!(!lp.contains('#') && !rp.contains('#'), "真实 rel 不得带显示消歧后缀: {r:?}");
+    }
+    // 同名两处 → `x.txt#0` / `x.txt#1`：id 与真实 rel 明显不同，正是 R3-03 的根因
+    let xs: Vec<_> = rows.iter().filter(|r| r.name == "x.txt").collect();
+    assert_eq!(xs.len(), 2, "同名两处应各占一行: {:?}", xs.iter().map(|r| &r.id).collect::<Vec<_>>());
+    assert!(xs.iter().all(|r| r.id.contains('#')), "同名多 occurrence 应产生 #i 消歧 id: {:?}", xs.iter().map(|r| &r.id).collect::<Vec<_>>());
+    assert!(xs.iter().any(|r| r.id != r.left_path.clone().unwrap()), "id 不得被当作文件地址");
+    let paths: std::collections::HashSet<_> = xs.iter().map(|r| r.left_path.clone().unwrap()).collect();
+    assert_eq!(paths.len(), 2, "两个消歧 id 必须指向不同真实 rel: {paths:?}");
+    drop(ld);
+    drop(rd);
+}

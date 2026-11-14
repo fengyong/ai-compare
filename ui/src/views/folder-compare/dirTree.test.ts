@@ -14,6 +14,8 @@ function dirRow(id: string, kind: DirRow['kind'] = 'file', hidden = false): DirR
     hasChildren: kind === 'dir',
     hidden,
     suppressed: false,
+    leftPath: id,
+    rightPath: id,
   };
 }
 
@@ -83,6 +85,8 @@ describe('dirTree 表头排序', () => {
     hasChildren: false,
     hidden: false,
     suppressed: false,
+    leftPath: missing === 'left' ? undefined : id,
+    rightPath: missing === 'right' ? undefined : id,
   });
 
   const rows = [

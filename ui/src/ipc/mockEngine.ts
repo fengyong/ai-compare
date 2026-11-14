@@ -76,6 +76,7 @@ import { clipboardStore, parseClipSpec } from '../lib/clipboardStore';
 import { hashString, mulberry32 } from '../lib/env';
 import { applyDisplayToRows, fileAllowedBySpec, SHOW_ALL_DISPLAY_FILTER, wildcardMatch } from '../views/folder-compare/dirFilters';
 import { parentOf } from '../views/folder-compare/dirTree';
+import { sidePath } from '../views/folder-compare/dirOps';
 
 /**
  * 内置演示引擎（纯 TypeScript 实现的协议子集）。
@@ -357,6 +358,7 @@ export class MockEngine {
         stats,
         progress: { scanned: Math.min((i + 1) * MAX_BATCH_ROWS, rows.length), total: rows.length },
         batch: { index: i, hasMore: i + 1 < batchCount },
+        scanErrors: [],
       });
     }
     return deltas;
@@ -394,6 +396,7 @@ export class MockEngine {
       stats,
       progress: { scanned: stats.total, total: stats.total },
       batch: { index: 0, hasMore: false },
+      scanErrors: [],
     };
     return {
       result: {
@@ -466,6 +469,7 @@ export class MockEngine {
       stats,
       progress: { scanned: stats.total, total: stats.total },
       batch: { index: 0, hasMore: false },
+      scanErrors: [],
     };
     return {
       result: {
@@ -571,11 +575,13 @@ export class MockEngine {
               if (other.id === op.path) continue;
               if (other.id.startsWith(`${op.path}/`)) {
                 other.id = newId + other.id.slice(op.path.length);
+                syncSidePaths(other);
                 touched.add(other.id);
               }
             }
             row.id = newId;
             row.name = op.newName;
+            syncSidePaths(row);
             touched.add(row.id);
             succeeded.push({ op, status: 'succeeded', detail: null });
             break;
@@ -608,6 +614,8 @@ export class MockEngine {
               hasChildren: false,
               hidden: false,
               suppressed: false,
+              leftPath: op.side === 'left' ? op.path : undefined,
+              rightPath: op.side === 'right' ? op.path : undefined,
             };
             s.treeRows.push(created);
             touched.add(created.id);
@@ -638,6 +646,7 @@ export class MockEngine {
           stats,
           progress: { scanned: stats.total, total: stats.total },
           batch: { index: 0, hasMore: false },
+          scanErrors: [],
         },
       ];
     }
@@ -1389,8 +1398,8 @@ function deriveFlatRows(s: MockDirSession): DirRow[] {
     if (row.kind !== 'file' || row.hidden) continue;
     const key = row.name.toLowerCase();
     const g = groups.get(key) ?? { ls: [], rs: [] };
-    if (row.left) g.ls.push({ rel: row.id, name: row.name, info: row.left });
-    if (row.right) g.rs.push({ rel: row.id, name: row.name, info: row.right });
+    if (row.left) g.ls.push({ rel: row.leftPath ?? row.id, name: row.name, info: row.left });
+    if (row.right) g.rs.push({ rel: row.rightPath ?? row.id, name: row.name, info: row.right });
     groups.set(key, g);
   }
   const out: DirRow[] = [];
@@ -1412,6 +1421,8 @@ function deriveFlatRows(s: MockDirSession): DirRow[] {
         hasChildren: false,
         hidden: false,
         suppressed: false,
+        leftPath: l?.rel,
+        rightPath: r?.rel,
       });
     }
   }
@@ -1444,6 +1455,7 @@ function applyCopyToRow(row: DirRow, targetSide: 'left' | 'right'): void {
 
 /** 简化状态重算（mock 演示口径：size+mtime 相等 = same，否则 contentDiff；单侧 = 孤立） */
 function recomputeRowStatus(row: DirRow): void {
+  syncSidePaths(row);
   if (row.kind === 'dir') {
     row.status = row.left && row.right ? 'dirSame' : row.left ? 'leftOnly' : row.right ? 'rightOnly' : 'unknown';
     return;
@@ -1463,6 +1475,12 @@ function mockSideInfo(): SideInfo {
   return { size: 0, mtimeMs: Date.now(), attribute: null, unixMode: 0, uid: 0, gid: 0 };
 }
 
+/** mock 树行两侧同名（id 即 rel）：侧存在性/行地址变化后同步真实路径 */
+function syncSidePaths(row: DirRow): void {
+  row.leftPath = row.left ? row.id : undefined;
+  row.rightPath = row.right ? row.id : undefined;
+}
+
 /**
  * mock 同步计划（与引擎 sync.rs plan_operations 同口径的 5 预设子集；
  * 目录聚合状态 DirDiff 参与 copy 语义、mirroring 删除另一侧孤立项）。
@@ -1475,7 +1493,12 @@ function mockPlanOperations(rows: DirRow[], preset: SyncPreset | null, paths: st
   for (const row of rows) {
     if (sel && !sel.has(row.id)) continue;
     const reason = `preset:${preset}`;
-    const push = (op: PlannedOperation['op']) => plan.push({ op, path: row.id, reason });
+    const push = (op: PlannedOperation['op']) => {
+      // 计划路径取 op 源侧的真实 rel（平铺 id 是显示消歧名，R3-03）
+      const side = op === 'copyLeftToRight' || op === 'deleteLeft' || op === 'touchLeft' ? 'left' : 'right';
+      const path = sidePath(row, side);
+      if (path !== null) plan.push({ op, path, reason });
+    };
     const mt = (info: SideInfo | null) => info?.mtimeMs ?? 0;
     switch (row.status) {
       case 'leftOnly':
@@ -1958,6 +1981,8 @@ function buildDirModel(left: string, right: string): DirRow[] {
       hasChildren,
       hidden: false,
       suppressed: false,
+      leftPath: status === 'rightOnly' ? undefined : id,
+      rightPath: status === 'leftOnly' ? undefined : id,
     });
   };
 

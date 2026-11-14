@@ -539,6 +539,27 @@ pub struct DirRow {
     /// P2：抑制过滤器生效时被隐藏行以 suppressed 标记显示（FR-DIR-035 青绿色语义）
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub suppressed: bool,
+    /// 左侧真实相对路径。平铺模式 id 是 `name` / `name#i`（显示用消歧 id），
+    /// 手动对齐时左右不同名 —— 两者都不能拿 id 当文件地址。该侧不存在时为 None。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub left_path: Option<String>,
+    /// 右侧真实相对路径（语义同 left_path）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub right_path: Option<String>,
+}
+
+/// 目录扫描问题（子目录不可读等）。比较工具的基本原则是「不可把未知当相同」，
+/// 因此这些错误必须随 delta 回到 UI，而不是只留在引擎内部。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct DirScanIssue {
+    /// 出问题的相对路径
+    pub path: String,
+    pub message: String,
 }
 
 /// 各状态计数（状态栏 / 信息对话框数据源）
@@ -603,6 +624,10 @@ pub struct DirDelta {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub progress: Option<ScanProgress>,
     pub batch: BatchInfo,
+    /// 扫描错误（目录不可读等）。始终序列化（空为 []），使生成的 TS 必填
+    /// Array 类型与线上 JSON 一致 —— 省略键会让 TS 类型说谎（R3-21）。
+    #[serde(default)]
+    pub scan_errors: Vec<DirScanIssue>,
 }
 
 // ---------------------------------------------------------------------------
@@ -2985,9 +3010,13 @@ mod tests {
             has_children: false,
             hidden: false,
             suppressed: false,
+            left_path: None,
+            right_path: Some("a.txt".into()),
         };
         let v = serde_json::to_value(&row).unwrap();
         assert!(v.get("left").is_none());
+        assert!(v.get("leftPath").is_none(), "缺失侧不应输出路径键");
+        assert_eq!(v["rightPath"], "a.txt");
         assert_eq!(v["status"], "rightOnly");
     }
 

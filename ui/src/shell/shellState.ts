@@ -1,4 +1,5 @@
 import type { SessionKind } from '../session/model';
+import type { DirRow } from '../protocol/types';
 
 /**
  * 应用壳状态类型（M30）：多窗口 × 多标签（FR-WIN-001/002）。
@@ -158,7 +159,7 @@ export interface TabsSlice {
   /** 独立文本比较（主页文本大按钮入口；子会话路径见 openTextChild） */
   openTextTab(leftPath: string, rightPath: string, opts?: OpenTabOpts): Promise<void>;
   /** 双击目录行 → 打开文本子会话（P0 闭环，保持原语义） */
-  openTextChild(parentTabId: string, row: { id: string; name: string }): Promise<void>;
+  openTextChild(parentTabId: string, row: Pick<DirRow, 'id' | 'name' | 'leftPath' | 'rightPath'>): Promise<void>;
   activate(tabId: string): void;
   /** 关闭（命名会话有未保存修改时转 closeGuard；引擎会话幂等清理） */
   closeTab(tabId: string): Promise<void>;

@@ -127,6 +127,8 @@ pub struct DirDeltaData {
     pub removals: Vec<String>,
     pub stats: DirStats,
     pub progress: ScanProgress,
+    /// 扫描错误（rel -> 消息）。随 delta 回到 UI，避免「读不到」被当成「相同」。
+    pub scan_errors: Vec<(String, String)>,
 }
 
 struct ModelState {
@@ -204,6 +206,7 @@ impl DirModel {
             children: Vec::new(),
             expanded: false,
             aligned_with: None,
+            scan_failed: false,
         }];
         // 根节点不计入可见行统计（旧 compute_stats 跳过 arena[0] 的语义）
         let stats = DirStats::default();
@@ -261,6 +264,7 @@ impl DirModel {
             removals: Vec::new(),
             stats: DirStats::default(),
             progress: model.progress(),
+            scan_errors: model.scan_errors(),
         });
         model.notify.notify_waiters();
         Ok((model, delta))
@@ -421,7 +425,12 @@ impl DirModel {
                 if st.gen == item.gen {
                     let rel = st.arena[item.dir_id as usize].rel_path.clone();
                     st.errors.push((rel, e.to_string()));
+                    // 读不到 ≠ 相同：标记扫描失败并置 Unknown，聚合会把它上推到祖先，
+                    // 否则父目录仍报 DirSame，用户以为已核对过这个读不到的子树。
+                    st.arena[item.dir_id as usize].scan_failed = true;
+                    self.set_status(&mut st, item.dir_id, DirEntryStatus::Unknown);
                     self.mark_expanded(&mut st, item.dir_id);
+                    self.aggregate_after_locked(&mut st, item.dir_id);
                 }
                 return;
             }
@@ -607,6 +616,7 @@ impl DirModel {
                 children: Vec::new(),
                 expanded: false,
                 aligned_with: None,
+                scan_failed: false,
             });
             st.index.insert(rel.clone(), id);
             st.arena[dir_id as usize].children.push(id);
@@ -844,10 +854,11 @@ impl DirModel {
         st.flat_dirty = false;
         let rev = self.rev.fetch_add(1, Ordering::SeqCst) + 1;
         let stats = st.stats;
+        let scan_errors = st.errors.clone();
         // progress() 内部需要 state 锁：先释放本锁再取（同线程重入会死锁）
         drop(st);
         let progress = self.progress();
-        Some(DirDeltaData { rev, upserts, removals, stats, progress })
+        Some(DirDeltaData { rev, upserts, removals, stats, progress, scan_errors })
     }
 
     /// 平铺视图里需要跨路径重判的配对（rel 左, rel 右, 名键）
@@ -931,6 +942,8 @@ impl DirModel {
                 has_children: node.kind == EntryKind::Dir,
                 hidden: display_hidden && !opts.suppress,
                 suppressed: display_hidden && opts.suppress,
+                left_path: node.left.as_ref().map(|_| node.rel_path.clone()),
+                right_path: node.right.as_ref().map(|_| node.rel_path.clone()),
             });
         }
         rows
@@ -1033,6 +1046,10 @@ impl DirModel {
                     has_children: false,
                     hidden: false,
                     suppressed: false,
+                    // 平铺 id 是 `name` / `name#i`（显示消歧用），不是文件地址；
+                    // 手动对齐时左右 rel 还可能不同名。必须各自携带真实 rel。
+                    left_path: lside.map(|o| o.rel.clone()),
+                    right_path: rside.map(|o| o.rel.clone()),
                 });
             }
         }
@@ -1203,6 +1220,7 @@ impl DirModel {
                 children: Vec::new(),
                 expanded: false,
                 aligned_with: None,
+                scan_failed: false,
             }];
             st.index = HashMap::from([(String::new(), 0)]);
             st.dirty = BTreeSet::from([0]);
@@ -1408,12 +1426,17 @@ impl DirModel {
     /// 节点状态变化后聚合其祖先链
     fn aggregate_after(&self, id: NodeId) {
         let mut st = self.state.lock().expect("模型锁");
+        self.aggregate_after_locked(&mut st, id);
+    }
+
+    /// 同 [`aggregate_after`]，但调用方已持锁（扫描失败分支在锁内直接上推）
+    fn aggregate_after_locked(&self, st: &mut ModelState, id: NodeId) {
         let mut cur = st.arena[id as usize].parent;
         while let Some(pid) = cur {
             let node = &st.arena[pid as usize];
             if node.is_paired_dir() && node.expanded {
                 let new_status = aggregate_children(node, &st.arena);
-                self.set_status(&mut st, pid, new_status);
+                self.set_status(st, pid, new_status);
             }
             cur = st.arena[pid as usize].parent;
         }
@@ -1451,6 +1474,8 @@ impl DirModel {
                     has_children: node.kind == EntryKind::Dir,
                     hidden: display_hidden && !opts.suppress,
                     suppressed: display_hidden && opts.suppress,
+                    left_path: node.left.as_ref().map(|_| node.rel_path.clone()),
+                    right_path: node.right.as_ref().map(|_| node.rel_path.clone()),
                 });
             }
             return rows;
