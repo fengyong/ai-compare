@@ -310,34 +310,56 @@ input:focus {
   background: var(--aic-status-unscanned);
 }
 
-/* 目录表 */
-.aic-dir-header,
-.aic-dir-row {
+/* 目录表：BC 双窗格 + 中央 gutter（FR-DIR-001/003/020） */
+.aic-dir-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: stretch;
+}
+.aic-dir-pane {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+/* 单侧三列：名称 / 大小 / 已修改（两侧同构，行按名称对齐） */
+.aic-dir-grid {
   display: grid;
-  grid-template-columns: minmax(200px, 1fr) 92px 132px 44px 92px 132px;
+  grid-template-columns: minmax(200px, 1fr) 92px 132px;
   gap: 8px;
   align-items: center;
   padding: 0 12px;
 }
-.aic-dir-header {
+.aic-dir-pane-head {
+  flex: none;
   height: 28px;
+  overflow: hidden;
   background: var(--aic-bg-panel);
   border-bottom: 1px solid var(--aic-border);
   color: var(--aic-text-dim);
   font-size: 12px;
-  flex: none;
 }
-.aic-dir-header .r,
+.aic-dir-pane-head .aic-dir-grid {
+  height: 28px;
+}
+/* 活动窗格：工具栏选择命令 / 空格标记 / 右键操作的作用侧 */
+.aic-dir-pane.active .aic-dir-pane-head {
+  background: var(--aic-accent-soft);
+  border-bottom-color: var(--aic-accent);
+}
+.aic-dir-pane-head .r,
 .aic-dir-cell.r {
   text-align: right;
 }
-.aic-dir-header .c,
+.aic-dir-pane-head .c,
 .aic-dir-cell.c {
   text-align: center;
 }
 
 .aic-dir-scroll {
   flex: 1;
+  min-height: 0;
   overflow: auto;
   position: relative;
 }
@@ -351,6 +373,11 @@ input:focus {
 }
 .aic-dir-row.selected {
   background: var(--aic-accent-soft);
+}
+/* 孤立项在缺侧整行留白（对齐行仍存在，只是该侧无内容） */
+.aic-dir-row.missing,
+.aic-dir-row.missing:hover {
+  background: var(--aic-rowbg-absent);
 }
 .aic-dir-cell.name {
   display: flex;
@@ -368,9 +395,63 @@ input:focus {
   font-size: 12px;
   color: var(--aic-text-dim);
 }
-.aic-dir-cell.placeholder {
-  color: var(--aic-st-older);
-  font-size: 12px;
+
+/* 中央 gutter：内容状态图标 + 左右复制箭头（纵向与两侧窗格同步） */
+.aic-dir-gutter {
+  flex: none;
+  width: 64px;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid var(--aic-border);
+  border-right: 1px solid var(--aic-border);
+  background: var(--aic-bg-panel);
+}
+.aic-dir-gutter-head {
+  flex: none;
+  height: 28px;
+  line-height: 28px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--aic-text-dim);
+  border-bottom: 1px solid var(--aic-border);
+}
+.aic-dir-gutter-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  position: relative;
+}
+.aic-dir-gutter-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+}
+.aic-dir-gutter-cell .aic-center-icon {
+  width: 16px;
+  flex: none;
+  text-align: center;
+}
+.aic-dir-gutter-cell .g-arrow {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  padding: 0;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--aic-text-dim);
+  font-size: 9px;
+  line-height: 1;
+  cursor: pointer;
+}
+.aic-dir-gutter-cell .g-arrow:hover:not(:disabled) {
+  background: var(--aic-accent-soft);
+  color: var(--aic-accent);
+}
+.aic-dir-gutter-cell .g-arrow:disabled {
+  opacity: 0.22;
+  cursor: default;
 }
 
 /* P6：第二行工具栏（同步预设 / 显示过滤 / 名称过滤 / 选择） */

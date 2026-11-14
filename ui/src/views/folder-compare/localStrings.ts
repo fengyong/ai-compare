@@ -72,4 +72,10 @@ export const F = {
   navInvalidPath: '路径为空，无法打开会话',
   navLeft: '左',
   navRight: '右',
+
+  // ---- BC 双窗格（FR-DIR-001/003：两侧独立选择/横向滚动，中间 gutter） ----
+  sortHint: '点击排序：升序 → 降序 → 默认（两侧共用行序以保持对齐）',
+  paneSelChip: (side: string, n: number) => `${side}侧已选 ${n} 项`,
+  paneActive: (side: string) => `活动窗格：${side}侧（全选/反选/清空/空格标记/右键操作均作用于此侧）`,
+  paneInactive: (side: string) => `${side}侧选择集（点击该窗格任意行即切换为活动窗格）`,
 } as const;
