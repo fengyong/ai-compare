@@ -1,4 +1,5 @@
 import type { TextSaveEntry, TextSaveParams, TextSaveResult } from '../../protocol/types';
+import { putTextSession, type TextSessionModel } from './textModel';
 
 /**
  * 文本落盘控制器（R3-04，FR-TXT-020）。
@@ -56,4 +57,21 @@ export async function runTextSave(
     saved.push(...res.saved);
   }
   return { saved, unsupported: false, error: null };
+}
+
+/**
+ * 落盘结果回写会话模型：只清除真正落盘的侧，另存为把该侧路径改指新目标
+ * （下次默认保存不再写原文件）。视图工具栏与壳级关闭守卫共用这一份语义。
+ */
+export function applySavedEntries(
+  model: TextSessionModel | undefined,
+  saved: readonly TextSaveEntry[],
+): void {
+  if (!model) return;
+  for (const e of saved) {
+    model.modifiedSides[e.side] = false;
+    if (e.side === 'left') model.leftPath = e.path;
+    else model.rightPath = e.path;
+  }
+  putTextSession(model);
 }

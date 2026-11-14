@@ -39,9 +39,15 @@ export function bootstrapShell(): void {
 // 模块加载即引导主窗口（AppShell/main 无需显式调用；测试用 resetShellForTest 复位）
 bootstrapShell();
 
-/** 测试辅助：复位到全新主窗口 */
+/** 测试辅助：复位到全新主窗口（含关闭守卫编排状态，避免跨用例串味） */
 export function resetShellForTest(): void {
-  useShell.setState({ windows: [makeWindow('w-1-main', true)], activeWindowId: 'w-1-main' });
+  useShell.setState({
+    windows: [makeWindow('w-1-main', true)],
+    activeWindowId: 'w-1-main',
+    closeGuard: null,
+    pendingClose: null,
+    exitHandler: null,
+  });
 }
 
 // 兼容旧引用：FolderCompareView / HomeView 等仍以 useShell 为主入口

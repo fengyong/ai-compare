@@ -110,7 +110,16 @@ export function TabBar() {
           {tab.pinned && <span className="pin">📌</span>}
           <span>{tab.title}</span>
           {tab.sessionLink && <span className="link-dot" title={`命名会话「${tab.sessionLink.name}」`} />}
-          {tab.dirty && <span className="dirty-dot" title={S.session.closeGuardTitle} />}
+          {(tab.dirty || tab.contentDirty?.left || tab.contentDirty?.right) && (
+            <span
+              className="dirty-dot"
+              title={
+                tab.contentDirty?.left || tab.contentDirty?.right
+                  ? S.session.closeGuardContentTitle
+                  : S.session.closeGuardTitle
+              }
+            />
+          )}
           {tab.kind !== 'home' && (
             <button
               className="close"

@@ -27,6 +27,7 @@ import {
   switchToMockEngine,
 } from '../ipc/engineProcess';
 import { setNoticeSink, createViewCtx } from './viewRegistry';
+import { attachNativeExitGuard } from './nativeExit';
 import { commandRegistry } from './commands';
 import { createShortcutEngine, type ShortcutEngine } from './shortcutEngine';
 import { S } from '../strings';
@@ -74,6 +75,9 @@ export function AppShell() {
       disposed = true;
     };
   }, []);
+
+  // ---- 原生窗口关闭守卫（R3-05：未落盘编辑/未保存会话先提示，处理完才退出）----
+  useEffect(() => attachNativeExitGuard(), []);
 
   // ---- 横幅状态机订阅 + 会话恢复事件（replay 降级 → rebindSession） ----
   useEffect(() => {

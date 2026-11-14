@@ -1,8 +1,10 @@
 import type { StateCreator } from 'zustand';
 import * as engine from '../ipc/engineProcess';
 import { releaseDirCache } from '../views/folder-compare/dirRowCache';
+import { deleteTextSession } from '../views/text-compare/textModel';
 import { basename, joinPath, looksTextual } from '../lib/env';
 import { S } from '../strings';
+import { firstPendingGuard, guardOf } from './closeGuard';
 import type { ShellStore, Tab, WindowState, WindowsSlice, TabsSlice, OpenTabOpts } from './shellState';
 
 /** 窗口 slice（FR-WIN-001/002）：多窗口、拖出标签、合并窗口 */
@@ -60,13 +62,14 @@ export const createWindowsSlice: StateCreator<ShellStore, [], [], WindowsSlice> 
   async closeWindow(windowId) {
     const win = get().windows.find((w) => w.id === windowId);
     if (!win) return;
-    // 脏的命名会话需要确认（与 closeTab 同口径）：否则下方整窗移除会
-    // 静默丢弃未保存内容（FR-SES-001）。
-    const dirty = win.tabs.find((t) => t.kind !== 'home' && t.sessionLink && t.dirty);
-    if (dirty) {
-      set({ closeGuard: { tabId: dirty.id } });
+    // 脏标签（未落盘编辑 / 命名会话修改）逐个确认；否则下方整窗移除会
+    // 静默丢弃未保存内容（FR-SES-001 / R3-05）。
+    const pending = firstPendingGuard([win]);
+    if (pending) {
+      set({ closeGuard: pending, pendingClose: { kind: 'window', windowId } });
       return;
     }
+    set({ pendingClose: null });
     for (const t of [...win.tabs]) {
       if (t.kind !== 'home') await get().closeTab(t.id);
     }
@@ -375,12 +378,26 @@ export const createTabsSlice: StateCreator<ShellStore, [], [], TabsSlice> = (set
     });
   },
 
-  /** 关闭（命名会话有未保存修改时转 closeGuard；引擎会话幂等清理） */
+  retargetTextSide(tabId, side, path) {
+    set((st) => ({
+      windows: st.windows.map((w) => {
+        const tabs = w.tabs.map((t) => {
+          if (t.id !== tabId || !t.text) return t;
+          const text = { ...t.text, [side]: { path, name: basename(path) } };
+          return { ...t, text, title: `${basename(text.left.path)}（${S.tab.textTitleSuffix}）` };
+        });
+        return { ...w, tabs, title: titleOf(w.activeTabId, tabs) };
+      }),
+    }));
+  },
+
+  /** 关闭（未落盘编辑或命名会话有未保存修改时转 closeGuard；引擎会话幂等清理） */
   async closeTab(tabId) {
     const found = get().findTab(tabId);
     if (!found || found.tab.kind === 'home') return;
-    if (found.tab.sessionLink && found.tab.dirty) {
-      set({ closeGuard: { tabId } });
+    const pending = guardOf(found.tab);
+    if (pending) {
+      set({ closeGuard: pending });
       return;
     }
     await cleanupTabEngines(found.tab);
@@ -401,14 +418,17 @@ export const createTabsSlice: StateCreator<ShellStore, [], [], TabsSlice> = (set
     const found = get().findTab(tabId);
     if (!found) return;
     const win = get().windows.find((w) => w.id === found.windowId)!;
-    // 脏的命名会话需要确认：否则下方批量过滤会静默丢弃未保存内容（FR-SES-001）。
-    const dirty = win.tabs.find(
-      (t) => t.kind !== 'home' && t.id !== tabId && !t.pinned && t.sessionLink && t.dirty
-    );
-    if (dirty) {
-      set({ closeGuard: { tabId: dirty.id } });
+    // 脏标签逐个确认：否则下方批量过滤会静默丢弃未保存内容（FR-SES-001 / R3-05）。
+    const closing: WindowState = {
+      ...win,
+      tabs: win.tabs.filter((t) => t.id !== tabId && !t.pinned),
+    };
+    const pending = firstPendingGuard([closing]);
+    if (pending) {
+      set({ closeGuard: pending, pendingClose: { kind: 'others', tabId } });
       return;
     }
+    set({ pendingClose: null });
     for (const t of win.tabs) {
       if (t.kind !== 'home' && t.id !== tabId && !t.pinned) await cleanupTabEngines(t);
     }
@@ -511,5 +531,10 @@ export async function cleanupTabEngines(tab: Tab): Promise<void> {
   // 目录视图另有 UI 侧行缓存需要释放
   if (tab.folder?.sessionId) {
     releaseDirCache(tab.folder.sessionId);
+  }
+  // 文本视图的会话模型缓存（编辑内容/撤销栈）随标签关闭一并释放：
+  // 否则关闭后仍留有陈旧模型，且缓存只增不减（R3-05）
+  if (tab.text?.sessionId) {
+    deleteTextSession(tab.text.sessionId);
   }
 }

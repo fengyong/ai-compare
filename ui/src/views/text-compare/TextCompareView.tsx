@@ -97,7 +97,7 @@ import {
   putTextSession,
   type TextSessionModel,
 } from './textModel';
-import { runTextSave, saveRequestsFor, type SaveRequest } from './textSave';
+import { applySavedEntries, runTextSave, saveRequestsFor, type SaveRequest } from './textSave';
 import { AlignedPane, type AlignedPaneHandle, type PaneContentInput } from './AlignedPane';
 import { FindPanel, type FindPanelState } from './FindPanel';
 import { OverviewBar } from './OverviewBar';
@@ -456,11 +456,16 @@ export function TextCompareView({ tab }: { tab: Tab }) {
     [rediffModel, rebuildAndRender]
   );
 
-  const applySideContent = useCallback((model: TextSessionModel, side: 'left' | 'right', lines: string[]): void => {
-    if (side === 'left') model.leftLines = lines;
-    else model.rightLines = lines;
-    model.modifiedSides[side] = true;
-  }, []);
+  const applySideContent = useCallback(
+    (model: TextSessionModel, side: 'left' | 'right', lines: string[]): void => {
+      if (side === 'left') model.leftLines = lines;
+      else model.rightLines = lines;
+      model.modifiedSides[side] = true;
+      // R3-05：编辑必须登记到标签上，否则关闭/退出守卫看不到未落盘内容
+      useShell.getState().markContentDirty(tab.id, model.modifiedSides);
+    },
+    [tab.id],
+  );
 
   // ---- R3-04：保存 / 另存为（FR-TXT-020；落盘由引擎 text/save 执行）----
   const [saveNotice, setSaveNotice] = useState<string | null>(null);
@@ -468,41 +473,46 @@ export function TextCompareView({ tab }: { tab: Tab }) {
   /** 活动窗格侧（另存为的作用对象，与 BC 一致） */
   const activeSideRef = useRef<'left' | 'right'>('left');
 
-  const doSave = useCallback(async (requests: SaveRequest[]): Promise<void> => {
-    const model = modelRef.current;
-    if (!model || requests.length === 0) {
-      setSaveNotice(S.text.saveNothing);
-      return;
-    }
-    setSaving(true);
-    try {
-      const out = await runTextSave(model.sessionId, requests, { save: saveText });
-      // 只清除真正落盘的侧；另存为把该侧目标改指新路径（下次保存不再写原文件）
-      for (const e of out.saved) {
-        model.modifiedSides[e.side] = false;
-        if (e.side === 'left') model.leftPath = e.path;
-        else model.rightPath = e.path;
-      }
-      putTextSession(model);
-      if (out.unsupported) {
-        setSaveNotice(S.text.saveUnsupported);
+  const doSave = useCallback(
+    async (requests: SaveRequest[]): Promise<void> => {
+      const model = modelRef.current;
+      if (!model || requests.length === 0) {
+        setSaveNotice(S.text.saveNothing);
         return;
       }
-      if (out.error !== null) {
-        setSaveNotice(`${S.text.saveFail}: ${out.error}`);
-        return;
+      setSaving(true);
+      try {
+        const out = await runTextSave(model.sessionId, requests, { save: saveText });
+        applySavedEntries(model, out.saved);
+        const st = useShell.getState();
+        st.markContentDirty(tab.id, model.modifiedSides);
+        // 另存为：标签上的路径/名称/标题同步改指，会话保存与关闭守卫才取到正确目标
+        const refs = st.findTab(tab.id)?.tab.text;
+        for (const e of out.saved) {
+          const ref = e.side === 'left' ? refs?.left : refs?.right;
+          if (ref && ref.path !== e.path) st.retargetTextSide(tab.id, e.side, e.path);
+        }
+        if (out.unsupported) {
+          setSaveNotice(S.text.saveUnsupported);
+          return;
+        }
+        if (out.error !== null) {
+          setSaveNotice(`${S.text.saveFail}: ${out.error}`);
+          return;
+        }
+        const paths = out.saved.map((e) => e.path).join('、');
+        const backups = out.saved.filter((e) => e.backupPath !== undefined).length;
+        setSaveNotice(
+          backups > 0
+            ? `${S.text.saved}：${paths}（${S.text.savedBackupSuffix} ${backups}）`
+            : `${S.text.saved}：${paths}`,
+        );
+      } finally {
+        setSaving(false);
       }
-      const paths = out.saved.map((e) => e.path).join('、');
-      const backups = out.saved.filter((e) => e.backupPath !== undefined).length;
-      setSaveNotice(
-        backups > 0
-          ? `${S.text.saved}：${paths}（${S.text.savedBackupSuffix} ${backups}）`
-          : `${S.text.saved}：${paths}`
-      );
-    } finally {
-      setSaving(false);
-    }
-  }, []);
+    },
+    [tab.id],
+  );
 
   const doSaveAs = useCallback(
     (side: 'left' | 'right') => {
@@ -895,6 +905,7 @@ export function TextCompareView({ tab }: { tab: Tab }) {
         model.summary = loaded.summary;
         model.undo = emptyUndoState();
         model.modifiedSides = { left: false, right: false };
+        useShell.getState().markContentDirty(tab.id, model.modifiedSides);
         collapsedRef.current = defaultCollapsedKeys(
           buildAlignedDocs(model.sections, model.leftLines, model.rightLines).left.rows,
           contextRowsRef.current
@@ -906,7 +917,7 @@ export function TextCompareView({ tab }: { tab: Tab }) {
         setError(err instanceof Error ? err.message : String(err));
       }
     },
-    [rebuildAndRender, syncCurrentSection]
+    [rebuildAndRender, syncCurrentSection, tab.id],
   );
 
   // ---- DMP 清理开关（inlineDiff RPC 参数映射）----
@@ -929,6 +940,20 @@ export function TextCompareView({ tab }: { tab: Tab }) {
   useEffect(() => {
     refreshDecorations();
   }, [wrap, bookmarks, refreshDecorations]);
+
+  // ---- 壳级关闭守卫落盘后同步本视图脏标记（R3-05：守卫保存不经过视图 doSave）----
+  const storeContentDirty = useShell((st) => st.findTab(tab.id)?.tab.contentDirty);
+  useEffect(() => {
+    const m = modelRef.current;
+    if (!m || !storeContentDirty) return;
+    if (
+      m.modifiedSides.left === storeContentDirty.left &&
+      m.modifiedSides.right === storeContentDirty.right
+    )
+      return;
+    m.modifiedSides = { ...storeContentDirty };
+    setUiVersion((v) => v + 1);
+  }, [storeContentDirty]);
 
   // ---- 壳级命令总线注册（换行/书签命令与快捷键统一入口）----
   useEffect(() => {

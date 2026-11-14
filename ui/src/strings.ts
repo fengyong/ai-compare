@@ -302,6 +302,8 @@ export const S = {
     renameFail: '重命名失败',
     closeGuardTitle: '保存会话修改？',
     closeGuardBody: '命名会话在关闭前有未保存的修改。',
+    closeGuardContentTitle: '保存文件修改？',
+    closeGuardContentBody: '下列文件有未保存的编辑，不保存关闭将丢失这些修改：',
     saveAndClose: '保存并关闭',
     discardClose: '不保存关闭',
     cancel: '取消',
