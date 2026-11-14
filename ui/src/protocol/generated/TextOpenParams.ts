@@ -24,4 +24,10 @@ manual?: TextManualAlignSpec,
  * unimportantElements + 按两侧文件名检测的文件格式语法 → 重要性键
  * 语法折叠（骨架不变，注释行/字符串内容差异判为不重要）
  */
-rules?: RulesSpec, };
+rules?: RulesSpec, 
+/**
+ * R3-15：会话编码覆盖（FR-TXT-013）。WHATWG 编码标签（`gb18030` /
+ * `utf-16le` / `big5` …）；缺省或 `auto` = 引擎自动检测（BOM → UTF-8 →
+ * 统计检测）。保存按打开时生效的编码 + 原 BOM 回写。
+ */
+encoding?: string, };

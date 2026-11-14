@@ -733,6 +733,12 @@ pub struct TextOpenParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub rules: Option<RulesSpec>,
+    /// R3-15：会话编码覆盖（FR-TXT-013）。WHATWG 编码标签（`gb18030` /
+    /// `utf-16le` / `big5` …）；缺省或 `auto` = 引擎自动检测（BOM → UTF-8 →
+    /// 统计检测）。保存按打开时生效的编码 + 原 BOM 回写。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub encoding: Option<String>,
 }
 
 /// diff 统计（docs/03 §4.1 DiffSummary 的协议形态）
@@ -764,6 +770,10 @@ pub struct TextOpenResult {
     pub right_line_count: u32,
     pub section_count: u32,
     pub summary: DiffSummary,
+    /// R3-15：两侧实际生效的编码标签（自动检测时回传检测结果，
+    /// UI 据此显示"当前按 X 解码"；保存由引擎按同一编码回写）
+    pub left_encoding: String,
+    pub right_encoding: String,
 }
 
 /// section 类别（docs/03 §4.1 SectionKind 的双文件比较子集；Conflict 为三向合并专用）
@@ -3601,6 +3611,38 @@ mod tests {
         // 旧字段集序列化逐字节不变（新字段 None 时省略）
         let s = serde_json::to_string(&v).unwrap();
         assert!(!s.contains("importance") && !s.contains("manual"), "{s}");
+    }
+
+    #[test]
+    fn r3_15_text_open_encoding_param_and_result_labels() {
+        // 旧载荷无 encoding：省略键，序列化字节不变
+        let old: TextOpenParams =
+            serde_json::from_str(r#"{"sessionId":"t1","left":"a","right":"b"}"#).unwrap();
+        assert!(old.encoding.is_none());
+        assert!(!serde_json::to_string(&old).unwrap().contains("encoding"));
+
+        let with: TextOpenParams = serde_json::from_str(
+            r#"{"sessionId":"t1","left":"a","right":"b","encoding":"gb18030"}"#,
+        )
+        .unwrap();
+        assert_eq!(with.encoding.as_deref(), Some("gb18030"));
+        assert!(serde_json::to_string(&with)
+            .unwrap()
+            .contains(r#""encoding":"gb18030""#));
+
+        // 结果必带两侧生效编码（UI 据此显示"当前按 X 解码"）
+        let r = TextOpenResult {
+            session_id: "t1".into(),
+            left_line_count: 1,
+            right_line_count: 1,
+            section_count: 0,
+            summary: DiffSummary::default(),
+            left_encoding: "GBK".into(),
+            right_encoding: "UTF-8".into(),
+        };
+        let v = serde_json::to_value(&r).unwrap();
+        assert_eq!(v["leftEncoding"], "GBK");
+        assert_eq!(v["rightEncoding"], "UTF-8");
     }
 
     #[test]

@@ -161,6 +161,7 @@ const CODE = {
   INVALID_PARAMS: -32602,
   SESSION_NOT_FOUND: 410,
   SESSION_EXISTS: 411,
+  INVALID_ENCODING: 413,
 } as const;
 
 export class MockEngine {
@@ -841,6 +842,7 @@ export class MockEngine {
     if (this.hasAnySession(p.sessionId)) {
       throw new RpcErr(CODE.SESSION_EXISTS, `会话已存在: ${p.sessionId}`);
     }
+    const encoding = resolveMockEncoding(p.encoding);
     const seed = baseName(p.left ?? '') || baseName(p.right ?? '') || 'file';
     // 队列 4：clipboard://N 规格（FR-CLIP-004）在 mock 下直接取剪贴板历史文本，
     // 使浏览器 dev 的演示数据与真实剪贴板内容一致（Tauri 侧已物化为临时文件）。
@@ -873,6 +875,8 @@ export class MockEngine {
       rightLineCount: gen.rightLines.length,
       sectionCount: gen.sections.length,
       summary,
+      leftEncoding: encoding,
+      rightEncoding: encoding,
     };
   }
 
@@ -2212,6 +2216,21 @@ function buildDirModel(left: string, right: string): DirRow[] {
 function baseName(p: string): string {
   const i = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'));
   return i >= 0 ? p.slice(i + 1) : p;
+}
+
+/**
+ * 编码标签解析（R3-15）：与引擎同一套 WHATWG 标签表，未知标签 -> 413。
+ * mock 内容是合成文本（没有真实文件字节），因此只解析并回传生效标签，
+ * 不做字节转码——字节级回环由引擎侧回归覆盖。
+ */
+function resolveMockEncoding(label?: string): string {
+  const l = (label ?? '').trim();
+  if (l === '' || l.toLowerCase() === 'auto') return 'utf-8';
+  try {
+    return new TextDecoder(l).encoding;
+  } catch {
+    throw new RpcErr(CODE.INVALID_ENCODING, `编码错误: 未知编码标签: ${l}`);
+  }
 }
 
 /** mock 落盘序列化：LF + 末尾换行（空行表 = 空文件） */

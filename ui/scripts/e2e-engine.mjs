@@ -809,6 +809,65 @@ try {
   ok(zipEntries.includes('new.txt'), '复制真的写回了归档', zipEntries.join(','));
   await client.request('session/close', { sessionId: 'e2e-zip-2' });
 
+  // 6.7 R3-15：编码自动检测 + 显式编码覆盖 + 按原编码回写（FR-TXT-013）
+  // 夹具是真实 GB18030 字节（不是 UTF-8 字符串写盘）：中D6D0 文CEC4 第B5DA 二B6FE 行D0D0 改B8C4
+  const gbkBytes = Buffer.from([0xd6, 0xd0, 0xce, 0xc4, 0x0a, 0xb5, 0xda, 0xb6, 0xfe, 0xd0, 0xd0, 0x0a]);
+  // 编辑只替换第 0 行，第 1 行"第二行"原样保留
+  const gbkEdited = Buffer.from([
+    0xd6, 0xd0, 0xce, 0xc4, 0xb8, 0xc4, 0x0a, 0xb5, 0xda, 0xb6, 0xfe, 0xd0, 0xd0, 0x0a,
+  ]);
+  ok(new TextDecoder('gb18030').decode(gbkBytes) === '中文\n第二行\n', 'GB18030 夹具自校验');
+  ok(new TextDecoder('gb18030').decode(gbkEdited) === '中文改\n第二行\n', 'GB18030 编辑后夹具自校验');
+  const encL = join(dir, 'enc-l.txt');
+  const encR = join(dir, 'enc-r.txt');
+  writeFileSync(encL, gbkBytes);
+  writeFileSync(encR, gbkBytes);
+  const encOpened = await client.request('text/open', {
+    sessionId: 'e2e-enc-1',
+    left: encL,
+    right: encR,
+  });
+  ok(encOpened.leftEncoding !== 'UTF-8', '非 UTF-8 文件自动检测出编码', encOpened.leftEncoding);
+  const encLines = await client.request('text/lines', {
+    sessionId: 'e2e-enc-1',
+    side: 'left',
+    start: 0,
+    count: 10,
+  });
+  ok(encLines.lines[0] === '中文', 'GB18030 内容正确解码', JSON.stringify(encLines.lines));
+  await client.request('text/edit', {
+    sessionId: 'e2e-enc-1',
+    edits: [{ side: 'left', start: 0, end: 1, text: '中文改' }],
+  });
+  await client.request('text/save', { sessionId: 'e2e-enc-1' });
+  const encSaved = readFileSync(encL);
+  ok(encSaved.equals(gbkEdited), '编辑后仍按 GB18030 回写（未被改写成 UTF-8）', encSaved.toString('hex'));
+  ok(readFileSync(encR).equals(gbkBytes), '未编辑侧字节不动');
+  await client.request('session/close', { sessionId: 'e2e-enc-1' });
+
+  // 显式编码压过自动检测：同一份 UTF-8 字节按 windows-1252 解出 mojibake
+  const utf8L = join(dir, 'enc-utf8.txt');
+  writeFileSync(utf8L, 'café\n');
+  const encExplicit = await client.request('text/open', {
+    sessionId: 'e2e-enc-2',
+    left: utf8L,
+    right: utf8L,
+    encoding: 'windows-1252',
+  });
+  ok(encExplicit.leftEncoding === 'windows-1252', '显式编码生效', encExplicit.leftEncoding);
+  const encMojibake = await client.request('text/lines', {
+    sessionId: 'e2e-enc-2',
+    side: 'left',
+    start: 0,
+    count: 1,
+  });
+  ok(encMojibake.lines[0] === 'cafÃ©', '按所选编码解码（不是自动检测）', encMojibake.lines[0]);
+  await client.request('session/close', { sessionId: 'e2e-enc-2' });
+  ok(
+    (await rpcCode('text/open', { sessionId: 'e2e-enc-3', left: utf8L, right: utf8L, encoding: 'no-such' })).includes('413'),
+    '未知编码标签报 413'
+  );
+
   // 7. 会话清理 + shutdown
   ok((await client.request('session/close', { sessionId: 'e2e-dir-1' })) === null, 'session/close dir 会话');
   ok((await client.request('session/close', { sessionId: 'e2e-text-1' })) === null, 'session/close text 会话');

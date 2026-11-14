@@ -18,7 +18,7 @@ use tokio::sync::Mutex;
 
 use crate::batch;
 use crate::mapping;
-use crate::server::{DirSessionData, Session, SessionMap, TextSessionData};
+use crate::server::{DirSessionData, Session, SessionMap, SideEncoding, TextSessionData};
 use crate::pump;
 
 /// 会话表 + 共享状态的容器
@@ -615,19 +615,19 @@ async fn text_open(
     let right_path = VfsPath::parse(&params.right).map_err(|e| mapping::vfs_error_to_rpc(&e))?;
     let opts_dto = params.options.clone().unwrap_or_default();
 
-    let (left_text, left_bom) = ctx
+    let left_dec = ctx
         .vfs
-        .read_file_text_bom(&left_path)
+        .read_file_decoded(&left_path, params.encoding.as_deref())
         .await
         .map_err(|e| mapping::vfs_error_to_rpc(&e))?;
-    let (right_text, right_bom) = ctx
+    let right_dec = ctx
         .vfs
-        .read_file_text_bom(&right_path)
+        .read_file_decoded(&right_path, params.encoding.as_deref())
         .await
         .map_err(|e| mapping::vfs_error_to_rpc(&e))?;
 
-    let lt = LineTable::from_text(&left_text);
-    let rt = LineTable::from_text(&right_text);
+    let lt = LineTable::from_text(&left_dec.text);
+    let rt = LineTable::from_text(&right_dec.text);
 
     // P3：骨架选项 + 重要性模型 + 手动对齐（无新参数时与 P0 diff_text 行为一致）
     let mut config = ai_core::DiffConfig { base: mapping::text_options_from_dto(&opts_dto), ..ai_core::DiffConfig::default() };
@@ -684,7 +684,10 @@ async fn text_open(
                 config,
                 labels: (params.left.clone(), params.right.clone()),
                 rev: 0,
-                boms: (left_bom, right_bom),
+                encodings: (
+                    SideEncoding::from_decoded(&left_dec),
+                    SideEncoding::from_decoded(&right_dec),
+                ),
                 modified: (false, false),
             }),
         );
@@ -696,6 +699,8 @@ async fn text_open(
         right_line_count,
         section_count,
         summary,
+        left_encoding: left_dec.encoding.to_string(),
+        right_encoding: right_dec.encoding.to_string(),
     };
     Ok(Handled::Value(serde_json::to_value(&result).expect("text/open 结果可序列化")))
 }
@@ -794,7 +799,8 @@ async fn text_edit(
 /// - `side=both`（缺省）只写会话内被编辑过的侧：未编辑侧不落盘，避免无谓改写
 ///   mtime 干扰父目录的时间戳比较判定；显式 left/right 无条件写该侧（另存为）。
 /// - 行尾风格与末尾换行由行表原样保留（`LineTable::to_text` 精确回环），
-///   BOM 按打开时探测结果原样写回（FR-TXT-013）。
+///   编码与 BOM 按打开时生效的结果原样回写（FR-TXT-013）；目标编码表示不了的
+///   字符整次保存失败（不写盘、不静默替换）。
 /// - `backup` 缺省 true：覆盖前把原文件复制为 `<path>.bak`；目标不存在时不备份。
 ///   备份失败即整次保存失败（不能静默丢掉用户要求的保险）。
 /// - 另存为会把该侧标签改指到新目标（与 BC 一致），否则下一次保存会写回原文件。
@@ -818,7 +824,7 @@ async fn text_save(
             params.right_path.as_deref().unwrap_or(&data.labels.1),
         ];
         let tables = [&data.left, &data.right];
-        let boms = [data.boms.0, data.boms.1];
+        let encs = [&data.encodings.0, &data.encodings.1];
         let mut plan = Vec::new();
         for idx in 0..2 {
             if !selected[idx] {
@@ -826,11 +832,9 @@ async fn text_save(
             }
             let path = VfsPath::parse(targets[idx]).map_err(|e| mapping::vfs_error_to_rpc(&e))?;
             let text = tables[idx].to_text();
-            let mut bytes = Vec::with_capacity(text.len() + if boms[idx] { 3 } else { 0 });
-            if boms[idx] {
-                bytes.extend_from_slice(ai_vfs::UTF8_BOM);
-            }
-            bytes.extend_from_slice(text.as_bytes());
+            let bytes = encs[idx]
+                .encode(&text)
+                .map_err(|e| mapping::vfs_error_to_rpc(&e))?;
             plan.push(SavePlan {
                 idx,
                 path,
@@ -1388,15 +1392,25 @@ async fn merge3_open(
     let left_path = VfsPath::parse(&params.left).map_err(|e| mapping::vfs_error_to_rpc(&e))?;
     let right_path = VfsPath::parse(&params.right).map_err(|e| mapping::vfs_error_to_rpc(&e))?;
 
-    let (base_text, base_bom) = ctx
+    let base_dec = ctx
         .vfs
-        .read_file_text_bom(&base_path)
+        .read_file_decoded(&base_path, None)
         .await
         .map_err(|e| mapping::vfs_error_to_rpc(&e))?;
-    let left_text = ctx.vfs.read_file_text(&left_path).await.map_err(|e| mapping::vfs_error_to_rpc(&e))?;
-    let right_text = ctx.vfs.read_file_text(&right_path).await.map_err(|e| mapping::vfs_error_to_rpc(&e))?;
+    let left_text = ctx
+        .vfs
+        .read_file_decoded(&left_path, None)
+        .await
+        .map_err(|e| mapping::vfs_error_to_rpc(&e))?
+        .text;
+    let right_text = ctx
+        .vfs
+        .read_file_decoded(&right_path, None)
+        .await
+        .map_err(|e| mapping::vfs_error_to_rpc(&e))?
+        .text;
 
-    let base = LineTable::from_text(&base_text);
+    let base = LineTable::from_text(&base_dec.text);
     let left = LineTable::from_text(&left_text);
     let right = LineTable::from_text(&right_text);
 
@@ -1429,7 +1443,7 @@ async fn merge3_open(
                 model,
                 options,
                 labels: (params.base.clone(), params.left.clone(), params.right.clone()),
-                bom: base_bom,
+                encoding: SideEncoding::from_decoded(&base_dec),
                 decisions: HashMap::new(),
                 rev: 0,
             }),
@@ -1599,7 +1613,7 @@ async fn merge3_output(
 /// - 目标文件的先前内容被覆盖（BC 语义：会话前存在或会话中被更改的内容都丢失），
 ///   覆盖警示由 UI 给出；
 /// - `backup` 缺省 true：覆盖前把原内容写到 `<path>.bak`（目标不存在则不产生备份）；
-/// - 保存不改决策：`rev` 不递增；祖先文件的 UTF-8 BOM 原样写回。
+/// - 保存不改决策：`rev` 不递增；祖先文件的编码与 BOM 原样回写。
 async fn merge3_save(
     params: Option<serde_json::Value>,
     ctx: &HandlerCtx,
@@ -1621,12 +1635,10 @@ async fn merge3_save(
             &data.decisions,
             &syn,
         );
-        let mut bytes =
-            Vec::with_capacity(out.text.len() + if data.bom { ai_vfs::UTF8_BOM.len() } else { 0 });
-        if data.bom {
-            bytes.extend_from_slice(ai_vfs::UTF8_BOM);
-        }
-        bytes.extend_from_slice(out.text.as_bytes());
+        let bytes = data
+            .encoding
+            .encode(&out.text)
+            .map_err(|e| mapping::vfs_error_to_rpc(&e))?;
         Ok(MergeSavePlan {
             path,
             bytes,
@@ -6650,5 +6662,287 @@ mod route_vfs_tests {
         assert!(vfs.capabilities_for(&local).has(ai_vfs::VfsCaps::DELETE));
         let ftps = VfsPath::parse("ftps://h/p").unwrap();
         assert!(!vfs.capabilities_for(&ftps).has(ai_vfs::VfsCaps::DELETE));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// R3-15：编码自动检测 / 显式编码覆盖 / 按原编码回写（FR-TXT-013）
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod text_encoding_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn ctx() -> HandlerCtx {
+        HandlerCtx::new(512)
+    }
+
+    fn chan() -> tokio::sync::mpsc::UnboundedSender<crate::server::Outbound> {
+        tokio::sync::mpsc::unbounded_channel().0
+    }
+
+    async fn call(
+        c: &HandlerCtx,
+        method: &str,
+        params: serde_json::Value,
+    ) -> Result<serde_json::Value, RpcErrorObject> {
+        dispatch(method, Some(params), c, &ai_dir::CancelFlag::new(), chan())
+            .await
+            .map(|h| match h {
+                Handled::Value(v) => v,
+                Handled::WithNotifications { response, .. } => response,
+            })
+    }
+
+    /// 按指定编码造一对真实字节文件（不是 UTF-8 字符串写盘）
+    fn pair(dir: &std::path::Path, left: &str, right: &str, label: &str) -> (String, String) {
+        let l = dir.join("L.txt");
+        let r = dir.join("R.txt");
+        std::fs::write(
+            &l,
+            ai_vfs::encode_text(left, label, ai_vfs::Bom::None).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(
+            &r,
+            ai_vfs::encode_text(right, label, ai_vfs::Bom::None).unwrap(),
+        )
+        .unwrap();
+        (
+            l.to_string_lossy().into_owned(),
+            r.to_string_lossy().into_owned(),
+        )
+    }
+
+    async fn open_pair(
+        c: &HandlerCtx,
+        id: &str,
+        paths: &(String, String),
+        extra: serde_json::Value,
+    ) -> Result<serde_json::Value, RpcErrorObject> {
+        let mut p = json!({"sessionId": id, "left": paths.0, "right": paths.1});
+        if let Some(obj) = extra.as_object() {
+            for (k, v) in obj {
+                p[k] = v.clone();
+            }
+        }
+        call(c, "text/open", p).await
+    }
+
+    async fn first_line(c: &HandlerCtx, id: &str, side: &str) -> String {
+        let v = call(
+            c,
+            "text/lines",
+            json!({"sessionId": id, "side": side, "start": 0, "count": 1}),
+        )
+        .await
+        .unwrap();
+        v["lines"][0].as_str().unwrap().to_string()
+    }
+
+    /// 核心回归：GBK 文件自动检测解码，编辑后仍按原编码回写。
+    /// 此前引擎只读 UTF-8：非 UTF-8 文件直接 open 失败（415）。
+    #[tokio::test]
+    async fn legacy_encoding_is_detected_and_written_back() {
+        let c = ctx();
+        let dir = tempfile::tempdir().unwrap();
+        let paths = pair(dir.path(), "中文\n第二行\n", "中文\n第二行\n", "gb18030");
+        let opened = open_pair(&c, "enc1", &paths, json!({})).await.unwrap();
+        assert_ne!(
+            opened["leftEncoding"], "UTF-8",
+            "应检测出非 UTF-8: {opened}"
+        );
+        assert_eq!(first_line(&c, "enc1", "left").await, "中文");
+
+        call(
+            &c,
+            "text/edit",
+            json!({"sessionId": "enc1", "edits": [{"side": "left", "start": 0, "end": 1, "text": "中文改"}]}),
+        )
+        .await
+        .unwrap();
+        call(&c, "text/save", json!({"sessionId": "enc1"}))
+            .await
+            .unwrap();
+
+        let bytes = std::fs::read(dir.path().join("L.txt")).unwrap();
+        let back = ai_vfs::decode_text(&bytes, Some("gb18030")).unwrap();
+        assert_eq!(back.text, "中文改\n第二行\n", "回写必须仍是 GB18030");
+        assert_ne!(bytes, "中文改\n第二行\n".as_bytes(), "不能被改写成 UTF-8");
+        // 未编辑侧字节不动
+        assert_eq!(
+            std::fs::read(dir.path().join("R.txt")).unwrap(),
+            ai_vfs::encode_text("中文\n第二行\n", "gb18030", ai_vfs::Bom::None).unwrap()
+        );
+    }
+
+    /// 显式编码必须压过自动检测：同一份 UTF-8 字节按 windows-1252 解出 mojibake，
+    /// 且保存按同一编码回写 -> 字节完全不变（证明选择器真的生效，不是装饰）
+    #[tokio::test]
+    async fn explicit_encoding_overrides_detection_and_round_trips() {
+        let c = ctx();
+        let dir = tempfile::tempdir().unwrap();
+        let l = dir.path().join("L.txt");
+        let r = dir.path().join("R.txt");
+        std::fs::write(&l, "café\n").unwrap();
+        std::fs::write(&r, "café\n").unwrap();
+        let paths = (
+            l.to_string_lossy().into_owned(),
+            r.to_string_lossy().into_owned(),
+        );
+        let opened = open_pair(&c, "enc2", &paths, json!({"encoding": "windows-1252"}))
+            .await
+            .unwrap();
+        assert_eq!(opened["leftEncoding"], "windows-1252");
+        assert_eq!(opened["rightEncoding"], "windows-1252");
+        assert_eq!(first_line(&c, "enc2", "left").await, "cafÃ©");
+
+        call(
+            &c,
+            "text/save",
+            json!({"sessionId": "enc2", "side": "left"}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            std::fs::read(&l).unwrap(),
+            b"caf\xc3\xa9\n",
+            "字节应原样回环"
+        );
+    }
+
+    /// 未知编码标签 -> 415（不是静默回退 UTF-8）
+    #[tokio::test]
+    async fn unknown_encoding_label_is_rejected() {
+        let c = ctx();
+        let dir = tempfile::tempdir().unwrap();
+        let paths = pair(dir.path(), "a\n", "a\n", "utf-8");
+        let e = open_pair(&c, "enc3", &paths, json!({"encoding": "no-such-encoding"}))
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, codes::INVALID_ENCODING, "{e:?}");
+    }
+
+    /// 选错编码解不出合法文本 -> 415，而不是替换字符后假装成功
+    #[tokio::test]
+    async fn wrong_explicit_encoding_fails_instead_of_replacing_chars() {
+        let c = ctx();
+        let dir = tempfile::tempdir().unwrap();
+        let paths = pair(dir.path(), "中文\n", "中文\n", "gb18030");
+        let e = open_pair(&c, "enc4", &paths, json!({"encoding": "utf-8"}))
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, codes::INVALID_ENCODING, "{e:?}");
+    }
+
+    /// UTF-16LE + BOM：自动识别、BOM 不进比较内容、保存原样写回 BOM 与字节序
+    #[tokio::test]
+    async fn utf16_bom_is_detected_stripped_and_rewritten() {
+        let c = ctx();
+        let dir = tempfile::tempdir().unwrap();
+        let l = dir.path().join("L.txt");
+        let r = dir.path().join("R.txt");
+        let orig = ai_vfs::encode_text("中文\n第二行\n", "utf-16le", ai_vfs::Bom::Utf16Le).unwrap();
+        std::fs::write(&l, &orig).unwrap();
+        std::fs::write(&r, &orig).unwrap();
+        let paths = (
+            l.to_string_lossy().into_owned(),
+            r.to_string_lossy().into_owned(),
+        );
+        let opened = open_pair(&c, "enc5", &paths, json!({})).await.unwrap();
+        assert_eq!(opened["leftEncoding"], "UTF-16LE");
+        assert_eq!(
+            first_line(&c, "enc5", "left").await,
+            "中文",
+            "BOM 不得进入首行"
+        );
+
+        call(
+            &c,
+            "text/edit",
+            json!({"sessionId": "enc5", "edits": [{"side": "left", "start": 1, "end": 2, "text": "末行"}]}),
+        )
+        .await
+        .unwrap();
+        call(&c, "text/save", json!({"sessionId": "enc5"}))
+            .await
+            .unwrap();
+
+        let bytes = std::fs::read(&l).unwrap();
+        assert_eq!(&bytes[..2], &[0xFF, 0xFE], "BOM 必须原样写回");
+        let back = ai_vfs::decode_text(&bytes, None).unwrap();
+        assert_eq!(back.text, "中文\n末行\n");
+        assert_eq!(back.bom, ai_vfs::Bom::Utf16Le);
+    }
+
+    /// 目标编码表示不了新内容 -> 整次保存失败且文件不动（不写 NCR 实体、不半写）
+    #[tokio::test]
+    async fn save_aborts_when_encoding_cannot_represent_edit() {
+        let c = ctx();
+        let dir = tempfile::tempdir().unwrap();
+        let paths = pair(dir.path(), "abc\n", "abc\n", "windows-1252");
+        // 纯 ASCII 自动检测会判 UTF-8（正确口径），所以这里必须显式钉住编码
+        open_pair(&c, "enc6", &paths, json!({"encoding": "windows-1252"}))
+            .await
+            .unwrap();
+        call(
+            &c,
+            "text/edit",
+            json!({"sessionId": "enc6", "edits": [{"side": "left", "start": 0, "end": 1, "text": "中"}]}),
+        )
+        .await
+        .unwrap();
+        let e = call(&c, "text/save", json!({"sessionId": "enc6"}))
+            .await
+            .unwrap_err();
+        assert_eq!(e.code, codes::INVALID_ENCODING, "{e:?}");
+        assert_eq!(std::fs::read(dir.path().join("L.txt")).unwrap(), b"abc\n");
+        assert!(!dir.path().join("L.txt.bak").exists(), "失败不该留下备份");
+    }
+
+    /// 三向合并：非 UTF-8 祖先能打开，输出按祖先编码回写（此前 open 直接 415）
+    #[tokio::test]
+    async fn merge3_opens_and_saves_in_base_encoding() {
+        let c = ctx();
+        let dir = tempfile::tempdir().unwrap();
+        for (name, text) in [
+            ("base.l", "中文\n共同\n"),
+            ("left.l", "中文左\n共同\n"),
+            ("right.l", "中文\n共同右\n"),
+        ] {
+            std::fs::write(
+                dir.path().join(name),
+                ai_vfs::encode_text(text, "gb18030", ai_vfs::Bom::None).unwrap(),
+            )
+            .unwrap();
+        }
+        call(
+            &c,
+            "text/merge3/open",
+            json!({
+                "sessionId": "enc7",
+                "base": dir.path().join("base.l").to_string_lossy(),
+                "left": dir.path().join("left.l").to_string_lossy(),
+                "right": dir.path().join("right.l").to_string_lossy(),
+            }),
+        )
+        .await
+        .unwrap();
+        let out = dir.path().join("out.txt");
+        call(
+            &c,
+            "text/merge3/save",
+            json!({"sessionId": "enc7", "path": out.to_string_lossy()}),
+        )
+        .await
+        .unwrap();
+        let bytes = std::fs::read(&out).unwrap();
+        let back = ai_vfs::decode_text(&bytes, Some("gb18030")).unwrap();
+        assert!(
+            back.text.contains("中文左"),
+            "输出应含左侧改动: {:?}",
+            back.text
+        );
+        assert_ne!(bytes, back.text.as_bytes(), "输出不能被改写成 UTF-8");
     }
 }

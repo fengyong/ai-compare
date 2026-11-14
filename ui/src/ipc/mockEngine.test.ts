@@ -246,3 +246,51 @@ describe('MockEngine P0 协议面', () => {
     await client.close();
   });
 });
+
+describe('MockEngine 编码参数（R3-15：选择器必须真的上协议面）', () => {
+  const openWith = async (encoding?: string) => {
+    const client = await newClient();
+    try {
+      return await client.request<{ leftEncoding: string; rightEncoding: string }>('text/open', {
+        sessionId: 'enc-mock-1',
+        left: '/a/x.txt',
+        right: '/b/x.txt',
+        options: null,
+        ...(encoding === undefined ? {} : { encoding }),
+      });
+    } finally {
+      await client.close();
+    }
+  };
+
+  it('缺省/auto：回传 utf-8（mock 内容为合成文本）', async () => {
+    expect((await openWith()).leftEncoding).toBe('utf-8');
+    expect((await openWith('auto')).leftEncoding).toBe('utf-8');
+  });
+
+  it('显式编码：两侧回传同一生效标签', async () => {
+    const r = await openWith('gb18030');
+    expect(r.leftEncoding).toBe('gb18030');
+    expect(r.rightEncoding).toBe('gb18030');
+    expect((await openWith('utf-16le')).leftEncoding).toBe('utf-16le');
+  });
+
+  it('未知标签 → 413，且不留下半开会话（同句柄可重试）', async () => {
+    const client = await newClient();
+    const args = { sessionId: 'enc-mock-2', left: '/a/x.txt', right: '/b/x.txt', options: null };
+    let code: unknown = null;
+    try {
+      await client.request('text/open', { ...args, encoding: 'no-such-encoding' });
+    } catch (e) {
+      code = (e as { code?: number }).code;
+    }
+    expect(code).toBe(413);
+    // 失败不得占用会话表：否则用户改选编码后重试会撞 411
+    const retry = await client.request<{ leftEncoding: string }>('text/open', {
+      ...args,
+      encoding: 'big5',
+    });
+    expect(retry.leftEncoding).toBe('big5');
+    await client.close();
+  });
+});
