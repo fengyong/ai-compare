@@ -1,5 +1,7 @@
 # ai-compare 深度 Code Review 报告
 
+> **本报告含两轮评审。第一轮见 §1–§6；第二轮（2026-11-14 晚，含 P0 安全修复与 BC 忠实度量化审计）见 §7。两轮结论冲突时以 §7 为准（§7.4 逐条更正第一轮裁定）。**
+
 > 评审时间：2026-11-14
 > 评审范围：`engine/`（5 crate）+ `cli/` + `ui/`（Tauri2 壳 + React18 + TS）+ `tests/`
 > 评审基线：引擎 822 测试 / UI 477 测试全绿的 `main`（HEAD `091a752`）
@@ -294,3 +296,369 @@
 | `ui/src/protocol/client.ts` | 修改：通知订阅者异常隔离 |
 | `ui/src/shell/sliceWindowsTabs.ts` | 修改：会话释放全覆盖、rebind 全覆盖、脏会话确认 |
 | `ui/src/views/hex-compare/HexCompareView.tsx` | 修改：分页在途标记、能力位判错 |
+
+---
+---
+
+# 第二轮深度评审（2026-11-14 晚）
+
+> 评审基线：HEAD `d6b2032`（第一轮修复后，引擎 829 / UI 484 全绿）
+> 评审终点：HEAD `954bb1c`（本轮 9 次提交，引擎 **842** / UI **485** 全绿）
+> 评审维度顺序：**① 对原始期望（BC 忠实度）的功能准确性 → ② 代码质量与正确性**
+> 方法：真实文件系统 / 真实引擎 RPC / 与 BC 自带权威文档逐条对照 + **双向变异验证**
+> 权威基线：`docs/01-需求规格说明书.md`（163 FR）+ `/Applications/Beyond Compare.app`（5.2.0.31950）**自带英文帮助文档**（本轮新引入的一手证据源，见 §7.3）
+
+## 7.1 结论摘要
+
+**一句话结论**：引擎算法层（Myers / Patience / histogram / 行内 / 重要性 / 手动对齐 / patch）**经对拍与变异验证是正确的**，质量高于第一轮评估；但**「P0 需求全量闭环」这一声明不成立** —— SRS §6.3 明列的 P0 MVP 范围里，**编码自动检测**与**差异文件导航**两项缺失，**重要性在编辑后被抹除**；同时本轮发现并修复了一个**可销毁比较根之外用户数据的 P0 安全缺陷**、**同步计划层两项静默数据丢失**（Update 整树复制覆写较新文件、大小写变体镜像清空目标侧且退出码 0），以及**用户在安装版上实测报出的「树形↔平铺切换丢光文件」**。
+
+本轮**修复 11 项缺陷 + 清偿 1 项测试基建（P1-09）**，新增 **14 条回归测试**（引擎 13 + UI 1），全部通过双向变异验证。**更正第一轮 4 项裁定**（其中 1 项是我自己的过度声称）。**新登记 11 项**，其中 3 项为契约级决策，需用户拍板（§7.7）。
+
+| 维度 | 第一轮评分 | 本轮修正 | 依据 |
+| --- | --- | --- | --- |
+| 算法正确性 | 未单独评分 | **A** | Myers 扩样对拍（400 对 ≤40×40 + 1682 对抗用例 + 20 变异 + deadline 路径）全过；aligners/inline/importance/manual/patch 逐条核实 |
+| BC 功能忠实度 | 未单独评分 | **C** | 命令面 26/370、菜单 5/10；P0 MVP 两项缺失（§7.3） |
+| 数据安全 | B- | **D → B**（修复后） | 符号链接逃逸可覆写/删除根外文件（已修）；脚本 RESCAN 静默扩大删除作用域（已修） |
+| 测试可信度 | B+ | **B**（下调） | UI **零 `.test.tsx`**：全部 484 个测试跑在 node 环境，**视图组件层无测试覆盖**；本轮 2 个 UI 缺陷因此无法附回归 |
+| 工程化 | C+ | C+（维持） | 无 CI、cargo-deny 未安装、壳层脱离 workspace、MSRV 声明不可满足 |
+
+**建议**：**继续推进，但先清偿 P0 忠实度缺口**。本轮修复不改变任何既有协议语义，可安全合入。
+
+---
+
+## 7.2 本轮已修复（11 项缺陷 + 1 项测试清偿）
+
+| # | 严重度 | 位置 | 缺陷 | 提交 |
+| --- | --- | --- | --- | --- |
+| R2-01 | **P0 安全** | `ai-dir/src/execute.rs` | **符号链接逃逸**：比较根内的操作可覆写/销毁根外用户数据 | `cdfb414` |
+| R2-02 | **P1 数据丢失** | `cli/aic/src/script.rs` `rescan_dir` | RESCAN 全量展开目录 → 后续 SELECT/DELETE 作用域从顶层静默扩到整棵子树 | `13e26f4` |
+| R2-03 | P2 | `ai-core/src/report.rs:1601` | XML 报告含非法控制字符 → **整份报告无法被任何 XML 解析器读取**（且进程退 0） | `01c587e` |
+| R2-04 | P2 | `cli/aic/src/script.rs` `write_log` | `.ok()?` 两处 → 函数恒返回 None，**错误分支是死代码**，LOG 写失败静默 | `13e26f4` |
+| R2-05 | P2 | `cli/aic/src/script.rs` `Cmd::Beep` | BEEP 被 `/silent` 抑制，违反 FR-SCR-002（BEEP 无视 silent） | `13e26f4` |
+| R2-06 | P2 | `cli/aic/src/app.rs:413` | `--conflict-exit-code` 只拒 0，**放行 2/11/12/13** → 覆盖保留语义（F-09 未完成） | `80e205f` |
+| R2-07 | P2 | `ui/.../HexCompareView.tsx:130` | 偏移跳转 `idx = floor((jumpTo-aligned)/ROW_BYTES)` **恒为 0** → 任何跳转都落到页首 | `5d943f0` |
+| R2-08 | P2 | `ui/.../FolderCompareView.tsx` | 名称过滤硬编码 `includeDirs: []` → **`includeFiles` 掩码使整页空白** | `5d943f0` |
+| R2-09 | 测试清偿 | `ai-engine/src/server.rs` | panic 隔离只有代码无回归（第一轮 P1-09）→ 补 2 条库内测试 + `#[cfg(test)]` panic 方法 | `180ccc0` |
+| R2-10 | **P1 用户实测** | `ai-dir/src/session.rs` `update_filters` | **树形↔平铺切换丢光文件**：UI 显示类切换每次附带空 `nameFilter`，`update_filters` 无条件重扫 → 已展开子树被整体移除（连带修好两条借道重扫的路径：`dir/execute` 落盘刷新、右键「刷新」） | `5b7a297` |
+| R2-11 | **P1 数据丢失** | `ai-dir/src/sync.rs` `apply_preset` | **Update 预设整树复制目录行**：目录 mtime 较新即整树 copy，无条件覆写子项中较新的文件 | `678e80d` |
+| R2-12 | **P1 数据丢失** | `ai-dir/src/sync.rs` 计划序 | **大小写变体镜像清空目标侧**：不敏感卷上 `A.txt`/`a.txt` 同一条目，先 copy 后 delete 把刚写入的内容删掉（退出码 0） | `954bb1c` |
+
+### 7.2.1 R2-01（P0 安全）—— 本轮最重要发现
+
+**根因不是「护栏写错了」，而是「护栏装错了位置」**：
+
+`execute.rs` 的 `validate()` 里有符号链接检查，但**它只在两个地方被调用**：① `dry_run` 分支；② `copy_path` 内部。**真实落盘路径（step 3）直接调 `remove_side` / `rename_side` / `touch_side` / `mkdir_side`，完全绕过 `validate`。** 而 `sanitize_rel`（:147）只做**词法**规范化，其文档注释却声称「通过护栏后 `root.join(rel)` 不可能逃出根」——**该声明为假**。
+
+**真实文件系统证据**（`/tmp/symprobe`，修复前）：
+
+```
+# 场景 A：copy 写穿目标侧符号链接
+OUTSIDE/precious.txt  内容 PRECIOUS-OUTSIDE  →  被覆写为 LEFT-CONTENT
+# 场景 B：delete 经由符号链接父目录
+OUTSIDE2/victim.txt   →  被删除（目录只剩 0 个文件）
+```
+
+修复后两处均**原样保留**。护栏移至 `exec_one` **公共 step 1**（`sanitize_rel` 之后），逐分量拒绝符号链接目录 + 拒绝符号链接末分量 + 校验 copy 写穿目标。
+
+**双向变异**：丢弃护栏返回值 → 2 条新测试**变红**；同时既有 `delete_symlink_does_not_follow`（:678）**保持绿** → 证明护栏**没有过宽**（不是「一律拒绝所有符号链接」的偷懒修法）。
+
+> 附带发现：`ai-vfs/src/local.rs:92-99` 的 `stat` 用 `symlink_metadata`（= lstat），这是**正确的**——它让引擎能看见符号链接本身。缺陷纯在 ai-dir 执行层的调用路径上。
+
+### 7.2.2 R2-02（P1 数据丢失）—— 变异验证揪出了一个「假守卫测试」
+
+`rescan_dir` 原实现把**结果里所有目录**无条件塞进 `state.expanded`。而 `row_visible`（:991-1004）要求**全部祖先目录都在 expanded 中**才可见。于是用户 COLLAPSE 掉的子树在 RESCAN 后重新可见，紧随其后的 `SELECT all` + `DELETE` 就把作用域从顶层扩到了整棵子树。
+
+**实测**：COPY+DELETE 组合**销毁全部 4 个文件**；单独 DELETE 则保留嵌套文件。修复改为**只展开本次新出现的目录**（与旧 arena 的目录集做差）。
+
+**这里有一个值得记录的方法论教训**：我第一版回归测试用 `mkdir all fresh`（**顶层**目录）断言，结果**过度修复的变异体依然全绿**——因为 `row_visible` 对顶层直接 `None => return true`，根本不走 expanded 判定。**一个在变异下不变红的测试什么都证明不了。** 重写为嵌套 `mkdir all sub` + `mkdir all sub/inner` 后，变异体立刻变红。
+
+### 7.2.3 其余各项的关键证据
+
+- **R2-03**：修复前 `python3 -c "ET.parse(...)"` 报 `not well-formed`，而 `aic report` **退出码 0**。修复后可正常解析。注意 XML 1.0 的 `Char` 产生式**连 `&#xNN;` 引用都不允许**这些码点，所以只能剔除、不能转义。新增测试用 4 组语料（ctl/nul/noncharacter/legal_kept）+ TAB 必须保留断言。
+- **R2-06**：`--conflict-exit-code` 现拒绝 `0|2|11|12|13` 并列出全部保留语义；放行 1/14/3/200。
+- **R2-08**：真实引擎验证 `includeFiles:["src"]` → `visibleRows=0`；`includeDirs:["src"]` → `1`。修复改为调用**早已实现且有测试、但零生产调用方**的 `dirFilters.ts:104 parseMaskInput`。
+
+> **本轮两次踩到同一个坑：陈旧二进制导致假结果。** `tests/cli/cli_matrix_test.rs` 依赖 `target/debug/aic`，改完 `app.rs` 不重建就会拿到旧行为（一度误判 BEEP「FAIL」、冲突码测试报「2 个未决冲突块」）。**任何 CLI 层结论都必须先 `cargo build -p aic --bins`。**
+
+### 7.2.4 用户实测缺陷 + 同步计划层两项数据丢失（R2-10/11/12）
+
+这三项在本轮报告初稿写完之后才完成，**其中 R2-10 是用户在使用安装版时实测报出的**（「我树形改平铺之后界面上就不展示任何文件了，重新选树形也没有用」）。
+
+**R2-10 根因链（三段，缺一不会触发）**：
+
+1. UI `FolderCompareView.applyFilters` 每次显示类切换（平铺/抑制/显示过滤）都附带 `nameFilter: parseMaskInput(当前输入)`；输入为空时 `parseMaskInput('')` 返回**非 null 的全空 spec**（`dirFilters.ts:104`）。
+2. 引擎 `dir_filter` 见 `name_filter.is_some()` 即调 `update_filters`。
+3. `update_filters` **无条件 `rescan()`**；`rescan` 重建 arena 并把**全部旧 rel 路径**塞进 `st.removals` → 用户已展开的子树被整体移除，平铺行集只剩顶层文件；切回树形也只剩折叠顶层（展开状态已被摧毁，不是显示问题）。
+
+真实引擎 RPC 证据（修复前）：`flat=true` → `removals:['f.txt','sub','sub/g.txt']`、`upserts:['f.txt']`（子树文件 `g.txt` 消失）。
+修复后：`flat=true` → `upserts:['f.txt','g.txt']`、`removals:[]`；`flat=false` → `upserts:['f.txt','sub','sub/g.txt']`、`removals:[]`。
+
+**修法**：`update_filters` 先判等（全空 spec 归一为 `None`），未变即 no-op。**强制重扫改走显式入口**，因为原判等把两条「本来就依赖无条件重扫」的路径变成了 no-op —— 这两处回归都是**门禁真实抓出来的，不是我事后想到的**：
+
+| 借道重扫的路径 | 变 no-op 后的后果 | 谁抓到的 | 修法 |
+| --- | --- | --- | --- |
+| `dir/execute` 落盘后（`handlers.rs:1749` 原调 `update_filters(None,None)`） | 复制/删除后 UI 不刷新，行集与磁盘不一致 | `tests/p9_e2e` 红：`rescan delta 含旧行 removals` | 新增 `DirModel::refresh()`，execute 改调它 |
+| 右键「刷新」（`FolderCompareView.tsx:550` 原调 `applyFilters()`） | 外部改动永远刷不出来（BC 的 Refresh 语义丢失） | 读代码顺链发现（**无测试覆盖，视图层零 `.test.tsx`**） | `dir/filter` 新增 `rescan` 参数，刷新下发 `rescan:true` |
+
+> 这两处说明一个结构性问题：**「重扫」原先没有自己的入口，被寄生在「改过滤器」上**。本修复把它显式化（`refresh()` / `rescan` 参数），而不是给 `update_filters` 加布尔开关继续混用语义。
+
+**R2-11（Update 预设整树复制目录行）**：目录 mtime 只反映条目增删，不代表内容新旧。真实文件系统复现：左 `sub/f.txt` 旧、右 `sub/f.txt` 新（`NEWER-RIGHT`），目录行左 mtime 较新 → Update 左→右 整树 copy → 右侧被覆写成 `NEW-LEFT`，**较新内容丢失**。修法是 Update 三预设跳过 `Dir` 行（子文件行各自携带 Update 语义）；Mirror 语义=使两侧一致，仍允许整树复制。
+
+**R2-12（大小写变体镜像清空目标侧）**：macOS APFS 上左孤 `A.txt` 与右孤 `a.txt` 是**同一条目**。原计划序先 copy 后 delete：copy 原地覆写 `a.txt`，delete 再把刚写入的内容删掉 → **目标侧清空且退出码 0**。真实复现：`left/A.txt=LEFT`、`right/a.txt=RIGHT`，mirror 左→右 后 right 目录为空、`exit=0`；修复后 `right/A.txt=LEFT`。修法是把碰撞的 delete 提前到对应 copy 之前 —— **该序在敏感卷与不敏感卷上都正确**；不采用「折叠对齐」或「抑制 delete」，那两种做法会在大小写敏感卷上产生错误结果。
+
+**对独立复核（子 agent）两条声称的裁定**（按「逐条实测核实、不顺着答」纪律；两条声称的**原始机理都被否证，但相邻的真缺陷都成立**，我各自重跑复现后才修）：
+
+| 声称原文 | 裁定 | 实测依据 |
+| --- | --- | --- |
+| A：「Update 预设会改写目标侧**目录 mtime**」 | **REFUTED（如述）** + 相邻缺陷 CONFIRMED | `apply_preset` 根本没有 `Touch*` 分支；全仓唯一 Touch 生产者是 `RuleAction::TouchLeft/Right`（显式规则/CLI touch）。`copy_tree_inner` 只 `mkdir_all`，从不 `set_mtime`。复现：目标目录刻意 stamp 成 2000-01-01，Update 后**目录 mtime 原样保留** —— 但 `right/sub/f.txt`（2024-07-01，`NEWER-RIGHT`）被左侧旧版覆写成 `NEW-LEFT`。RPC 原始计划：`{"plan":[{"op":"copyLeftToRight","path":"sub"}],"total":1}`。**真缺陷是整树复制覆写较新子文件（R2-11），不是 mtime** |
+| B：「`compare_case=false` + 平铺折叠对齐 → 镜像毁掉两侧文件」 | **机理 REFUTED** + 数据丢失 CONFIRMED | `CaseFoldAligner` **只在测试里用**（`align.rs:307/317/327`、`session/tests.rs`）；全部生产调用方注入 `ByNameAligner`（`handlers.rs:268`、`script.rs:1344/1625`、`app.rs:354/678`）。平铺 + `compareCase:false` 只发一条 copy、无 delete，两种卷上都不丢数据。**真触发条件是「树形 + 精确名对齐 + 不敏感卷 + 默认设置」，且 CLI 可达**（R2-12）：`build_pairs` 按 `BTreeSet` 键排序，`"A.txt" < "a.txt"` → copy 先于 delete |
+| zip CRC / zip64 截断 / zip 保存损坏 | **仍未裁定** | 本轮未实测，**不声称已确认或已排除** |
+
+> **我否掉了子 agent 给的两个修法**：它建议「按卷大小写敏感性选 `CaseFoldAligner`」或「抑制同批已被写过的折叠同名 delete」。前者需要 VFS 能力探测且改变对齐语义，后者在**大小写敏感卷**上会把本该删除的独立文件留下。改用**重排执行序**（delete 提前到 copy 之前）：两种卷语义下都正确，且与触发顺序无关（子 agent 指出的「左名排序在前才触发」只是原实现的症状，重排后 `left/a.txt + right/A.txt` 的反向情形也一并覆盖）。
+>
+> 子 agent 另注明「Tauri GUI 端到端未测，GUI 可达性属推断」——本轮 R2-10 由用户在安装版 GUI 上实测报出，**GUI 可达性已由用户实测补齐**。
+
+---
+
+## 7.3 BC 功能忠实度审计（用户第一维度）
+
+> 本轮引入**一手权威证据**：BC 自带英文帮助 `/Applications/Beyond Compare.app/Contents/Resources/en.lproj/Help/`，其中 `commands*.html`（15 页）逐条列出**每个视图的每个菜单的每个命令**，`command_line_reference.html` 给出**权威退出码表**。以下所有 BC 侧数字均从这些文件解析得出，非凭印象。
+
+### 7.3.1 命令面与菜单面：量化差距
+
+从 BC 帮助解析出的 `class="f_Command"` 条目（去重）：
+
+| BC 菜单 | 命令数 | 我们的实现 |
+| --- | --- | --- |
+| Beyond Compare（应用菜单） | 7 | ✗ 无（Settings 等散落在 tools） |
+| Session | 56 | 部分（4 条） |
+| File | 23 | **✗ 菜单不存在** |
+| Edit | 68 | **✗ 菜单不存在** |
+| Search | 43 | **✗ 菜单不存在** |
+| View | 84 | 部分（10 条） |
+| Actions（文件夹/同步/合并视图） | 68 | **✗ 菜单不存在** |
+| Tools | 6 | 部分（5 条） |
+| Window | 12 | 部分（7 条） |
+| Help | 3 | 硬编码 About/Docs（`menuModel.ts:18` 为 `help: []`） |
+| **合计** | **370** | **26 条命令 / 5 个菜单** |
+
+`ui/src/shell/menuModel.ts:9` 的 `MenuId` 只有 `session|view|window|tools|help`。BC 文件夹比较视图的菜单是 `Session / Actions / Edit / Search / View`（+ 公共 Tools/Window/Help/应用菜单），文本比较是 `Session / File / Edit / Search / View`。**缺 File / Edit / Search / Actions 四个菜单 + 应用菜单。**
+
+> 更正：本轮早期口径「3 of 8 菜单缺失」不准确，按 BC 帮助实测应为**缺 4 个视图菜单 + 应用菜单（5/10）**。
+
+### 7.3.2 【P0】编码自动检测：SRS 列为 MVP，实现直接拒绝非 UTF-8
+
+**SRS §6.3「MVP（P0）范围小结」第 2 条**明列「…+ **编码自动检测**」。
+
+**实现**（`ai-vfs/src/lib.rs:331-334`）：
+
+```rust
+/// 读取并解码为文本：UTF-8 / UTF-8 BOM（BOM 剥离）；P0 不做其他编码检测
+async fn read_file_text(&self, path: &VfsPath) -> Result<String, VfsError> {
+    let bytes = self.read_file_bytes(path).await?;
+    let stripped = strip_bom(&bytes);
+    String::from_utf8(stripped.to_vec()).map_err(|_| VfsError::InvalidEncoding { .. })
+}
+```
+
+**实测**（GBK 中文文件，真实二进制）：
+
+```
+$ aic diff /tmp/encprobe/l.txt /tmp/encprobe/r.txt
+aic diff: 文件不是合法 UTF-8 文本: /tmp/encprobe/l.txt
+退出码=2
+```
+
+**BC 权威口径**（`formattextconversion.html`）：
+> "The Encoding of most text files can be detected automatically, but you can specify a specific code page to use."
+
+**影响**：中文 Windows 用户的 GBK / Big5 / Shift-JIS 文本**根本无法比较**——这是 BC 的核心日常场景。注意代码注释自称「P0 不做」，**与 SRS 的 P0 定义直接冲突**：这是实现方私自缩小了 P0 范围。
+
+**关联缺口**：`TextOpenParams` **无 `encoding` 字段**（`ui/src/protocol/generated/TextOpenParams.ts`），`mapping.rs:344` 硬编码 `encoding: None`；`ui/src/lib/encodings.ts:52,72` 的编码工具**零生产调用方**。所以 UI 的「编码切换」是**纯 no-op**——PROGRESS.md 第 188 行「编码切换 ✅ P5」**不成立**。
+
+### 7.3.3 【P0】差异文件导航（FR-DIR-071）：SRS 列为 MVP，实现缺失
+
+**SRS §6.3 第 3 条**明列「…+ 子会话打开 + **差异文件导航**」。FR-DIR-071（:412-415）要求：搜索 > 下一个/上一个差异文件、复制到对侧并打开下一个差异、以及 5 项程序选项。
+
+**实现**：全仓 grep `nextDiffFile|prevDiffFile|下一个差异文件|copyAndNext` → **零命中**。`shortcuts.ts` 16 条绑定里**没有任何差异导航键**。
+
+### 7.3.4 【P0】状态回传：产品核心概念，实现明确未开放
+
+SRS :50 把「文件级视图的差异信息**回传**文件夹会话（颜色覆盖）」列为产品两大核心衔接之一；:149 表格 likewise。
+
+**实现自述**（`ui/src/shell/sliceWindowsTabs.ts:318`）：
+> "差异回传均未开放（P1/P2）；UI 以行 id（相对路径）拼出两侧完整路径直接…"
+
+`shellState.ts:76` 亦注明「引擎侧写回属 P1」。**即：从文件夹双击进文本比较后，文件夹行的颜色不会反映文件内差异**——BC 的招牌体验缺失。
+
+### 7.3.5 【P1】重要性在编辑后被抹除
+
+`ui/src/lib/lineDiffCore.ts:167` 的 `toSections(ops: DiffOp[])` **四个分支全部硬编码 `important: 'important'`**。`TextCompareView.tsx:397-400` 的 `rediffModel` 在用户编辑后走这条路径 → **红/蓝语义全部退化为红**。
+
+根因：**协议无 `text/rediff` RPC**，前端只能本地重 diff，而本地重 diff 拿不到引擎的重要性规则。修复需二选一：① 新增 `text/rediff` RPC（改协议面）；② 把重要性规则下发到 TS 侧复刻（重复实现，易漂移）。**属架构决策，登记待拍板。**
+
+### 7.3.6 【P1】文件夹高频快捷键是过期桩命令
+
+`commands.ts:235-262` 三条命令的 `run` **只弹一句阶段提示，不执行任何操作**：
+
+| 命令 | 键位 | run 实现 |
+| --- | --- | --- |
+| `folder.copyToLeft` | Ctrl/Cmd+L | `ctx.notice('复制到左侧属 P6 文件操作阶段交付')` |
+| `folder.copyToRight` | Ctrl/Cmd+R | `ctx.notice('复制到右侧属 P6 文件操作阶段交付')` |
+| `folder.markSelection` | Space | `ctx.notice('空格标记选择属 P6 选择模型阶段交付')` |
+
+**而 P6 早已交付**：右键菜单（`FolderCompareView.tsx:506`）与 gutter 箭头（:709）都能真复制。Space 靠一个**window 捕获监听器绕过桩命令**才生效（:563-579，注释明确写了这是为了绕开壳层 shortcutEngine 的 `stopPropagation`）。
+
+**净效果：BC 文件夹比较最高频的 Ctrl+L / Ctrl+R 在本实现里什么都不做。** 这是「命令注册表与视图实现脱节、桩命令未随交付回收」的架构债。
+
+**为何本轮不修**：`ui/` **零 `.test.tsx`**（484 个测试全在 node 环境跑纯函数），改 `FolderCompareView` + 拆除 Space  workaround **无法附回归测试**，且需浏览器实测交互。按「测不到就说测不到」原则登记，不擅自改不可验证的交互层。**建议修法**：仿 `viewRegistry.ts:181 setNoticeSink` 既有模式加一个 folder 命令 sink，三条桩改为委派，同时拆除 Space 的 window 捕获 workaround。
+
+### 7.3.7 忠实度审计结论
+
+**PROGRESS.md 的「P0 需求全量闭环」（:36、:142）与「M2 MVP ✅ P0 需求全量覆盖」（:28）声明不成立**，已在本次同步校准。BC 忠实度审计清单（:171-194）中下列 ✅ 需下调：
+
+| 原声明 | 实测 |
+| --- | --- |
+| 编码切换 ✅ P5 | **✗ no-op**（协议无字段、工具零调用方、引擎拒非 UTF-8） |
+| CLI（退出码 11-14）✅ P3/P11 | **⚠ 部分**：11/12/13/14/105/106/107 对齐；**0/1/2 语义与 BC 相反**（§7.7） |
+| 文本比较 ✅ 队列 6 | **⚠**：编辑后重要性抹除 |
+| 文件夹比较 ✅ P6c 后 | **⚠**：Ctrl+L/R 桩；差异文件导航缺失；状态回传未开放 |
+| 菜单栏/工具栏 ✅ 队列 8 | **⚠**：5/10 菜单、26/370 命令 |
+| 三向合并 ✅ 队列 3 | **⚠**：EOL 处理与 git 不一致（§7.5 R2-N4） |
+
+---
+
+## 7.4 第一轮 21 项待决项的复核裁定
+
+> 原则：**不采信任何结论的措辞，逐条实测**。包括我自己的结论。
+
+| 原编号 | 本轮裁定 | 证据 |
+| --- | --- | --- |
+| **P1-04** | **降级为「潜在 P0」**（原判 CONFIRMED 是**我的过度声称**） | 我原先只验了「代码无串行化」，**未验可达性**。实测 `ui/src-tauri/src/lib.rs` 共 **7 个 `#[tauri::command]`，0 个 async** → Tauri 同步命令在主线程串行执行，**当前不存在并发写**。但 `service.ts:159-170 persistByFileKey` 确实无队列，**一旦任何命令改 async 即成 P0 数据损坏**。属「结构上暂时不可达的真实隐患」 |
+| **P1-08** | **REFUTED → 降级 P3** | `Merge3View.tsx` **没有局部 `decisions` state**；决策在引擎侧，视图重挂载后由 `sections` 回带恢复。残余仅「视图偏好（窗格隐藏等）不持久」，属 P3 |
+| **P1-09** | **✅ 已清偿** | `180ccc0`：2 条库内测试（panic → -32603；panic 不污染共享状态）+ `#[cfg(test)] "test/panic"` dispatch |
+| **P1-03** | **CONFIRMED，且比原判更严重** | 除掉电窗口外，**失败路径也丢数据**：`settings_write`（:353-356）先 `rename(primary→.bak)`，若随后 `rename(tmp→primary)` 失败，**主文件已不存在**，只剩 .bak |
+| **P1-07** | **CONFIRMED** | 全仓仅 **3 处 `trackSession`**；`TrackedSession.kind` 联合类型是 `'dir'\|'text'`，而会话种类有 **7 种** |
+| **P1-10** | **CONFIRMED** | 无 `.github/workflows`、无 Makefile/justfile；`cargo-deny` **未安装** → `deny.toml` 的 GPL 零容忍策略**无任何执行点** |
+| **P2-12** | **CONFIRMED，且比原判更严重** | 原判「算式可疑」；实测 `idx = floor((jumpTo-aligned)/ROW_BYTES)` 在 `aligned === jumpTo` 时**恒为 0**，选择器退化。**已修（R2-07）**。阈值精化为 `0x800`（`PAGE_BYTES 4096 / ROW_BYTES 16 = 256` 行/页） |
+| **P2-13** | **REFUTED（前提错误）** | 原判「`deleteFile` 调用方未启用」；实测**存在活调用方** `demoSeed.ts:86` → P1-06 的影响面**不是受限，而是已生效** |
+| P3「行内 diff 超时降级」 | **RESOLVED（无缺陷）** | 实测降级路径**正确返回 `truncated=true`**，不是静默产错 |
+| P1-01/02/05/06、P2-01~11 | **维持登记**，本轮未逐条重验 | 显式标注：**未实测**，不声称已确认 |
+
+---
+
+## 7.5 本轮新登记（未修，附证据与修法）
+
+| # | 严重度 | 位置 | 问题 | 为何不修 |
+| --- | --- | --- | --- | --- |
+| **R2-N1** | **P0 契约** | `cli/aic/src/app.rs` 等 **76 处调用点** | **退出码 0/1/2 语义与 BC 相反**（详见 §7.7） | 契约级产品决策，需用户拍板 |
+| **R2-N2** | **P0 功能** | `ai-vfs/src/lib.rs:331` | 编码自动检测缺失（§7.3.2） | 需协议加 `encoding` 字段 + 检测链 + 错误态工具栏，跨 3 层 |
+| **R2-N3** | **P0 功能** | UI 全局 | FR-DIR-071 差异文件导航 + 状态回传缺失（§7.3.3/4） | 需引擎侧写回 RPC + 父会话关联，属 P1 架构批 |
+| **R2-N4** | **P1 数据正确性** | `ai-core/src/merge3way.rs` | **合并 EOL 损坏**：与 `git merge-file` 对拍——base=left=`x\ny`、right=`x\ny\n` → aic 输出 `x\ny`，git 输出 `x\ny\n`；**文件中段**场景 aic 输出 `f\nga`（**两行被融合**），git 正确 | 修复需改 chunk 分类语义（**中风险**），登记待拍板而非此刻擅改 |
+| **R2-N5** | **P1 功能** | `ui/src/shell/commands.ts:235-262` | Ctrl+L/Ctrl+R 桩命令（§7.3.6） | UI 视图层**零测试覆盖**，无法附回归 |
+| **R2-N6** | **P1 重要性** | `ui/src/lib/lineDiffCore.ts:167` | 编辑后重要性抹除（§7.3.5） | 需新增 RPC 或 TS 复刻规则，架构决策 |
+| R2-N7 | P2 | `engine/ai-core/src/incremental.rs` | 增量 splice **未接线**（无生产调用方），边界锚定缺性质证明 | 潜在项，接线前需要先补随机编辑序列 vs 全量 diff 的一致性测试 |
+| R2-N8 | P2 | `engine/ai-core/src/inline.rs` | 行内 DMP **默认禁用**，启用路径缺覆盖 | 潜在项；超时降级本身已验证正确 |
+| R2-N9 | P2 | `scripts/build-app.sh:55` | `codesign … \|\| true` **静默吞掉签名失败** | 本轮改为**打包后显式验签**（见 §7.8），脚本本身待改 |
+| R2-N10 | P2 | `ui/src-tauri/Cargo.toml` | MSRV 声明 **1.77.2 不可满足**（tauri 2 需 ≥1.90）；且壳层脱离根 workspace，`cargo clippy --all-targets` 不覆盖 | 需与根 MSRV 统一，属工程化批 |
+| R2-N11 | P3 | `ui/src/shell/menuModel.ts:18` | `help: []` → Help 菜单在 `MenuBar.tsx` 里硬编码 About/Docs，**不走命令注册表** → 无法自定义键位/隐藏 | 随菜单面补齐批一起做 |
+
+**ai-dir / ai-vfs 侧原 5 项待裁定的结清情况**：folder mtime Update 覆写、大小写不敏感镜像两项**已裁定并修复**（原始声称的机理均被否证，相邻真缺陷成立 → R2-11 / R2-12，逐条证据与裁定见 §7.2.4）；**zip CRC、zip64 截断、zip 保存损坏三项仍未裁定**——本轮未实测，不声称已确认或已排除。
+
+---
+
+## 7.6 门禁复验（HEAD `954bb1c`）
+
+| 门禁 | 结果 |
+| --- | --- |
+| `cargo test --workspace` | **842 / 842 通过，0 失败**（基线 829 + 本轮 13） |
+| `cargo clippy --all-targets -- -D warnings` | **零警告** |
+| `pnpm test`（UI） | **485 / 485**（49 个测试文件） |
+| `pnpm lint` / `pnpm build` | 全绿（eslint 零告警；tsc -b + vite build 成功） |
+| `pnpm e2e:engine`（真实引擎） | 全绿（`✅ 真实引擎端到端：全部通过`，引擎随 shutdown 退出 exit=0） |
+| `ui/src-tauri` 独立 clippy | 零警告（壳层不在根 workspace，需单独跑） |
+
+**新增 14 条回归**：`e2e_rescan_preserves_collapse_scope`、`e2e_rescan_expands_newly_created_dirs`、`e2e_log_write_failure_is_reported`、`copy_through_destination_symlink_is_rejected`、`delete_through_symlinked_parent_is_rejected`、`handler_panic_is_answered_as_internal_error`、`handler_panic_does_not_poison_shared_state`、`merge_conflict_exit_code_rejects_reserved_codes`、`xml_report_strips_illegal_control_chars`、`unchanged_name_filter_must_not_rescan_away_expanded_rows`、`update_preset_must_not_tree_copy_dir_rows`、`mirror_case_variant_delete_runs_before_copy`、`dir_filter_rescan_flag_picks_up_external_changes`（以上引擎 13）、UI `mockDirOps「强制重扫（rescan=true）」`（1）。
+
+> **门禁真实抓到了一次我自己引入的回归**：R2-10 的 no-op 守卫把 `dir/execute` 借道的 `update_filters(None,None)` 变成了空操作，`tests/p9_e2e` 立刻红（`rescan delta 含旧行 removals`）。**不是先写测试再补修复，而是修复被既有门禁拦下**——这正是保留全量 e2e 的价值。第二条同类回归（右键「刷新」）**没有测试覆盖，是读调用链发现的**，已补 `dir_filter_rescan_flag_picks_up_external_changes` 守住引擎侧；UI 侧仍只有 mock 层测试（视图层零 `.test.tsx`，见 R2-N5）。
+
+### 7.6.1 双向变异矩阵（本轮）
+
+| 修复 | 回退变异（应变红） | 过度修复变异（应变红） |
+| --- | --- | --- |
+| R2-01 符号链接 | 丢弃护栏返回值 → 2 条新测试红 ✓ | 一律拒绝所有符号链接 → 既有 `delete_symlink_does_not_follow` 红 ✓（证明未过宽） |
+| R2-02 RESCAN | 恢复全量展开 → `preserves_collapse_scope` 红 ✓ | 一律不展开新目录 → `expands_newly_created_dirs` 红 ✓（**第一版测试在此变异下假绿，已重写**） |
+| R2-03 XML | 恢复 `html_escape` → 解析测试红 ✓ | 连 TAB/换行一起剔除 → legal_kept 语料红 ✓ |
+| R2-06 冲突码 | 恢复只拒 0 → 保留码测试红 ✓ | 拒绝一切非 14 → 合法值 1/3/200 红 ✓ |
+| R2-10 过滤器判等 | 守卫改 `if false && !changed`（恢复无条件重扫）→ `unchanged_name_filter_…` 红（tests.rs:161）✓ | 守卫改 `if !changed \|\| true`（一律不重扫）→ 既有 `update_filters_rescans_and_removes_old_rows` 红（tests.rs:136）✓ |
+| R2-10 强制重扫入口 | `dir/execute` 的 `refresh()` 换回 `update_filters(None,None)` → `p9_e2e` 红 ✓（**门禁真实捕获，非事后补演**） | — |
+| R2-11 Update 跳过 Dir | 去掉 Dir 跳过分支 → `update_preset_must_not_tree_copy_dir_rows` 红 ✓ | 把 Mirror 两预设也加进跳过集 → 同测试的 Mirror 断言红 ✓（证明未过宽） |
+| R2-12 碰撞重排 | 函数首行注入 `return plan;` → `mirror_case_variant_delete_runs_before_copy` 红，且 R2-11 测试仍绿 ✓（两项各自独立被守护） | 去掉「折叠同名且路径不同」条件（把所有 delete 都提前）→ 新测试 + 既有 `mirror_left_to_right` 双双红 ✓ |
+
+> **UI 两项（R2-07/08）无法做变异验证**：视图层零测试覆盖。已用**真实引擎 RPC** 与**手工算式推演**替代，并在 §7.5 R2-N5 登记该覆盖缺口。**不声称它们有回归保护。**
+
+---
+
+## 7.7 需用户拍板的契约级决策
+
+### 决策 1：CLI 退出码 —— BC 忠实度 vs GNU diff/git difftool 兼容
+
+**BC 权威退出码表**（`command_line_reference.html`，一手证据）：
+
+| 码 | BC 含义 | 我们的含义 |
+| --- | --- | --- |
+| 0 | Success | 相同/成功 ✓ |
+| **1** | **Binary same**（一种「相同」） | **不同** ✗ |
+| **2** | **Rules-based same**（一种「相同」） | **错误** ✗ |
+| 11 | Binary differences | 二进制差异 ✓ |
+| 12 | Similar | 相似 ✓ |
+| 13 | Rules-based differences | 基于规则的差异 ✓ |
+| 14 | Conflicts detected | 冲突 ✓ |
+| **100** | **Unknown error** | 无（我们用 2） ✗ |
+| **101** | Conflicts detected, merge output not written | 无 ✗ |
+| 105/106/107 | 脚本读失败/语法错/加载失败 | **完全一致 ✓** |
+
+**冲突本质**：BC 把 **1 和 2 用于「相同」的细分**，错误走 100；我们沿用 **GNU diff 惯例**（0 同 / 1 异 / 2 错）。**为 BC 写的批处理脚本（`if errorlevel 1` 判「二进制相同」）在我们这里会完全误判。**
+
+**代价**：改齐 BC 需动 **76 处调用点 + 全部退出码测试 + golden**，且**破坏 git difftool 兼容**（git 期望 0/1）。这不是 bug 修复，是**产品契约选择**，我不擅自改。
+
+### 决策 2：重要性回传 —— 新增 `text/rediff` RPC vs TS 侧复刻规则
+
+前者改协议面（但语义单一来源、不漂移）；后者不动协议（但重要性规则要在 Rust/TS 各维护一份，长期必漂移）。**倾向前者。**
+
+### 决策 3：合并 EOL 语义（R2-N4）
+
+以 `git merge-file` 为准修 chunk 分类（中风险，需重跑 28 组对拍），还是保持现状并把「EOL 差异不参与合并」写进文档？**倾向前者**——因为当前行为会**融合两行**，属数据损坏而非风格差异。
+
+---
+
+## 7.8 本轮方法论备忘（供后续评审复用）
+
+1. **护栏要装在公共路径上，不是装在「看起来该装」的函数里。** R2-01 的根因是 `validate` 只在 dry_run 与 copy 内被调用——**读代码时先画调用图，再判断护栏覆盖面**。
+2. **在变异下不变红的测试等于没有测试。** R2-02 第一版测试用顶层目录，过度修复变异体全绿；换嵌套目录才有鉴别力。
+3. **陈旧二进制会伪造结论。** 本轮两次误判都源于此。CLI 层任何实测前先重建。
+4. **「代码没有防护」≠「缺陷可达」。** P1-04 我原判 CONFIRMED，实测 7 个同步命令 0 个 async 后必须降级。**可达性要单独验。**
+5. **不采信其他 reviewer 的措辞，也不采信自己上一轮的措辞。** 本轮更正 4 项，其中 1 项是我自己的过度声称。
+6. **一手权威文档 > 印象。** BC 自带帮助给出了 370 命令 / 10 菜单 / 权威退出码表，把「忠实度」从主观判断变成了可量化对照。**后续评审应继续以此为基线。**
+7. **测不到就明说。** UI 视图层零 `.test.tsx` 是本轮最重要的**测试可信度**发现：484 全绿**不代表视图正确**，R2-07/08 两个真实缺陷正好落在无覆盖区。
+8. **一个修复会把「寄生在旧行为上的路径」变成新缺陷。** R2-10 的 no-op 守卫让 `dir/execute` 与右键「刷新」两条借道重扫的路径失效；前者被既有 e2e 抓红，后者只能靠读调用链。**改语义前先 grep 全部调用方，问「谁在依赖这个副作用」。**
+9. **探针夹具必须先验干净。** 本轮一次安装版验证用了 /tmp 残留目录（内含上一轮符号链接逃逸探针的 `R/sub → OUT2` 符号链接），`mkdir -p`/写文件顺着链接走，产出「子树文件消失」的**假结果**。改用全新目录并 `find -type l` 断言为 0 后才可信。**任何 /tmp 复现目录都要么新建、要么先验结构。**
+
+---
+
+## 7.9 安装版验证（2026-11-15 00:0x，用户要求「编译最新代码在我本机安装上方便我体验」）
+
+**产物与安装**：`bash scripts/build-app.sh --dmg` → `ui/src-tauri/target/release/bundle/macos/ai-compare.app` + `.../bundle/dmg/ai-compare_0.1.0_aarch64-apple-darwin.dmg`；`codesign --verify --deep --strict` 通过；覆盖 `/Applications/ai-compare.app`（旧包移至 `/tmp/ai-compare-prev-235756.app` 保留，未删除）。
+
+**在安装版二进制（`/Applications/ai-compare.app/Contents/MacOS/ai-engine`）上的实测**，非构建树二进制：
+
+| 验证项 | 原始结果 |
+| --- | --- |
+| 树→平铺（UI 真实载荷：空 nameFilter + flat:true） | `upserts:['f.txt','g.txt']`、`removals:[]` —— 子树文件保留（用户缺陷已修） |
+| 平铺→树 | `upserts:['f.txt','sub','sub/g.txt']`、`removals:[]` —— 展开态保留 |
+| 右键刷新（`rescan:true`，外部新建 external.txt） | `stats.total` 2→3，delta 含 `external.txt` |
+| Update 左→右 计划 + 执行 | 计划仅 `[('copyLeftToRight','sub/h.txt')]`；执行后 `R/sub/f.txt` 仍为 `NEWER-RIGHT`、`R/sub/h.txt` 变 `H-LEFT` |
+| 镜像左→右（左 A.txt / 右 a.txt）计划 + 执行 | 计划 `[('deleteRight','a.txt'),('copyLeftToRight','A.txt')]`；执行后右盘仅 `A.txt`，内容 `LEFT`（不再清空） |
+| GUI 启动 | 主页正常渲染；`ai-engine --stdio` 子进程随会话拉起；无崩溃报告 |
+
+**未验证项（明说）**：GUI 内「点击平铺按钮」的端到端点击路径**未自动化验证**（Tauri WebView 无自动化通道，视图层零 `.test.tsx`）；上表以安装版引擎 RPC + 真实磁盘终态为准，UI 载荷形状取自 `FolderCompareView.applyFilters` 源码。**请用户在安装版上点一次树↔平铺确认观感。**
