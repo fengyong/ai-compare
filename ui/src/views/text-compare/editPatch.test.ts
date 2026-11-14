@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import {
   applySidePatches,
+  fullSideReplayOp,
   invertSidePatches,
+  opsFromPatches,
   patchSideFromDocEdit,
   patchesFromLineReplacement,
   type SidePatch,
 } from './editPatch';
 import type { AlignedRow } from './alignment';
+import type { TextEditOp } from '../../protocol/types';
 
 /** 构造对齐行元数据：l/r 为 0 基侧行号，undefined = 填充行 */
 function row(l: number | undefined, r: number | undefined, status: AlignedRow['status']): AlignedRow {
@@ -168,5 +171,75 @@ describe('patchesFromLineReplacement：全部替换的复合补丁', () => {
     const newL = ['X', 'cd', 'X'];
     const patches = patchesFromLineReplacement(oldL, newL)!;
     expect(applySidePatches(newL, invertSidePatches(patches))).toEqual(oldL);
+  });
+});
+
+/**
+ * 按引擎 text/edit 语义把 op 序列应用到行数组（顺序应用、坐标为应用后坐标、
+ * text 以 \n 连接、空串 = 纯删除、end 省略 = 到该侧末尾）。
+ */
+function applyOps(lines: string[], ops: TextEditOp[]): string[] {
+  const out = [...lines];
+  for (const op of ops) {
+    const end = op.end ?? out.length;
+    const parts = op.text === '' ? [] : op.text.split('\n');
+    out.splice(op.start, end - op.start, ...parts);
+  }
+  return out;
+}
+
+describe('opsFromPatches：UI 补丁 → 引擎 text/edit op（R3-18 引擎权威重 diff）', () => {
+  it('op 序列与 applySidePatches 结果逐行一致（单块/多块/增删改混合）', () => {
+    const cases: Array<{ lines: string[]; patches: SidePatch[] }> = [
+      { lines: ['abc', 'x', 'y'], patches: [{ start: 0, removed: ['abc'], inserted: ['axbc'] }] },
+      { lines: ['one', '2', 'three'], patches: [{ start: 1, removed: ['2'], inserted: ['2a', '2b'] }] },
+      { lines: ['a', 'b', 'c'], patches: [{ start: 1, removed: ['b'], inserted: [] }] },
+      { lines: ['a', 'c'], patches: [{ start: 1, removed: [], inserted: ['b'] }] },
+      {
+        lines: ['a=1', 'keep', 'b=2', 'c=3'],
+        patches: [
+          { start: 0, removed: ['a=1'], inserted: ['1=a'] },
+          { start: 2, removed: ['b=2', 'c=3'], inserted: ['2=b', '3=c'] },
+        ],
+      },
+      { lines: ['a', 'b'], patches: [{ start: 2, removed: [], inserted: ['c', 'd'] }] },
+    ];
+    for (const { lines, patches } of cases) {
+      const ops = opsFromPatches('left', patches);
+      expect(applyOps(lines, ops)).toEqual(applySidePatches(lines, patches));
+      expect(ops.every((o) => o.side === 'left')).toBe(true);
+    }
+  });
+
+  it('纯删除 → text 为空串；多行插入 → \\n 连接', () => {
+    expect(opsFromPatches('right', [{ start: 1, removed: ['b'], inserted: [] }])).toEqual([
+      { side: 'right', start: 1, end: 2, text: '' },
+    ]);
+    expect(opsFromPatches('right', [{ start: 0, removed: [], inserted: ['p', 'q'] }])).toEqual([
+      { side: 'right', start: 0, end: 0, text: 'p\nq' },
+    ]);
+  });
+
+  it('空补丁列表 → 空 op 列表（调用方据此跳过 RPC）', () => {
+    expect(opsFromPatches('left', [])).toEqual([]);
+  });
+});
+
+describe('fullSideReplayOp：整侧重放（引擎态与 UI 态分叉后的收敛手段）', () => {
+  it('end 省略 = 到末尾，text 为全部行', () => {
+    expect(fullSideReplayOp('left', ['a', 'b', 'c'])).toEqual({
+      side: 'left',
+      start: 0,
+      text: 'a\nb\nc',
+    });
+  });
+
+  it('重放后行表与 UI 完全一致（含空侧）', () => {
+    expect(applyOps(['stale', 'lines', 'here'], [fullSideReplayOp('right', ['a', 'b'])])).toEqual([
+      'a',
+      'b',
+    ]);
+    expect(applyOps(['x'], [fullSideReplayOp('left', [])])).toEqual([]);
+    expect(applyOps([], [fullSideReplayOp('left', ['x'])])).toEqual(['x']);
   });
 });

@@ -75,6 +75,7 @@ pub async fn dispatch(
         ai_protocol::method::TEXT_SECTIONS => text_sections(params, ctx, out).await,
         ai_protocol::method::TEXT_LINES => text_lines(params, ctx).await,
         ai_protocol::method::TEXT_INLINE_DIFF => text_inline_diff(params, ctx).await,
+        ai_protocol::method::TEXT_EDIT => text_edit(params, ctx).await,
         ai_protocol::method::TEXT_MERGE3_OPEN => merge3_open(params, ctx).await,
         ai_protocol::method::TEXT_MERGE3_SECTIONS => merge3_sections(params, ctx).await,
         ai_protocol::method::TEXT_MERGE3_DECIDE => merge3_decide(params, ctx).await,
@@ -141,6 +142,8 @@ fn initialize() -> Result<Handled, RpcErrorObject> {
             picture_compare: Some(true),
             // R3-07：文件夹三向合并入口开放（dir/mergeScan|mergePlan|mergeExecute）
             dir_merge: Some(true),
+            // R3-18：编辑增量重 diff 入口开放（text/edit，引擎权威重要性）
+            text_edit: Some(true),
             dir_background_scan: true,
             dir_filters: true,
             dir_operate: true,
@@ -685,6 +688,170 @@ async fn text_open(
         summary,
     };
     Ok(Handled::Value(serde_json::to_value(&result).expect("text/open 结果可序列化")))
+}
+
+/// text/edit：编辑增量落行表 -> 按会话配置重 diff -> 应答权威 sections（R3-18）。
+///
+/// 引擎是编辑态与重要性的唯一权威：UI 提交行区间补丁，引擎用打开会话时的
+/// 完整 [`ai_core::DiffConfig`]（骨架选项 + 重要性 + 规则折叠 + 手动对齐）重算，
+/// 因此编辑后"不重要差异"不会被抹成重要（此前 UI 侧 TS 重 diff 的缺陷）。
+///
+/// 原子语义：先按序校验全部区间与手动对齐锚点，任一不合法则整批不落会话。
+async fn text_edit(
+    params: Option<serde_json::Value>,
+    ctx: &HandlerCtx,
+) -> Result<Handled, RpcErrorObject> {
+    let params: ai_protocol::TextEditParams = parse_params(params)?;
+    if params.edits.is_empty() {
+        return Err(bad_params("edits 不能为空"));
+    }
+    let result = with_text_session(&ctx.sessions, &params.session_id, |data| {
+        // 1. 校验（不改行表）：逐 op 跟踪两侧行数，区间必须落在当时的长度内
+        let mut lens = [data.left.len(), data.right.len()];
+        let mut spans = Vec::with_capacity(params.edits.len());
+        for op in &params.edits {
+            let idx = match op.side {
+                ai_protocol::DiffSide::Left => 0,
+                ai_protocol::DiffSide::Right => 1,
+            };
+            let start = op.start as usize;
+            let end = op.end.map_or(lens[idx], |e| e as usize);
+            if start > end || end > lens[idx] {
+                return Err(bad_params(format!(
+                    "编辑区间越界: side={} start={start} end={end} 当前行数={}",
+                    if idx == 0 { "left" } else { "right" },
+                    lens[idx]
+                )));
+            }
+            let new_len = LineTable::from_text(&op.text).len();
+            lens[idx] = lens[idx] - (end - start) + new_len;
+            spans.push((idx, start, end));
+        }
+
+        // 2. 手动对齐锚点按新行数复核；失效则丢弃锚点（编辑优先于对齐覆盖，
+        //    否则用户一旦删行就再也无法编辑）。隔离/偏斜设置保留。
+        let mut config = data.config.clone();
+        if config
+            .manual
+            .validate(lens[0] as u32, lens[1] as u32)
+            .is_err()
+        {
+            config.manual.align_anchors.clear();
+        }
+
+        // 3. 应用（区间已校验，此步不会失败）
+        for (op, &(idx, start, end)) in params.edits.iter().zip(&spans) {
+            let table = if idx == 0 {
+                &mut data.left
+            } else {
+                &mut data.right
+            };
+            let entries = edit_entries(table, start, end, &op.text);
+            table.replace_lines_entries(start, end, entries);
+        }
+
+        // 4. 引擎权威重 diff
+        let keyed = ai_core::diff_config(&data.left, &data.right, &config)
+            .map_err(|e| ai_protocol::error_object(codes::INVALID_PARAMS, format!("{e}")))?;
+        data.config = config;
+        data.sections = keyed.output.sections;
+        data.summary = keyed.output.summary;
+        data.rev += 1;
+
+        Ok(ai_protocol::TextEditResult {
+            session_id: params.session_id.clone(),
+            rev: data.rev,
+            left_line_count: u32::try_from(data.left.len()).unwrap_or(u32::MAX),
+            right_line_count: u32::try_from(data.right.len()).unwrap_or(u32::MAX),
+            section_count: u32::try_from(data.sections.len()).unwrap_or(u32::MAX),
+            summary: mapping::summary_to_dto(&data.summary),
+            sections: data.sections.iter().map(mapping::section_to_dto).collect(),
+        })
+    })
+    .await?;
+    Ok(Handled::Value(
+        serde_json::to_value(&result).expect("text/edit 结果可序列化"),
+    ))
+}
+
+/// 编辑区间的新行条目：行尾风格随该侧既有风格，文件末尾"有无换行符"语义保留。
+///
+/// UI 的行数组不含行尾符（`text/lines` 口径），直接拼接会把 CRLF 文件的
+/// 被编辑段变成 LF；故此处按参考行的行尾归一 inserted 文本。
+fn edit_entries(
+    table: &LineTable,
+    start: usize,
+    end: usize,
+    text: &str,
+) -> Vec<ai_core::LineEntry> {
+    let eol = edit_eol(table, start);
+    let normalized = normalize_newlines(text, eol);
+    let mut entries: Vec<ai_core::LineEntry> =
+        LineTable::from_text(&normalized).iter().cloned().collect();
+    // 编辑触及文件末尾且原末行带行尾符：新末行补同风格行尾（纯追加/改末行
+    // 不应悄悄删掉文件的尾换行）。原末行本就无行尾符时保持无。
+    let old_last_had_eol = table
+        .iter()
+        .last()
+        .is_some_and(|l| l.ending != ai_core::LineEnding::None);
+    if end == table.len() && old_last_had_eol {
+        if let Some(last) = entries.last_mut() {
+            if last.ending == ai_core::LineEnding::None {
+                last.ending = eol;
+            }
+        }
+    }
+    entries
+}
+
+/// 参考行尾：优先取编辑起点处的既有行（插入时即其后继行），否则取末行；
+/// 两者都无行尾符（或空表）时退回全表多数风格。
+fn edit_eol(table: &LineTable, start: usize) -> ai_core::LineEnding {
+    use ai_core::LineEnding as E;
+    let reference = if start < table.len() {
+        Some(table.line(start).ending)
+    } else {
+        table.iter().last().map(|l| l.ending)
+    };
+    match reference {
+        Some(E::Lf) => E::Lf,
+        Some(E::CrLf) => E::CrLf,
+        Some(E::Cr) => E::Cr,
+        _ => dominant_eol(table),
+    }
+}
+
+/// 全表多数行尾风格（None 不计；平票取 LF，与 merge marker 同口径）
+fn dominant_eol(table: &LineTable) -> ai_core::LineEnding {
+    use ai_core::LineEnding as E;
+    let mut lf = 0u32;
+    let mut crlf = 0u32;
+    let mut cr = 0u32;
+    for l in table.iter() {
+        match l.ending {
+            E::Lf => lf += 1,
+            E::CrLf => crlf += 1,
+            E::Cr => cr += 1,
+            E::None => {}
+        }
+    }
+    if crlf > lf && crlf > cr {
+        E::CrLf
+    } else if cr > lf && cr > crlf {
+        E::Cr
+    } else {
+        E::Lf
+    }
+}
+
+/// 把 inserted 文本的行尾统一为指定风格（CRLF/CR/LF 混排先归一再替换）
+fn normalize_newlines(text: &str, eol: ai_core::LineEnding) -> String {
+    let unified = text.replace("\r\n", "\n").replace('\r', "\n");
+    if eol == ai_core::LineEnding::Lf {
+        unified
+    } else {
+        unified.replace('\n', eol.as_str())
+    }
 }
 
 /// 取文本会话（可变访问；闭包可失败。会话表锁内不做重活/不做 await）
@@ -4834,5 +5001,430 @@ mod dir_merge_tests {
             .expect("该项应有明细");
         assert_eq!(lonly["status"], "failed", "符号链接项应失败而非成功: {exec}");
         assert_eq!(exec["copied"], 3, "其余三项仍应成功（部分成功语义）: {exec}");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// R3-18：text/edit（编辑增量重 diff，引擎权威重要性 + 行尾/EOF 语义保留）
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod text_edit_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn ctx() -> HandlerCtx {
+        HandlerCtx::new(512)
+    }
+
+    fn chan() -> tokio::sync::mpsc::UnboundedSender<crate::server::Outbound> {
+        tokio::sync::mpsc::unbounded_channel().0
+    }
+
+    async fn call(
+        c: &HandlerCtx,
+        method: &str,
+        params: serde_json::Value,
+    ) -> Result<serde_json::Value, RpcErrorObject> {
+        dispatch(method, Some(params), c, &ai_dir::CancelFlag::new(), chan())
+            .await
+            .map(|h| match h {
+                Handled::Value(v) => v,
+                Handled::WithNotifications { response, .. } => response,
+            })
+    }
+
+    /// 打开文本会话；tempdir 由调用方持有（保存类测试需要文件仍在）
+    async fn open(
+        c: &HandlerCtx,
+        id: &str,
+        left: &str,
+        right: &str,
+        extra: serde_json::Value,
+    ) -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        let l = dir.path().join("L.txt");
+        let r = dir.path().join("R.txt");
+        std::fs::write(&l, left).unwrap();
+        std::fs::write(&r, right).unwrap();
+        let mut p =
+            json!({"sessionId": id, "left": l.to_string_lossy(), "right": r.to_string_lossy()});
+        if let Some(obj) = extra.as_object() {
+            for (k, v) in obj {
+                p[k] = v.clone();
+            }
+        }
+        call(c, "text/open", p).await.unwrap();
+        dir
+    }
+
+    /// 取会话内一侧行表的严格还原文本（行尾/EOF 语义的可观测口径）
+    async fn side_text(c: &HandlerCtx, id: &str, side: ai_protocol::DiffSide) -> String {
+        let sessions = c.sessions.lock().await;
+        match sessions.get(id).unwrap() {
+            Session::Text(d) => match side {
+                ai_protocol::DiffSide::Left => d.left.to_text(),
+                ai_protocol::DiffSide::Right => d.right.to_text(),
+            },
+            _ => panic!("不是文本会话"),
+        }
+    }
+
+    async fn edit(
+        c: &HandlerCtx,
+        id: &str,
+        edits: serde_json::Value,
+    ) -> Result<serde_json::Value, RpcErrorObject> {
+        call(c, "text/edit", json!({"sessionId": id, "edits": edits})).await
+    }
+
+    /// R3-18 核心回归：编辑后"仅尾随空白差异"仍判为不重要。
+    /// 此前 UI 侧 TS 重 diff 把所有差异恒置 important（蓝色变红）。
+    #[tokio::test]
+    async fn edit_keeps_engine_importance_for_whitespace_only_change() {
+        let c = ctx();
+        let _dir = open(
+            &c,
+            "imp1",
+            "alpha\nbeta one  \ngamma\n",
+            "alpha\nbeta one\ngamma\n",
+            json!({"importance": {"trailingWsUnimportant": true}}),
+        )
+        .await;
+        let opened = call(
+            &c,
+            "text/sections",
+            json!({"sessionId": "imp1", "offset": 0, "count": 100}),
+        )
+        .await
+        .unwrap();
+        let change = opened["sections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["kind"] == "change")
+            .unwrap();
+        assert_eq!(
+            change["important"], "unimportant",
+            "打开时即应为不重要: {opened}"
+        );
+
+        // 编辑左侧该行：尾随空白从 2 个变 3 个（仍只是空白差异）
+        let r = edit(
+            &c,
+            "imp1",
+            json!([{"side": "left", "start": 1, "end": 2, "text": "beta one   "}]),
+        )
+        .await
+        .unwrap();
+        let after = r["sections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["kind"] == "change")
+            .unwrap();
+        assert_eq!(
+            after["important"], "unimportant",
+            "编辑后重要性必须由引擎规则判定: {r}"
+        );
+        assert_eq!(r["rev"], 1);
+        assert_eq!(r["leftLineCount"], 3);
+    }
+
+    /// 编辑引入真实内容差异时必须升为重要（反向变异：恒 unimportant 也要红）
+    #[tokio::test]
+    async fn edit_promotes_real_content_change_to_important() {
+        let c = ctx();
+        let _dir = open(
+            &c,
+            "imp2",
+            "alpha\nbeta one  \ngamma\n",
+            "alpha\nbeta one\ngamma\n",
+            json!({"importance": {"trailingWsUnimportant": true}}),
+        )
+        .await;
+        let r = edit(
+            &c,
+            "imp2",
+            json!([{"side": "left", "start": 1, "end": 2, "text": "beta TWO"}]),
+        )
+        .await
+        .unwrap();
+        let after = r["sections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["kind"] == "change")
+            .unwrap();
+        assert_eq!(
+            after["important"], "important",
+            "内容差异不得被判为不重要: {r}"
+        );
+    }
+
+    /// CRLF 文件的被编辑段不得变成 LF（UI 行数组不含行尾符）
+    #[tokio::test]
+    async fn edit_preserves_crlf_style_of_edited_segment() {
+        let c = ctx();
+        let _dir = open(&c, "eol1", "a\r\nb\r\nc\r\n", "a\r\nb\r\nc\r\n", json!({})).await;
+        edit(
+            &c,
+            "eol1",
+            json!([{"side": "left", "start": 1, "end": 2, "text": "B"}]),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            side_text(&c, "eol1", ai_protocol::DiffSide::Left).await,
+            "a\r\nB\r\nc\r\n"
+        );
+    }
+
+    /// 多行插入同样按该侧风格归一（内部行也不得漏）
+    #[tokio::test]
+    async fn edit_multiline_insert_uses_side_eol_for_every_line() {
+        let c = ctx();
+        let _dir = open(&c, "eol2", "a\r\nz\r\n", "a\r\nz\r\n", json!({})).await;
+        edit(
+            &c,
+            "eol2",
+            json!([{"side": "left", "start": 1, "end": 1, "text": "p\nq\nr"}]),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            side_text(&c, "eol2", ai_protocol::DiffSide::Left).await,
+            "a\r\np\r\nq\r\nr\r\nz\r\n"
+        );
+    }
+
+    /// 参考行优先于全表多数风格：CRLF 为主的文件里编辑一条 LF 行仍保持 LF
+    #[tokio::test]
+    async fn edit_eol_follows_reference_line_not_dominant() {
+        let c = ctx();
+        let _dir = open(&c, "eol3", "a\r\nb\r\nc\n", "a\r\nb\r\nc\n", json!({})).await;
+        edit(
+            &c,
+            "eol3",
+            json!([{"side": "left", "start": 2, "end": 3, "text": "C"}]),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            side_text(&c, "eol3", ai_protocol::DiffSide::Left).await,
+            "a\r\nb\r\nC\n"
+        );
+    }
+
+    /// 追加行不得悄悄删掉文件原有的尾换行
+    #[tokio::test]
+    async fn edit_append_keeps_existing_trailing_newline() {
+        let c = ctx();
+        let _dir = open(&c, "eof1", "a\nb\n", "a\nb\n", json!({})).await;
+        edit(
+            &c,
+            "eof1",
+            json!([{"side": "left", "start": 2, "end": 2, "text": "c"}]),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            side_text(&c, "eof1", ai_protocol::DiffSide::Left).await,
+            "a\nb\nc\n"
+        );
+    }
+
+    /// 原本无尾换行的文件编辑末行后仍无尾换行（EOF 语义是内容差异）
+    #[tokio::test]
+    async fn edit_last_line_without_trailing_newline_stays_without() {
+        let c = ctx();
+        let _dir = open(&c, "eof2", "a\nb", "a\nb", json!({})).await;
+        edit(
+            &c,
+            "eof2",
+            json!([{"side": "left", "start": 1, "end": 2, "text": "B"}]),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            side_text(&c, "eof2", ai_protocol::DiffSide::Left).await,
+            "a\nB"
+        );
+    }
+
+    /// 纯删除区间
+    #[tokio::test]
+    async fn edit_pure_delete_removes_range() {
+        let c = ctx();
+        let _dir = open(&c, "del1", "a\nb\nc\nd\n", "a\nb\nc\nd\n", json!({})).await;
+        let r = edit(
+            &c,
+            "del1",
+            json!([{"side": "left", "start": 1, "end": 3, "text": ""}]),
+        )
+        .await
+        .unwrap();
+        assert_eq!(r["leftLineCount"], 2);
+        assert_eq!(
+            side_text(&c, "del1", ai_protocol::DiffSide::Left).await,
+            "a\nd\n"
+        );
+    }
+
+    /// 整侧重放（end 省略 = 到末尾）：崩溃恢复/分叉后的收敛手段
+    #[tokio::test]
+    async fn edit_full_side_replay_replaces_whole_side() {
+        let c = ctx();
+        let _dir = open(&c, "replay1", "a\r\nb\r\n", "a\r\nb\r\n", json!({})).await;
+        edit(
+            &c,
+            "replay1",
+            json!([{"side": "left", "start": 0, "text": "x\ny\nz"}]),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            side_text(&c, "replay1", ai_protocol::DiffSide::Left).await,
+            "x\r\ny\r\nz\r\n"
+        );
+    }
+
+    /// 原子性：批内后一 op 越界 -> 整批不落会话（前一 op 也不得生效）
+    #[tokio::test]
+    async fn edit_batch_is_atomic_when_any_op_out_of_bounds() {
+        let c = ctx();
+        let _dir = open(&c, "atom1", "a\nb\nc\n", "a\nb\nc\n", json!({})).await;
+        let err = edit(
+            &c,
+            "atom1",
+            json!([
+                {"side": "left", "start": 0, "end": 1, "text": "A"},
+                {"side": "left", "start": 5, "end": 6, "text": "X"}
+            ]),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.code, codes::INVALID_PARAMS);
+        assert!(err.message.contains("越界"), "{}", err.message);
+        assert_eq!(
+            side_text(&c, "atom1", ai_protocol::DiffSide::Left).await,
+            "a\nb\nc\n",
+            "失败批不得改动行表"
+        );
+        let sessions = c.sessions.lock().await;
+        match sessions.get("atom1").unwrap() {
+            Session::Text(d) => assert_eq!(d.rev, 0, "失败批不得推进 rev"),
+            _ => panic!(),
+        }
+    }
+
+    /// 多 op 按序应用：后一 op 的坐标以前一 op 应用后的长度为准
+    #[tokio::test]
+    async fn edit_sequential_ops_use_post_application_coordinates() {
+        let c = ctx();
+        let _dir = open(&c, "seq1", "a\nb\n", "a\nb\n", json!({})).await;
+        // 先在 0 处插入两行（长度 2->4），再替换新的第 3 行（原 b）
+        edit(
+            &c,
+            "seq1",
+            json!([
+                {"side": "left", "start": 0, "end": 0, "text": "p\nq"},
+                {"side": "left", "start": 3, "end": 4, "text": "B"}
+            ]),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            side_text(&c, "seq1", ai_protocol::DiffSide::Left).await,
+            "p\nq\na\nB\n"
+        );
+    }
+
+    /// 空 edits 拒绝（无意义请求不得推进 rev）
+    #[tokio::test]
+    async fn edit_empty_batch_rejected() {
+        let c = ctx();
+        let _dir = open(&c, "empty1", "a\n", "a\n", json!({})).await;
+        let err = edit(&c, "empty1", json!([])).await.unwrap_err();
+        assert_eq!(err.code, codes::INVALID_PARAMS);
+    }
+
+    /// 手动对齐锚点因编辑越界时丢弃锚点，编辑仍可继续（否则用户删行后永久卡死）
+    #[tokio::test]
+    async fn edit_drops_manual_anchors_invalidated_by_line_removal() {
+        let c = ctx();
+        let _dir = open(
+            &c,
+            "man1",
+            "a\nb\nc\nd\n",
+            "a\nb\nc\nd\n",
+            json!({"manual": {"alignAnchors": [{"left": {"start": 2, "end": 3}, "right": {"start": 2, "end": 3}}]}}),
+        )
+        .await;
+        // 删掉左侧 3 行 -> 左行数 1，锚点 left.end=3 越界
+        let r = edit(
+            &c,
+            "man1",
+            json!([{"side": "left", "start": 0, "end": 3, "text": ""}]),
+        )
+        .await
+        .unwrap();
+        assert_eq!(r["leftLineCount"], 1);
+        let sessions = c.sessions.lock().await;
+        match sessions.get("man1").unwrap() {
+            Session::Text(d) => {
+                assert!(d.config.manual.align_anchors.is_empty(), "失效锚点应被丢弃")
+            }
+            _ => panic!(),
+        }
+    }
+
+    /// 会话不存在 / 非文本会话
+    #[tokio::test]
+    async fn edit_rejects_unknown_and_non_text_sessions() {
+        let c = ctx();
+        let err = edit(
+            &c,
+            "nope",
+            json!([{"side": "left", "start": 0, "end": 0, "text": "x"}]),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.code, codes::SESSION_NOT_FOUND);
+        let _dir = open(&c, "kind1", "a\n", "a\n", json!({})).await;
+        let err = edit(
+            &c,
+            "kind1",
+            json!([{"side": "left", "start": 0, "end": 0, "text": "x"}]),
+        )
+        .await
+        .unwrap();
+        assert_eq!(err["leftLineCount"], 2);
+    }
+
+    /// 行尾归一 helper：混排先统一再替换；LF 目标不额外分配替换
+    #[test]
+    fn normalize_newlines_unifies_mixed_endings() {
+        use ai_core::LineEnding as E;
+        assert_eq!(
+            normalize_newlines("a\r\nb\rc\n", E::CrLf),
+            "a\r\nb\r\nc\r\n"
+        );
+        assert_eq!(normalize_newlines("a\r\nb\rc\n", E::Lf), "a\nb\nc\n");
+        assert_eq!(normalize_newlines("a\nb", E::Cr), "a\rb");
+        assert_eq!(normalize_newlines("", E::CrLf), "");
+    }
+
+    /// 多数风格：平票取 LF；None 不计
+    #[test]
+    fn dominant_eol_majority_with_lf_tiebreak() {
+        use ai_core::LineEnding as E;
+        assert_eq!(
+            dominant_eol(&LineTable::from_text("a\r\nb\r\nc\n")),
+            E::CrLf
+        );
+        assert_eq!(dominant_eol(&LineTable::from_text("a\r\nb\n")), E::Lf);
+        assert_eq!(dominant_eol(&LineTable::from_text("a\rb\rc\n")), E::Cr);
+        assert_eq!(dominant_eol(&LineTable::from_text("abc")), E::Lf);
+        assert_eq!(dominant_eol(&LineTable::from_text("")), E::Lf);
     }
 }

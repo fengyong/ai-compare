@@ -60,6 +60,8 @@ pub mod method {
     pub const TEXT_LINES: &str = "text/lines";
     /// 行内差异懒计算（P3，docs/03 §2.3.2 text/inlineDiff {sectionId}）
     pub const TEXT_INLINE_DIFF: &str = "text/inlineDiff";
+    /// 编辑增量重 diff（R3-18，FR-TXT-020：引擎权威 sections + 重要性）
+    pub const TEXT_EDIT: &str = "text/edit";
     /// 三向合并：打开会话（P7，docs/03 §4.5 MergeModel）
     pub const TEXT_MERGE3_OPEN: &str = "text/merge3/open";
     /// 三向合并：块清单分批取回（P7）

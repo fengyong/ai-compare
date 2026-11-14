@@ -82,4 +82,9 @@ pictureCompare?: boolean,
  * 缺省 **false**：旧引擎不含该字段时不得假定能力存在（此前多个能力位
  * 缺省 true 属过度承诺，见 R3-22）。
  */
-dirMerge?: boolean, };
+dirMerge?: boolean, 
+/**
+ * R3-18：编辑增量重 diff（text/edit）。缺省 **false**（旧引擎无此入口，
+ * UI 回落客户端重 diff；不得假定能力存在）。
+ */
+textEdit?: boolean, };

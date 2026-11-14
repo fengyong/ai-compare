@@ -13,7 +13,7 @@
  */
 
 import { diffLinesOps } from '../../lib/lineDiffCore';
-import type { Side } from '../../protocol/types';
+import type { Side, TextEditOp } from '../../protocol/types';
 import type { AlignedRow } from './alignment';
 
 export interface SidePatch {
@@ -130,6 +130,26 @@ export function invertSidePatches(patches: SidePatch[]): SidePatch[] {
   return [...patches]
     .reverse()
     .map((p) => ({ start: p.start, removed: p.inserted, inserted: p.removed }));
+}
+
+/**
+ * 单侧补丁 → text/edit 载荷（R3-18 引擎权威重 diff）。
+ *
+ * `start` 已是"应用时坐标"（见模块文档），与引擎按序应用同口径；
+ * `text` 用 `\n` 连接，行尾风格由引擎按该侧既有风格归一。
+ */
+export function opsFromPatches(side: Side, patches: readonly SidePatch[]): TextEditOp[] {
+  return patches.map((p) => ({
+    side,
+    start: p.start,
+    end: p.start + p.removed.length,
+    text: p.inserted.join('\n'),
+  }));
+}
+
+/** 整侧重放 op（end 省略 = 到末尾）：引擎态与 UI 态分叉后的收敛手段 */
+export function fullSideReplayOp(side: Side, lines: readonly string[]): TextEditOp {
+  return { side, start: 0, text: lines.join('\n') };
 }
 
 /**

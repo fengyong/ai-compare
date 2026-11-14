@@ -385,6 +385,11 @@ pub struct EngineCapabilities {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub dir_merge: Option<bool>,
+    /// R3-18：编辑增量重 diff（text/edit）。缺省 **false**（旧引擎无此入口，
+    /// UI 回落客户端重 diff；不得假定能力存在）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub text_edit: Option<bool>,
 }
 
 /// 许可能力（ADR-009：开源/自用默认全能力；字段为后续门控留位）
@@ -1029,6 +1034,60 @@ pub struct TextInlineDiffResult {
     /// 行内计算状态（Full = 全部行完成；Partial = 存在超长/超时降级行）
     pub state: InlineState,
     pub lines: Vec<InlineLineDiffDto>,
+}
+
+// ---------------------------------------------------------------------------
+// R3-18：text/edit（编辑增量重 diff，引擎权威 sections 与重要性）
+// ---------------------------------------------------------------------------
+
+/// 单侧行区间编辑：半开区间 `[start, end)` 被 `text` 替换。
+///
+/// `end` 省略 = 到该侧末尾（整侧重放用 `{start:0, text:全文}`）。
+/// `text` 用 `\n` 连接各行即可：引擎按该侧既有行尾风格归一，并保留
+/// 文件末尾"有无换行符"的语义（FR-TXT-020 编辑不改变行尾风格）。
+/// 空串 = 纯删除。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct TextEditOp {
+    pub side: DiffSide,
+    pub start: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub end: Option<u32>,
+    pub text: String,
+}
+
+/// text/edit 参数：一次提交多个编辑，按序应用。
+///
+/// 原子语义：任一编辑越界/非法则整批不落会话（引擎保持编辑前状态），
+/// 调用方可原样重试或整侧重放，不会留下半 applied 的分叉状态。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct TextEditParams {
+    pub session_id: String,
+    pub edits: Vec<TextEditOp>,
+}
+
+/// text/edit 应答：引擎按会话配置重 diff 后的**权威** section 全量与统计。
+///
+/// 重要性与规则折叠由引擎判定（R3-18：UI 不再自行维护第二套重要性语义）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct TextEditResult {
+    pub session_id: String,
+    /// 会话版本号（每次成功编辑 +1）
+    pub rev: u64,
+    pub left_line_count: u32,
+    pub right_line_count: u32,
+    pub section_count: u32,
+    pub summary: DiffSummary,
+    pub sections: Vec<Section>,
 }
 
 // ---------------------------------------------------------------------------
@@ -3392,6 +3451,7 @@ mod tests {
             reports: Some(true),
             picture_compare: Some(true),
             dir_merge: Some(true),
+            text_edit: Some(true),
             format_rules: None,
         };
         let s = serde_json::to_string(&c).unwrap();
@@ -3678,6 +3738,7 @@ mod tests {
             reports: None,
             picture_compare: None,
             dir_merge: None,
+            text_edit: None,
         };
         let s = serde_json::to_string(&c).unwrap();
         assert!(!s.contains("tableCompare") && !s.contains("hexCompare"), "{s}");
@@ -3797,6 +3858,9 @@ mod tests {
         assert_eq!(v.lines_read, Some(true));
         assert_eq!(v.format_rules, Some(true), "P10 能力位缺省 true");
         assert_eq!(v.reports, Some(true), "P11 能力位缺省 true");
+        // R3-18 起新能力位缺省 **false**（None）：旧引擎不含该字段时不得假定入口存在
+        assert_eq!(v.dir_merge, None, "R3-07 能力位缺省不得为 true");
+        assert_eq!(v.text_edit, None, "R3-18 能力位缺省不得为 true");
         // 新引擎序列化携带 threeWayMerge
         let c = EngineCapabilities {
             dir_compare: true,
@@ -3818,6 +3882,7 @@ mod tests {
             reports: Some(true),
             picture_compare: Some(true),
             dir_merge: Some(true),
+            text_edit: Some(true),
         };
         let s = serde_json::to_string(&c).unwrap();
         assert!(s.contains("threeWayMerge"));
