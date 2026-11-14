@@ -145,7 +145,7 @@ const SIDE_LABEL: Record<PaneSide, string> = { left: S.folder.leftTag, right: S.
 
 export function FolderCompareView({ tab }: { tab: Tab }) {
   const folder = tab.folder!;
-  const openTextChild = useShell((st) => st.openTextChild);
+  const openChild = useShell((st) => st.openChild);
   const setNotice = useShell((st) => st.setNotice);
   // P6b：基文件夹导航（FR-DIR-003）——复用既有 store 动作（新标签 = 新会话）
   const openFolderTab = useShell((st) => st.openFolderTab);
@@ -1076,7 +1076,7 @@ export function FolderCompareView({ tab }: { tab: Tab }) {
       setNotice(S.folder.orphanHint);
       return;
     }
-    void openTextChild(tab.id, row);
+    void openChild(tab.id, row);
   }
 }
 

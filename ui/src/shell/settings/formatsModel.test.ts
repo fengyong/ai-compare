@@ -11,6 +11,7 @@ import {
   newCustomFormat,
   parseMaskList,
   removeCustom,
+  resolveViewKind,
   setBuiltinOverride,
   shadowedFormatIds,
   upsertCustom,
@@ -169,5 +170,58 @@ describe('settings/formatsModel（P10 文件格式页纯逻辑）', () => {
     expect(fresh.grammar[0].items[0]).toMatchObject({ kind: 'delimited', start: '//', toEol: true });
     expect(validateFormatSpec(fresh)).toHaveLength(1) /* '空掩码报错' */;
     expect(validateFormatSpec({ ...fresh, masks: ['*.x'], id: 'builtin-fake' })).toHaveLength(1) /* '内置前缀保留' */;
+  });
+
+  // ---- R3-17d：非文本内置格式 + 双击选型（FR-FMT-004 / FR-SEL-001） ----
+
+  it('内置表含表格/十六进制/图片三类非文本格式（与引擎 builtin_formats 同 id 同掩码）', () => {
+    const byId = (id: string) => BUILTIN_FORMAT_CATALOG.find((f) => f.id === id)!;
+    expect(byId('builtin-table').viewKind).toBe('table');
+    expect(byId('builtin-table').masks).toEqual(['*.csv', '*.tsv', '*.tab']);
+    expect(byId('builtin-hex').viewKind).toBe('hex');
+    expect(byId('builtin-hex').masks).toContain('*.dll');
+    expect(byId('builtin-picture').viewKind).toBe('picture');
+    for (const ext of ['gif', 'ico', 'jpeg', 'jpg', 'png', 'tiff', 'bmp']) {
+      expect(byId('builtin-picture').masks).toContain(`*.${ext}`); // FR-PIX-001 内置关联
+    }
+    expect(byId('builtin-picture').grammar).toEqual([]);
+  });
+
+  it('选型：首匹配格式的 viewKind 决定视图（csv→table、png→picture、dll→hex、c→text）', () => {
+    const formats = effectiveFormats(defaultFileFormatsState());
+    expect(resolveViewKind(formats, 'data.csv')).toBe('table');
+    expect(resolveViewKind(formats, 'a.tsv')).toBe('table');
+    expect(resolveViewKind(formats, 'shot.png')).toBe('picture');
+    expect(resolveViewKind(formats, 'SHOT.JPG')).toBe('picture'); // 掩码大小写不敏感
+    expect(resolveViewKind(formats, 'lib.dll')).toBe('hex');
+    expect(resolveViewKind(formats, 'main.c')).toBe('text');
+  });
+
+  it('选型兜底：无匹配 → 文本；扩展名不在文本表 → 十六进制（FR-SEL-001 内部启发）', () => {
+    const formats = effectiveFormats(defaultFileFormatsState());
+    expect(resolveViewKind(formats, 'Makefile')).toBe('text');
+    expect(resolveViewKind(formats, 'notes.xyz')).toBe('hex');
+    expect(resolveViewKind(formats, 'archive.zip')).toBe('hex');
+  });
+
+  it('选型尊重设置层：禁用内置图片格式后 png 回落 hex；自定义格式可改判视图', () => {
+    const disabled = setBuiltinOverride(defaultFileFormatsState(), 'builtin-picture', { enabled: false });
+    expect(resolveViewKind(effectiveFormats(disabled), 'shot.png')).toBe('hex');
+
+    const custom = upsertCustom(defaultFileFormatsState(), {
+      ...newCustomFormat('fmt-log'),
+      masks: ['*.log'],
+      viewKind: 'table',
+    });
+    expect(resolveViewKind(effectiveFormats(custom), 'trace.log')).toBe('table');
+  });
+
+  it('选型顺序敏感：自定义 *.csv→hex 追加在内置表格之后不生效（FR-FMT-001）', () => {
+    const st = upsertCustom(defaultFileFormatsState(), {
+      ...newCustomFormat('fmt-csv'),
+      masks: ['*.csv'],
+      viewKind: 'hex',
+    });
+    expect(resolveViewKind(effectiveFormats(st), 'data.csv')).toBe('table');
   });
 });

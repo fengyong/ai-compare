@@ -5,6 +5,7 @@ import type {
   GrammarElementSpec,
   GrammarItemSpec,
 } from '../../protocol/types';
+import { looksTextual } from '../../lib/env';
 
 /**
  * 文件格式页的纯逻辑层（P10 / FR-FMT-001~003 设置侧）。
@@ -307,6 +308,53 @@ export const BUILTIN_FORMAT_CATALOG: FileFormatSpec[] = [
     independentLines: false,
     columnData: false,
   },
+  // 非文本视图格式（FR-FMT-004）：与引擎 builtin_formats 同 id/同掩码/同顺序。
+  // 双击目录行的视图类型由本表首匹配决定（FR-SEL-001）。
+  {
+    id: 'builtin-table',
+    enabled: true,
+    masks: ['*.csv', '*.tsv', '*.tab'],
+    description: '表格数据（CSV/制表符分隔）',
+    viewKind: 'table',
+    grammar: [],
+    tabStops: 4,
+    independentLines: false,
+    columnData: false,
+  },
+  {
+    id: 'builtin-hex',
+    enabled: true,
+    masks: [
+      '*.exe',
+      '*.dll',
+      '*.so',
+      '*.dylib',
+      '*.bin',
+      '*.dat',
+      '*.o',
+      '*.obj',
+      '*.a',
+      '*.lib',
+      '*.class',
+    ],
+    description: '二进制/可执行文件',
+    viewKind: 'hex',
+    grammar: [],
+    tabStops: 4,
+    independentLines: false,
+    columnData: false,
+  },
+  {
+    id: 'builtin-picture',
+    enabled: true,
+    masks: ['*.gif', '*.ico', '*.jpeg', '*.jpg', '*.png', '*.tiff', '*.tif', '*.bmp'],
+    description: '图片',
+    viewKind: 'picture',
+    grammar: [],
+    tabStops: 4,
+    independentLines: false,
+    columnData: false,
+  },
 ];
 
 export function defaultFileFormatsState(): FileFormatsState {
@@ -442,6 +490,17 @@ export function firstMatchingFormat(formats: FileFormatSpec[], fileName: string)
     if (f.masks.some((m) => maskMatches(m, fileName))) return f;
   }
   return null;
+}
+
+/**
+ * 打开文件时的视图类型（FR-DIR-070 / FR-SEL-001）：格式列表自上而下首匹配生效。
+ * 无匹配 → 默认文本比较；扩展名不在文本表内时按内部启发兜底十六进制
+ * （FR-SEL-001「无匹配格式 → 默认文本比较（或十六进制，按内部启发）」）。
+ */
+export function resolveViewKind(formats: FileFormatSpec[], fileName: string): FormatViewKind {
+  const fmt = firstMatchingFormat(formats, fileName);
+  if (fmt) return fmt.viewKind;
+  return looksTextual(fileName) ? 'text' : 'hex';
 }
 
 /**
