@@ -1746,6 +1746,23 @@ input:focus {
 .aic-picture-toolbar .sep { color: var(--fg-dim, #777); }
 .aic-picture-check { white-space: nowrap; }
 
+/* ---- 队列 8：菜单栏 / 工具栏（附录 F + FR-UI-003） ---- */
+.aic-menubar { display: flex; align-items: stretch; gap: 0; flex-shrink: 0; border-bottom: 1px solid var(--border, #333); background: var(--bg-header, #252526); font-size: 12px; }
+.aic-menu { position: relative; }
+.aic-menu-title { padding: 3px 10px; border: 0; background: transparent; color: var(--fg, #ddd); font-size: 12px; cursor: pointer; }
+.aic-menu-title:hover, .aic-menu-title.open { background: var(--accent-soft, rgba(91, 140, 255, 0.16)); }
+.aic-menu-dropdown { position: absolute; top: 100%; left: 0; z-index: 80; min-width: 220px; max-height: 70vh; overflow: auto; padding: 4px 0; background: var(--bg-panel, #23262b); border: 1px solid var(--border, #333); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5); }
+.aic-menu-item { display: flex; align-items: center; justify-content: space-between; gap: 16px; width: 100%; padding: 3px 12px; border: 0; background: transparent; color: var(--fg, #ddd); font-size: 12px; text-align: left; cursor: pointer; }
+.aic-menu-item:hover:not(:disabled) { background: var(--accent-soft, rgba(91, 140, 255, 0.16)); }
+.aic-menu-item:disabled { color: var(--fg-dim, #777); cursor: default; }
+.aic-menu-keys { color: var(--fg-dim, #999); font-size: 11px; white-space: nowrap; }
+.aic-menu-empty { display: block; padding: 4px 12px; color: var(--fg-dim, #777); font-size: 11px; }
+.aic-menubar-spacer { flex: 1; }
+.aic-menubar-hint { align-self: center; padding: 0 10px; color: var(--fg-dim, #777); font-size: 11px; }
+.aic-toolbar { display: flex; align-items: center; gap: 4px; flex-shrink: 0; padding: 3px 8px; border-bottom: 1px solid var(--border, #333); background: var(--bg-panel, #23262b); }
+.aic-toolbar button { padding: 2px 8px; font-size: 11px; }
+.aic-toolbar.compact button { min-width: 24px; padding: 2px 4px; }
+
 /* ---- P14：表格比较视图 ---- */
 .aic-table { display: flex; flex-direction: column; height: 100%; overflow: hidden; }
 .aic-table-toolbar { display: flex; align-items: center; gap: 16px; padding: 6px 12px; border-bottom: 1px solid var(--border, #333); font-size: 12px; color: var(--fg, #ddd); }

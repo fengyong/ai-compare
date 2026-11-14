@@ -290,6 +290,14 @@ export function registerBuiltinCommands(reg: CommandRegistry): void {
     run: () => useShell.getState().openReportDialog(),
   });
 
+  reg.register({
+    id: 'app.toolbarLayout',
+    title: '切换工具栏布局',
+    category: '工具',
+    phaseNote: 'FR-UI-003：大按钮 / 紧凑 / 隐藏循环切换（右键工具栏同效）',
+    run: () => useShell.getState().cycleToolbarLayout(),
+  });
+
   // 队列 6：文本视图命令（FR-TXT-002 自动换行 / FR-TXT-023 书签 0-9）
   const textWhen = (ctx: CommandContext) => ctx.activeTabKind === 'text';
   reg.register({

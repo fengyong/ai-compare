@@ -4,6 +4,7 @@ import type { SessionKind } from '../session/model';
 import { S } from '../strings';
 import type { SessionSlice, ShellStore, Tab } from './shellState';
 import { sessionIdOfTab } from '../views/report/reportModel';
+import { nextToolbarLayout } from './menuModel';
 
 /** 会话 slice（SES-001~006）：打开已保存会话 / 保存 / 另存 / 锁定 / 关闭确认 */
 export const createSessionSlice: StateCreator<ShellStore, [], [], SessionSlice> = (set, get) => ({
@@ -216,7 +217,7 @@ export const createUiSlice: StateCreator<
   ShellStore,
   [],
   [],
-  Pick<ShellStore, 'notice' | 'setNotice' | 'settingsDialog' | 'openSettings' | 'closeSettings' | 'prompt' | 'openPrompt' | 'resolvePrompt' | 'clipboardPanelOpen' | 'toggleClipboardPanel' | 'reportDialog' | 'openReportDialog' | 'closeReportDialog'>
+  Pick<ShellStore, 'notice' | 'setNotice' | 'settingsDialog' | 'openSettings' | 'closeSettings' | 'prompt' | 'openPrompt' | 'resolvePrompt' | 'clipboardPanelOpen' | 'toggleClipboardPanel' | 'reportDialog' | 'openReportDialog' | 'closeReportDialog' | 'toolbarLayout' | 'cycleToolbarLayout'>
 > = (set, get) => ({
   notice: null,
   setNotice(msg) {
@@ -256,5 +257,9 @@ export const createUiSlice: StateCreator<
   },
   closeReportDialog() {
     set({ reportDialog: null });
+  },
+  toolbarLayout: 'large',
+  cycleToolbarLayout() {
+    set({ toolbarLayout: nextToolbarLayout(get().toolbarLayout) });
   },
 });
