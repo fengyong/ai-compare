@@ -47,6 +47,7 @@ pub fn run_cli(args: &[String]) -> ExitCode {
         Some("quick") => cmd_quick(&args[1..]),
         Some("table") => cmd_table(&args[1..]),
         Some("hex") => cmd_hex(&args[1..]),
+        Some("picture") => cmd_picture(&args[1..]),
         Some("patch") => cmd_patch(&args[1..]),
         Some("--help") | Some("-h") | Some("help") => {
             print_usage();
@@ -914,7 +915,7 @@ fn escape_cell(v: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// aic hex（P9 十六进制比较；FR-HEX 引擎侧 CLI 面）
+// aic picture <l.png> <r.png> [--tolerance n] [--block n]\n  aic hex（P9 十六进制比较；FR-HEX 引擎侧 CLI 面）
 // ---------------------------------------------------------------------------
 
 pub fn cmd_hex(args: &[String]) -> ExitCode {
@@ -1194,4 +1195,90 @@ pub fn arg_error(msg: &str) -> ExitCode {
     eprintln!("aic: {msg}");
     print_usage();
     EXIT_ERROR.into()
+}
+
+// aic picture
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct PictureFlags {
+    pub tolerance: Option<u16>,
+    pub block: Option<u32>,
+}
+
+pub fn cmd_picture(args: &[String]) -> ExitCode {
+    let mut positional = Vec::new();
+    let mut flags = PictureFlags::default();
+    let mut i = 0usize;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--tolerance" => {
+                i += 1;
+                if let Some(v) = args.get(i).and_then(|s| s.parse::<u16>().ok()) {
+                    flags.tolerance = Some(v.min(255));
+                }
+            }
+            "--block" => {
+                i += 1;
+                if let Some(v) = args.get(i).and_then(|s| s.parse::<u32>().ok()) {
+                    flags.block = Some(v.max(1));
+                }
+            }
+            other => positional.push(other.to_string()),
+        }
+        i += 1;
+    }
+    if positional.len() != 2 {
+        eprintln!("aic picture <left.png> <right.png> [--tolerance n] [--block n]");
+        return ExitCode::from(2);
+    }
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("tokio 运行时");
+    match rt.block_on(run_picture(&positional[0], &positional[1], &flags)) {
+        Ok(same) if same => ExitCode::from(0),
+        Ok(_) => ExitCode::from(1),
+        Err(msg) => {
+            eprintln!("aic picture: {msg}");
+            ExitCode::from(2)
+        }
+    }
+}
+
+async fn run_picture(left_s: &str, right_s: &str, flags: &PictureFlags) -> Result<bool, String> {
+    let vfs = RouteFs::new();
+    let left_path = VfsPath::parse(left_s).map_err(|e| e.to_string())?;
+    let right_path = VfsPath::parse(right_s).map_err(|e| e.to_string())?;
+    let left = vfs.read_file_bytes(&left_path).await.map_err(|e| e.to_string())?;
+    let right = vfs.read_file_bytes(&right_path).await.map_err(|e| e.to_string())?;
+    let opts = ai_core::picture::PictureDiffOptions {
+        tolerance: flags.tolerance.unwrap_or(8) as u8,
+        block: flags.block.unwrap_or(32),
+    };
+    let r = ai_core::picture::diff_bytes(&left, &right, &opts).map_err(|e| e)?;
+    let same = r.diff_pixels == 0;
+    use std::io::Write as _;
+    let mut lock = std::io::stdout().lock();
+    if same {
+        let _ = writeln!(lock, "same: {left_s} {right_s} (similarity=100%)");
+        return Ok(true);
+    }
+    let _ = writeln!(
+        lock,
+        "# diff\tpixels={}\ttotal={}\tsimilarity={:.2}%\tblocks={}\tcanvas={}x{}\tleft={}x{}\tright={}x{}",
+        r.diff_pixels, r.total_pixels, r.similarity_pct, r.blocks.len(),
+        r.width, r.height, r.left_size.0, r.left_size.1, r.right_size.0, r.right_size.1
+    );
+    for b in r.blocks.iter().take(20) {
+        let _ = writeln!(
+            lock,
+            "block ({},{}) {}x{} diff {:.0}%",
+            b.x, b.y, b.w, b.h, b.diff_ratio * 100.0
+        );
+    }
+    if r.blocks.len() > 20 {
+        let _ = writeln!(lock, "... 其余 {} 块省略", r.blocks.len() - 20);
+    }
+    Ok(false)
 }

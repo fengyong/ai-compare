@@ -102,6 +102,16 @@ pub struct HexSessionData {
     pub labels: (String, String),
 }
 
+/// P14：图片比较会话（差异结果全驻内存；块数上限保护在 open 时截断）
+#[derive(Debug, Clone)]
+pub struct PictureSessionData {
+    pub result: ai_core::picture::PictureDiffResult,
+    /// 打开会话时的选项
+    pub options: ai_core::picture::PictureDiffOptions,
+    /// 两侧标签（打开时的路径原串）
+    pub labels: (String, String),
+}
+
 #[derive(Clone)]
 pub enum Session {
     Dir(DirSessionData),
@@ -109,6 +119,7 @@ pub enum Session {
     Merge(MergeSessionData),
     Table(TableSessionData),
     Hex(HexSessionData),
+    Picture(PictureSessionData),
 }
 
 pub type SessionMapInner = HashMap<String, Session>;

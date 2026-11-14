@@ -91,6 +91,7 @@ pub async fn dispatch(
         ai_protocol::method::RULES_GET => rules_get(params, ctx).await,
         ai_protocol::method::RULES_SET => rules_set(params, ctx).await,
         ai_protocol::method::REPORT_GENERATE => report_generate(params, ctx).await,
+        ai_protocol::method::PICTURE_OPEN => picture_open(params, ctx).await,
         ai_protocol::method::SESSION_CLOSE => session_close(params, ctx).await,
         other => Err(RpcErrorObject {
             code: codes::METHOD_NOT_FOUND,
@@ -130,6 +131,7 @@ fn initialize() -> Result<Handled, RpcErrorObject> {
             format_rules: Some(true),
             // P11：报告生成入口（report/generate）
             reports: Some(true),
+            picture_compare: Some(true),
             dir_background_scan: true,
             dir_filters: true,
             dir_operate: true,
@@ -540,7 +542,8 @@ async fn dir_model(
         Session::Dir(data) => data.model.clone().ok_or_else(|| {
             bad_params("该会话未启用 P2 会话模型（lazyScan/过滤器/平铺/对齐任一即可启用）")
         }),
-        Session::Text(_) | Session::Merge(_) | Session::Table(_) | Session::Hex(_) => {
+        Session::Text(_) | Session::Merge(_) | Session::Table(_) | Session::Hex(_)
+        | Session::Picture(_) => {
             Err(bad_params(format!("会话不是目录会话: {id}")))
         }
     }
@@ -676,7 +679,8 @@ async fn with_text_session<T>(
     let session = sessions.get_mut(id).ok_or_else(|| session_not_found(id))?;
     match session {
         Session::Text(data) => f(data),
-        Session::Dir(_) | Session::Merge(_) | Session::Table(_) | Session::Hex(_) => {
+        Session::Dir(_) | Session::Merge(_) | Session::Table(_) | Session::Hex(_)
+        | Session::Picture(_) => {
             Err(bad_params(format!("会话不是文本会话: {id}")))
         }
     }
@@ -1368,6 +1372,100 @@ async fn with_table_session<T>(
     }
 }
 
+/// P14：picture/open：读两侧图片字节流 -> 解码 -> 像素容差 diff -> 网格块聚合
+/// -> 存会话 -> 应答统计与差异块（块数 >10 万截断，truncated=true）
+async fn picture_open(
+    params: Option<serde_json::Value>,
+    ctx: &HandlerCtx,
+) -> Result<Handled, RpcErrorObject> {
+    use ai_core::picture;
+
+    let params: ai_protocol::PictureOpenParams = parse_params(params)?;
+    if params.session_id.is_empty() {
+        return Err(bad_params("sessionId 不能为空"));
+    }
+    let left_path = VfsPath::parse(&params.left).map_err(|e| mapping::vfs_error_to_rpc(&e))?;
+    let right_path = VfsPath::parse(&params.right).map_err(|e| mapping::vfs_error_to_rpc(&e))?;
+    let left = ctx
+        .vfs
+        .read_file_bytes(&left_path)
+        .await
+        .map_err(|e| mapping::vfs_error_to_rpc(&e))?;
+    let right = ctx
+        .vfs
+        .read_file_bytes(&right_path)
+        .await
+        .map_err(|e| mapping::vfs_error_to_rpc(&e))?;
+
+    let mut opts = picture::PictureDiffOptions::default();
+    if let Some(spec) = &params.options {
+        if let Some(t) = spec.tolerance {
+            opts.tolerance = t.min(255) as u8;
+        }
+        if let Some(b) = spec.block {
+            opts.block = b.max(1);
+        }
+    }
+
+    let result = picture::diff_bytes(&left, &right, &opts)
+        .map_err(|e| RpcErrorObject {
+            code: codes::INVALID_PARAMS,
+            message: e,
+            data: None,
+        })?;
+
+    // 块数上限保护（>10 万截断，truncated=true）
+    const MAX_BLOCKS: usize = 100_000;
+    let truncated = result.blocks.len() > MAX_BLOCKS;
+    let blocks: Vec<ai_protocol::PictureBlockDto> = result
+        .blocks
+        .iter()
+        .take(MAX_BLOCKS)
+        .map(|b| ai_protocol::PictureBlockDto {
+            x: b.x,
+            y: b.y,
+            w: b.w,
+            h: b.h,
+            diff_ratio: b.diff_ratio,
+        })
+        .collect();
+
+    {
+        let mut sessions = ctx.sessions.lock().await;
+        if sessions.contains_key(&params.session_id) {
+            return Err(RpcErrorObject {
+                code: codes::SESSION_EXISTS,
+                message: format!("会话已存在: {}", params.session_id),
+                data: Some(json!({ "sessionId": params.session_id })),
+            });
+        }
+        sessions.insert(
+            params.session_id.clone(),
+            Session::Picture(crate::server::PictureSessionData {
+                result: result.clone(),
+                options: opts,
+                labels: (params.left.clone(), params.right.clone()),
+            }),
+        );
+    }
+
+    let out = ai_protocol::PictureOpenResult {
+        session_id: params.session_id,
+        width: result.width,
+        height: result.height,
+        left_width: result.left_size.0,
+        left_height: result.left_size.1,
+        right_width: result.right_size.0,
+        right_height: result.right_size.1,
+        diff_pixels: result.diff_pixels,
+        total_pixels: result.total_pixels,
+        similarity_pct: result.similarity_pct,
+        blocks,
+        truncated,
+    };
+    Ok(Handled::Value(serde_json::to_value(&out).expect("picture/open 结果可序列化")))
+}
+
 /// hex/open：读两侧字节流 -> 分块哈希粗对齐 + 精对齐 -> 块模型 + 每字节状态图
 /// -> 存会话 -> 应答统计。十六进制行经 hex/bytes 分页取数。
 async fn hex_open(
@@ -1920,6 +2018,10 @@ async fn report_generate(
                 status_left: data.status_left.clone(),
                 status_right: data.status_right.clone(),
             }),
+            // P14：图片会话暂无文本报告布局（视图批次交付 html 图片报告）
+            Session::Picture(_) => {
+                return Err(bad_params("图片会话不支持 report/generate（P14 视图批次交付）"));
+            }
         }
     };
 
@@ -2977,6 +3079,82 @@ mod p9_tests {
         .await
         .unwrap();
         (dir, l.to_string_lossy().into_owned(), r.to_string_lossy().into_owned())
+    }
+
+    /// P14 语料：程序生成 PNG——左侧全黑 32x32，右侧右上角 16x16 涂白
+    async fn open_picture(c: &HandlerCtx, id: &str) -> (tempfile::TempDir, String, String) {
+        use image::{Rgba, RgbaImage};
+        let dir = tempfile::tempdir().unwrap();
+        let l = dir.path().join("l.png");
+        let r = dir.path().join("r.png");
+        let black = RgbaImage::from_pixel(32, 32, Rgba([0, 0, 0, 255]));
+        let mut right = black.clone();
+        for y in 0..16u32 {
+            for x in 16..32u32 {
+                right.put_pixel(x, y, Rgba([255, 255, 255, 255]));
+            }
+        }
+        for (p, img) in [(&l, &black), (&r, &right)] {
+            image::DynamicImage::ImageRgba8(img.clone())
+                .write_to(&mut std::io::Cursor::new(Vec::new()), image::ImageFormat::Png)
+                .unwrap();
+            // 直接写 PNG 字节
+            let bytes = {
+                let mut buf = std::io::Cursor::new(Vec::new());
+                image::DynamicImage::ImageRgba8(img.clone())
+                    .write_to(&mut buf, image::ImageFormat::Png)
+                    .unwrap();
+                buf.into_inner()
+            };
+            std::fs::write(p, bytes).unwrap();
+            let _ = p;
+        }
+        let (tx, _rx) = chan();
+        let _ = dispatch(
+            "picture/open",
+            Some(json!({"sessionId": id, "left": l.to_string_lossy(), "right": r.to_string_lossy()})),
+            c, &ai_dir::CancelFlag::new(), tx,
+        )
+        .await
+        .unwrap();
+        (dir, l.to_string_lossy().into_owned(), r.to_string_lossy().into_owned())
+    }
+
+    #[tokio::test]
+    async fn picture_open_blocks_and_similarity() {
+        let c = ctx();
+        let (_d, l, r) = open_picture(&c, "p1").await;
+        // 重新 open 一次验证统计（open_picture 内部已 open "p1"，此处用 p2）
+        let got = dispatch(
+            "picture/open",
+            Some(json!({"sessionId": "p2", "left": l, "right": r})),
+            &c, &ai_dir::CancelFlag::new(), chan().0,
+        )
+        .await
+        .unwrap();
+        let v = match got { Handled::Value(v) => v, _ => panic!("形态") };
+        println!("picture/open p2 响应: {v}");
+        assert_eq!(v["width"], 32);
+        assert_eq!(v["height"], 32);
+        assert_eq!(v["diffPixels"], 256, "右半上 16x16 涂白 = 256 差异像素: {v}");
+        // 256 差异像素全部落在 block=32 的 (0,0) 块：256/1024 = 0.25 占比
+        let blocks = v["blocks"].as_array().unwrap();
+        assert_eq!(blocks.len(), 1, "单块聚合: {v}");
+        assert_eq!(blocks[0]["x"], 0);
+        assert_eq!(blocks[0]["y"], 0);
+        assert_eq!(blocks[0]["diffRatio"], 0.25);
+        let sim = v["similarityPct"].as_f64().unwrap();
+        assert!((sim - 75.0).abs() < 0.01, "768/1024 = 75%: {v}");
+        assert_eq!(v["truncated"], false);
+        // 重复 sessionId -> SESSION_EXISTS
+        let err = dispatch(
+            "picture/open",
+            Some(json!({"sessionId": "p2", "left": l, "right": r})),
+            &c, &ai_dir::CancelFlag::new(), chan().0,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.code, 411);
     }
 
     #[tokio::test]
