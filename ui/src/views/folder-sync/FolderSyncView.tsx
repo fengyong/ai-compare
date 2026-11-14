@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { DEFAULT_DIR_CRITERIA, type PlannedOpKind, type PlannedOperation, type SyncPreset } from '../../protocol/types';
 import type { Tab } from '../../shell/store';
 import { useShell } from '../../shell/store';
@@ -61,7 +61,9 @@ export function FolderSyncView({ tab }: { tab: Tab }) {
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [report, setReport] = useState<SyncExecReport | null>(null);
   const [reportPreset, setReportPreset] = useState('');
-  const [cancelRequested, setCancelRequested] = useState(false);
+  // 取消标记必须放 ref：runSync 是跨多次 await 的长循环，持有的是发起那一帧
+  // 的闭包；用 state 的话按钮置 true 后循环里读到的仍是旧值 false → 取消永不生效
+  const cancelRef = useRef(false);
 
   useEffect(() => {
     let disposed = false;
@@ -141,11 +143,11 @@ export function FolderSyncView({ tab }: { tab: Tab }) {
   // ---- 立即同步（分批执行 → 进度 → 报告） ----
   const runSync = async (): Promise<void> => {
     setPhase('running');
-    setCancelRequested(false);
+    cancelRef.current = false;
     setProgress({ done: 0, total: pendingOps.length });
     const report: SyncExecReport = { copied: 0, deleted: 0, touched: 0, skipped: 0, failed: 0, total: pendingOps.length, cancelled: false, details: [] };
     for (let i = 0; i < pendingOps.length; i += EXEC_BATCH_SIZE) {
-      if (cancelRequested) {
+      if (cancelRef.current) {
         const rest = pendingOps.length - i;
         report.cancelled = true;
         report.skipped += rest;
@@ -344,7 +346,7 @@ export function FolderSyncView({ tab }: { tab: Tab }) {
             </span>
             {progress.total === 0 ? S.syncView.executing : S.syncView.running(progress.done, progress.total)}
           </span>
-          <button className="mini" onClick={() => setCancelRequested(true)}>
+          <button className="mini" onClick={() => { cancelRef.current = true; }}>
             取消
           </button>
         </div>
