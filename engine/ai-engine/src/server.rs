@@ -174,13 +174,15 @@ struct Recorder {
 }
 
 impl Recorder {
-    fn open(path: Option<&std::path::Path>) -> Self {
-        let file = path.and_then(|p| {
-            std::fs::File::create(p)
-                .ok()
-                .map(|f| StdMutex::new(std::io::BufWriter::new(f)))
-        });
-        Recorder { file }
+    /// 打开录制目标；失败时返回原因供调用方告警。
+    ///
+    /// 为什么不能静默禁用：用户以为在录制、实际无文件，问题现场无法复现。
+    fn open(path: Option<&std::path::Path>) -> (Self, Option<String>) {
+        let Some(p) = path else { return (Recorder { file: None }, None) };
+        match std::fs::File::create(p) {
+            Ok(f) => (Recorder { file: Some(StdMutex::new(std::io::BufWriter::new(f))) }, None),
+            Err(e) => (Recorder { file: None }, Some(format!("{}: {e}", p.display()))),
+        }
     }
 
     fn record(&self, dir: &str, value: &serde_json::Value) {
@@ -199,7 +201,11 @@ pub async fn run_stdio(opts: ServerOptions) -> std::io::Result<()> {
     let max_batch = opts.max_delta_batch_rows();
     let ctx = HandlerCtx::new(max_batch);
     let cancels = Arc::new(CancelRegistry::new());
-    let recorder = Arc::new(Recorder::open(opts.record_path.as_deref()));
+    let (recorder, record_err) = Recorder::open(opts.record_path.as_deref());
+    if let Some(msg) = record_err {
+        log::warn(format!("--record 录制已禁用（{msg}）"));
+    }
+    let recorder = Arc::new(recorder);
 
     let (tx, rx) = mpsc::unbounded_channel::<Outbound>();
     let writer = tokio::spawn(writer_task(rx, tokio::io::stdout(), Arc::clone(&recorder)));
@@ -498,7 +504,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("rec.ndjson");
         {
-            let rec = Recorder::open(Some(&path));
+            let (rec, err) = Recorder::open(Some(&path));
+            assert!(err.is_none(), "可写目标不应报错: {err:?}");
             rec.record("in", &serde_json::json!({"method": "initialize"}));
             rec.record("out", &serde_json::json!({"result": null}));
         }
@@ -507,6 +514,22 @@ mod tests {
         assert_eq!(lines.len(), 2);
         assert!(lines[0].starts_with(r#"{"dir":"in""#));
         assert!(lines[1].starts_with(r#"{"dir":"out""#));
+    }
+
+    /// P2-06：录制目标不可写时必须把原因交回调用方（旧实现 `.ok()` 吞掉，
+    /// 用户以为在录制、实际无文件，问题现场无法复现）。
+    #[test]
+    fn recorder_open_failure_is_reported() {
+        let dir = tempfile::tempdir().unwrap();
+        let bad = dir.path().join("no-such-subdir").join("rec.ndjson");
+        let (rec, err) = Recorder::open(Some(&bad));
+        assert!(rec.file.is_none(), "打不开就不该持有文件句柄");
+        let msg = err.expect("不可写目标必须返回失败原因");
+        assert!(msg.contains("no-such-subdir"), "原因需含目标路径: {msg}");
+
+        let (rec, err) = Recorder::open(None);
+        assert!(rec.file.is_none());
+        assert!(err.is_none(), "未请求录制不是错误");
     }
 
     /// panic 隔离边界（F-02 / P1-09）：handler panic 必须转成 -32603 应答。

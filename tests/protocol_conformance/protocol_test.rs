@@ -321,3 +321,34 @@ fn merge3_open_is_idempotent_and_keeps_decisions() {
     );
     assert_eq!(still["decision"], json!("left"));
 }
+
+/// P2-06：`--record` 目标不可写时必须在 stderr 告警。
+///
+/// 旧实现 `File::create(p).ok()` 静默禁用录制：实测 exit=0、stderr 无任何
+/// 告警、文件未创建 —— 用户以为在录制，问题现场无法复现。
+#[test]
+fn record_target_unwritable_warns_on_stderr() {
+    harness::ensure_engine_fresh();
+    let dir = tempfile::tempdir().unwrap();
+    let bad = dir.path().join("missing-subdir").join("rec.ndjson");
+    let mut child = Command::new(harness::engine_bin())
+        .args(["--stdio", "--record", bad.to_str().unwrap()])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("启动 ai-engine");
+    let mut stdin = child.stdin.take().expect("stdin");
+    let _ = writeln!(
+        stdin,
+        r#"{{"jsonrpc":"2.0","id":1,"method":"initialize","params":{{"protocolVersion":"1.0","clientInfo":{{"name":"t","version":"0"}}}}}}"#
+    );
+    let _ = writeln!(stdin, r#"{{"jsonrpc":"2.0","id":2,"method":"shutdown"}}"#);
+    drop(stdin);
+    let out = child.wait_with_output().expect("等待引擎退出");
+    assert!(out.status.success(), "录制目标不可写不应让引擎拒绝服务");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("--record"), "必须告警录制已禁用，实际 stderr: {err}");
+    assert!(err.contains("missing-subdir"), "告警需含目标路径，实际 stderr: {err}");
+    assert!(!bad.exists(), "不可写目标不应被创建");
+}
