@@ -86,6 +86,27 @@ export function SaveAsDialog() {
   );
 }
 
+/** 通用确认框（R3-20 覆盖警示）：由 askConfirm 的 Promise 驱动，是/否都结清 */
+export function ConfirmDialog() {
+  const confirm = useShell((st) => st.confirm);
+  const resolveConfirm = useShell((st) => st.resolveConfirm);
+  if (!confirm) return null;
+  return (
+    <div className="aic-modal-mask">
+      <div className="aic-modal aic-dialog" role="alertdialog" aria-label={confirm.title}>
+        <b>{confirm.title}</b>
+        <p>{confirm.message}</p>
+        <div className="aic-dialog-actions">
+          <button className="primary" onClick={() => resolveConfirm(true)}>
+            {confirm.confirmLabel ?? S.session.ok}
+          </button>
+          <button onClick={() => resolveConfirm(false)}>{S.session.cancel}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function PromptDialog() {
   const prompt = useShell((st) => st.prompt);
   const resolvePrompt = useShell((st) => st.resolvePrompt);

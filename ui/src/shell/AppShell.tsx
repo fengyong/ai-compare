@@ -3,7 +3,7 @@ import { activeWindowSelector, useShell } from './store';
 import { TabBar } from './TabBar';
 import { MenuBar } from './MenuBar';
 import { ToolBar } from './ToolBar';
-import { CloseGuardDialog, PromptDialog, SaveAsDialog } from './Dialogs';
+import { CloseGuardDialog, ConfirmDialog, PromptDialog, SaveAsDialog } from './Dialogs';
 import { SettingsDialog } from './settings/SettingsDialog';
 import { HomeView } from '../views/home/HomeView';
 import { FolderCompareView } from '../views/folder-compare/FolderCompareView';
@@ -247,6 +247,7 @@ export function AppShell() {
       <CloseGuardDialog />
       <SaveAsDialog />
       <PromptDialog />
+      <ConfirmDialog />
       <ClipboardHistoryPanel />
       <ReportDialog />
     </div>

@@ -69,6 +69,8 @@ import type {
   MergeOpenResult,
   MergeOutputParams,
   MergeOutputResult,
+  MergeSaveParams,
+  MergeSaveResult,
   MergeSectionsParams,
   MergeSectionsResult,
   ReportGenerateParams,
@@ -277,6 +279,8 @@ export class MockEngine {
         return { result: this.merge3Decide(params as MergeDecideParams), notifications: [] };
       case 'text/merge3/output':
         return { result: this.merge3Output(params as MergeOutputParams), notifications: [] };
+      case 'text/merge3/save':
+        return { result: this.merge3Save(params as MergeSaveParams), notifications: [] };
       // P11：报告生成（report/generate；FR-RPT-001/002）
       case 'report/generate':
         return { result: this.reportGenerate(params as ReportGenerateParams), notifications: [] };
@@ -320,6 +324,8 @@ export class MockEngine {
         // R3-18：text/edit 已同形实现（编辑增量重 diff）
         textEdit: true,
         textSave: true,
+        // R3-20：text/merge3/save 已同形实现（合并输出落盘）
+        mergeSave: true,
       },
       license: { proUnlocked: true },
     };
@@ -1382,6 +1388,41 @@ export class MockEngine {
       unresolvedChunks: unresolved,
       hasConflicts: unresolved.length > 0,
       decidedCount: s.decisions.size,
+    };
+  }
+
+  /**
+   * text/merge3/save 同形实现（R3-20）：输出由会话决策现场合成（复用 output），
+   * 覆盖目标前按 backup 缺省把原内容写到 `.bak`；保存不改决策，rev 不递增。
+   * 与引擎的口径差异：mock 无 BOM/行尾信息，一律按 LF + 末尾换行序列化。
+   */
+  private merge3Save(p: MergeSaveParams): MergeSaveResult {
+    if (!p.path) throw new InvalidParams('合并输出目标路径不能为空');
+    const s = this.requireMerge3(p.sessionId);
+    const out = this.merge3Output({
+      sessionId: p.sessionId,
+      mode: p.mode ?? null,
+      markerStyle: p.markerStyle ?? null,
+    });
+    let backupPath: string | undefined;
+    if (p.backup !== false) {
+      const orig = this.files.get(p.path);
+      if (orig !== undefined) {
+        backupPath = `${p.path}.bak`;
+        this.files.set(backupPath, orig);
+      }
+    }
+    this.files.set(p.path, out.text);
+    return {
+      sessionId: p.sessionId,
+      path: p.path,
+      bytes: out.text.length as unknown as bigint,
+      lineCount: out.text === '' ? 0 : out.text.split('\n').length - 1,
+      ...(backupPath === undefined ? {} : { backupPath }),
+      conflictCount: out.conflictCount,
+      unresolvedChunks: out.unresolvedChunks,
+      hasConflicts: out.hasConflicts,
+      rev: s.rev as unknown as bigint,
     };
   }
 

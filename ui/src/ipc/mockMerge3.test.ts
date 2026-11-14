@@ -6,6 +6,7 @@ import type {
   MergeDecideResult,
   MergeOpenResult,
   MergeOutputResult,
+  MergeSaveResult,
   MergeSectionsResult,
 } from '../protocol/types';
 
@@ -274,3 +275,102 @@ describe('MockEngine P7：错误路径与会话清理', () => {
   });
 });
 
+describe('MockEngine P7：text/merge3/save（R3-20，FR-TMRG-006）', () => {
+  const save = (client: RpcClient, sessionId: string, extra: Record<string, unknown> = {}) =>
+    client.request<MergeSaveResult>('text/merge3/save', { sessionId, ...extra });
+
+  it('initialize 宣告 mergeSave 能力位', async () => {
+    const client = await newClient();
+    const init = await client.request<{ capabilities: { mergeSave?: boolean } }>('initialize', {
+      clientInfo: { name: 'test', version: '0' },
+      protocolVersion: 1,
+    });
+    expect(init.capabilities.mergeSave).toBe(true);
+    await client.close();
+  });
+
+  it('写入合成输出：字节/行数与 output 一致，新目标不备份，rev 不递增', async () => {
+    const client = await newClient();
+    await openMerge3(client);
+    await client.request('text/merge3/decide', {
+      sessionId: 'm3-1',
+      decisions: [
+        { chunkId: 3, action: 'left', text: null },
+        { chunkId: 7, action: 'right', text: null },
+      ],
+    });
+    const out = await output(client, 'm3-1');
+    const res = await save(client, 'm3-1', { path: '/tmp/aic-m3-out.txt' });
+    expect(res.path).toBe('/tmp/aic-m3-out.txt');
+    expect(Number(res.bytes)).toBe(out.text.length);
+    expect(res.lineCount).toBe(out.text.split('\n').length - 1);
+    expect(res.backupPath).toBeUndefined();
+    expect(Number(res.rev)).toBe(1); // 决策后 rev=1，保存不递增
+    expect(res.hasConflicts).toBe(false);
+    expect(res.unresolvedChunks).toEqual([]);
+    expect(res.conflictCount).toBe(3);
+    await client.close();
+  });
+
+  it('二次保存产生 .bak（证明首次写入已落地）；backup=false 不备份', async () => {
+    const client = await newClient();
+    await openMerge3(client);
+    const path = '/tmp/aic-m3-again.txt';
+    const first = await save(client, 'm3-1', { path });
+    expect(first.backupPath).toBeUndefined();
+    const second = await save(client, 'm3-1', { path });
+    expect(second.backupPath).toBe(`${path}.bak`);
+    const third = await save(client, 'm3-1', { path, backup: false });
+    expect(third.backupPath).toBeUndefined();
+    await client.close();
+  });
+
+  it('marker 模式保存未决冲突：回报冲突清单，字节数与 marker 输出一致', async () => {
+    const client = await newClient();
+    await openMerge3(client);
+    const marker = await output(client, 'm3-1', 'marker');
+    const res = await save(client, 'm3-1', {
+      path: '/tmp/aic-m3-marker.txt',
+      mode: 'marker',
+      backup: false,
+    });
+    expect(Number(res.bytes)).toBe(marker.text.length);
+    expect(res.hasConflicts).toBe(true);
+    expect(res.unresolvedChunks).toEqual([3, 7]);
+    expect(res.backupPath).toBeUndefined();
+    await client.close();
+  });
+
+  it('manual 决策文本进入落盘输出（行数随编辑变化）', async () => {
+    const client = await newClient();
+    await openMerge3(client);
+    const before = await output(client, 'm3-1');
+    await client.request('text/merge3/decide', {
+      sessionId: 'm3-1',
+      decisions: [{ chunkId: 3, action: 'manual', text: 'L1\nL2\nL3\n' }],
+    });
+    const after = await output(client, 'm3-1');
+    expect(after.text).not.toBe(before.text);
+    const res = await save(client, 'm3-1', { path: '/tmp/aic-m3-manual.txt' });
+    expect(Number(res.bytes)).toBe(after.text.length);
+    expect(res.lineCount).toBe(after.text.split('\n').length - 1);
+    await client.close();
+  });
+
+  it('空路径 / 未知会话 / 非合并会话被拒', async () => {
+    const client = await newClient();
+    await openMerge3(client);
+    await expect(save(client, 'm3-1', { path: '' })).rejects.toMatchObject({ code: -32602 });
+    await expect(save(client, 'ghost', { path: '/tmp/x' })).rejects.toMatchObject({ code: 410 });
+    await client.request('text/open', {
+      sessionId: 'm3-text',
+      left: '/a/x.c',
+      right: '/b/x.c',
+      options: null,
+    });
+    await expect(save(client, 'm3-text', { path: '/tmp/x' })).rejects.toMatchObject({
+      code: -32602,
+    });
+    await client.close();
+  });
+});
