@@ -4,6 +4,15 @@
  * 在此之前所有用户可见字符串从这里引用，键名保持稳定以便平滑迁移。
  */
 export const S = {
+  table: {
+    title: '表格比较',
+    loadFail: '加载失败',
+    loading: '加载中…',
+    dotChanged: '内容差异',
+    dotUnimportant: '不重要差异',
+    dotAdded: '新增行',
+    dotRemoved: '删除行',
+  },
   picture: {
     title: '图片比较',
     loading: '比较中…',
@@ -338,6 +347,7 @@ export const S = {
   tab: {
     folderTitleSuffix: '文件夹比较',
     textTitleSuffix: '文本比较',
+    tableTitleSuffix: '表格比较',
     pictureTitleSuffix: '图片比较',
     syncTitleSuffix: '文件夹同步',
     mergeTitleSuffix: '文件夹合并',

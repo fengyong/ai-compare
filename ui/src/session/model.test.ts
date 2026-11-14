@@ -20,11 +20,11 @@ describe('session/model', () => {
       expect(KIND_META[k].phase).toMatch(/^P\d/);
     }
     expect(KIND_META['folder-compare'].implemented).toBe(true);
-    expect(KIND_META['table-compare'].implemented).toBe(false);
+    expect(KIND_META['table-compare'].implemented).toBe(true);
     // P8：同步/合并视图接入后置为已实现
     expect(KIND_META['folder-sync'].implemented).toBe(true);
     expect(KIND_META['folder-merge'].implemented).toBe(true);
-    expect(KIND_META['table-compare'].implemented).toBe(false);
+    expect(KIND_META['table-compare'].implemented).toBe(true);
   });
 
   it('isSessionKind 判定', () => {
