@@ -314,6 +314,34 @@ fn script_09_mkdir_rename_touch() {
 }
 
 #[test]
+fn script_09b_rename_regexpr() {
+    let boxd = fresh_dir("09b");
+    let sb = Sandbox::new();
+    // SRS regexpr 形态：正则捕获组 + $n 模板 —— 下划线前后段交换
+    sb.write('l', "alpha_beta.txt", "1\n");
+    sb.write('r', "alpha_beta.txt", "1\n");
+    sb.write('l', "nomatch.md", "2\n");
+    let src = format!(
+        "load {l} {r}\n\
+         select all\n\
+         rename regexpr \"(\\w+)_(\\w+)\\.txt\" \"$2_$1.txt\"\n",
+        l = sb.ls(),
+        r = sb.rs()
+    );
+    let (code, _o, err) = run_script(&boxd, &src, &[], &[]);
+    assert_eq!(code, 0, "{err}");
+    assert!(
+        sb.exists('l', "beta_alpha.txt"),
+        "regexpr 捕获组交换改名（$2_ 组名边界适配）: {err}"
+    );
+    // BC 模板适配回归：$2_ 不被 regex 解析为命名组 "2_"（历史 bug：产出 alpha.txt）
+    assert!(sb.exists('r', "beta_alpha.txt"));
+    // 不匹配的文件保持原名
+    assert!(sb.exists('l', "nomatch.md"), "不匹配文件应跳过");
+    let _ = std::fs::remove_dir_all(&boxd);
+}
+
+#[test]
 fn script_10_attrib_readonly() {
     let boxd = fresh_dir("10");
     let sb = Sandbox::new();

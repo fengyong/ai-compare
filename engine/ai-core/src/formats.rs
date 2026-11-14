@@ -1175,7 +1175,7 @@ pub fn unimportant_mask(
                 // 元素级 case_sensitive 为项级缺省的兜底（FR-FMT-003）
                 let effective = ensure_item_case(item, e.case_sensitive);
                 if let Some(l) = effective.match_len_at(text, pos) {
-                    if l > 0 && best.map_or(true, |b| l > b) {
+                    if l > 0 && best.is_none_or(|b| l > b) {
                         best = Some(l);
                     }
                 }

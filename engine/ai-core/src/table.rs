@@ -863,7 +863,7 @@ fn emit_keyed_rows(
                     continue;
                 }
                 let dist = ri.abs_diff(li);
-                if dist <= skew && best.map_or(true, |(_, bd)| dist < bd) {
+                if dist <= skew && best.is_none_or(|(_, bd)| dist < bd) {
                     best = Some((ri, dist));
                 }
             }

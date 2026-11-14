@@ -108,6 +108,7 @@ dependencies = [
  "ai-dir",
  "ai-protocol",
  "ai-vfs",
+ "regex",
  "tempfile",
  "tokio",
 ]
