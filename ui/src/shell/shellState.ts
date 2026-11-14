@@ -223,6 +223,9 @@ export interface UiSlice {
   reportDialog: { sessionId: string; kind: string } | null;
   openReportDialog(): void;
   closeReportDialog(): void;
+  /** 队列 8：工具栏布局（FR-UI-003：大按钮 / 紧凑 / 隐藏） */
+  toolbarLayout: 'large' | 'compact' | 'hidden';
+  cycleToolbarLayout(): void;
 }
 
 export type ShellStore = WindowsSlice & TabsSlice & SessionSlice & UiSlice;

@@ -4,6 +4,21 @@
  * 在此之前所有用户可见字符串从这里引用，键名保持稳定以便平滑迁移。
  */
 export const S = {
+  /** 队列 8：菜单栏 / 工具栏（附录 F 命令矩阵 + FR-UI-003） */
+  menu: {
+    session: '会话',
+    view: '视图',
+    window: '窗口',
+    tools: '工具',
+    help: '帮助',
+    about: '关于 ai-compare',
+    aboutHint: 'ai-compare：忠实复刻 Beyond Compare 5 的会话比较工具',
+    docs: 'docs/01-需求规格说明书.md',
+    docsLabel: '需求与文档',
+    noCommands: '（当前视图无可用命令）',
+    toolbar: '工具栏',
+    toolbarHint: '右键工具栏切换布局（大按钮 / 紧凑 / 隐藏）',
+  },
   /** 队列 5：报告对话框（FR-RPT-001/002） */
   report: {
     title: '报告',
