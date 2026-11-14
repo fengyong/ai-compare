@@ -11,6 +11,10 @@ import {
 } from './settingsSchema';
 import { S } from '../../strings';
 import { useShell } from '../store';
+import { FileFormatsPage } from './FileFormatsPage';
+import { defaultFileFormatsState, type FileFormatsState } from './formatsModel';
+import { CompareRulesPage } from './CompareRulesPage';
+import { defaultCompareRulesState, type CompareRulesState } from './rulesModel';
 
 /**
  * 设置对话框框架（FR-SES-002 / docs/04 §P4 交付 6）：
@@ -57,15 +61,44 @@ export function SettingsDialog({ initialPage, kind, sessionTabId }: Props) {
     drafts[`${page.id}:${scope}`] ?? { scope, values: cloneTree(loadLayer(scope)) };
 
   const setFieldValue = (group: string, field: FieldDef, value: unknown) => {
+    setGroupKey(group, field.key, value);
+  };
+
+  /** 通用"组.键"写入（自定义结构化页以任意值形态写入，如数组/对象） */
+  const setGroupKey = (group: string, key: string, value: unknown) => {
     setDrafts((prev) => {
-      const key = `${page.id}:${scope}`;
-      const base = prev[key] ?? { scope, values: cloneTree(loadLayer(scope)) };
+      const key0 = `${page.id}:${scope}`;
+      const base = prev[key0] ?? { scope, values: cloneTree(loadLayer(scope)) };
       return {
         ...prev,
-        [key]: { scope, values: { ...base.values, [group]: { ...base.values[group], [field.key]: value } } },
+        [key0]: { scope, values: { ...base.values, [group]: { ...base.values[group], [key]: value } } },
       };
     });
   };
+
+  /** 整组多键写入（自定义结构化页的 onChange：一次提交多个键） */
+  const setGroupValues = (group: string, values: Record<string, unknown>) => {
+    setDrafts((prev) => {
+      const key0 = `${page.id}:${scope}`;
+      const base = prev[key0] ?? { scope, values: cloneTree(loadLayer(scope)) };
+      return {
+        ...prev,
+        [key0]: { scope, values: { ...base.values, [group]: { ...base.values[group], ...values } } },
+      };
+    });
+  };
+
+  // P10 结构化页的受控值（缺省字段补齐 + 跨页引用）
+  const formatsGroup = (draft.values['fileFormats'] ?? {}) as Partial<FileFormatsState>;
+  const formatsDraft: FileFormatsState = { ...defaultFileFormatsState(), ...formatsGroup };
+  const rulesGroup = (draft.values['compareRules'] ?? {}) as Partial<CompareRulesState>;
+  const rulesDraft: CompareRulesState = { ...defaultCompareRulesState(), ...rulesGroup };
+  const formatsStateForRules: FileFormatsState = (() => {
+    const base = (sessionService.getGlobalSettings()['fileFormats'] ?? {}) as Partial<FileFormatsState>;
+    const d = drafts['fileFormats:global'];
+    const overlay = (d?.values['fileFormats'] ?? {}) as Partial<FileFormatsState>;
+    return { ...defaultFileFormatsState(), ...base, ...overlay };
+  })();
 
   const setScope = (next: SettingsScope) => {
     setScopes((prev) => ({ ...prev, [page.id]: next }));
@@ -132,12 +165,40 @@ export function SettingsDialog({ initialPage, kind, sessionTabId }: Props) {
             ))}
           </nav>
           <div className="aic-settings-form">
-            <SchemaForm
-              page={page}
-              layer={draft.values}
-              group={group}
-              onChange={(field, value) => setFieldValue(group, field, value)}
-            />
+            {page.custom === 'fileFormats' ? (
+              <FileFormatsPage
+                value={formatsDraft}
+                onChange={(next) =>
+                  setGroupValues('fileFormats', {
+                    custom: next.custom,
+                    builtinOverrides: next.builtinOverrides,
+                  })
+                }
+              />
+            ) : page.custom === 'compareRules' ? (
+              <CompareRulesPage
+                value={rulesDraft}
+                formatsState={formatsStateForRules}
+                onChange={(next) =>
+                  setGroupValues('compareRules', {
+                    leadingWsUnimportant: next.leadingWsUnimportant,
+                    embeddedWsUnimportant: next.embeddedWsUnimportant,
+                    trailingWsUnimportant: next.trailingWsUnimportant,
+                    caseUnimportant: next.caseUnimportant,
+                    eolStyleUnimportant: next.eolStyleUnimportant,
+                    encodingUnimportant: next.encodingUnimportant,
+                    formatBindings: next.formatBindings,
+                  })
+                }
+              />
+            ) : (
+              <SchemaForm
+                page={page}
+                layer={draft.values}
+                group={group}
+                onChange={(field, value) => setFieldValue(group, field, value)}
+              />
+            )}
             {sessionScopeSupported && (
               <div className="aic-settings-scope">
                 <label>{S.settings.scopeLabel}</label>

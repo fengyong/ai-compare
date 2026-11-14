@@ -24,6 +24,8 @@ export interface FieldDef {
   help?: string;
   /** 未交付字段（置灰 + 阶段说明，如同步页 P8） */
   phaseNote?: string;
+  /** 字段缺省值（缺省按 type 推导；布尔开关需非 false 缺省时显式声明） */
+  default?: unknown;
 }
 
 export interface SettingsPage {
@@ -33,6 +35,13 @@ export interface SettingsPage {
   /** 该页适用的作用域集（程序选项页不含会话作用域） */
   scope: 'session-scoped' | 'app';
   fields: FieldDef[];
+  /**
+   * P10：结构化页（SchemaForm 之外的专用编辑器组件）。
+   * - 'fileFormats'：格式列表/掩码/语法元素/导入导出（FileFormatsPage）；
+   * - 'compareRules'：重要性开关 + 元素勾选 + 格式绑定（CompareRulesPage）。
+   * fields 仍声明该页的标量字段（生效预览与默认值口径），由专用组件渲染。
+   */
+  custom?: 'fileFormats' | 'compareRules';
 }
 
 export const COMPARE_PAGE: SettingsPage = {
@@ -141,7 +150,63 @@ export const GENERAL_PAGE: SettingsPage = {
   ],
 };
 
-export const SETTINGS_PAGES: readonly SettingsPage[] = [COMPARE_PAGE, SYNC_PAGE, GENERAL_PAGE];
+/**
+ * P10 文件格式页（FR-FMT-001）：格式列表/掩码/语法元素/导入导出。
+ * 格式为程序级资源（BC 语义）→ 作用域 app（settings.json 全局层）。
+ * fields 声明两个持久化键的口径（值由 FileFormatsPage 结构化写入）。
+ */
+export const FILE_FORMATS_PAGE: SettingsPage = {
+  id: 'fileFormats',
+  title: '文件格式',
+  icon: '🧩',
+  scope: 'app',
+  custom: 'fileFormats',
+  fields: [
+    {
+      key: 'custom',
+      label: '自定义格式',
+      type: 'text',
+      help: '自定义格式定义（FileFormatsPage 结构化编辑；此处仅生效预览）',
+    },
+    {
+      key: 'builtinOverrides',
+      label: '内置格式覆盖',
+      type: 'text',
+      help: '内置格式的启用/掩码覆盖（FileFormatsPage 结构化编辑）',
+    },
+  ],
+};
+
+/**
+ * P10 比较规则页（FR-TXT-010）：重要性开关 + 元素勾选 + 格式绑定。
+ * 会话级资源 → session-scoped（四层作用域；缺省写 session-defaults.json
+ * 的类型默认层）。fields 与 CompareRulesState 的开关一一对应
+ * （eol/encoding 缺省 true = 引擎 ImportanceOptions::default）。
+ */
+export const COMPARE_RULES_PAGE: SettingsPage = {
+  id: 'compareRules',
+  title: '比较规则',
+  icon: '📋',
+  scope: 'session-scoped',
+  custom: 'compareRules',
+  fields: [
+    { key: 'leadingWsUnimportant', label: '行首空白不重要', type: 'boolean', help: 'FR-TXT-010 空白三类' },
+    { key: 'embeddedWsUnimportant', label: '嵌入空白不重要', type: 'boolean', help: '连续空白折叠为一个空格' },
+    { key: 'trailingWsUnimportant', label: '行尾空白不重要', type: 'boolean', help: 'FR-TXT-010 空白三类' },
+    { key: 'caseUnimportant', label: '字符大小写不重要', type: 'boolean', help: '"其他所有内容"区分大小写开关的反面' },
+    { key: 'eolStyleUnimportant', label: '行尾风格不重要', type: 'boolean', default: true, help: 'CRLF/LF/CR 差异不重要（引擎缺省 true）' },
+    { key: 'encodingUnimportant', label: '纯编码差异不重要', type: 'boolean', default: true, help: '引擎缺省 true' },
+    { key: 'formatBindings', label: '格式绑定（不重要元素）', type: 'text', help: 'formatId -> 不重要语法元素名集（CompareRulesPage 结构化编辑）' },
+  ],
+};
+
+export const SETTINGS_PAGES: readonly SettingsPage[] = [
+  COMPARE_PAGE,
+  SYNC_PAGE,
+  GENERAL_PAGE,
+  FILE_FORMATS_PAGE,
+  COMPARE_RULES_PAGE,
+];
 
 export function pageById(id: string | undefined): SettingsPage {
   return SETTINGS_PAGES.find((p) => p.id === id) ?? COMPARE_PAGE;
@@ -155,6 +220,7 @@ export interface ScopeOption {
 
 /** 字段默认值（schema 内聚，避免散落的 magic default） */
 export function fieldDefault(field: FieldDef): unknown {
+  if (field.default !== undefined) return field.default;
   switch (field.type) {
     case 'number':
       return field.key === 'mtimeToleranceSec' ? 2 : 0;
