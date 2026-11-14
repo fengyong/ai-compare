@@ -23,7 +23,8 @@ import {
 } from './dirOps';
 import { displayFilterPreset, SHOW_ALL_DISPLAY_FILTER } from './dirFilters';
 import { buildTreeIndex, expandAll, orderedFlatRows, orderedTreeRows, toggleExpanded, collapseAll, rowDepth, type DirSortKey, type DirSortSpec } from './dirTree';
-import { clearSelection, emptySelection, invertSelection, onRowClick, runEditSelectCommand, selectAll, type EditSelectCommand } from './dirSelection';
+import { gutterCopyDirs, nextSortSpec, paneColumns, scrollSyncPlan, sidePresent, withPaneSelection, type PaneSelections, type PaneSide } from './dirPanes';
+import { clearSelection, emptySelection, invertSelection, onRowClick, runEditSelectCommand, selectAll, type EditSelectCommand, type SelectionState } from './dirSelection';
 import { ConfirmOpsDialog, PlanPreviewDialog, RenameDialog, type ConfirmOpsDialogState, type PlanPreviewDialogState, type RenameDialogState } from './DirOpsDialogs';
 import { BatchRenameDialog, type BatchRenameDialogState } from './BatchRenameDialog';
 import { QuickCompareDialog, type QuickCompareDialogState } from './QuickCompareDialog';
@@ -34,10 +35,16 @@ import { F } from './localStrings';
 
 /**
  * 文件夹比较视图（docs/03 §3.4.2 folder-compare / P6 完备化 + P6b 遗留批）：
- * - 虚拟滚动表（TanStack Virtual）：10 万行目标级窗口渲染（PB-04）；
+ * - BC 双窗格（FR-DIR-001/003）：左右各自成列（名称/大小/已修改）、各自选择集、
+ *   各自横向滚动；中间 gutter 显示内容状态图标 + 左右复制箭头。
+ *   行按名称对齐（FR-DIR-020，一份 DirRow 两侧渲染），孤立项在缺侧整行留白；
+ *   纵向滚动三列同步（dirPanes.scrollSyncPlan，跳过源与已对齐者防事件回环）；
+ * - 虚拟滚动表（TanStack Virtual）：10 万行目标级窗口渲染（PB-04），
+ *   虚拟窗口挂在左窗格，右窗格与 gutter 复用同一批 virtual items；
  * - 树形/平铺切换（FR-DIR-021）：树形按展开状态 DFS 序（dirTree.ts），
- *   惰性会话（lazyScan:true）双击目录消费 dir/expand；
- * - 选择模型（FR-DIR-050）：单击/Ctrl 累加/Shift 连选（dirSelection.ts）；
+ *   惰性会话（lazyScan:true）双击目录消费 dir/expand；展开状态两侧共用；
+ * - 选择模型（FR-DIR-050）：单击/Ctrl 累加/Shift 连选（dirSelection.ts），
+ *   工具栏选择命令/空格标记/右键操作作用于「活动窗格」（最后一次点击的那侧）；
  * - P6b 编辑菜单（§3.1.6）：选择较新的/较旧的/孤立的（左右/两侧）/
  *   所有文件/全选/反选——runEditSelectCommand 数据面 + 计数反馈；
  * - P6b 空格标记：Space 切换选中行标记集（会话缓存层持久，
@@ -47,13 +54,14 @@ import { F } from './localStrings';
  * - P6b 快速比较（FR-DIR-013）：摘要对话框（size/mtime/状态 + 快速判定说明）；
  * - P6b 复制文件名/路径（FR-DIR-066）：右键菜单 + navigator.clipboard（降级提示）；
  * - P6b 基文件夹导航（FR-DIR-003）：可编辑面包屑，点击层级/上一级/交换侧
- *   → openFolderTab 打开新会话；
+ *   → openFolderTab 打开新会话（两侧基路径可各自独立切换）；
  * - 右键操作（FR-DIR-060~066）：复制/移动/删除/重命名/对时 → 确认对话框
  *   （含不可逆警示）→ dir/execute（mock 同形；真实引擎待协议合入）；
  * - 同步预设（FR-DIR-067）：5 预设按钮 → dir/operate 计划预览 → 执行；
  * - 过滤器（FR-DIR-031/033/035）：名称过滤输入栏 + 显示过滤预设 + 抑制
  *   （青绿还原）→ dir/filter（引擎侧求值；mock 同形实现）；
- * - P6b 表头排序（FR-DIR-042）：点击列标题循环 升序→降序→默认，标记不受影响。
+ * - P6b 表头排序（FR-DIR-042）：点击任一侧列标题循环 升序→降序→默认，
+ *   两侧共用一份排序规格以保持行对齐，标记不受影响。
  */
 
 interface ExecReport {
@@ -106,15 +114,12 @@ const EDIT_MENU_ITEMS: { key: string; label: string; cmd?: EditSelectCommand; se
   { key: 'orphanB', label: F.editSelectOrphan('两侧'), cmd: 'selectOrphanBoth' },
 ];
 
-/** 表头列定义（FR-DIR-042：点击列标题排序；内容列不排序） */
-const HEADER_COLUMNS: { label: string; key: DirSortKey | null; align: string }[] = [
-  { label: S.folder.nameCol, key: 'name', align: '' },
-  { label: `${S.folder.leftTag} · ${S.folder.sizeCol}`, key: 'leftSize', align: 'r' },
-  { label: S.folder.mtimeCol, key: 'leftMtime', align: 'r' },
-  { label: S.folder.contentCol, key: null, align: 'c' },
-  { label: `${S.folder.rightTag} · ${S.folder.sizeCol}`, key: 'rightSize', align: 'r' },
-  { label: S.folder.mtimeCol, key: 'rightMtime', align: 'r' },
-];
+/** 单侧窗格最小内容宽度（名称 200 + 大小 92 + 已修改 132 + 间距 16 + 内边距 24）：
+ *  窗格窄于此值时出现该侧独立的横向滚动条（FR-DIR-003 两侧互不牵连） */
+const PANE_MIN_WIDTH = 464;
+
+/** 活动窗格标识（工具栏选择命令/空格标记/右键操作的作用侧） */
+const SIDE_LABEL: Record<PaneSide, string> = { left: S.folder.leftTag, right: S.folder.rightTag };
 
 export function FolderCompareView({ tab }: { tab: Tab }) {
   const folder = tab.folder!;
@@ -129,7 +134,9 @@ export function FolderCompareView({ tab }: { tab: Tab }) {
 
   const [error, setError] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
-  const [selection, setSelection] = useState(emptySelection);
+  // 两侧独立选择集 + 活动窗格（FR-DIR-003/050）
+  const [paneSel, setPaneSel] = useState<PaneSelections>({ left: emptySelection, right: emptySelection });
+  const [activeSide, setActiveSide] = useState<PaneSide>('left');
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
   const [flat, setFlat] = useState(false);
   const [suppress, setSuppress] = useState(false);
@@ -149,6 +156,12 @@ export function FolderCompareView({ tab }: { tab: Tab }) {
   const [sortSpec, setSortSpec] = useState<DirSortSpec | null>(null);
   const [batchRenameState, setBatchRenameState] = useState<BatchRenameDialogState | null>(null);
   const [quickCompareState, setQuickCompareState] = useState<QuickCompareDialogState | null>(null);
+
+  // 活动窗格的选择集 = 工具栏/键盘/右键操作的默认目标
+  const selection = paneSel[activeSide];
+  const setSelection = (next: SelectionState, side: PaneSide = activeSide): void => {
+    setPaneSel((all) => withPaneSelection(all, side, next));
+  };
 
   const version = useSyncExternalStore(cache.subscribe, cache.getSnapshot);
   // 标记集（会话缓存层持久；toggle/setMarks 推版本号触发重渲染）
@@ -222,11 +235,15 @@ export function FolderCompareView({ tab }: { tab: Tab }) {
     [allRows, visibleIdSet, version]
   );
 
-  // ---- 虚拟滚动 ----
-  const scrollRef = useRef<HTMLDivElement>(null);
+  // ---- 虚拟滚动（窗口挂左窗格；右窗格与 gutter 复用同一批 items） ----
+  const leftScrollRef = useRef<HTMLDivElement>(null);
+  const rightScrollRef = useRef<HTMLDivElement>(null);
+  const gutterScrollRef = useRef<HTMLDivElement>(null);
+  const leftHeadRef = useRef<HTMLDivElement>(null);
+  const rightHeadRef = useRef<HTMLDivElement>(null);
   const virtualizer = useVirtualizer({
     count: ready ? visibleRows.length : 0,
-    getScrollElement: () => scrollRef.current,
+    getScrollElement: () => leftScrollRef.current,
     estimateSize: () => 28,
     overscan: 12,
   });
@@ -235,6 +252,31 @@ export function FolderCompareView({ tab }: { tab: Tab }) {
   useLayoutEffect(() => {
     virtualizer.measure();
   }, [virtualizer, visibleRows.length]);
+
+  // ---- 滚动同步：纵向三列对齐（行对齐的前提），横向各侧表头跟随本格 ----
+  const syncVertical = (sourceId: string, el: HTMLElement): void => {
+    const nodes: Record<string, HTMLDivElement | null> = {
+      left: leftScrollRef.current,
+      gutter: gutterScrollRef.current,
+      right: rightScrollRef.current,
+    };
+    const present = Object.entries(nodes).filter((entry): entry is [string, HTMLDivElement] => entry[1] !== null);
+    const plan = scrollSyncPlan(sourceId, el.scrollTop, present.map(([id, node]) => ({ id, top: node.scrollTop })));
+    for (const p of plan) nodes[p.id]!.scrollTop = p.top;
+  };
+
+  const syncHorizontal = (side: PaneSide, el: HTMLElement): void => {
+    const head = side === 'left' ? leftHeadRef.current : rightHeadRef.current;
+    if (!head) return;
+    for (const p of scrollSyncPlan('body', el.scrollLeft, [{ id: 'head', top: head.scrollLeft }])) {
+      head.scrollLeft = p.top;
+    }
+  };
+
+  const onPaneScroll = (side: PaneSide, el: HTMLElement): void => {
+    syncVertical(side, el);
+    syncHorizontal(side, el);
+  };
 
   // ---- 展开/折叠（dir/expand；mock/真实引擎 upsert 幂等） ----
   const toggleDir = (row: DirRow): void => {
@@ -249,15 +291,11 @@ export function FolderCompareView({ tab }: { tab: Tab }) {
     }
   };
 
-  // ---- 选择 ----
-  const rowClick = (row: DirRow, e: React.MouseEvent): void => {
-    const next = onRowClick(
-      selection,
-      row.id,
-      { ctrl: e.ctrlKey || e.metaKey, shift: e.shiftKey },
-      visibleIds
-    );
-    setSelection(next);
+  // ---- 选择（按窗格独立；点击即把该侧设为活动窗格） ----
+  const rowClick = (side: PaneSide, row: DirRow, e: React.MouseEvent): void => {
+    setActiveSide(side);
+    const next = onRowClick(paneSel[side], row.id, { ctrl: e.ctrlKey || e.metaKey, shift: e.shiftKey }, visibleIds);
+    setSelection(next, side);
   };
 
   const selectedCount = selection.selected.size;
@@ -369,12 +407,14 @@ export function FolderCompareView({ tab }: { tab: Tab }) {
   const selectionRef = useRef(selection);
   selectionRef.current = selection;
 
-  // ---- P6b：表头排序（FR-DIR-042）升序→降序→默认 循环 ----
+  // ---- P6b：表头排序（FR-DIR-042）升序→降序→默认 循环（两侧表头共用规格） ----
   const headerSortClick = (key: DirSortKey): void => {
-    setSortSpec((prev) => {
-      if (prev && prev.key === key) return prev.dir === 1 ? { key, dir: -1 } : null;
-      return { key, dir: 1 };
-    });
+    setSortSpec((prev) => nextSortSpec(prev, key));
+  };
+
+  // ---- gutter 复制箭头：单行操作走既有确认 → dir/execute 链 ----
+  const runRowOp = (row: DirRow, cmd: OpCommandKind, title: string): void => {
+    runOps(buildOpsForCommand(cmd, allRows, new Set([row.id])), title);
   };
 
   // ---- P6b：基文件夹导航（FR-DIR-003）——面包屑/上一级/交换侧 → 新会话 ----
@@ -517,11 +557,12 @@ export function FolderCompareView({ tab }: { tab: Tab }) {
     return items;
   };
 
-  // ---- 键盘：Ctrl/Cmd+A 全选（Space 标记见下方 window 捕获监听） ----
-  const onKeyDown = (e: React.KeyboardEvent): void => {
+  // ---- 键盘：Ctrl/Cmd+A 全选本格（Space 标记见下方 window 捕获监听） ----
+  const onPaneKeyDown = (side: PaneSide, e: React.KeyboardEvent): void => {
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
       e.preventDefault();
-      setSelection(selectAll(visibleIds));
+      setActiveSide(side);
+      setSelection(selectAll(visibleIds), side);
     }
   };
 
@@ -542,6 +583,159 @@ export function FolderCompareView({ tab }: { tab: Tab }) {
     window.addEventListener('keydown', onWinKeyDown, true);
     return () => window.removeEventListener('keydown', onWinKeyDown, true);
   }, []);
+
+  // ---- 单侧窗格：独立表头 + 独立横向滚动 + 独立选择集（FR-DIR-001/003） ----
+  const renderPane = (side: PaneSide): React.ReactNode => {
+    const scrollRef = side === 'left' ? leftScrollRef : rightScrollRef;
+    const headRef = side === 'left' ? leftHeadRef : rightHeadRef;
+    const sel = paneSel[side];
+    return (
+      <div className={`aic-dir-pane${activeSide === side ? ' active' : ''}`} data-side={side}>
+        <div className="aic-dir-pane-head" ref={headRef}>
+          <div className="aic-dir-grid" style={{ minWidth: PANE_MIN_WIDTH }}>
+            {/* P6b：表头排序（FR-DIR-042）——两侧共用排序规格以保持行对齐 */}
+            {paneColumns(side).map((col, i) => {
+              const active = col.key !== null && sortSpec?.key === col.key;
+              const arrow = active ? (sortSpec!.dir === 1 ? ' ▲' : ' ▼') : '';
+              const style: React.CSSProperties = col.key
+                ? { cursor: 'pointer', userSelect: 'none', color: active ? 'var(--aic-text)' : undefined }
+                : {};
+              return (
+                <span
+                  key={col.label}
+                  className={col.align}
+                  style={style}
+                  title={col.key ? F.sortHint : undefined}
+                  onClick={() => col.key && headerSortClick(col.key)}
+                >
+                  {i === 0 ? `${SIDE_LABEL[side]} · ${col.label}` : col.label}
+                  {arrow}
+                </span>
+              );
+            })}
+          </div>
+        </div>
+
+        <div
+          className="aic-dir-scroll"
+          ref={scrollRef}
+          data-side={side}
+          data-version={side === 'left' ? version : undefined}
+          tabIndex={0}
+          onKeyDown={(e) => onPaneKeyDown(side, e)}
+          onFocus={() => setActiveSide(side)}
+          onScroll={(e) => onPaneScroll(side, e.currentTarget)}
+        >
+          <div style={{ height: virtualizer.getTotalSize(), position: 'relative', minWidth: PANE_MIN_WIDTH }}>
+            {items.map((item) => {
+              const row = visibleRows[item.index];
+              const present = row ? sidePresent(row, side) : false;
+              const selected = row ? sel.selected.has(row.id) : false;
+              return (
+                <div
+                  key={row?.id ?? item.key}
+                  className={`aic-dir-row aic-dir-grid${selected ? ' selected' : ''}${row && !present ? ' missing' : ''}`}
+                  data-row-id={row?.id}
+                  style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    width: '100%',
+                    height: item.size,
+                    transform: `translateY(${item.start}px)`,
+                  }}
+                  onClick={(e) => row && present && rowClick(side, row, e)}
+                  onDoubleClick={() => row && present && openRow(row)}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    if (!row || !present) return;
+                    setActiveSide(side);
+                    if (!sel.selected.has(row.id)) {
+                      setSelection(onRowClick(sel, row.id, { ctrl: false, shift: false }, visibleIds), side);
+                    }
+                    setCtxMenu({ x: e.clientX, y: e.clientY, rowId: row.id });
+                  }}
+                >
+                  {row && present ? (
+                    <PaneRowCells
+                      row={row}
+                      side={side}
+                      depth={rowDepth(row.id)}
+                      expanded={expanded.has(row.id)}
+                      marked={marks.has(row.id)}
+                      onToggleDir={() => toggleDir(row)}
+                    />
+                  ) : (
+                    <>
+                      <span className="aic-dir-cell" />
+                      <span className="aic-dir-cell r" />
+                      <span className="aic-dir-cell r" />
+                    </>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // ---- 中央 gutter：内容状态图标 + 左右复制箭头（源侧存在才可点） ----
+  const renderGutter = (): React.ReactNode => (
+    <div className="aic-dir-gutter">
+      <div className="aic-dir-gutter-head" title={S.folder.contentCol}>
+        {S.folder.contentCol}
+      </div>
+      <div className="aic-dir-gutter-scroll" ref={gutterScrollRef} onScroll={(e) => syncVertical('gutter', e.currentTarget)}>
+        <div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
+          {items.map((item) => {
+            const row = visibleRows[item.index];
+            const vis = row ? statusVisual(row.status) : null;
+            const dirs = row ? gutterCopyDirs(row) : null;
+            return (
+              <div
+                key={row?.id ?? item.key}
+                className="aic-dir-gutter-cell"
+                style={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  width: '100%',
+                  height: item.size,
+                  transform: `translateY(${item.start}px)`,
+                }}
+              >
+                {row && vis && dirs && (
+                  <>
+                    <button
+                      className="g-arrow"
+                      disabled={!dirs.toLeft}
+                      title={S.folder.ctxCopyToLeft}
+                      onClick={() => runRowOp(row, 'copyToLeft', S.folder.ctxCopyToLeft)}
+                    >
+                      ◀
+                    </button>
+                    <span className={`aic-center-icon ${vis.centerClass}`} title={vis.label}>
+                      {vis.centerGlyph}
+                    </span>
+                    <button
+                      className="g-arrow"
+                      disabled={!dirs.toRight}
+                      title={S.folder.ctxCopyToRight}
+                      onClick={() => runRowOp(row, 'copyToRight', S.folder.ctxCopyToRight)}
+                    >
+                      ▶
+                    </button>
+                  </>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
 
   if (error) {
     return (
@@ -721,7 +915,18 @@ export function FolderCompareView({ tab }: { tab: Tab }) {
             {F.markedCount(markCount)}
           </span>
         )}
-        {selectedCount > 0 && <span className="sel-chip">{S.folder.selectedCount(selectedCount)}</span>}
+        {(['left', 'right'] as PaneSide[]).map((side) =>
+          paneSel[side].selected.size > 0 ? (
+            <span
+              key={side}
+              className="sel-chip"
+              style={{ opacity: activeSide === side ? 1 : 0.5 }}
+              title={activeSide === side ? F.paneActive(SIDE_LABEL[side]) : F.paneInactive(SIDE_LABEL[side])}
+            >
+              {F.paneSelChip(SIDE_LABEL[side], paneSel[side].selected.size)}
+            </span>
+          ) : null
+        )}
         {!flat && (
           <>
             <span className="sep" />
@@ -766,72 +971,11 @@ export function FolderCompareView({ tab }: { tab: Tab }) {
         </>
       )}
 
-      <div className="aic-dir-header">
-        {/* P6b：表头排序（FR-DIR-042）——点击列标题循环 升序→降序→默认；与标记正交 */}
-        {HEADER_COLUMNS.map((col) => {
-          const active = col.key !== null && sortSpec?.key === col.key;
-          const arrow = active ? (sortSpec!.dir === 1 ? ' ▲' : ' ▼') : '';
-          const style: React.CSSProperties = col.key
-            ? { cursor: 'pointer', userSelect: 'none', color: active ? 'var(--aic-text)' : undefined }
-            : {};
-          return (
-            <span key={col.label + col.align} className={col.align} style={style} title={col.key ? '点击排序' : undefined} onClick={() => col.key && headerSortClick(col.key)}>
-              {col.label}
-              {arrow}
-            </span>
-          );
-        })}
-      </div>
-
-      <div className="aic-dir-scroll" ref={scrollRef} data-version={version} tabIndex={0} onKeyDown={onKeyDown}>
-        <div style={{ height: virtualizer.getTotalSize(), position: 'relative', minWidth: 720 }}>
-          {items.map((item) => {
-            const row = visibleRows[item.index];
-            const selected = row ? selection.selected.has(row.id) : false;
-            return (
-              <div
-                key={row?.id ?? item.key}
-                className={`aic-dir-row${selected ? ' selected' : ''}`}
-                style={{
-                  position: 'absolute',
-                  top: 0,
-                  left: 0,
-                  width: '100%',
-                  height: item.size,
-                  transform: `translateY(${item.start}px)`,
-                }}
-                onClick={(e) => row && rowClick(row, e)}
-                onDoubleClick={() => row && openRow(row)}
-                onContextMenu={(e) => {
-                  e.preventDefault();
-                  if (row && !selection.selected.has(row.id)) {
-                    setSelection(onRowClick(selection, row.id, { ctrl: false, shift: false }, visibleIds));
-                  }
-                  setCtxMenu({ x: e.clientX, y: e.clientY, rowId: row?.id ?? '' });
-                }}
-              >
-                {row ? (
-                  <DirRowCells
-                    row={row}
-                    depth={rowDepth(row.id)}
-                    expanded={expanded.has(row.id)}
-                    marked={marks.has(row.id)}
-                    onToggleDir={() => toggleDir(row)}
-                  />
-                ) : (
-                  <>
-                    <span className="aic-dir-cell placeholder">…</span>
-                    <span className="aic-dir-cell placeholder r">…</span>
-                    <span className="aic-dir-cell placeholder r">…</span>
-                    <span className="aic-dir-cell placeholder c">…</span>
-                    <span className="aic-dir-cell placeholder r">…</span>
-                    <span className="aic-dir-cell placeholder r">…</span>
-                  </>
-                )}
-              </div>
-            );
-          })}
-        </div>
+      {/* BC 双窗格 + 中央 gutter（FR-DIR-001）：行按名称对齐，纵向滚动三列同步 */}
+      <div className="aic-dir-body">
+        {renderPane('left')}
+        {renderGutter()}
+        {renderPane('right')}
       </div>
 
       {ctxMenu && (
@@ -878,12 +1022,14 @@ function nonExcludeMasks(text: string): string[] {
 }
 
 /**
- * 行渲染（P6 + P6b）：目录展开箭头 + 名称缩进 + 抑制青绿（FR-DIR-035）+
- * 标记橙色角标（P6b 空格标记；与抑制徽标并存）。
+ * 单侧行渲染（P6 + P6b + 双窗格）：目录展开箭头 + 名称缩进 + 抑制青绿
+ * （FR-DIR-035）+ 标记橙色角标（P6b 空格标记；与抑制徽标并存）。
+ * 只渲染本侧的 名称/大小/已修改 三列；缺侧由调用方整行留白。
  * suppressed 行整行青绿色 + 徽标；hidden 行不进入 visibleRows（dirTree 过滤）。
  */
-function DirRowCells({ row, depth, expanded, marked, onToggleDir }: { row: DirRow; depth: number; expanded: boolean; marked: boolean; onToggleDir(): void }) {
+function PaneRowCells({ row, side, depth, expanded, marked, onToggleDir }: { row: DirRow; side: PaneSide; depth: number; expanded: boolean; marked: boolean; onToggleDir(): void }) {
   const vis = statusVisual(row.status);
+  const info = row[side];
   const isDir = row.kind === 'dir';
   const isSuppressed = row.suppressed;
   const nameClass = isSuppressed ? 'aic-status-filtered' : toneClass(vis.tone);
@@ -892,7 +1038,7 @@ function DirRowCells({ row, depth, expanded, marked, onToggleDir }: { row: DirRo
     <>
       <span
         className={`aic-dir-cell name ${nameClass}`}
-        title={`${row.id} · ${marked ? `${F.markedBadge} · ` : ''}${isSuppressed ? `${S.folder.suppressedBadge} · ` : ''}${vis.label}`}
+        title={`${SIDE_LABEL[side]} ${row.id} · ${marked ? `${F.markedBadge} · ` : ''}${isSuppressed ? `${S.folder.suppressedBadge} · ` : ''}${vis.label}`}
         style={{ paddingLeft: 12 + depth * 18 }}
       >
         <span
@@ -911,13 +1057,8 @@ function DirRowCells({ row, depth, expanded, marked, onToggleDir }: { row: DirRo
           {isSuppressed && <span className="sup-badge">{S.folder.suppressedBadge}</span>}
         </span>
       </span>
-      <span className="aic-dir-cell mono r">{formatSize(row.left?.size)}</span>
-      <span className="aic-dir-cell mono r">{formatTime(row.left?.mtimeMs)}</span>
-      <span className={`aic-dir-cell c aic-center-icon ${vis.centerClass}`} title={vis.label}>
-        {vis.centerGlyph}
-      </span>
-      <span className="aic-dir-cell mono r">{formatSize(row.right?.size)}</span>
-      <span className="aic-dir-cell mono r">{formatTime(row.right?.mtimeMs)}</span>
+      <span className="aic-dir-cell mono r">{formatSize(info?.size)}</span>
+      <span className="aic-dir-cell mono r">{formatTime(info?.mtimeMs)}</span>
     </>
   );
 }
