@@ -210,6 +210,9 @@ export function HomeView() {
           <button className="primary" onClick={start}>
             {S.home.start}
           </button>
+          <button title={S.clip.title} onClick={() => useShell.getState().toggleClipboardPanel(true)}>
+            {S.clip.history}
+          </button>
         </div>
 
         <div className="aic-recent">

@@ -4,6 +4,33 @@
  * 在此之前所有用户可见字符串从这里引用，键名保持稳定以便平滑迁移。
  */
 export const S = {
+  /** 队列 4：剪贴板比较（FR-CLIP-001~004） */
+  clip: {
+    title: '剪贴板历史',
+    history: '剪贴板历史',
+    clipboardCompare: '剪贴板比较',
+    withClipboard: '与剪贴板比较',
+    capture: '捕获当前剪贴板',
+    compare: '比较最近两条',
+    compareEntry: '与相邻条目比较',
+    openText: '用文本编辑打开',
+    saveAs: '另存为…',
+    delete: '删除',
+    clear: '清空',
+    close: '关闭',
+    count: '条',
+    byteHint: '删除条目不影响系统剪贴板',
+    emptyHint: '尚无剪贴板条目。复制文本后点「捕获当前剪贴板」，或按 Ctrl+Alt+C 比较最近两条。',
+    needTwo: '剪贴板历史不足两条，请先复制两段文本',
+    compared: '已打开剪贴板文本比较',
+    captured: '已捕获剪贴板文本',
+    cleared: '剪贴板历史已清空',
+    empty: '剪贴板为空或不可读',
+    readDenied: '剪贴板不可读（浏览器权限）',
+    missing: '剪贴板条目不存在',
+    openFailed: '打开剪贴板比较失败',
+    noLeftFile: '当前文本会话没有左侧文件',
+  },
   /** 队列 3：三向文本合并（FR-TMRG-001~007） */
   merge3: {
     title: '文本合并',

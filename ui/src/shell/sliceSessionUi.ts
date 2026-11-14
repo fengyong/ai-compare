@@ -215,7 +215,7 @@ export const createUiSlice: StateCreator<
   ShellStore,
   [],
   [],
-  Pick<ShellStore, 'notice' | 'setNotice' | 'settingsDialog' | 'openSettings' | 'closeSettings' | 'prompt' | 'openPrompt' | 'resolvePrompt'>
+  Pick<ShellStore, 'notice' | 'setNotice' | 'settingsDialog' | 'openSettings' | 'closeSettings' | 'prompt' | 'openPrompt' | 'resolvePrompt' | 'clipboardPanelOpen' | 'toggleClipboardPanel'>
 > = (set, get) => ({
   notice: null,
   setNotice(msg) {
@@ -236,5 +236,9 @@ export const createUiSlice: StateCreator<
     const current = get().prompt;
     set({ prompt: null });
     if (current) current.onSubmit(value);
+  },
+  clipboardPanelOpen: false,
+  toggleClipboardPanel(open) {
+    set({ clipboardPanelOpen: open ?? !get().clipboardPanelOpen });
   },
 });
