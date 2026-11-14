@@ -15,12 +15,14 @@ use async_trait::async_trait;
 use thiserror::Error;
 
 pub mod crc32;
+pub mod encoding;
 pub mod ftp;
 pub mod local;
 pub mod route;
 pub mod zip;
 
 pub use crc32::{crc32, crc32_update};
+pub use encoding::{decode as decode_text, encode as encode_text, Bom, DecodedText};
 pub use crc32::INITIAL as CRC32_INITIAL;
 pub use local::LocalFs;
 pub use ftp::{split_ftp_uri, FtpConfig, FtpFs};
@@ -42,6 +44,8 @@ pub enum VfsError {
     InvalidPath(String),
     #[error("文件不是合法 UTF-8 文本: {path}")]
     InvalidEncoding { path: String },
+    #[error("编码错误: {0}")]
+    Encoding(String),
     #[error("操作被取消")]
     Cancelled,
     #[error("不支持的操作: {0}")]
@@ -350,6 +354,21 @@ pub trait VfsProvider: Send + Sync {
             }
         })?;
         Ok((text, has_bom))
+    }
+
+    /// 按编码标签解码（R3-15）。`label` 为 None/`auto` 时自动检测
+    /// （BOM → 合法 UTF-8 → 统计检测）；显式标签下解码失败报
+    /// [`VfsError::Encoding`]，不静默替换字符。
+    ///
+    /// 与 [`VfsProvider::read_file_text_bom`] 的分工：后者是 UTF-8 专用快路径
+    /// （table/hex 等按字节语义消费的调用方），本方法是文本比较的编码入口。
+    async fn read_file_decoded(
+        &self,
+        path: &VfsPath,
+        label: Option<&str>,
+    ) -> Result<DecodedText, VfsError> {
+        let bytes = self.read_file_bytes(path).await?;
+        encoding::decode(&bytes, label)
     }
 
     /// 预计算 CRC-32（IEEE）：提供中心目录等预计算元数据的 Provider

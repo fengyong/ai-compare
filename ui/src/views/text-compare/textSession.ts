@@ -20,6 +20,8 @@ export interface LoadedTextSession {
   summary: DiffSummary;
   leftLines: string[];
   rightLines: string[];
+  /** 引擎回传的生效编码（R3-15）；null = 未知（复用已存在会话时无 open 应答） */
+  encodings: { left: string | null; right: string | null };
 }
 
 const SECTIONS_CHUNK = 4000;
@@ -57,6 +59,7 @@ export async function loadTextSession(
     summary: opened.summary,
     leftLines,
     rightLines,
+    encodings: { left: opened.leftEncoding, right: opened.rightEncoding },
   };
 }
 
@@ -83,5 +86,6 @@ export async function loadTextSessionReuse(
     summary: summarizeSections(sections),
     leftLines,
     rightLines,
+    encodings: { left: null, right: null },
   };
 }

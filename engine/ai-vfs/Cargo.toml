@@ -14,6 +14,8 @@ tokio = { workspace = true }
 miniz_oxide = "0.8"
 # P12-c：FTP/FTPS 客户端（tokio 异步 + rustls TLS，纯 Rust 无 OpenSSL 依赖）
 suppaftp = { version = "12.2.1", default-features = false, features = ["tokio-rustls-ring", "no-log"] }
+encoding_rs = "0.8"
+chardetng = "1"
 
 [dev-dependencies]
 tempfile = { workspace = true }

@@ -41,7 +41,9 @@
     "id": 2,
     "jsonrpc": "2.0",
     "result": {
+      "leftEncoding": "UTF-8",
       "leftLineCount": 4,
+      "rightEncoding": "UTF-8",
       "rightLineCount": 5,
       "sectionCount": 4,
       "sessionId": "t1",

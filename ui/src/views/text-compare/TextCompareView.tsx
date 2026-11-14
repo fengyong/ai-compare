@@ -25,7 +25,13 @@ import {
   firstMatchingFormat,
   type FileFormatsState,
 } from '../../shell/settings/formatsModel';
-import { ENCODING_CHOICES, encodingById, isEngineNative, type EncodingId } from '../../lib/encodings';
+import {
+  ENCODING_CHOICES,
+  encodingById,
+  encodingDisplayName,
+  encodingParam,
+  type EncodingId,
+} from '../../lib/encodings';
 
 // ---- P10 运行时接线：设置页「比较规则」→ text/open rules 参数 ----
 // 数据源：kindDefaults('text-compare').compareRules（作用域=类型默认层）+
@@ -581,6 +587,7 @@ export function TextCompareView({ tab }: { tab: Tab }) {
           rightLines: loaded.rightLines,
           sections: loaded.sections,
           summary: loaded.summary,
+          detectedEncoding: loaded.encodings,
         });
         collapsedRef.current = defaultCollapsedKeys(
           buildAlignedDocs(model.sections, model.leftLines, model.rightLines).left.rows,
@@ -884,30 +891,51 @@ export function TextCompareView({ tab }: { tab: Tab }) {
     }
   }, [findInfo]);
 
-  // ---- 编码切换（ENC-001：会话级，重载重 diff；BOM 语义见 lib/encodings）----
+  // ---- 编码切换（ENC-001：会话级，带 encoding 重开重 diff；引擎按原编码回写）----
   const onEncodingChange = useCallback(
     async (enc: EncodingId) => {
       const model = modelRef.current;
       if (!model || enc === model.encoding) return;
       if (isTextModified(model) && !window.confirm(S.text.encodingDiscardConfirm)) return;
-      model.encoding = enc;
-      putTextSession(model);
-      try {
-        await closeSession({ sessionId: model.sessionId });
-        const reopened = await openText({
+      const prevEnc = model.encoding;
+      const rules = effectiveRulesFor(model.leftPath, model.rightPath);
+      const reopen = (encoding: string | undefined) =>
+        openText({
           sessionId: model.sessionId,
           left: model.leftPath,
           right: model.rightPath,
           options: null,
-          rules: effectiveRulesFor(model.leftPath, model.rightPath),
+          rules,
+          encoding,
         });
+      try {
+        await closeSession({ sessionId: model.sessionId });
+        let reopened;
+        try {
+          reopened = await reopen(encodingParam(enc));
+        } catch (err) {
+          // 选错编码（413）时会话已关：按原编码恢复，否则视图停在无会话态
+          await reopen(encodingParam(prevEnc)).catch(() => undefined);
+          throw err;
+        }
         const loaded = await loadTextSession(reopened, model.leftPath, model.rightPath);
+        model.encoding = enc;
+        model.detectedEncoding = loaded.encodings;
         model.leftLines = loaded.leftLines;
         model.rightLines = loaded.rightLines;
         model.sections = loaded.sections;
         model.summary = loaded.summary;
         model.undo = emptyUndoState();
         model.modifiedSides = { left: false, right: false };
+        putTextSession(model);
+        // 崩溃重放必须用切换后的编码，否则恢复出来的会话解码口径漂移
+        trackSession(model.sessionId, 'text', {
+          left: model.leftPath,
+          right: model.rightPath,
+          options: null,
+          rules,
+          encoding: encodingParam(enc),
+        });
         useShell.getState().markContentDirty(tab.id, model.modifiedSides);
         collapsedRef.current = defaultCollapsedKeys(
           buildAlignedDocs(model.sections, model.leftLines, model.rightLines).left.rows,
@@ -1024,6 +1052,16 @@ export function TextCompareView({ tab }: { tab: Tab }) {
   const diffCount = derived.diffSections.length;
   const hidden = hiddenRowCount(derived.folds);
   const encodingChoice = encodingById(model.encoding);
+  const detectedLabels = [model.detectedEncoding.left, model.detectedEncoding.right]
+    .filter((v): v is string => v !== null)
+    .filter((v, i, a) => a.indexOf(v) === i)
+    .map(encodingDisplayName);
+  const encodingTitle =
+    model.encoding === 'auto'
+      ? detectedLabels.length > 0
+        ? `${S.text.encodingDetected}${detectedLabels.join(' / ')} · ${S.text.encodingHintAuto}`
+        : S.text.encodingHintAuto
+      : `${encodingChoice.label} · ${S.text.encodingHintExplicit}`;
   const currentSec = derived.diffSections.find((s) => s.id === currentSectionId) ?? null;
   const currentRange = currentSec ? rowRangeOfSection(derived.rows, currentSec.id) : null;
   const inlineSource = getEngineCapabilities()?.inlineDiff
@@ -1192,10 +1230,7 @@ export function TextCompareView({ tab }: { tab: Tab }) {
         <button className={`nav${syntaxOn ? ' on' : ''}`} onClick={() => setSyntaxOn((v) => !v)}>
           {S.text.syntaxLabel}
         </button>
-        <span
-          className="meta"
-          title={isEngineNative(model.encoding) ? S.text.encodingHintEngineUtf8 : `${encodingChoice.label} · ${S.text.encodingHintEngineUtf8}`}
-        >
+        <span className="meta" title={encodingTitle}>
           {S.text.encodingLabel}
           <select
             className="aic-mini-select"
@@ -1208,6 +1243,9 @@ export function TextCompareView({ tab }: { tab: Tab }) {
               </option>
             ))}
           </select>
+          {model.encoding === 'auto' && detectedLabels.length > 0 && (
+            <span className="dim">{detectedLabels.join(' / ')}</span>
+          )}
         </span>
         <button className={`nav${model.dmpCleanup ? ' on' : ''}`} onClick={onDmpToggle} title={S.text.dmpCleanup}>
           {S.text.dmpCleanup}

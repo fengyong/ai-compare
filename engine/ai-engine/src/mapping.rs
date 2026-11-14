@@ -14,6 +14,7 @@ pub fn vfs_error_to_rpc(err: &VfsError) -> ai_protocol::RpcErrorObject {
         VfsError::InvalidEncoding { path } => {
             (codes::INVALID_ENCODING, format!("文件不是合法 UTF-8 文本: {path}"))
         }
+        VfsError::Encoding(m) => (codes::INVALID_ENCODING, format!("编码错误: {m}")),
         VfsError::Cancelled => (codes::REQUEST_CANCELLED, "操作被取消".to_string()),
         VfsError::Unsupported(m) => (codes::INTERNAL_ERROR, format!("不支持的操作: {m}")),
         VfsError::Io(e) => (codes::INTERNAL_ERROR, format!("IO 错误: {e}")),

@@ -24,6 +24,27 @@ pub struct DirSessionData {
     pub roots: Option<(ai_vfs::VfsPath, ai_vfs::VfsPath)>,
 }
 
+/// 单侧生效编码（R3-15）：解码时确定的标签 + 原文件 BOM。
+/// 保存必须用这一对回写，否则 GBK 文件会被写成 UTF-8、BOM 被静默丢掉。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SideEncoding {
+    pub label: String,
+    pub bom: ai_vfs::Bom,
+}
+
+impl SideEncoding {
+    pub fn from_decoded(d: &ai_vfs::DecodedText) -> Self {
+        SideEncoding {
+            label: d.encoding.to_string(),
+            bom: d.bom,
+        }
+    }
+
+    pub fn encode(&self, text: &str) -> Result<Vec<u8>, ai_vfs::VfsError> {
+        ai_vfs::encode_text(text, &self.label, self.bom)
+    }
+}
+
 /// 文本比较会话数据
 ///
 /// P3 起保存两侧行表与完整 diff 配置：text/lines（行分页）、text/inlineDiff
@@ -43,8 +64,8 @@ pub struct TextSessionData {
     pub labels: (String, String),
     /// 会话内单调递增版本号（重要性重判等模型变更时 +1）
     pub rev: u64,
-    /// R3-04：两侧打开时是否带 UTF-8 BOM（保存时原样写回，FR-TXT-013）
-    pub boms: (bool, bool),
+    /// R3-15：两侧生效编码 + 原 BOM（保存按此回写，FR-TXT-013）
+    pub encodings: (SideEncoding, SideEncoding),
     /// R3-04：两侧是否有未落盘编辑（text/edit 置位，text/save 落盘后清除）
     pub modified: (bool, bool),
 }
@@ -65,8 +86,8 @@ pub struct MergeSessionData {
     pub options: ai_core::merge::MergeOptions,
     /// marker 标签（(base, left, right)，取打开时的路径原串）
     pub labels: (String, String, String),
-    /// 祖先文件是否带 UTF-8 BOM（输出落盘时原样写回，否则编码签名被静默改掉）
-    pub bom: bool,
+    /// 祖先文件的生效编码 + 原 BOM（输出落盘按此回写，否则编码签名被静默改掉）
+    pub encoding: SideEncoding,
     /// 块决策表（chunkId -> 决策；显式决策覆盖 auto_decision）
     pub decisions: std::collections::HashMap<u32, ai_core::merge::MergeDecision>,
     /// 会话内单调递增版本号（决策内容变化时 +1）

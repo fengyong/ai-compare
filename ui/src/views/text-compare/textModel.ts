@@ -24,6 +24,8 @@ export interface TextSessionModel {
   summary: DiffSummary;
   undo: UndoState;
   encoding: EncodingId;
+  /** 引擎回传的生效编码（R3-15）；null = 未知（复用已存在会话时无 open 应答） */
+  detectedEncoding: { left: string | null; right: string | null };
   /** 逐侧未落盘编辑标记（R3-04：保存按侧清除；父目录刷新与关闭守卫据此判定） */
   modifiedSides: { left: boolean; right: boolean };
   /** 行内差异 DMP 语义清理开关（引擎 inlineDiff RPC 参数映射） */
@@ -71,11 +73,13 @@ export function newTextSessionModel(init: {
   rightLines: string[];
   sections: Section[];
   summary: DiffSummary;
+  detectedEncoding?: { left: string | null; right: string | null };
 }): TextSessionModel {
   return {
     ...init,
     undo: emptyUndoState(),
     encoding: 'auto',
+    detectedEncoding: init.detectedEncoding ?? { left: null, right: null },
     modifiedSides: { left: false, right: false },
     dmpCleanup: false,
     collapsedKeys: [],
