@@ -14,6 +14,7 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 
+use crate::ftp::{split_ftp_uri, FtpFs};
 use crate::zip::ZipFsMut;
 use crate::{StatInfo, VfsCaps, VfsDirEntry, VfsError, VfsPath, VfsProvider};
 
@@ -122,6 +123,8 @@ pub struct RouteFs {
     local: Arc<dyn VfsProvider>,
     /// zip 归档实例缓存（同归档路径复用同一 ZipFsMut，跨方法状态一致）
     zips: Mutex<HashMap<String, Arc<ZipPrefixProvider>>>,
+    /// ftp/ftps 实例缓存（key = scheme://authority/root）
+    ftps: Mutex<HashMap<String, Arc<FtpFs>>>,
 }
 
 impl Default for RouteFs {
@@ -135,6 +138,7 @@ impl RouteFs {
         RouteFs {
             local: Arc::new(crate::LocalFs::new()),
             zips: Mutex::new(HashMap::new()),
+            ftps: Mutex::new(HashMap::new()),
         }
     }
 
@@ -155,9 +159,23 @@ impl RouteFs {
                 zips.insert(archive, prefixed.clone());
                 Ok(prefixed)
             }
-            Some(scheme @ ("ftp" | "ftps" | "sftp")) => Err(VfsError::Unsupported(format!(
-                "{scheme}:// 远程站点属 P12-c（FTP/SFTP provider 未接入）"
-            ))),
+            Some("ftp") => {
+                let mut ftps = self.ftps.lock().expect("route ftp 缓存锁中毒");
+                let key = path.as_str().to_string();
+                if let Some(p) = ftps.get(&key) {
+                    return Ok(p.clone());
+                }
+                let (config, root) = split_ftp_uri(path.as_str())?;
+                let ftp = Arc::new(FtpFs::new(config, root));
+                ftps.insert(key, ftp.clone());
+                Ok(ftp)
+            }
+            Some("ftps") => Err(VfsError::Unsupported(
+                "ftps:// 需真实 FTPS 服务器验证，P12-c 后续批次交付".into(),
+            )),
+            Some("sftp") => Err(VfsError::Unsupported(
+                "sftp:// 属 P12-c 后半（SFTP provider 评估接入中）".into(),
+            )),
             Some(other) => Err(VfsError::Unsupported(format!("未知 scheme: {other}"))),
         }
     }
@@ -379,17 +397,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ftp_scheme_is_placeholder() {
+    async fn ftp_scheme_routes_to_real_provider() {
+        // P12-c：ftp:// 路由到 FtpFs（真实 provider）；ftps:// 仍为暂缓占位
         let rf = RouteFs::new();
+        assert_eq!(rf.route(&VfsPath::parse("ftp://host/pub").unwrap()).unwrap().scheme(), "ftp");
         let err = rf
-            .stat(&VfsPath::parse("ftp://host/pub/f.txt").unwrap())
+            .stat(&VfsPath::parse("ftps://host/pub/f.txt").unwrap())
             .await
             .unwrap_err();
         assert!(matches!(err, VfsError::Unsupported(_)));
-        assert!(matches!(
-            provider_for_session("ftp://host").stat(&VfsPath::parse("ftp://host/").unwrap()).await,
-            Err(VfsError::Unsupported(_))
-        ));
+        // provider_for_session 对 ftp 返回路由面（scheme=route）
+        let p = provider_for_session("ftp://host");
+        assert_eq!(p.scheme(), "route");
     }
 
     #[test]

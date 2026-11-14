@@ -16,7 +16,7 @@ members = [
 version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
-rust-version = "1.80"
+rust-version = "1.88"
 
 [workspace.dependencies]
 # 内部 crates（ai-engine 为 bin 包，按路径直接构建，不经 workspace 依赖引用）
