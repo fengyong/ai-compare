@@ -51,7 +51,14 @@ import { isTauriRuntime } from '../lib/env';
 import { MockEngine } from './mockEngine';
 import { MockTransport } from './mockTransport';
 import { TauriEngineTransport } from './tauriTransport';
-import { ReconnectPolicy, isMethodNotFound, type ResyncOutcome, type TrackedSession } from './reconnect';
+import {
+  ReconnectPolicy,
+  isMethodNotFound,
+  type EngineSessionKind,
+  type ResyncOutcome,
+  type TrackedSession,
+} from './reconnect';
+import { resyncSessions } from './sessionResync';
 
 /**
  * 引擎连接单例：连接选择（Tauri 真实引擎 / 演示引擎）、状态广播、按会话的 delta 订阅、
@@ -119,8 +126,12 @@ export function subscribeResync(fn: (outcome: ResyncOutcome) => void): () => voi
   return () => resyncListeners.delete(fn);
 }
 
-/** 登记需要崩溃恢复的会话（视图 open 成功后调用） */
-export function trackSession(sessionId: string, kind: 'dir' | 'text', params: Record<string, unknown>): void {
+/** 登记需要崩溃恢复的会话（视图 open 成功后调用；全部会话种类都要登记，R3-19） */
+export function trackSession(
+  sessionId: string,
+  kind: EngineSessionKind,
+  params: Record<string, unknown>,
+): void {
   trackedSessions.set(sessionId, { kind, params });
 }
 
@@ -135,7 +146,7 @@ export function getEngineCapabilities(): EngineCapabilities | null {
 }
 
 /** 生成引擎侧会话句柄（客户端分配；前缀便于日志排查） */
-export function newSessionId(kind: 'dir' | 'text' | 'merge' | 'merge3' | 'picture' | 'table' | 'hex'): string {
+export function newSessionId(kind: EngineSessionKind): string {
   const rand =
     typeof crypto !== 'undefined' && 'randomUUID' in crypto
       ? crypto.randomUUID().slice(0, 8)
@@ -237,24 +248,22 @@ function handleTransportCrash(reason?: string): void {
  * 视图经 rebindSession 重开会话（UI 侧全量重放 delta）。
  */
 async function resyncTrackedSessions(c: RpcClient): Promise<void> {
-  const entries = [...trackedSessions.entries()];
-  for (const [sessionId, tracked] of entries) {
-    try {
-      await c.request('session/resync', { sessionId, rev: 0 }, 4_000);
-      const outcome: ResyncOutcome = { oldSessionId: sessionId, newSessionId: sessionId, kind: tracked.kind, mode: 'resync' };
-      for (const fn of resyncListeners) fn(outcome);
-    } catch (err) {
-      if (isMethodNotFound(err)) {
-        console.info('[resync] 引擎未提供 session/resync（P2），走 UI 全量重放降级');
+  await resyncSessions(trackedSessions, {
+    resync: async (sessionId) => {
+      try {
+        await c.request('session/resync', { sessionId, rev: 0 }, 4_000);
+      } catch (err) {
+        if (isMethodNotFound(err)) {
+          console.info('[resync] 引擎未提供 session/resync（P2），走 UI 全量重放降级');
+        }
+        throw err;
       }
-      const newId = newSessionId(tracked.kind);
-      trackedSessions.delete(sessionId);
-      // 新句柄必须重新登记：否则第二次引擎崩溃时该会话不再被恢复/重建。
-      trackedSessions.set(newId, tracked);
-      const outcome: ResyncOutcome = { oldSessionId: sessionId, newSessionId: newId, kind: tracked.kind, mode: 'replay' };
+    },
+    newSessionId,
+    emit: (outcome) => {
       for (const fn of resyncListeners) fn(outcome);
-    }
-  }
+    },
+  });
   reconnectPolicy.onResynced();
 }
 

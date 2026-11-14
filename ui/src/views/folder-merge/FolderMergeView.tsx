@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { formatSize, formatTime } from '../../lib/env';
 import type { DirMergeRow, DirMergeDecision, DirMergeTarget, DirMergePlannedOp } from '../../protocol/types';
-import { mergeExecute, mergePlan, mergeScan } from '../../ipc/engineProcess';
+import { mergeExecute, mergePlan, mergeScan, trackSession } from '../../ipc/engineProcess';
 import type { DirMergeExecuteResult } from '../../protocol/types';
 import type { Tab } from '../../shell/store';
 import { useShell } from '../../shell/store';
@@ -76,6 +76,7 @@ export function FolderMergeView({ tab }: { tab: Tab }) {
     setError(null);
     try {
       const result = await mergeScan({ sessionId, base: merge.base, left: merge.left, right: merge.right });
+      trackSession(sessionId, 'merge', { base: merge.base, left: merge.left, right: merge.right });
       setRows(result.rows);
       setExpanded(new Set(result.rows.filter((r) => r.kind === 'dir').map((r) => r.relPath)));
       setPhase('tree');

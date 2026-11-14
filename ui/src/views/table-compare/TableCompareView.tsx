@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { getEngineCapabilities, openTable, tableSections } from '../../ipc/engineProcess';
+import {
+  getEngineCapabilities,
+  openTable,
+  tableSections,
+  trackSession,
+} from '../../ipc/engineProcess';
 import { S } from '../../strings';
 import type { Tab } from '../../shell/store';
 
@@ -92,6 +97,11 @@ export function TableCompareView({ tab }: { tab: Tab & { kind: 'table'; table: {
     })
       .then((opened) => {
         if (disposed) return;
+        trackSession(tab.table.sessionId, 'table', {
+          left: tab.table.left,
+          right: tab.table.right,
+          options: null,
+        });
         setColumns(opened.columns);
         setRowCount(opened.rowCount);
         setSummary(opened.summary);

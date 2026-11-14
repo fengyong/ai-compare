@@ -548,12 +548,13 @@ export function TextCompareView({ tab }: { tab: Tab }) {
           return;
         }
         // openText 411（会话已存在：StrictMode 重挂载/重复打开）→ 直接复用引擎侧会话
+        const rules = effectiveRulesFor(text.left.path, text.right.path);
         const loaded = await openText({
           sessionId: text.sessionId,
           left: text.left.path,
           right: text.right.path,
           options: null,
-          rules: effectiveRulesFor(text.left.path, text.right.path),
+          rules,
         })
           .then((opened) => loadTextSession(opened, text.left.path, text.right.path))
           .catch((err) => {
@@ -563,10 +564,12 @@ export function TextCompareView({ tab }: { tab: Tab }) {
             throw err;
           });
         if (disposed) return;
+        // 登记参数必须与 open 完全一致（含 rules）：否则崩溃重放后重要性折叠口径漂移
         trackSession(text.sessionId, 'text', {
           left: text.left.path,
           right: text.right.path,
           options: null,
+          rules,
         });
         const model = newTextSessionModel({
           sessionId: text.sessionId,
