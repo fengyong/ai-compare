@@ -1,18 +1,35 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, WheelEvent as ReactWheelEvent } from 'react';
 import { openPicture } from '../../ipc/engineProcess';
 import { S } from '../../strings';
 import type { Tab } from '../../shell/store';
+import {
+  ZOOM_STEP,
+  actualZoom,
+  autoScaleGeometry,
+  blendPercent,
+  blinkSide,
+  fitScale,
+  offsetStep,
+  panTransform,
+  zoomBy,
+  zoomIn,
+  zoomOut,
+  type BlinkMode,
+  type ZoomState,
+} from './pictureViewModel';
 
 /**
- * 图片比较视图（P14，FR-PIC：Pro 视图族首件）。
+ * 图片比较视图（P14 基线 + 队列 7；docs/01 §3.8 FR-PIX-001~004）。
  *
  * 数据面：picture/open（引擎像素容差 diff → 网格块聚合；PictureDiffResult）。
- * 渲染：左右双 img + 中央差异块叠加 canvas（红色半透明块边界框，占比越高越浓）。
- * 浏览器演示模式（mock）：两侧路径非真实文件——canvas 程序化合成演示图案
- * （确定性种子），叠加块与统计与 mock 引擎响应一致。
+ * 渲染：左右双窗格（演示模式为程序化 canvas 图案，真实模式为 file:// 图片）
+ * + 差异块叠加 canvas；两窗格共用同一 ZoomState 实现缩放/平移同步。
  *
- * 交互：容差滑杆（重比较）+ 并排/叠加两种模式 + 统计栏
- * （相似度/差异像素/画布/两侧尺寸）。
+ * 队列 7 交互：
+ * - FR-PIX-002 混合/闪烁：blink 定时切换左右，blend 三角波混合百分比；
+ * - FR-PIX-003 自动缩放（较小图匹配较大图比例）+ 差异偏移（箭头键/Ctrl 大步）；
+ * - FR-PIX-004 放大/缩小/缩放到适合/实际像素 + Ctrl+滚轮缩放 + 拖动平移同步。
  */
 
 interface PictureOpenData {
@@ -48,7 +65,6 @@ export function blockRects(
     y: b.y * scale,
     w: b.w * scale,
     h: b.h * scale,
-    // 占比越高越浓（0.05 底线保证可见）
     alpha: 0.05 + Math.min(0.55, b.diffRatio * 0.5),
   }));
 }
@@ -78,12 +94,23 @@ function drawDemoPattern(
   }
 }
 
-export function PictureCompareView({ tab }: { tab: Tab & { kind: 'picture'; picture: { left: string; right: string; sessionId: string } } }) {
+type PictureTab = Tab & { kind: 'picture'; picture: { left: string; right: string; sessionId: string } };
+
+export function PictureCompareView({ tab }: { tab: PictureTab }) {
   const [data, setData] = useState<PictureOpenData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [tolerance, setTolerance] = useState(8);
-  const [overlayMode, setOverlayMode] = useState<'right' | 'left'>('right');
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [zoom, setZoom] = useState<ZoomState>(actualZoom());
+  const [autoScale, setAutoScale] = useState(false);
+  const [blinkMode, setBlinkMode] = useState<BlinkMode>('off');
+  const [blinkMs, setBlinkMs] = useState(400);
+  const [tick, setTick] = useState(0);
+  const [offset, setOffset] = useState({ dx: 0, dy: 0 });
+  const [panStart, setPanStart] = useState<{ x: number; y: number; panX: number; panY: number } | null>(null);
+  const hostRef = useRef<HTMLDivElement | null>(null);
+  const leftCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const rightCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const diffCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const demoSeed = tab.picture.left.length + tab.picture.right.length;
   const isDemo = tab.picture.left.startsWith('/demo/') || tab.picture.right.startsWith('/demo/');
 
@@ -104,17 +131,37 @@ export function PictureCompareView({ tab }: { tab: Tab & { kind: 'picture'; pict
     return () => {
       disposed = true;
     };
-    // 容差变化触发重比较（sessionId 复用会被 411 拒——演示模式忽略；真实模式
-    // 换新 sessionId 由调用方管理，P14 简化为首次打开）
+    // 容差变化触发重比较（sessionId 复用会被 411 拒——演示模式忽略）
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab.picture.sessionId, tolerance]);
 
-  // 叠加层渲染（差异块边界框 + 半透明填充）
+  // 闪烁/混合节拍（off 时停表）
   useEffect(() => {
-    const canvas = canvasRef.current;
+    if (blinkMode === 'off') return;
+    const id = window.setInterval(() => setTick((t) => t + 1), Math.max(60, blinkMs));
+    return () => window.clearInterval(id);
+  }, [blinkMode, blinkMs]);
+
+  // 演示图案：左右两侧各一张确定性图案
+  useEffect(() => {
+    if (!isDemo || !data) return;
+    for (const [ref, side] of [
+      [leftCanvasRef, 'left'],
+      [rightCanvasRef, 'right'],
+    ] as const) {
+      const canvas = ref.current;
+      if (!canvas) continue;
+      canvas.width = data.width;
+      canvas.height = data.height;
+      const ctx = canvas.getContext('2d');
+      if (ctx) drawDemoPattern(ctx, data.width, data.height, demoSeed, side);
+    }
+  }, [isDemo, data, demoSeed]);
+
+  // 差异块叠加（按原始画布坐标绘制；缩放由 CSS transform 承担）
+  useEffect(() => {
+    const canvas = diffCanvasRef.current;
     if (!canvas || !data) return;
-    const displayW = canvas.clientWidth || data.width;
-    const scale = displayW / data.width;
     canvas.width = data.width;
     canvas.height = data.height;
     const ctx = canvas.getContext('2d');
@@ -127,20 +174,64 @@ export function PictureCompareView({ tab }: { tab: Tab & { kind: 'picture'; pict
       ctx.lineWidth = 1;
       ctx.strokeRect(r.x + 0.5, r.y + 0.5, r.w - 1, r.h - 1);
     }
-    void scale;
-  }, [data, overlayMode]);
-
-  // 演示模式：合成图案
-  useEffect(() => {
-    if (!isDemo || !data) return;
-    const canvas = overlayMode === 'right' ? canvasRef.current : canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    drawDemoPattern(ctx, data.width, data.height, demoSeed, overlayMode === 'right' ? 'right' : 'left');
-  }, [isDemo, data, overlayMode, demoSeed]);
+  }, [data]);
 
   const stats = useMemo(() => (data ? formatStats(data) : S.picture.loading), [data]);
+
+  const geometry = useMemo(
+    () => data
+      ? autoScaleGeometry(
+          { w: data.leftWidth, h: data.leftHeight },
+          { w: data.rightWidth, h: data.rightHeight }
+        )
+      : { left: 1, right: 1 },
+    [data]
+  );
+
+  const transformFor = (side: 'left' | 'right'): string => {
+    const z = autoScale ? zoomBy(zoom, geometry[side]) : zoom;
+    return panTransform(z, side === 'right' ? offset : { dx: 0, dy: 0 });
+  };
+
+  const onFit = () => {
+    const host = hostRef.current;
+    if (!data) return;
+    const w = host?.clientWidth ?? data.width;
+    const h = host?.clientHeight ?? data.height;
+    setZoom({ scale: fitScale(data.width, data.height, w / 2, h), panX: 0, panY: 0 });
+  };
+
+  const onWheel = (e: ReactWheelEvent) => {
+    if (!(e.ctrlKey || e.metaKey)) return;
+    e.preventDefault();
+    setZoom((z) => zoomBy(z, e.deltaY < 0 ? ZOOM_STEP : 1 / ZOOM_STEP));
+  };
+
+  const onKeyDown = (e: ReactKeyboardEvent) => {
+    const step = offsetStep(e.key, e.ctrlKey || e.metaKey);
+    if (!step) return;
+    e.preventDefault();
+    setOffset((o) => ({ dx: o.dx + step.dx, dy: o.dy + step.dy }));
+  };
+
+  const onMouseDown = (e: ReactMouseEvent) => {
+    setPanStart({ x: e.clientX, y: e.clientY, panX: zoom.panX, panY: zoom.panY });
+  };
+  const onMouseMove = (e: ReactMouseEvent) => {
+    if (!panStart) return;
+    setZoom((z) => ({
+      ...z,
+      panX: panStart.panX + (e.clientX - panStart.x),
+      panY: panStart.panY + (e.clientY - panStart.y),
+    }));
+  };
+
+  const visible = blinkSide(blinkMode, tick);
+  const blend = blinkMode === 'blend' ? blendPercent(tick) : 1;
+  const leftOpacity = blinkMode === 'blink' ? (visible === 'left' ? 1 : 0) : 1;
+  const rightOpacity = blinkMode === 'blink'
+    ? (visible === 'right' ? 1 : 0)
+    : blinkMode === 'blend' ? blend : 1;
 
   return (
     <div className="aic-picture">
@@ -148,22 +239,37 @@ export function PictureCompareView({ tab }: { tab: Tab & { kind: 'picture'; pict
         <span className="aic-picture-title">{S.picture.title}: {tab.title.replace('图片比较：', '')}</span>
         <label>
           {S.picture.tolerance}
-          <input
-            type="range"
-            min={0}
-            max={64}
-            value={tolerance}
-            onChange={(e) => setTolerance(Number(e.target.value))}
-          />
+          <input type="range" min={0} max={64} value={tolerance} onChange={(e) => setTolerance(Number(e.target.value))} />
           <span className="val">{tolerance}</span>
         </label>
+        <span className="meta sep">|</span>
+        <button onClick={() => setZoom(zoomOut(zoom))} title={S.picture.zoomOutHint}>{S.picture.zoomOut}</button>
+        <button onClick={() => setZoom(zoomIn(zoom))} title={S.picture.zoomInHint}>{S.picture.zoomIn}</button>
+        <button onClick={onFit} title={S.picture.zoomFitHint}>{S.picture.zoomFit}</button>
+        <button onClick={() => setZoom(actualZoom())} title={S.picture.zoomActualHint}>{S.picture.zoomActual}</button>
+        <span className="meta">{S.picture.zoomLabel} {Math.round(zoom.scale * 100)}%</span>
+        <span className="meta sep">|</span>
         <label>
-          {S.picture.overlaySide}
-          <select value={overlayMode} onChange={(e) => setOverlayMode(e.target.value as 'left' | 'right')}>
-            <option value="right">{S.picture.overlayRight}</option>
-            <option value="left">{S.picture.overlayLeft}</option>
+          {S.picture.blinkMode}
+          <select value={blinkMode} onChange={(e) => { setBlinkMode(e.target.value as BlinkMode); setTick(0); }}>
+            <option value="off">{S.picture.blinkOff}</option>
+            <option value="blink">{S.picture.blinkOn}</option>
+            <option value="blend">{S.picture.blend}</option>
           </select>
         </label>
+        {blinkMode !== 'off' && (
+          <label>
+            {S.picture.blinkSpeed}
+            <input type="range" min={60} max={1200} step={20} value={blinkMs} onChange={(e) => setBlinkMs(Number(e.target.value))} />
+            <span className="val">{blinkMs}ms</span>
+          </label>
+        )}
+        <label className="aic-picture-check">
+          <input type="checkbox" checked={autoScale} onChange={(e) => setAutoScale(e.target.checked)} />
+          {S.picture.autoScale}
+        </label>
+        <span className="meta" title={S.picture.offsetHint}>{S.picture.offset} {offset.dx},{offset.dy}</span>
+        <button onClick={() => setOffset({ dx: 0, dy: 0 })} title={S.picture.resetOffsetHint}>{S.picture.resetOffset}</button>
       </div>
       <div className="aic-picture-stats">
         {error ? (
@@ -177,22 +283,51 @@ export function PictureCompareView({ tab }: { tab: Tab & { kind: 'picture'; pict
           </>
         )}
       </div>
-      <div className="aic-picture-canvas-host">
-        <canvas
-          ref={canvasRef}
-          className="aic-picture-canvas"
-          width={data?.width ?? 640}
-          height={data?.height ?? 480}
-        />
-        {!isDemo && data && (
-          <div className="aic-picture-imgs">
-            <img src={`file://${tab.picture.left}`} alt="left" style={{ display: overlayMode === 'left' ? 'block' : 'none' }} />
-            <img src={`file://${tab.picture.right}`} alt="right" style={{ display: overlayMode === 'right' ? 'block' : 'none' }} />
-          </div>
-        )}
+      <div
+        className="aic-picture-canvas-host"
+        ref={hostRef}
+        tabIndex={0}
+        onKeyDown={onKeyDown}
+        onWheel={onWheel}
+        onMouseDown={onMouseDown}
+        onMouseMove={onMouseMove}
+        onMouseUp={() => setPanStart(null)}
+        onMouseLeave={() => setPanStart(null)}
+      >
+        <div className="aic-picture-pane">
+          <div className="aic-picture-pane-head">{S.picture.paneLeft}</div>
+          {isDemo ? (
+            <canvas ref={leftCanvasRef} className="aic-picture-layer" style={{ transform: transformFor('left'), opacity: leftOpacity }} />
+          ) : (
+            <img
+              className="aic-picture-layer"
+              src={`file://${tab.picture.left}`}
+              alt="left"
+              style={{ transform: transformFor('left'), opacity: leftOpacity }}
+            />
+          )}
+        </div>
+        <div className="aic-picture-pane">
+          <div className="aic-picture-pane-head">{S.picture.paneRight}</div>
+          {isDemo ? (
+            <canvas ref={rightCanvasRef} className="aic-picture-layer" style={{ transform: transformFor('right'), opacity: rightOpacity }} />
+          ) : (
+            <img
+              className="aic-picture-layer"
+              src={`file://${tab.picture.right}`}
+              alt="right"
+              style={{ transform: transformFor('right'), opacity: rightOpacity }}
+            />
+          )}
+          <canvas
+            ref={diffCanvasRef}
+            className="aic-picture-diff"
+            width={data?.width ?? 640}
+            height={data?.height ?? 480}
+            style={{ transform: transformFor('right'), opacity: blinkMode === 'off' ? 1 : 0 }}
+          />
+        </div>
       </div>
     </div>
   );
 }
-
-void S;
