@@ -37,7 +37,9 @@ impl HandlerCtx {
     pub fn new(max_batch_rows: usize) -> Self {
         HandlerCtx {
             sessions: Arc::new(Mutex::new(HashMap::new())),
-            vfs: Arc::new(ai_vfs::LocalFs::new()),
+            // R3-14：路由型 provider——无 scheme 走 LocalFs（行为与之前一致），
+            // zip:// 与 ftp:// 透明可用。写能力由 capabilities_for 按路径协商。
+            vfs: Arc::new(ai_vfs::RouteFs::new()),
             max_batch_rows,
             formats: Arc::new(Mutex::new(ai_core::FormatRegistry::builtin())),
             rules: Arc::new(Mutex::new(ai_core::RuleSet::default())),
@@ -6391,5 +6393,262 @@ mod merge3_save_tests {
             b"PRECIOUS\n",
             "备份失败时目标必须保持原样: {err:?}"
         );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// R3-14：真实引擎的 VFS 路由（zip:// 透明可用；写能力按路径协商）
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod route_vfs_tests {
+    use super::*;
+    use ai_vfs::VfsProvider;
+    use serde_json::json;
+
+    fn ctx() -> HandlerCtx {
+        HandlerCtx::new(512)
+    }
+
+    fn chan() -> tokio::sync::mpsc::UnboundedSender<crate::server::Outbound> {
+        tokio::sync::mpsc::unbounded_channel().0
+    }
+
+    async fn call(
+        c: &HandlerCtx,
+        method: &str,
+        params: serde_json::Value,
+    ) -> Result<serde_json::Value, RpcErrorObject> {
+        dispatch(method, Some(params), c, &ai_dir::CancelFlag::new(), chan())
+            .await
+            .map(|h| match h {
+                Handled::Value(v) => v,
+                Handled::WithNotifications { response, .. } => response,
+            })
+    }
+
+    /// 造一个真实 zip 归档，返回 (tempdir, zip:// 前缀)
+    fn zip_fixture(entries: &[(&str, &[u8])]) -> (tempfile::TempDir, String) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("repo.zip");
+        std::fs::write(&path, ai_vfs::zip::build_test_zip(entries)).unwrap();
+        let prefix = format!("zip://{}!", path.display());
+        (dir, prefix)
+    }
+
+    /// 文本会话：左侧 zip 内条目 vs 右侧本地文件，必须真的读到 zip 内容。
+    #[tokio::test]
+    async fn text_open_reads_zip_entry() {
+        let c = ctx();
+        let (_d, prefix) = zip_fixture(&[("a.txt", b"alpha\nbeta\n")]);
+        let dir = tempfile::tempdir().unwrap();
+        let local = dir.path().join("a.txt");
+        std::fs::write(&local, "alpha\nCHANGED\n").unwrap();
+
+        call(
+            &c,
+            "text/open",
+            json!({
+                "sessionId": "rt1",
+                "left": format!("{prefix}/a.txt"),
+                "right": local.to_string_lossy(),
+            }),
+        )
+        .await
+        .unwrap();
+
+        let left = call(
+            &c,
+            "text/lines",
+            json!({"sessionId": "rt1", "side": "left", "start": 0, "count": 10}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            left["lines"],
+            json!(["alpha", "beta"]),
+            "zip 内条目未被读到"
+        );
+        let right = call(
+            &c,
+            "text/lines",
+            json!({"sessionId": "rt1", "side": "right", "start": 0, "count": 10}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(right["lines"], json!(["alpha", "CHANGED"]));
+    }
+
+    /// 目录会话：zip 根 vs 本地根，行必须来自归档中心目录。
+    #[tokio::test]
+    async fn dir_open_scans_zip_root() {
+        let c = ctx();
+        let (_d, prefix) = zip_fixture(&[("a.txt", b"A"), ("sub/b.txt", b"B")]);
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("R");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::write(root.join("a.txt"), "A").unwrap();
+
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let handled = dispatch(
+            "dir/open",
+            Some(json!({
+                "sessionId": "rd1",
+                "left": format!("{prefix}/"),
+                "right": root.to_string_lossy(),
+                "depth": 2,
+            })),
+            &c,
+            &ai_dir::CancelFlag::new(),
+            tx,
+        )
+        .await
+        .unwrap();
+        let mut notes = match handled {
+            Handled::WithNotifications { notifications, .. } => notifications,
+            Handled::Value(_) => Vec::new(),
+        };
+        while let Ok(o) = rx.try_recv() {
+            if let crate::server::Outbound::Notification(n) = o {
+                notes.push(n);
+            }
+        }
+        let blob = serde_json::to_value(&notes).unwrap().to_string();
+        assert!(blob.contains("a.txt"), "zip 根扫描未列出 a.txt: {blob}");
+        assert!(blob.contains("sub"), "zip 根扫描未列出子目录: {blob}");
+    }
+
+    /// 写路径：本地 → zip 复制必须落盘（能力位按路径协商，不是全局 READ）。
+    #[tokio::test]
+    async fn dir_execute_copies_local_file_into_zip() {
+        let c = ctx();
+        let (d, prefix) = zip_fixture(&[("keep.txt", b"K")]);
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("L");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::write(root.join("new.txt"), "FROM-LOCAL").unwrap();
+
+        call(
+            &c,
+            "dir/open",
+            json!({
+                "sessionId": "rw1",
+                "left": root.to_string_lossy(),
+                "right": format!("{prefix}/"),
+                "depth": 1,
+            }),
+        )
+        .await
+        .unwrap();
+        let res = call(
+            &c,
+            "dir/execute",
+            json!({"sessionId": "rw1", "ops": [{"kind": "copy", "path": "new.txt", "side": "left"}]}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(res["failed"], json!([]), "复制被拒: {res:?}");
+
+        let bytes = std::fs::read(d.path().join("repo.zip")).unwrap();
+        let fs = ai_vfs::zip::ZipFsMut::from_bytes_writable(&bytes).unwrap();
+        let got = fs
+            .read_file_bytes(&VfsPath::parse("/new.txt").unwrap())
+            .await
+            .unwrap();
+        assert_eq!(got, b"FROM-LOCAL", "zip 未真正落盘");
+    }
+
+    /// 本地写路径经路由后仍全部放行：RouteFs 的全局能力位只有 READ，
+    /// 执行层若按全局位门控，本地删除/改名/对时/建目录都会被误判为"不支持"。
+    /// copy 还断言保留源 mtime——那是原生 copy_file 与 read+write 降级的可观测差别。
+    #[tokio::test]
+    async fn dir_execute_local_writes_survive_routing() {
+        let c = ctx();
+        let dir = tempfile::tempdir().unwrap();
+        let l = dir.path().join("L");
+        let r = dir.path().join("R");
+        std::fs::create_dir(&l).unwrap();
+        std::fs::create_dir(&r).unwrap();
+        for (root, name) in [
+            (&l, "copy.txt"),
+            (&l, "mv.txt"),
+            (&l, "del.txt"),
+            (&r, "touch.txt"),
+        ] {
+            std::fs::write(root.join(name), "x").unwrap();
+        }
+        // 源 mtime 固定到过去：read+write 降级会写成"现在"，断言即可区分
+        let src_mtime_ms = 1_000_000_000_000u64;
+        let set_mtime = |p: &std::path::Path, ms: u64| {
+            let f = std::fs::File::options().write(true).open(p).unwrap();
+            f.set_times(
+                std::fs::FileTimes::new()
+                    .set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_millis(ms)),
+            )
+            .unwrap();
+        };
+        set_mtime(&l.join("copy.txt"), src_mtime_ms);
+
+        call(
+            &c,
+            "dir/open",
+            json!({
+                "sessionId": "rlw",
+                "left": l.to_string_lossy(),
+                "right": r.to_string_lossy(),
+                "depth": 1,
+            }),
+        )
+        .await
+        .unwrap();
+        let res = call(
+            &c,
+            "dir/execute",
+            json!({"sessionId": "rlw", "ops": [
+                {"kind": "copy", "path": "copy.txt", "side": "left"},
+                {"kind": "mkdir", "path": "newdir", "side": "right"},
+                {"kind": "rename", "path": "mv.txt", "side": "left", "newName": "renamed.txt"},
+                {"kind": "touch", "path": "touch.txt", "side": "right", "mtimeMs": 1234567890000u64},
+                {"kind": "delete", "path": "del.txt", "side": "left"}
+            ]}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(res["failed"], json!([]), "本地写操作被路由层误拒: {res:?}");
+
+        let mtime_ms = |p: &std::path::Path| {
+            std::fs::metadata(p)
+                .unwrap()
+                .modified()
+                .unwrap()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis() as u64
+        };
+        assert_eq!(
+            mtime_ms(&r.join("copy.txt")),
+            src_mtime_ms,
+            "copy 未走原生实现（源 mtime 丢失）"
+        );
+        assert!(r.join("newdir").is_dir(), "mkdir 未生效");
+        assert!(
+            l.join("renamed.txt").is_file() && !l.join("mv.txt").exists(),
+            "rename 未生效"
+        );
+        assert_eq!(
+            mtime_ms(&r.join("touch.txt")),
+            1_234_567_890_000,
+            "touch 未生效"
+        );
+        assert!(!l.join("del.txt").exists(), "delete 未生效");
+    }
+
+    /// 未支持 scheme 不得声称写能力（否则执行层会放行到 Unsupported 才失败）。
+    #[test]
+    fn capabilities_for_rejects_writes_on_unsupported_scheme() {
+        let vfs = ai_vfs::RouteFs::new();
+        let local = VfsPath::parse("/tmp/x").unwrap();
+        assert!(vfs.capabilities_for(&local).has(ai_vfs::VfsCaps::DELETE));
+        let ftps = VfsPath::parse("ftps://h/p").unwrap();
+        assert!(!vfs.capabilities_for(&ftps).has(ai_vfs::VfsCaps::DELETE));
     }
 }

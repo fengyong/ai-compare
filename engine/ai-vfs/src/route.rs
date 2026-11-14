@@ -193,6 +193,24 @@ impl VfsProvider for RouteFs {
         VfsCaps::READ
     }
 
+    fn capabilities_for(&self, path: &VfsPath) -> VfsCaps {
+        // 路由失败（ftps/sftp 等尚未支持的 scheme）时只声明读：写门控先挡住，
+        // 真正的 Unsupported 文案由 open/read 路径给出。
+        self.route(path)
+            .map(|p| p.capabilities())
+            .unwrap_or(VfsCaps::READ)
+    }
+
+    async fn read_range(
+        &self,
+        path: &VfsPath,
+        offset: u64,
+        len: usize,
+    ) -> Result<Vec<u8>, VfsError> {
+        // 必须转发：默认实现会全量读，本地大文件的格式嗅探就退化成整文件读盘
+        self.route(path)?.read_range(path, offset, len).await
+    }
+
     async fn stat(&self, path: &VfsPath) -> Result<StatInfo, VfsError> {
         self.route(path)?.stat(path).await
     }
@@ -418,5 +436,47 @@ mod tests {
         assert_eq!(p.scheme(), "file");
         let p = provider_for_session("zip:///r.zip");
         assert_eq!(p.scheme(), "route");
+    }
+
+    // ---------------- R3-14：按路径协商能力 + range 读转发 ----------------
+
+    /// 混合会话的能力位必须按来源回答：本地满配、zip 可写、未支持 scheme 只读。
+    #[test]
+    fn capabilities_for_answers_per_source() {
+        let rf = RouteFs::new();
+        let local = VfsPath::parse("/tmp/aic-caps-probe").unwrap();
+        assert!(rf.capabilities_for(&local).has(VfsCaps::DELETE));
+        assert!(rf.capabilities_for(&local).has(VfsCaps::MOVE));
+
+        let (_d, zip) = temp_zip(&[("a.txt", b"A")]);
+        let zp = VfsPath::parse(&format!("zip://{}!/a.txt", zip.display())).unwrap();
+        assert!(rf.capabilities_for(&zp).has(VfsCaps::DELETE));
+
+        for s in ["ftps://h/p", "sftp://h/p"] {
+            let p = VfsPath::parse(s).unwrap();
+            assert!(
+                !rf.capabilities_for(&p).has(VfsCaps::DELETE),
+                "{s} 不应声称删除能力"
+            );
+        }
+        // 全局能力位仍是最保守公共面（不因本次改动被放大）
+        assert_eq!(rf.capabilities(), VfsCaps::READ);
+    }
+
+    /// range 读必须转发到目标 provider：本地与 zip 都要给出正确切片与 EOF 短读。
+    #[tokio::test]
+    async fn read_range_slices_both_sources() {
+        let rf = RouteFs::new();
+        let dir = tempfile::tempdir().unwrap();
+        let local = dir.path().join("big.txt");
+        std::fs::write(&local, b"0123456789").unwrap();
+        let lp = VfsPath::parse(local.to_str().unwrap()).unwrap();
+        assert_eq!(rf.read_range(&lp, 3, 4).await.unwrap(), b"3456");
+        assert_eq!(rf.read_range(&lp, 8, 100).await.unwrap(), b"89");
+
+        let (_d, zip) = temp_zip(&[("a.txt", b"0123456789")]);
+        let zp = VfsPath::parse(&format!("zip://{}!/a.txt", zip.display())).unwrap();
+        assert_eq!(rf.read_range(&zp, 3, 4).await.unwrap(), b"3456");
+        assert_eq!(rf.read_range(&zp, 8, 100).await.unwrap(), b"89");
     }
 }
