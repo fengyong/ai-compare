@@ -70,14 +70,22 @@ def git_hunks(left_text, right_text):
 
 
 def norm_lines(text):
-    """与 ai-core 默认骨架键一致的行序列（剥离行尾风格）。"""
-    return text.splitlines()
+    """与 ai-core 默认骨架键一致的行序列：剥离行尾**风格**（LF/CRLF/CR），
+    但保留末行**有无**行尾符（git/diff3 的 "\\ No newline at end of file"
+    是内容结构差异；早期版本用 splitlines() 把它抹掉，导致
+    no_trailing_newline 用例的两套 oracle 都被喂了失真输入）。"""
+    lines = text.splitlines()
+    if lines and not text.endswith(("\n", "\r")):
+        lines[-1] += "\x00none"
+    return lines
 
 
 def git_norm(text):
-    """git 比较用文本：行尾统一为 \\n（剥离风格差异后仍保内容）。"""
+    """git 比较用文本：行尾统一为 \\n（剥离风格差异），末行缺行尾符则保留缺省。"""
     lines = text.splitlines()
-    return "\n".join(lines) + ("\n" if lines else "")
+    if not lines:
+        return ""
+    return "\n".join(lines) + ("\n" if text.endswith(("\n", "\r")) else "")
 
 
 CASES = []

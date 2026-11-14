@@ -17,8 +17,8 @@ tr.same{}tr.orphan{background:#eee}tr.unimp{background:#fff3c2}
 <table class="diff">
 <tr><th>左</th><th>右</th></tr>
 <tr class="same"><td class="t">x</td><td class="t">x</td></tr>
-<tr class="same"><td class="t">y</td><td class="t">y</td></tr>
-<tr class="ins"><td class="t"></td><td class="t">z</td></tr>
+<tr class="chg"><td class="t">y</td><td class="t">y</td></tr>
+<tr class="chg"><td class="t"></td><td class="t">z</td></tr>
 </table>
 </body>
 </html>

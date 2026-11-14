@@ -472,8 +472,22 @@
    "right_raw": "a\nb\n",
    "exact": true,
    "note": "",
-   "difflib_hunks": [],
-   "git_hunks": []
+   "difflib_hunks": [
+    [
+     1,
+     2,
+     1,
+     2
+    ]
+   ],
+   "git_hunks": [
+    [
+     1,
+     2,
+     1,
+     2
+    ]
+   ]
   }
  ]
 }

@@ -151,10 +151,14 @@ fn mixed_crlf_ignored_by_default() {
 
 #[test]
 fn no_trailing_newline() {
-    // 默认忽略行尾风格：b 结尾有无 \n 不构成差异
+    // 末行有无行尾符是内容结构差异（GNU diff / git 均报 "\ No newline at end
+    // of file"），不随 ignore_eol_style 一起被忽略；行尾风格 LF/CRLF 才忽略。
     let out = diff("a\nb", "a\nb\n");
-    assert_eq!(out.sections.len(), 1);
+    assert_eq!(out.sections.len(), 2);
     assert_eq!(out.sections[0].kind, SectionKind::Equal);
+    assert_eq!(out.sections[1].kind, SectionKind::Change);
+    assert_eq!(out.sections[1].left.unwrap().start, 1);
+    assert_eq!(out.sections[1].right.unwrap().start, 1);
 
     let out = diff("a\nb", "a\nc");
     assert_eq!(out.sections.len(), 2);
