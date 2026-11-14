@@ -1182,13 +1182,18 @@ pub async fn run_script_async(src: &str, args: &[String], opts: &ScriptOptions) 
 
 fn write_log(path: &str, append: bool, body: &str) -> Option<String> {
     use std::io::Write as _;
-    let mut f = if append {
+    let opened = if append {
         std::fs::OpenOptions::new().create(true).append(true).open(path)
     } else {
         std::fs::File::create(path)
+    };
+    let mut f = match opened {
+        Ok(f) => f,
+        Err(e) => return Some(format!("打开失败: {e}")),
+    };
+    if let Err(e) = f.write_all(body.as_bytes()) {
+        return Some(format!("写入失败: {e}"));
     }
-    .ok()?;
-    f.write_all(body.as_bytes()).ok()?;
     None
 }
 
@@ -1279,9 +1284,8 @@ async fn exec_cmd(
             Ok(())
         }
         Cmd::Beep => {
-            if !opts.silent {
-                let _ = std::io::stderr().write_all(b"\x07");
-            }
+            // FR-SCR-002：BEEP 无视 /silent
+            let _ = std::io::stderr().write_all(b"\x07");
             Ok(())
         }
         Cmd::IfExists { path, negate, rest } => {
@@ -1625,10 +1629,20 @@ async fn rescan_dir(state: &mut ScriptState) {
     else {
         return;
     };
-    // 新出现的目录保持可见（操作刚落盘的层级应可被后续 SELECT 捕获）
-    let dirs: Vec<String> = result.arena.iter().filter(|r| r.kind == EntryKind::Dir).map(|r| r.rel_path.clone()).collect();
-    for d in dirs {
-        state.expanded.insert(d);
+    // 仅本次操作新出现的目录自动展开；已存在的目录保留用户 EXPAND/COLLAPSE 状态。
+    // 全量展开会把后续 SELECT/DELETE 的作用域从顶层静默扩到整棵子树（数据丢失）。
+    let old_dirs: std::collections::BTreeSet<String> = match &state.session {
+        Some(LoadedSession::Dir { arena, .. }) => arena
+            .iter()
+            .filter(|r| r.kind == EntryKind::Dir)
+            .map(|r| r.rel_path.clone())
+            .collect(),
+        _ => std::collections::BTreeSet::new(),
+    };
+    for r in result.arena.iter().filter(|r| r.kind == EntryKind::Dir) {
+        if !old_dirs.contains(&r.rel_path) {
+            state.expanded.insert(r.rel_path.clone());
+        }
     }
     if let Some(LoadedSession::Dir { arena, stats, .. }) = &mut state.session {
         *arena = result.arena;
@@ -3098,6 +3112,23 @@ mod tests {
         assert!(log.contains("select"), "{log}");
     }
 
+    /// 日志落盘失败必须上报：此前两个 `.ok()?` 让 write_log 永远返回 None，
+    /// 错误分支成死代码，用户以为在记录日志实际什么都没有且退出码 0。
+    #[test]
+    fn e2e_log_write_failure_is_reported() {
+        let dir = tempfile::tempdir().unwrap();
+        let bad = dir.path().join("no_such_parent").join("Log.txt");
+        let out = run(
+            &format!("LOG normal {}\nbeep\n", bad.to_string_lossy()),
+            &[],
+        );
+        assert_eq!(out.exit_code, EXIT_ERROR, "日志写失败应报错而非静默成功: {out:?}");
+        assert!(
+            out.errors.iter().any(|e| e.contains("日志写入失败")),
+            "错误信息应指明日志写入失败: {out:?}"
+        );
+    }
+
     #[test]
     fn e2e_expand_selects_hidden_subtree() {
         let dir = tempfile::tempdir().unwrap();
@@ -3185,5 +3216,52 @@ mod tests {
         assert_eq!(out.exit_code, EXIT_SAME, "{out:?}");
         assert!(Path::new("rep_text.txt").exists(), "%k 模板展开");
         let _ = std::fs::remove_file("rep_text.txt");
+    }
+
+    /// 操作后重扫不得扩大用户 EXPAND/COLLAPSE 界定的作用域：
+    /// 一次无害 COPY 曾把后续 DELETE 从顶层静默扩到整棵子树，销毁嵌套用户数据。
+    #[test]
+    fn e2e_rescan_preserves_collapse_scope() {
+        let dir = tempfile::tempdir().unwrap();
+        let l = dir.path().join("L");
+        let r = dir.path().join("R");
+        for base in [&l, &r] {
+            std::fs::create_dir_all(base.join("nested")).unwrap();
+            std::fs::write(base.join("nested").join("deep.txt"), "precious\n").unwrap();
+            std::fs::write(base.join("top.txt"), "top\n").unwrap();
+        }
+        let (ls, rs) = (l.to_string_lossy().into_owned(), r.to_string_lossy().into_owned());
+        let out = run(
+            &format!("load {ls} {rs}\nselect all.files\ncopy left->right\ndelete all\n"),
+            &[],
+        );
+        assert_eq!(out.exit_code, EXIT_SAME, "{out:?}");
+        assert!(
+            l.join("nested").join("deep.txt").exists() && r.join("nested").join("deep.txt").exists(),
+            "未 EXPAND 的嵌套文件必须存活（COPY 不得扩大 DELETE 作用域）"
+        );
+        assert!(!l.join("top.txt").exists(), "顶层可见文件应被删除");
+    }
+
+    /// 反向：本次操作新出现的目录仍应自动展开（否则 MKDIR/COPY 产物无法被后续 SELECT 捕获）。
+    /// 必须用嵌套新目录：顶层目录的 row_visible 恒真，测不到自动展开路径。
+    #[test]
+    fn e2e_rescan_expands_newly_created_dirs() {
+        let dir = tempfile::tempdir().unwrap();
+        let l = dir.path().join("L");
+        let r = dir.path().join("R");
+        std::fs::create_dir_all(&l).unwrap();
+        std::fs::create_dir_all(&r).unwrap();
+        std::fs::write(l.join("a.txt"), "a\n").unwrap();
+        std::fs::write(r.join("a.txt"), "a\n").unwrap();
+        let (ls, rs) = (l.to_string_lossy().into_owned(), r.to_string_lossy().into_owned());
+        let out = run(
+            &format!("load {ls} {rs}\nmkdir all sub\nmkdir all sub/inner\nselect all.files\nfolder-report layout:list output-to:n.txt\n"),
+            &[],
+        );
+        assert_eq!(out.exit_code, EXIT_SAME, "{out:?}");
+        let rep = std::fs::read_to_string("n.txt").unwrap();
+        let _ = std::fs::remove_file("n.txt");
+        assert!(rep.contains("sub/inner"), "新建嵌套目录应自动展开可见: {rep}");
     }
 }
