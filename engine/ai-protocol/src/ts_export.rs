@@ -129,6 +129,25 @@ pub fn export_all_to_ui() -> Result<usize, Box<dyn std::error::Error>> {
     DirExecuteOpStatus::export()?;
     DirExecuteOpResult::export()?;
     DirExecuteResult::export()?;
+    // R3-07：文件夹三向合并（dir/mergeScan|mergePlan|mergeExecute）
+    DirMergeCategory::export()?;
+    DirMergeRowState::export()?;
+    DirMergeRow::export()?;
+    DirMergeScanStats::export()?;
+    DirMergeScanParams::export()?;
+    DirMergeScanResult::export()?;
+    DirMergeTarget::export()?;
+    DirMergeDecision::export()?;
+    DirMergeOpKind::export()?;
+    DirMergePlannedOp::export()?;
+    DirMergePlanStats::export()?;
+    DirMergePlanParams::export()?;
+    DirMergePlanResult::export()?;
+    DirMergeExecKind::export()?;
+    DirMergeExecStatus::export()?;
+    DirMergeExecDetail::export()?;
+    DirMergeExecuteParams::export()?;
+    DirMergeExecuteResult::export()?;
     // P2 新增
     NameFilterSpec::export()?;
     OtherFilterSpec::export()?;

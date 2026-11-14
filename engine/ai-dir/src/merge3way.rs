@@ -886,9 +886,27 @@ pub async fn run_folder_merge(
         )],
     };
     if target == MergeTarget::Output {
-        // 输出目标先行校验（缺第三目录立即失败）
-        if let Err(msg) = output_root(roots) {
+        // 第三目录通常是全新目录：顶层文件的父目录链为空，执行层只建相对父链、
+        // 不会建根，故此处先建根；建不出来则整批失败（不得报成功）。
+        let ready = match output_root(roots) {
+            Ok(out) => vfs
+                .mkdir_all(&out)
+                .await
+                .map_err(|e| format!("创建输出目录失败: {}: {e}", out.as_str())),
+            Err(msg) => Err(msg),
+        };
+        if let Err(msg) = ready {
+            report.stats.failed = plan.len();
             report.log.push(format!("失败 {msg}"));
+            for p in plan {
+                report.details.push(OpRecord {
+                    kind: p.kind.as_str().into(),
+                    path: p.path.clone(),
+                    reason: p.reason.clone(),
+                    status: RecordStatus::Failed,
+                    detail: Some(msg.clone()),
+                });
+            }
             return report;
         }
     }
@@ -1208,6 +1226,34 @@ mod tests {
         assert_eq!(op_tuples(&plan), vec![(MergeOpKind::TakeRight, "rc.txt".to_string())]);
     }
 
+    /// Auto 默认决策表全矩阵（10 分类 × 3 目标 = 30 格）逐格钉死。
+    /// UI 侧曾镜像此表，R3-07 接线后删除镜像，本测试是该表唯一的穷举守卫。
+    #[test]
+    fn auto_default_matrix_all_30_cells() {
+        use MergeCategory::*;
+        use MergeOpKind::*;
+        use MergeTarget::*;
+        let table: [(MergeCategory, [(MergeOpKind, MergeTarget); 3]); 10] = [
+            (Same, [(Keep, Left), (Keep, Right), (TakeLeft, Output)]),
+            (LeftChanged, [(Keep, Left), (TakeLeft, Right), (TakeLeft, Output)]),
+            (RightChanged, [(TakeRight, Left), (Keep, Right), (TakeRight, Output)]),
+            (BothSame, [(Keep, Left), (Keep, Right), (TakeLeft, Output)]),
+            (DeletedRight, [(DeleteTarget, Left), (Keep, Right), (Keep, Output)]),
+            (DeletedLeft, [(Keep, Left), (DeleteTarget, Right), (Keep, Output)]),
+            (Conflict, [(Keep, Left), (Keep, Right), (Keep, Output)]),
+            (LeftOnly, [(Keep, Left), (TakeLeft, Right), (TakeLeft, Output)]),
+            (RightOnly, [(TakeRight, Left), (Keep, Right), (TakeRight, Output)]),
+            (BaseOnly, [(Keep, Left), (Keep, Right), (Keep, Output)]),
+        ];
+        for (cat, cells) in table {
+            for (want_kind, target) in cells {
+                let (kind, reason) = auto_default(cat, target);
+                assert_eq!(kind, want_kind, "{cat:?} -> {target:?}");
+                assert!(!reason.is_empty(), "{cat:?} -> {target:?} 理由不得为空");
+            }
+        }
+    }
+
     #[tokio::test]
     async fn plan_output_snapshot_copies_authoritative_sides() {
         let (_d, res) = make_mixed_tree().await;
@@ -1376,6 +1422,60 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn run_merge_output_creates_fresh_root() {
+        let (dir, b, l, r) = make3(
+            &[("top.txt", b"v0"), ("sub/deep.txt", b"v0")],
+            &[("top.txt", b"v1"), ("sub/deep.txt", b"v1"), ("lo.txt", b"o")],
+            &[("top.txt", b"v0"), ("sub/deep.txt", b"v0")],
+        )
+        .await;
+        // 第三目录全新（BC 常规流程）：不得要求调用方先建根
+        let out_root = dir.path().join("FRESH/OUT");
+        let vfs = LocalFs::new();
+        let res = scan_merge(&vfs, &b, &l, &r, &CancelFlag::new()).await.unwrap();
+        let plan = plan_merge(&res.arena, &MergePlanParams { target: MergeTarget::Output, decisions: &BTreeMap::new() });
+        let roots = MergeRoots {
+            base: b,
+            left: l,
+            right: r,
+            output: Some(VfsPath::parse(out_root.to_str().unwrap()).unwrap()),
+        };
+        let report = run_folder_merge(&vfs, &roots, &plan.ops, MergeTarget::Output, None, &CancelFlag::new()).await;
+        assert_eq!(report.stats.failed, 0, "{:?}", report.details);
+        let out = VfsPath::parse(out_root.to_str().unwrap()).unwrap();
+        assert_eq!(vfs.read_file_bytes(&out.join("top.txt")).await.unwrap(), b"v1");
+        assert_eq!(vfs.read_file_bytes(&out.join("sub/deep.txt")).await.unwrap(), b"v1");
+        assert_eq!(vfs.read_file_bytes(&out.join("lo.txt")).await.unwrap(), b"o");
+    }
+
+    #[tokio::test]
+    async fn run_merge_output_root_occupied_by_file_fails_whole_batch() {
+        let (dir, b, l, r) = make3(&[("a.txt", b"v0")], &[("a.txt", b"v1")], &[("a.txt", b"v0")]).await;
+        let out_root = dir.path().join("OUT");
+        std::fs::write(&out_root, "占位文件").unwrap();
+        let vfs = LocalFs::new();
+        let res = scan_merge(&vfs, &b, &l, &r, &CancelFlag::new()).await.unwrap();
+        let plan = plan_merge(&res.arena, &MergePlanParams { target: MergeTarget::Output, decisions: &BTreeMap::new() });
+        let roots = MergeRoots {
+            base: b,
+            left: l,
+            right: r,
+            output: Some(VfsPath::parse(out_root.to_str().unwrap()).unwrap()),
+        };
+        let report = run_folder_merge(&vfs, &roots, &plan.ops, MergeTarget::Output, None, &CancelFlag::new()).await;
+        assert_eq!(report.stats.copied, 0);
+        assert_eq!(report.stats.failed, report.stats.total, "建根失败必须整批记失败: {:?}", report.details);
+        assert_eq!(report.details.len(), plan.ops.len());
+        assert!(report.details.iter().all(|d| d.status == RecordStatus::Failed));
+        assert!(
+            report.log.iter().any(|l| l.contains("创建输出目录失败")),
+            "失败原因须指向建根而非逐项复制: {:?}",
+            report.log
+        );
+        assert_eq!(std::fs::read(&out_root).unwrap(), "占位文件".as_bytes(), "占位文件不得被改写");
+    }
+
+    #[tokio::test]
     async fn run_merge_output_requires_third_root() {
         let (_d, b, l, r) = make3(&[("a.txt", b"v0")], &[("a.txt", b"v1")], &[("a.txt", b"v0")]).await;
         let vfs = LocalFs::new();
@@ -1384,6 +1484,8 @@ mod tests {
         let roots = MergeRoots { base: b, left: l, right: r, output: None };
         let report = run_folder_merge(&vfs, &roots, &plan.ops, MergeTarget::Output, None, &CancelFlag::new()).await;
         assert_eq!(report.stats.copied, 0);
+        assert_eq!(report.stats.failed, report.stats.total, "缺第三目录时明细必须齐备");
+        assert_eq!(report.details.len(), plan.ops.len());
         assert!(report.log.iter().any(|l| l.contains("第三目录")));
     }
 

@@ -10,6 +10,7 @@
         "dirCompare": true,
         "dirExecute": true,
         "dirFilters": true,
+        "dirMerge": true,
         "dirOperate": true,
         "formatRules": true,
         "hexCompare": true,

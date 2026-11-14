@@ -85,6 +85,9 @@ pub async fn dispatch(
         ai_protocol::method::HEX_BYTES => hex_bytes(params, ctx).await,
         ai_protocol::method::TEXT_PATCH_APPLY => patch_apply(params, ctx).await,
         ai_protocol::method::DIR_EXECUTE => dir_execute(params, ctx, cancel).await,
+        ai_protocol::method::DIR_MERGE_SCAN => dir_merge_scan(params, ctx, cancel).await,
+        ai_protocol::method::DIR_MERGE_PLAN => dir_merge_plan(params, ctx).await,
+        ai_protocol::method::DIR_MERGE_EXECUTE => dir_merge_execute(params, ctx, cancel).await,
         ai_protocol::method::FORMATS_LIST => formats_list(params, ctx).await,
         ai_protocol::method::FORMATS_SAVE => formats_save(params, ctx).await,
         ai_protocol::method::FORMATS_LOAD => formats_load(params, ctx).await,
@@ -136,6 +139,8 @@ fn initialize() -> Result<Handled, RpcErrorObject> {
             // P11：报告生成入口（report/generate）
             reports: Some(true),
             picture_compare: Some(true),
+            // R3-07：文件夹三向合并入口开放（dir/mergeScan|mergePlan|mergeExecute）
+            dir_merge: Some(true),
             dir_background_scan: true,
             dir_filters: true,
             dir_operate: true,
@@ -552,7 +557,7 @@ async fn dir_model(
         Session::Dir(data) => data.model.clone().ok_or_else(|| {
             bad_params("该会话未启用 P2 会话模型（lazyScan/过滤器/平铺/对齐任一即可启用）")
         }),
-        Session::Text(_) | Session::Merge(_) | Session::Table(_) | Session::Hex(_)
+        Session::Text(_) | Session::Merge(_) | Session::DirMerge(_) | Session::Table(_) | Session::Hex(_)
         | Session::Picture(_) => {
             Err(bad_params(format!("会话不是目录会话: {id}")))
         }
@@ -692,7 +697,7 @@ async fn with_text_session<T>(
     let session = sessions.get_mut(id).ok_or_else(|| session_not_found(id))?;
     match session {
         Session::Text(data) => f(data),
-        Session::Dir(_) | Session::Merge(_) | Session::Table(_) | Session::Hex(_)
+        Session::Dir(_) | Session::Merge(_) | Session::DirMerge(_) | Session::Table(_) | Session::Hex(_)
         | Session::Picture(_) => {
             Err(bad_params(format!("会话不是文本会话: {id}")))
         }
@@ -1799,6 +1804,141 @@ async fn dir_execute(
     }
 }
 
+/// dir/mergeScan：扫描 base/left/right 三树 + diff3 分类（R3-07，FR-DMRG-002）。
+/// 同 sessionId 重复调用 = 重扫并替换会话（与 dir/open 同语义）。
+async fn dir_merge_scan(
+    params: Option<serde_json::Value>,
+    ctx: &HandlerCtx,
+    cancel: &ai_dir::CancelFlag,
+) -> Result<Handled, RpcErrorObject> {
+    let params: ai_protocol::DirMergeScanParams = parse_params(params)?;
+    let base = VfsPath::parse(&params.base).map_err(|e| mapping::vfs_error_to_rpc(&e))?;
+    let left = VfsPath::parse(&params.left).map_err(|e| mapping::vfs_error_to_rpc(&e))?;
+    let right = VfsPath::parse(&params.right).map_err(|e| mapping::vfs_error_to_rpc(&e))?;
+
+    let scan = ai_dir::merge3way::scan_merge(ctx.vfs.as_ref(), &base, &left, &right, cancel)
+        .await
+        .map_err(|e| mapping::dir_scan_error_to_rpc(&e))?;
+
+    let result = ai_protocol::DirMergeScanResult {
+        session_id: params.session_id.clone(),
+        rows: scan.rows().iter().map(mapping::dir_merge_row_to_dto).collect(),
+        stats: mapping::dir_merge_scan_stats_to_dto(&scan.stats),
+    };
+
+    ctx.sessions.lock().await.insert(
+        params.session_id.clone(),
+        Session::DirMerge(crate::server::DirMergeSessionData {
+            roots: ai_dir::MergeRoots { base, left, right, output: None },
+            scan,
+        }),
+    );
+
+    Ok(Handled::Value(serde_json::to_value(&result).expect("dir/mergeScan 结果可序列化")))
+}
+
+/// 取文件夹合并会话（不存在 / 类型不符均报 INVALID_PARAMS）
+async fn dir_merge_session(
+    ctx: &HandlerCtx,
+    session_id: &str,
+) -> Result<crate::server::DirMergeSessionData, RpcErrorObject> {
+    let sessions = ctx.sessions.lock().await;
+    match sessions.get(session_id) {
+        Some(Session::DirMerge(data)) => Ok(data.clone()),
+        Some(_) => Err(bad_params(format!("会话不是文件夹合并会话: {session_id}"))),
+        None => Err(session_not_found(session_id)),
+    }
+}
+
+/// dir/mergePlan：决策 -> 计划预览（纯函数，不落盘；R3-07，FR-DMRG-003）。
+/// target=output 必须给 outputPath（本次或此前记入会话的），并记回会话供 execute 复用。
+async fn dir_merge_plan(
+    params: Option<serde_json::Value>,
+    ctx: &HandlerCtx,
+) -> Result<Handled, RpcErrorObject> {
+    let params: ai_protocol::DirMergePlanParams = parse_params(params)?;
+    let mut data = dir_merge_session(ctx, &params.session_id).await?;
+    let target = mapping::dir_merge_target_from_dto(params.target);
+
+    if let Some(out) = &params.output_path {
+        data.roots.output = Some(VfsPath::parse(out).map_err(|e| mapping::vfs_error_to_rpc(&e))?);
+    }
+    if target == ai_dir::MergeTarget::Output && data.roots.output.is_none() {
+        return Err(bad_params("target=output 需要提供 outputPath（第三输出目录）"));
+    }
+
+    let decisions: std::collections::BTreeMap<String, ai_dir::MergeDecision> = params
+        .decisions
+        .iter()
+        .map(|(k, v)| (k.clone(), mapping::dir_merge_decision_from_dto(*v)))
+        .collect();
+    let plan = ai_dir::merge3way::plan_merge(
+        &data.scan.arena,
+        &ai_dir::MergePlanParams { target, decisions: &decisions },
+    );
+
+    let result = ai_protocol::DirMergePlanResult {
+        session_id: params.session_id.clone(),
+        target: params.target,
+        ops: plan.ops.iter().map(mapping::dir_merge_planned_op_to_dto).collect(),
+        stats: mapping::dir_merge_batch_stats_to_dto(&plan.stats),
+    };
+
+    // 记回输出根（execute 可省略 outputPath）
+    if let Some(Session::DirMerge(d)) = ctx.sessions.lock().await.get_mut(&params.session_id) {
+        d.roots.output = data.roots.output.clone();
+    }
+
+    Ok(Handled::Value(serde_json::to_value(&result).expect("dir/mergePlan 结果可序列化")))
+}
+
+/// dir/mergeExecute：执行已预览的计划（复用 execute 层护栏/部分成功/取消语义）。
+/// target=output 时必须有输出根（本次参数或 plan 时记入会话的）。
+async fn dir_merge_execute(
+    params: Option<serde_json::Value>,
+    ctx: &HandlerCtx,
+    cancel: &ai_dir::CancelFlag,
+) -> Result<Handled, RpcErrorObject> {
+    let params: ai_protocol::DirMergeExecuteParams = parse_params(params)?;
+    let mut data = dir_merge_session(ctx, &params.session_id).await?;
+    let target = mapping::dir_merge_target_from_dto(params.target);
+
+    if let Some(out) = &params.output_path {
+        data.roots.output = Some(VfsPath::parse(out).map_err(|e| mapping::vfs_error_to_rpc(&e))?);
+    }
+    if target == ai_dir::MergeTarget::Output && data.roots.output.is_none() {
+        return Err(bad_params("target=output 需要提供 outputPath（第三输出目录）"));
+    }
+
+    let ops: Vec<ai_dir::MergePlannedOp> =
+        params.ops.iter().map(mapping::dir_merge_planned_op_from_dto).collect();
+    let report = ai_dir::merge3way::run_folder_merge(
+        ctx.vfs.as_ref(),
+        &data.roots,
+        &ops,
+        target,
+        None,
+        cancel,
+    )
+    .await;
+
+    let result = ai_protocol::DirMergeExecuteResult {
+        session_id: params.session_id.clone(),
+        target: params.target,
+        total: mapping::sat_u32(report.stats.total),
+        copied: mapping::sat_u32(report.stats.copied),
+        deleted: mapping::sat_u32(report.stats.deleted),
+        touched: mapping::sat_u32(report.stats.touched),
+        skipped: mapping::sat_u32(report.stats.skipped),
+        failed: mapping::sat_u32(report.stats.failed),
+        cancelled: report.cancelled,
+        details: report.details.iter().map(mapping::dir_merge_exec_detail_to_dto).collect(),
+        log: report.log.clone(),
+    };
+
+    Ok(Handled::Value(serde_json::to_value(&result).expect("dir/mergeExecute 结果可序列化")))
+}
+
 /// 一份 delta 数据切批为通知（removals 只随首批；同 push_delta 的返回版）
 fn delta_notifications(
     session_id: &str,
@@ -2064,6 +2204,11 @@ async fn report_generate(
             // P14：图片会话暂无文本报告布局（视图批次交付 html 图片报告）
             Session::Picture(_) => {
                 return Err(bad_params("图片会话不支持 report/generate（P14 视图批次交付）"));
+            }
+            // R3-07：文件夹合并的执行报告走 dir/mergeExecute 的 details/log，
+            // 不复用文本报告布局
+            Session::DirMerge(_) => {
+                return Err(bad_params("文件夹合并会话不支持 report/generate（执行报告见 dir/mergeExecute）"));
             }
         }
     };
@@ -4214,5 +4359,480 @@ mod p11_report_tests {
     async fn initialize_reports_reports_capability() {
         let v = value_of(initialize()).await;
         assert_eq!(v["capabilities"]["reports"], true);
+    }
+}
+
+#[cfg(test)]
+mod dir_merge_tests {
+    use super::*;
+    use crate::server::Outbound;
+    use serde_json::json;
+
+    fn ctx() -> HandlerCtx {
+        HandlerCtx::new(512)
+    }
+
+    fn chan() -> (
+        tokio::sync::mpsc::UnboundedSender<Outbound>,
+        tokio::sync::mpsc::UnboundedReceiver<Outbound>,
+    ) {
+        tokio::sync::mpsc::unbounded_channel()
+    }
+
+    async fn value_of(got: Result<Handled, RpcErrorObject>) -> serde_json::Value {
+        match got.unwrap() {
+            Handled::Value(v) => v,
+            Handled::WithNotifications { response, .. } => response,
+        }
+    }
+
+    /// 三树语料（分类由内容决定，与 mtime 无关）：
+    /// same=三方一致 / lchg=仅左改 / rchg=仅右改 / conf=冲突 /
+    /// lonly=左孤立 / del=右删除
+    fn make3() -> (tempfile::TempDir, String, String, String) {
+        let dir = tempfile::tempdir().unwrap();
+        let mut roots = Vec::new();
+        for name in ["B", "L", "R"] {
+            let p = dir.path().join(name);
+            std::fs::create_dir_all(&p).unwrap();
+            roots.push(p.to_string_lossy().into_owned());
+        }
+        let put = |side: usize, rel: &str, bytes: &[u8]| {
+            std::fs::write(std::path::Path::new(&roots[side]).join(rel), bytes).unwrap();
+        };
+        for s in 0..3 {
+            put(s, "same.txt", b"1");
+        }
+        put(0, "lchg.txt", b"old");
+        put(1, "lchg.txt", b"new");
+        put(2, "lchg.txt", b"old");
+        put(0, "rchg.txt", b"old");
+        put(1, "rchg.txt", b"old");
+        put(2, "rchg.txt", b"new");
+        put(0, "conf.txt", b"b");
+        put(1, "conf.txt", b"l");
+        put(2, "conf.txt", b"r");
+        put(1, "lonly.txt", b"L");
+        put(0, "del.txt", b"x");
+        put(1, "del.txt", b"x");
+        (dir, roots[0].clone(), roots[1].clone(), roots[2].clone())
+    }
+
+    async fn scan(c: &HandlerCtx, id: &str, b: &str, l: &str, r: &str) -> serde_json::Value {
+        value_of(
+            dispatch(
+                "dir/mergeScan",
+                Some(json!({"sessionId": id, "base": b, "left": l, "right": r})),
+                c,
+                &ai_dir::CancelFlag::new(),
+                chan().0,
+            )
+            .await,
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn dir_merge_capability_and_methods_registered() {
+        let c = ctx();
+        let v = value_of(initialize()).await;
+        assert_eq!(v["capabilities"]["dirMerge"], true, "R3-07 能力位 dirMerge");
+
+        // 三个方法都必须已注册（修复前 dispatch 无入口 -> -32601）
+        let (_d, b, l, r) = make3();
+        for (m, params) in [
+            ("dir/mergeScan", json!({"sessionId": "m0", "base": b, "left": l, "right": r})),
+            ("dir/mergePlan", json!({"sessionId": "m0", "target": "right", "decisions": {}})),
+            (
+                "dir/mergeExecute",
+                json!({"sessionId": "m0", "target": "right", "ops": []}),
+            ),
+        ] {
+            let got = dispatch(m, Some(params), &c, &ai_dir::CancelFlag::new(), chan().0).await;
+            assert!(got.is_ok(), "{m} 应已注册: {:?}", got.err());
+        }
+    }
+
+    #[tokio::test]
+    async fn dir_merge_scan_classifies_and_stats_match_rows() {
+        let c = ctx();
+        let (_d, b, l, r) = make3();
+        let v = scan(&c, "m1", &b, &l, &r).await;
+        assert_eq!(v["sessionId"], "m1");
+
+        let rows = v["rows"].as_array().unwrap();
+        let cat = |name: &str| -> String {
+            rows.iter()
+                .find(|x| x["relPath"] == name)
+                .unwrap_or_else(|| panic!("缺行 {name}: {v}"))["category"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        };
+        assert_eq!(cat("same.txt"), "same");
+        assert_eq!(cat("lchg.txt"), "leftChanged");
+        assert_eq!(cat("rchg.txt"), "rightChanged");
+        assert_eq!(cat("conf.txt"), "conflict");
+        assert_eq!(cat("lonly.txt"), "leftOnly");
+        assert_eq!(cat("del.txt"), "deletedRight");
+
+        // 冲突叶标记（UI 双击进文本合并的判定依据）
+        let conf = rows.iter().find(|x| x["relPath"] == "conf.txt").unwrap();
+        assert_eq!(conf["conflictLeaf"], true);
+        assert_eq!(conf["rowState"], "conflict");
+        assert_eq!(conf["depth"], 1);
+        assert!(conf["parent"].is_null(), "根的直接子项 parent 为 null");
+        assert!(conf["base"].is_object() && conf["left"].is_object() && conf["right"].is_object());
+        let lonly = rows.iter().find(|x| x["relPath"] == "lonly.txt").unwrap();
+        assert!(lonly["base"].is_null() && lonly["right"].is_null());
+        assert_eq!(lonly["rowState"], "orphan");
+
+        // 统计与行一致（口径自洽，不是各自算一套）
+        let st = &v["stats"];
+        assert_eq!(st["total"].as_u64().unwrap() as usize, rows.len());
+        assert_eq!(st["conflict"], 1);
+        assert_eq!(st["orphan"], 1);
+        assert_eq!(st["files"].as_u64().unwrap() as usize, rows.len());
+        assert_eq!(st["dirs"], 0);
+    }
+
+    #[tokio::test]
+    async fn dir_merge_plan_then_execute_to_right_lands_on_disk() {
+        let c = ctx();
+        let (_d, b, l, r) = make3();
+        scan(&c, "m2", &b, &l, &r).await;
+
+        let plan = value_of(
+            dispatch(
+                "dir/mergePlan",
+                Some(json!({"sessionId": "m2", "target": "right", "decisions": {}})),
+                &c,
+                &ai_dir::CancelFlag::new(),
+                chan().0,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(plan["target"], "right");
+        let ops = plan["ops"].as_array().unwrap();
+        // Auto：仅左改 + 左孤立并入右侧；三方一致/右改/冲突/右已删 不入计划
+        let mut paths: Vec<&str> = ops.iter().map(|o| o["path"].as_str().unwrap()).collect();
+        paths.sort_unstable();
+        assert_eq!(paths, vec!["lchg.txt", "lonly.txt"], "计划清单: {plan}");
+        assert!(ops.iter().all(|o| o["kind"] == "takeLeft"));
+        assert_eq!(plan["stats"]["total"], 2);
+        assert_eq!(plan["stats"]["copied"], 2);
+
+        // 计划阶段不得落盘
+        assert!(!std::path::Path::new(&r).join("lonly.txt").exists(), "plan 只预览");
+        assert_eq!(std::fs::read(std::path::Path::new(&r).join("lchg.txt")).unwrap(), b"old");
+
+        let exec = value_of(
+            dispatch(
+                "dir/mergeExecute",
+                Some(json!({"sessionId": "m2", "target": "right", "ops": ops})),
+                &c,
+                &ai_dir::CancelFlag::new(),
+                chan().0,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(exec["total"], 2);
+        assert_eq!(exec["copied"], 2);
+        assert_eq!(exec["failed"], 0);
+        assert_eq!(exec["cancelled"], false);
+        assert_eq!(exec["details"].as_array().unwrap().len(), 2);
+        assert!(exec["details"].as_array().unwrap().iter().all(|d| d["status"] == "copied"));
+        assert!(!exec["log"].as_array().unwrap().is_empty(), "日志面板行");
+
+        // 真实落盘
+        assert_eq!(std::fs::read(std::path::Path::new(&r).join("lchg.txt")).unwrap(), b"new");
+        assert_eq!(std::fs::read(std::path::Path::new(&r).join("lonly.txt")).unwrap(), b"L");
+        // 未决策的冲突保持原样
+        assert_eq!(std::fs::read(std::path::Path::new(&r).join("conf.txt")).unwrap(), b"r");
+    }
+
+    #[tokio::test]
+    async fn dir_merge_explicit_decision_overrides_auto() {
+        let c = ctx();
+        let (_d, b, l, r) = make3();
+        scan(&c, "m3", &b, &l, &r).await;
+        let plan = value_of(
+            dispatch(
+                "dir/mergePlan",
+                Some(json!({
+                    "sessionId": "m3", "target": "right",
+                    "decisions": {"conf.txt": "takeLeft", "lonly.txt": "skip"}
+                })),
+                &c,
+                &ai_dir::CancelFlag::new(),
+                chan().0,
+            )
+            .await,
+        )
+        .await;
+        let ops = plan["ops"].as_array().unwrap();
+        let find = |p: &str| ops.iter().find(|o| o["path"] == p).unwrap_or_else(|| panic!("缺 {p}: {plan}"));
+        assert_eq!(find("conf.txt")["kind"], "takeLeft", "显式决策覆盖冲突默认");
+        assert_eq!(find("lonly.txt")["kind"], "keep", "skip 决策记 Keep 供预览解释");
+        assert_eq!(plan["stats"]["skipped"], 1);
+
+        let exec = value_of(
+            dispatch(
+                "dir/mergeExecute",
+                Some(json!({"sessionId": "m3", "target": "right", "ops": ops})),
+                &c,
+                &ai_dir::CancelFlag::new(),
+                chan().0,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(std::fs::read(std::path::Path::new(&r).join("conf.txt")).unwrap(), b"l");
+        assert!(!std::path::Path::new(&r).join("lonly.txt").exists(), "skip 不落盘");
+        // Keep 项记 planned（可追溯），不计 copied
+        let keep = exec["details"].as_array().unwrap().iter().find(|d| d["path"] == "lonly.txt").unwrap();
+        assert_eq!(keep["status"], "planned");
+        assert_eq!(keep["kind"], "keep");
+    }
+
+    #[tokio::test]
+    async fn dir_merge_output_target_requires_and_uses_output_path() {
+        let c = ctx();
+        let (d, b, l, r) = make3();
+        scan(&c, "m4", &b, &l, &r).await;
+        let out = d.path().join("OUT");
+
+        // 缺 outputPath：plan 与 execute 都必须拒绝（不得静默写到别处）
+        for m in ["dir/mergePlan", "dir/mergeExecute"] {
+            let params = if m == "dir/mergePlan" {
+                json!({"sessionId": "m4", "target": "output", "decisions": {}})
+            } else {
+                json!({"sessionId": "m4", "target": "output", "ops": []})
+            };
+            let e = dispatch(m, Some(params), &c, &ai_dir::CancelFlag::new(), chan().0)
+                .await
+                .expect_err("target=output 缺 outputPath 应拒绝");
+            assert_eq!(e.code, codes::INVALID_PARAMS, "{m}: {e:?}");
+            assert!(e.message.contains("outputPath"), "{m}: {}", e.message);
+        }
+        assert!(!out.exists(), "拒绝后不得建目录");
+
+        // plan 带 outputPath -> 记入会话；execute 省略也能用会话里的输出根
+        let plan = value_of(
+            dispatch(
+                "dir/mergePlan",
+                Some(json!({
+                    "sessionId": "m4", "target": "output", "decisions": {},
+                    "outputPath": out.to_string_lossy()
+                })),
+                &c,
+                &ai_dir::CancelFlag::new(),
+                chan().0,
+            )
+            .await,
+        )
+        .await;
+        let ops = plan["ops"].as_array().unwrap();
+        // 输出快照：same/lchg 取左、rchg 取右、lonly 并入；conf 与 del 不动作
+        assert_eq!(ops.len(), 4, "输出计划: {plan}");
+        let exec = value_of(
+            dispatch(
+                "dir/mergeExecute",
+                Some(json!({"sessionId": "m4", "target": "output", "ops": ops})),
+                &c,
+                &ai_dir::CancelFlag::new(),
+                chan().0,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(exec["failed"], 0, "执行报告: {exec}");
+        assert_eq!(exec["copied"], 4);
+        assert_eq!(std::fs::read(out.join("same.txt")).unwrap(), b"1");
+        assert_eq!(std::fs::read(out.join("lchg.txt")).unwrap(), b"new");
+        assert_eq!(std::fs::read(out.join("rchg.txt")).unwrap(), b"new");
+        assert_eq!(std::fs::read(out.join("lonly.txt")).unwrap(), b"L");
+        assert!(!out.join("conf.txt").exists(), "未决冲突不进输出");
+        assert!(!out.join("del.txt").exists(), "右侧已删除项不进输出");
+        // 左右两侧未被改动
+        assert_eq!(std::fs::read(std::path::Path::new(&r).join("lchg.txt")).unwrap(), b"old");
+        assert!(!std::path::Path::new(&r).join("lonly.txt").exists());
+    }
+
+    #[tokio::test]
+    async fn dir_merge_session_errors_and_close() {
+        let c = ctx();
+        let (_d, b, l, r) = make3();
+
+        // 未知会话 -> 410
+        let e = dispatch(
+            "dir/mergePlan",
+            Some(json!({"sessionId": "ghost", "target": "right", "decisions": {}})),
+            &c,
+            &ai_dir::CancelFlag::new(),
+            chan().0,
+        )
+        .await
+        .expect_err("未知会话");
+        assert_eq!(e.code, codes::SESSION_NOT_FOUND);
+
+        // 类型不符（文本会话 id）-> INVALID_PARAMS，不得误当合并会话
+        scan(&c, "m5", &b, &l, &r).await;
+        let e = dispatch(
+            "dir/mergeExecute",
+            Some(json!({"sessionId": "m5", "target": "right", "ops": []})),
+            &c,
+            &ai_dir::CancelFlag::new(),
+            chan().0,
+        )
+        .await;
+        assert!(e.is_ok(), "空 ops 合法");
+
+        // 目录会话 id 用于合并方法 -> 拒绝
+        let (tx, _rx) = chan();
+        dispatch(
+            "dir/open",
+            Some(json!({"sessionId": "d5", "left": l, "right": r, "depth": 1})),
+            &c,
+            &ai_dir::CancelFlag::new(),
+            tx,
+        )
+        .await
+        .unwrap();
+        let e = dispatch(
+            "dir/mergePlan",
+            Some(json!({"sessionId": "d5", "target": "right", "decisions": {}})),
+            &c,
+            &ai_dir::CancelFlag::new(),
+            chan().0,
+        )
+        .await
+        .expect_err("目录会话不是合并会话");
+        assert_eq!(e.code, codes::INVALID_PARAMS);
+
+        // 合并会话不得走文本/目录入口
+        let e = dispatch(
+            "text/sections",
+            Some(json!({"sessionId": "m5", "offset": 0, "count": 10})),
+            &c,
+            &ai_dir::CancelFlag::new(),
+            chan().0,
+        )
+        .await
+        .expect_err("合并会话不是文本会话");
+        assert_eq!(e.code, codes::INVALID_PARAMS);
+
+        // close 后再用 -> 410
+        dispatch(
+            "session/close",
+            Some(json!({"sessionId": "m5"})),
+            &c,
+            &ai_dir::CancelFlag::new(),
+            chan().0,
+        )
+        .await
+        .unwrap();
+        let e = dispatch(
+            "dir/mergePlan",
+            Some(json!({"sessionId": "m5", "target": "right", "decisions": {}})),
+            &c,
+            &ai_dir::CancelFlag::new(),
+            chan().0,
+        )
+        .await
+        .expect_err("已关闭会话");
+        assert_eq!(e.code, codes::SESSION_NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn dir_merge_scan_missing_root_reports_error() {
+        let c = ctx();
+        let (d, b, l, _r) = make3();
+        let missing = d.path().join("NOPE");
+        let e = dispatch(
+            "dir/mergeScan",
+            Some(json!({
+                "sessionId": "m6", "base": b, "left": l,
+                "right": missing.to_string_lossy()
+            })),
+            &c,
+            &ai_dir::CancelFlag::new(),
+            chan().0,
+        )
+        .await
+        .expect_err("不存在的根应报错");
+        assert_ne!(e.code, codes::METHOD_NOT_FOUND);
+        // 失败的 scan 不得留下可用会话
+        let e2 = dispatch(
+            "dir/mergePlan",
+            Some(json!({"sessionId": "m6", "target": "right", "decisions": {}})),
+            &c,
+            &ai_dir::CancelFlag::new(),
+            chan().0,
+        )
+        .await
+        .expect_err("scan 失败不应登记会话");
+        assert_eq!(e2.code, codes::SESSION_NOT_FOUND);
+    }
+
+    /// R3-01 的护栏必须覆盖合并这条新写路径：输出目录内的符号链接
+    /// 不得把内容写到根外。
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn dir_merge_execute_does_not_follow_output_symlink() {
+        let c = ctx();
+        let (d, b, l, _r) = make3();
+        let out = d.path().join("OUT");
+        std::fs::create_dir_all(&out).unwrap();
+        let outside = d.path().join("OUTSIDE");
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("lonly.txt"), b"PRECIOUS").unwrap();
+        // 输出根内的文件符号链接指向根外同名文件
+        std::os::unix::fs::symlink(outside.join("lonly.txt"), out.join("lonly.txt")).unwrap();
+
+        scan(&c, "m7", &b, &l, &d.path().join("R").to_string_lossy()).await;
+        let plan = value_of(
+            dispatch(
+                "dir/mergePlan",
+                Some(json!({
+                    "sessionId": "m7", "target": "output", "decisions": {},
+                    "outputPath": out.to_string_lossy()
+                })),
+                &c,
+                &ai_dir::CancelFlag::new(),
+                chan().0,
+            )
+            .await,
+        )
+        .await;
+        let exec = value_of(
+            dispatch(
+                "dir/mergeExecute",
+                Some(json!({
+                    "sessionId": "m7", "target": "output",
+                    "ops": plan["ops"], "outputPath": out.to_string_lossy()
+                })),
+                &c,
+                &ai_dir::CancelFlag::new(),
+                chan().0,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(
+            std::fs::read(outside.join("lonly.txt")).unwrap(),
+            b"PRECIOUS",
+            "根外文件被改写: {exec}"
+        );
+        let lonly = exec["details"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|x| x["path"] == "lonly.txt")
+            .expect("该项应有明细");
+        assert_eq!(lonly["status"], "failed", "符号链接项应失败而非成功: {exec}");
+        assert_eq!(exec["copied"], 3, "其余三项仍应成功（部分成功语义）: {exec}");
     }
 }

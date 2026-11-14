@@ -81,6 +81,12 @@ pub mod method {
     pub const TEXT_PATCH_APPLY: &str = "text/patch/apply";
     /// 文件操作执行（P6 提案合入：dryRun + 执行 + rescan delta）
     pub const DIR_EXECUTE: &str = "dir/execute";
+    /// 文件夹三向合并：扫描三树 + diff3 分类（R3-07，FR-DMRG-002）
+    pub const DIR_MERGE_SCAN: &str = "dir/mergeScan";
+    /// 文件夹三向合并：决策 -> 计划预览（R3-07，FR-DMRG-003）
+    pub const DIR_MERGE_PLAN: &str = "dir/mergePlan";
+    /// 文件夹三向合并：执行计划 -> 部分成功报告（R3-07，FR-DMRG-004）
+    pub const DIR_MERGE_EXECUTE: &str = "dir/mergeExecute";
     /// 文件格式：全量列表（P10，内置 + 会话期自定义，按生效顺序）
     pub const FORMATS_LIST: &str = "formats/list";
     /// 文件格式：按 id 覆盖/追加（P10；引擎会话期态，持久化由 UI 负责）

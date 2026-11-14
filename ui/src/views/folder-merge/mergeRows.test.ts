@@ -1,9 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import type { DirMergeRow, MergeDecision, MergeTarget } from '../../protocol/types';
+import type { DirMergeRow, DirMergeDecision, DirMergeOpKind, DirMergePlannedOp } from '../../protocol/types';
 import {
   applyDecisionToTree,
-  autoDefaultOp,
-  buildMergePreview,
   defaultExpanded,
   effectiveDecision,
   exportMergeReportText,
@@ -11,7 +9,7 @@ import {
   mergeDecisionStats,
   mergeStateClass,
   orderedMergeRows,
-  previewToMergeOps,
+  mergePreviewFromPlan,
   summarizeMergePlan,
   type DecisionMap,
 } from './mergeRows';
@@ -135,97 +133,64 @@ describe('folder-merge/mergeRows 决策状态机（继承/展开/聚合）', () 
   });
 });
 
-describe('folder-merge/mergeRows 计划预览（默认决策表镜像）', () => {
-  it('目标右：仅左改取左、右改保持、三方一致保持', () => {
+describe('folder-merge/mergeRows 计划预览（以引擎 ops 为权威）', () => {
+  const ops = (...t: [DirMergeOpKind, string, string][]): DirMergePlannedOp[] =>
+    t.map(([kind, path, reason]) => ({ kind, path, reason }));
+
+  it('动作/理由/顺序全部取自引擎计划，客户端不再推导', () => {
     const rows = mixedRows();
-    const preview = buildMergePreview(rows, {}, 'right');
-    const byPath = new Map(preview.map((p) => [p.path, p]));
-    expect(byPath.get('d/lc')!.op).toBe('takeLeft');
-    expect(byPath.get('rc')!.op).toBe('keep');
-    expect(byPath.get('same')!.op).toBe('keep');
-    expect(byPath.get('lo')!.op).toBe('takeLeft');
-    expect(byPath.get('d/cf')!.op).toBe('keep');
+    const plan = ops(
+      ['takeLeft', 'd/lc', '仅左改 → 取左'],
+      ['takeLeft', 'lo', '左孤立并入目标'],
+      ['deleteTarget', 'rc', '跟随右侧删除'],
+    );
+    const preview = mergePreviewFromPlan(rows, {}, plan);
+    expect(preview.map((p) => p.path)).toEqual(['d/lc', 'lo', 'rc']);
+    expect(preview.map((p) => p.op)).toEqual(['takeLeft', 'takeLeft', 'deleteTarget']);
+    expect(preview.map((p) => p.reason)).toEqual(['仅左改 → 取左', '左孤立并入目标', '跟随右侧删除']);
+    expect(preview[2].warning).toBe(true);
+    expect(preview.every((p) => p.actionable)).toBe(true);
   });
 
-  it('目标左：右改取右', () => {
+  it('引擎未计划的路径不进预览（即使本地行存在且决策为 auto）', () => {
     const rows = mixedRows();
-    const preview = buildMergePreview(rows, {}, 'left');
-    const byPath = new Map(preview.map((p) => [p.path, p]));
-    expect(byPath.get('rc')!.op).toBe('takeRight');
-    expect(byPath.get('d/lc')!.op).toBe('keep');
-    expect(byPath.get('lo')!.op).toBe('keep');
+    const preview = mergePreviewFromPlan(rows, {}, ops(['takeLeft', 'lo', '左孤立并入目标']));
+    expect(preview.map((p) => p.path)).toEqual(['lo']);
+    // same/rc/d/cf 等行本地都在，但引擎没计划 → 不得出现在执行清单里
+    expect(preview.some((p) => p.path === 'same')).toBe(false);
+    expect(preview.some((p) => p.path === 'd/cf')).toBe(false);
   });
 
-  it('输出目标：三方一致也复制、冲突/两侧已删不动', () => {
-    const rows = [
-      ...mixedRows(),
-      mrow('gone', { category: 'baseOnly', rowState: 'orphan' }),
-    ];
-    const preview = buildMergePreview(rows, {}, 'output');
-    const byPath = new Map(preview.map((p) => [p.path, p]));
-    expect(byPath.get('same')!.op).toBe('takeLeft');
-    expect(byPath.get('gone')!.op).toBe('keep');
-    expect(byPath.get('d/cf')!.op).toBe('keep');
-    expect(byPath.get('lo')!.op).toBe('takeLeft');
-  });
-
-  it('删除跟随：目标左时 deletedRight 产生 deleteTarget', () => {
-    const rows = [mrow('dr', { category: 'deletedRight', rowState: 'auto' })];
-    const preview = buildMergePreview(rows, {}, 'left');
-    expect(preview[0].op).toBe('deleteTarget');
-    expect(preview[0].warning).toBe(true);
-    const previewRight = buildMergePreview(rows, {}, 'right');
-    expect(previewRight[0].op).toBe('keep');
-  });
-
-  it('冲突行显式取左覆盖默认', () => {
+  it('join 行元数据与有效决策（含祖先继承）', () => {
     const rows = mixedRows();
-    const preview = buildMergePreview(rows, { 'd/cf': 'takeLeft' }, 'right');
-    const cf = preview.find((p) => p.path === 'd/cf')!;
-    expect(cf.op).toBe('takeLeft');
-    expect(cf.reason).toContain('取左');
-    expect(cf.actionable).toBe(true);
+    const preview = mergePreviewFromPlan(rows, { d: 'takeLeft' }, ops(['takeLeft', 'd/cf', '决策:取左']));
+    const cf = preview[0];
+    expect(cf.name).toBe('cf');
+    expect(cf.kind).toBe('file');
+    expect(cf.category).toBe('conflict');
+    expect(cf.decision).toBe('takeLeft');
   });
 
-  it('skip 决策产生 keep 占位行', () => {
-    const rows = mixedRows();
-    const preview = buildMergePreview(rows, { lo: 'skip' }, 'right');
-    const lo = preview.find((p) => p.path === 'lo')!;
-    expect(lo.op).toBe('keep');
-    expect(lo.reason).toContain('跳过');
-    expect(lo.actionable).toBe(false);
+  it('引擎显式 keep 项：占位不可执行、无删除告警', () => {
+    const preview = mergePreviewFromPlan(mixedRows(), { lo: 'skip' }, ops(['keep', 'lo', '决策:跳过']));
+    expect(preview[0].op).toBe('keep');
+    expect(preview[0].actionable).toBe(false);
+    expect(preview[0].warning).toBe(false);
+    expect(preview[0].decision).toBe('skip');
   });
 
-  it('目录 both 决策 = 递归合并（子项按各自决策）', () => {
-    const rows = mixedRows();
-    const preview = buildMergePreview(rows, { d: 'both' }, 'right');
-    const d = preview.find((p) => p.path === 'd')!;
-    expect(d.op).toBe('keep');
-    expect(d.reason).toContain('递归');
-    // 子项 cf 仍在（both 继承下冲突默认人工）
-    expect(preview.some((p) => p.path === 'd/cf')).toBe(true);
-  });
-
-  it('预览统计与可执行动作行', () => {
-    const rows = mixedRows();
-    const preview = buildMergePreview(rows, { 'd/cf': 'takeLeft' }, 'right');
+  it('预览统计含 keep（与确认框统计行同口径）', () => {
+    const preview = mergePreviewFromPlan(
+      mixedRows(),
+      {},
+      ops(['takeLeft', 'd/lc', 'a'], ['takeLeft', 'lo', 'b'], ['deleteTarget', 'rc', 'c'], ['keep', 'same', 'd']),
+    );
     const stats = summarizeMergePlan(preview);
-    expect(stats.takeLeft).toBeGreaterThanOrEqual(3); // d/cf + d/lc + lo
-    const ops = previewToMergeOps(preview);
-    expect(ops.every((o) => o.kind !== 'keep')).toBe(true);
-    expect(ops.some((o) => o.path === 'd/cf' && o.kind === 'takeLeft')).toBe(true);
+    expect(stats).toMatchObject({ takeLeft: 2, takeRight: 0, deleteTarget: 1, keep: 1, total: 4 });
   });
 
-  it('autoDefaultOp 全分类覆盖（10 分类 × 3 目标抽样）', () => {
-    const targets: MergeTarget[] = ['left', 'right', 'output'];
-    for (const t of targets) {
-      for (const cat of ['same', 'leftChanged', 'rightChanged', 'bothSame', 'deletedLeft', 'deletedRight', 'conflict', 'leftOnly', 'rightOnly', 'baseOnly'] as const) {
-        const row = mrow('x', { category: cat, rowState: 'auto' });
-        const r = autoDefaultOp(row, t);
-        expect(['takeLeft', 'takeRight', 'deleteTarget', 'keep']).toContain(r.op);
-        expect(r.reason.length).toBeGreaterThan(0);
-      }
-    }
+  it('空计划 → 空预览（planEmpty 分支）', () => {
+    expect(mergePreviewFromPlan(mixedRows(), {}, [])).toEqual([]);
   });
 });
 
@@ -234,7 +199,7 @@ describe('folder-merge/mergeRows 执行映射与报告导出', () => {
   it('导出文本报告', () => {
     const text = exportMergeReportText(
       { target: 'right', base: '/B', left: '/L', right: '/R' },
-      { total: 3, copied: 2, deleted: 1, skipped: 0, failed: 0, cancelled: false, details: [{ kind: 'takeLeft', path: 'a', status: 'copied', detail: null }] },
+      { total: 3, copied: 2, deleted: 1, skipped: 0, failed: 0, cancelled: false, details: [{ kind: 'takeLeft', path: 'a', reason: '仅左改 → 取左', status: 'copied' }] },
     );
     expect(text).toContain('文件夹合并报告');
     expect(text).toContain('合并目标：右侧');
@@ -245,7 +210,7 @@ describe('folder-merge/mergeRows 执行映射与报告导出', () => {
 
 describe('folder-merge/mergeRows 决策标签全集', () => {
   it('五类决策均可表达（末次 auto 清除显式项）', () => {
-    const all: MergeDecision[] = ['takeLeft', 'takeRight', 'both', 'skip', 'auto'];
+    const all: DirMergeDecision[] = ['takeLeft', 'takeRight', 'both', 'skip', 'auto'];
     const rows = mixedRows();
     let decisions: DecisionMap = {};
     for (const d of all) {
