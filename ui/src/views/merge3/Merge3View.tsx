@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   getEngineCapabilities,
   merge3Decide,
-  merge3Open,
+  merge3OpenIdempotent,
   merge3Output,
   merge3Sections,
 } from '../../ipc/engineProcess';
@@ -297,12 +297,13 @@ export function Merge3View({ tab }: { tab: Merge3Tab }) {
     setOutput(r);
   }, [sessionId, mode, markerStyle]);
 
-  // 打开会话 + 拉全块清单；只在会话句柄变化时执行一次（StrictMode 双调用由引擎 411 保护）
+  // 打开会话 + 拉全块清单；只在会话句柄变化时执行一次。
+  // 幂等封装处理 411（React StrictMode 双挂载 / 标签重挂载）：先 close 再 open。
   useEffect(() => {
     let disposed = false;
     void (async () => {
       try {
-        const r = await merge3Open({ sessionId, base, left, right, options: null });
+        const r = await merge3OpenIdempotent({ sessionId, base, left, right, options: null });
         if (disposed) return;
         setOpened(r);
         const all = await loadSections();

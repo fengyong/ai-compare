@@ -101,7 +101,7 @@ import {
   toggleBookmark,
   type BookmarkMap,
 } from './bookmarks';
-import { setActiveTextView } from './textViewBus';
+import { registerTextView } from './textViewBus';
 
 type FindMatch = { pane: 'left' | 'right'; line: number; from: number; to: number };
 type FindInfo = { matches: FindMatch[]; compiled: CompiledQuery; error: string | null };
@@ -821,7 +821,7 @@ export function TextCompareView({ tab }: { tab: Tab }) {
   // ---- 壳级命令总线注册（换行/书签命令与快捷键统一入口）----
   useEffect(() => {
     const currentLine = () => paneL.current?.cursorPos().line ?? paneR.current?.cursorPos().line ?? 0;
-    setActiveTextView({
+    const dispose = registerTextView({
       toggleWrap: () => setWrap((v) => !v),
       toggleBookmark: () => setBookmarks((m) => toggleBookmark(m, currentLine()).map),
       gotoBookmark: (dir) => {
@@ -833,7 +833,7 @@ export function TextCompareView({ tab }: { tab: Tab }) {
       clearBookmarks: () => setBookmarks(clearBookmarks()),
       setBookmarkAtCursor: (slot) => setBookmarks((m) => setBookmarkSlot(m, slot, currentLine())),
     });
-    return () => setActiveTextView(null);
+    return dispose;
   }, [revealRow]);
 
   // ---- Ctrl+F / F3 / Esc（视图级快捷键）----

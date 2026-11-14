@@ -231,7 +231,7 @@
 
 ## 最新状态（2026-11-14 21:1x；覆盖上文交接节点的旧数字）
 
-- 现场：工作树干净、全部门禁全绿 —— 引擎 **822/0**、UI **463/0**、clippy `-D warnings` 零警、`pnpm e2e:engine`（含 merge3 四方法链路 + report/generate 分块流）、`pnpm build`、`pnpm lint` 零警告；看门狗守护存活（10 分钟心跳 + 每小时 AI 接手）。
+- 现场：工作树干净、全部门禁全绿 —— 引擎 **822/0**、UI **470/0**、clippy `-D warnings` 零警、`pnpm e2e:engine`（含 merge3 四方法链路 + report/generate 分块流）、`pnpm build`、`pnpm lint` 零警告；看门狗守护存活（10 分钟心跳 + 每小时 AI 接手）。多轮自审与修复清单见文末「多轮自审」节。
 - 迭代队列：**1~8 的 UI 交互面已完成**（8 仅菜单栏/工具栏）；**队列 9 与 P13 后半为平台能力项**：媒体比较（需音频解码）、版本比较（Windows exe/dll 资源）、注册表比较（Windows 实时注册表）、自动更新与安装程序（需签名/发布基础设施）、主题 i18n 壳集成与命令面板（FR-UI-003 后半）——均需额外引擎或平台/发布能力，非本环境可闭环，已如实登记交由后续批次/看门狗续作。
 - **P14k 菜单栏与工具栏交付（队列 8）**：`MenuBar`（五个菜单按命令 category 分组、when 门控灰显、显示默认键位、帮助项、点击外部关闭）+ `ToolBar`（收藏命令、右键循环 大按钮/紧凑/隐藏、`app.toolbarLayout` 菜单项可在隐藏态恢复）+ `menuModel.ts` 纯函数（分组/门控/收藏/布局循环/短标签）+ UiSlice 布局状态 + 4 个测试。
 - **队列 8 相对 FR-UI 的未闭环项（忠实度后续批次）**：设置 > 命令页（按视图类型控制命令显示、快捷键自定义与冲突提示、工具栏收藏编辑、导出 .bcpkg）、命令面板、菜单栏原生系统菜单（macOS）、主题 i18n 壳集成。
@@ -243,3 +243,12 @@
 - **队列 5 相对 FR-RPT 的未闭环项（忠实度后续批次）**：HTML 外部样式表与 html-custom 主题、print-color/print-mono 与 portrait/landscape 打印渲染细节、include-file-links 内嵌逐文件报告链接、strikeout-left/right-diffs（interleaved）、各会话类型的会话菜单内独立报告命令（当前为状态栏/命令统一入口）。
 - **队列 4 相对 FR-CLIP 的未闭环项（忠实度后续批次）**：FR-CLIP-001 系统托盘常驻与后台自动监视剪贴板（Web 内为手动「捕获当前剪贴板」+ 历史面板）；FR-CLIP-002 全局快捷键注册（当前为应用内 `Ctrl+Alt+C`）；FR-CLIP-003 选项页（启动运行/键位开关/格式掩码/最小长度/条数与 MB 上限，当前为代码默认值 `DEFAULT_CLIP_LIMITS`）；FR-CLIP-004「文件 > 从剪贴板打开」直接加载到选定窗格（当前为与当前会话左文件新开文本比较）、「编辑 > 将选择与剪贴板比较」（当前无编辑器选区注入）、命令行 `clipboard://` 规格（当前仅 UI 内部使用，引擎 VFS 未注册该 scheme）。
 - 上文「⚠️ 额度紧张交接节点」的门禁数字（UI 400/419/434）与「下一接手项 = 队列 3」为历史快照，以本节为准。
+
+## 多轮自审（2026-11-14 21:0x；用户指令「多次 review 自己修复发现的问题」）
+
+- **轮 1（自查 + 门禁）**：① `merge3/open` / `picture/open` 会话已存在（411）未重建，React StrictMode 双挂载与图片容差滑杆重比较会失败 → 新增 `openPictureIdempotent` / `merge3OpenIdempotent`（幂等 close 后重开）；② `clipboardStore.registerText` 在空历史且被过滤时返回无效 `clipboard://0`；③ 报告 HTML 布局误传 `wrap=character`（FR-RPT-001 仅 none/word）→ 归一为 word；④ MenuBar 命令使用菜单展开期间的过期 ctx → 点击时重建上下文。
+- **轮 2（独立只读审查 + 门禁）**：P1 `ToolBar` 未订阅 `activeWindowId`（切换活动窗口后命令 when/run 用错标签）→ 补订阅；P2 历史已满时 `add()` 因裁剪误返回 null（改用尾部新 id 判断）、`registerText('')` 返回不存在规格（绕过 appendClip 强制插入）、`autoScaleGeometry` 两侧分别取 max 破坏等比（改按统一目标宽度对齐）、`deliverReport` 打印/浏览器把纯文本当 HTML 写入（新增 `escapeHtml` / `reportHtmlBody`）、容差快速拖动 close/open 竞态（请求序号 + 串行队列，只应用最后一次结果）。
+- **轮 3（安全/健壮性自查）**：报告标题 HTML 敏感字符清洗、菜单/工具栏命令 async 异常未捕获（`runCommandSafely` 统一捕获并提示）、多窗口 `textViewBus` 注销误清空其它视图（改为注册栈 + token disposer）。看门狗脚本复核：无 eval 注入、pid 文件仅数字、日志落在已忽略的 `target/`。
+- **回归测试**：411→close→open 链路、历史满 `add`、空文本 `registerText`、HTML 转义/包装/标题清洗、命令异常捕获、命令总线注册栈等；UI 测试 463 → **470**。
+- **最终门禁**：引擎 **822/0**、UI **470/0**、clippy `-D warnings` 零警、`pnpm e2e:engine`（含 merge3 四方法与 report/generate 分块链路）、`pnpm build`、`pnpm lint` 零警告；看门狗守护进程存活（10 分钟心跳 + 每小时 AI 接手）。
+- **边界（如实登记）**：队列 9 与 P13 后半属平台/发布能力项（Windows exe/dll 资源与实时注册表比较、音频解码、签名更新与安装程序、主题 i18n 壳集成、命令面板、设置 > 命令自定义页），需额外引擎或发布基础设施，非本环境可闭环；已登记为后续批次，看门狗据此续作。

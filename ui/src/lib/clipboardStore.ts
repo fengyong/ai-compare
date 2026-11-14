@@ -114,18 +114,28 @@ export class ClipboardStore {
   /** 返回新增条目（被过滤时返回 null） */
   add(text: string, ts = Date.now()): ClipboardEntry | null {
     const id = ++this.seq;
-    const before = this.entries.length;
     this.entries = appendClip(this.entries, text, ts, id, this.limits);
-    if (this.entries.length === before) return null;
+    const tail = this.entries[this.entries.length - 1];
+    // 用「尾部是否为本轮新 id」判断，而非长度相等：历史已满时裁剪会
+    // 保持长度不变，但新条目确实已写入（原实现会误返回 null）。
+    if (!tail || tail.id !== id) return null;
     this.emit();
-    return this.entries[this.entries.length - 1];
+    return tail;
   }
 
   /** 注册一段即时文本（如编辑器选择），返回可传给 text/open 的规格 */
   registerText(text: string): string {
-    const e = this.add(text);
-    if (!e && this.entries.length > 0) return `clipboard://${this.entries[this.entries.length - 1].id}`;
-    return `clipboard://${e?.id ?? 0}`;
+    const last = this.entries[this.entries.length - 1];
+    if (last?.text === text) return `clipboard://${last.id}`;
+    // add 可能因空文本/最小长度/相邻去重被过滤；此处必须强制插入，
+    // 否则空历史场景会返回无效的 clipboard://0，text/open 找不到条目。
+    const id = ++this.seq;
+    // 直接插入（绕过 appendClip 的空文本/最小长度过滤）：返回的规格必须
+    // 始终指向真实条目；裁剪只丢最旧项，新条目一定保留在尾部。
+    const next = [...this.entries, { id, text, ts: Date.now() }];
+    this.entries = next.slice(-Math.max(2, this.limits.maxEntries));
+    this.emit();
+    return `clipboard://${id}`;
   }
 
   remove(id: number): void {

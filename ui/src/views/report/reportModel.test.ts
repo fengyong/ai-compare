@@ -7,7 +7,9 @@ import {
   REPORT_TARGET_LABELS,
   buildReportParams,
   defaultReportForm,
+  escapeHtml,
   isHtmlTarget,
+  reportHtmlBody,
   reportFileName,
   sessionIdOfTab,
   wrapReportText,
@@ -57,12 +59,34 @@ describe('报告布局与表单（FR-RPT-002）', () => {
     expect(p.columns).toBeUndefined();
     const blank = buildReportParams(defaultReportForm('text'), 't-2', 'text');
     expect(blank.title).toBeUndefined();
+    const unsafe = defaultReportForm('text');
+    unsafe.title = '  <script>alert("x")</script>  ';
+    expect(buildReportParams(unsafe, 't-3', 'text').title).not.toMatch(/[<>&"']/);
     const folder = buildReportParams(defaultReportForm('folder'), 'd-1', 'folder');
     expect(folder.columns).toEqual(DEFAULT_DIR_COLUMNS);
   });
 });
 
 describe('报告换行 / 文件名 / HTML 判定（FR-RPT-001）', () => {
+  it('HTML 布局把 character 换行归一为 word，其它布局不受影响', () => {
+    const f = defaultReportForm('text');
+    f.layout = 'html';
+    f.wrap = 'character';
+    expect(buildReportParams(f, 't-1', 'text').wrap).toBe('word');
+    f.layout = 'summary';
+    expect(buildReportParams(f, 't-2', 'text').wrap).toBe('character');
+    f.layout = 'html';
+    f.wrap = 'none';
+    expect(buildReportParams(f, 't-3', 'text').wrap).toBe('none');
+  });
+  it('HTML 转义与包装：非 html 布局保留换行并转义标签', () => {
+    expect(escapeHtml('<a & "b">')).toBe('&lt;a &amp; &quot;b&quot;&gt;');
+    const body = reportHtmlBody('a<b\nsecond', 'summary');
+    expect(body).toContain('<pre>');
+    expect(body).toContain('a&lt;b\nsecond');
+    expect(reportHtmlBody('<html>raw</html>', 'html')).toBe('<html>raw</html>');
+  });
+
   it('wrap-none 原样；character 按列硬折；word 按词折', () => {
     const src = 'alpha beta gamma\nshort';
     expect(wrapReportText(src, 'none', 5)).toBe(src);

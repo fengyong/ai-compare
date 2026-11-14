@@ -7,6 +7,7 @@ import {
   commandEnabled,
   groupCommands,
   nextToolbarLayout,
+  runCommandSafely,
   toolbarCommands,
   toolbarLabel,
 } from './menuModel';
@@ -66,6 +67,23 @@ describe('工具栏（FR-UI-003）', () => {
     const home = toolbarCommands(defs, ctx('home'), ['app.report', 'app.newTab', 'missing']);
     expect(home.map((d) => d.id)).toEqual(['app.newTab']);
     expect(TOOLBAR_FAVORITES.length).toBeGreaterThan(0);
+  });
+
+  it('runCommandSafely 捕获同步/异步命令异常并提示（无未处理 rejection）', async () => {
+    const notices: string[] = [];
+    const sync: CommandDef = {
+      id: 'x1', title: '同步出错', category: '工具',
+      run: () => { throw new Error('sync-boom'); },
+    };
+    const asyncDef: CommandDef = {
+      id: 'x2', title: '异步出错', category: '工具',
+      run: async () => { throw new Error('async-boom'); },
+    };
+    await runCommandSafely(sync, ctx(), (m) => notices.push(m));
+    await runCommandSafely(asyncDef, ctx(), (m) => notices.push(m));
+    expect(notices).toHaveLength(2);
+    expect(notices[0]).toContain('sync-boom');
+    expect(notices[1]).toContain('async-boom');
   });
 
   it('布局循环 large→compact→hidden→large；compact 短标签', () => {
