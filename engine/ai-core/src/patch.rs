@@ -751,6 +751,9 @@ pub trait PatchFs {
     fn write(&self, path: &Path, data: &[u8]) -> std::io::Result<()>;
     fn exists(&self, path: &Path) -> bool;
     fn remove(&self, path: &Path) -> std::io::Result<()>;
+    /// 路径本身是否符号链接（lstat 语义，不跟随）。逃逸护栏用：词法校验
+    /// 挡不住文件系统层的链接解析。无链接概念的实现返回 false。
+    fn is_symlink(&self, path: &Path) -> bool;
 }
 
 /// std::fs 实现
@@ -774,6 +777,9 @@ impl PatchFs for StdFs {
     fn remove(&self, path: &Path) -> std::io::Result<()> {
         std::fs::remove_file(path)
     }
+    fn is_symlink(&self, path: &Path) -> bool {
+        std::fs::symlink_metadata(path).map(|m| m.file_type().is_symlink()).unwrap_or(false)
+    }
 }
 
 /// 路径护栏：拒绝绝对路径 / `..` 逃逸 / 空路径（补丁路径不可越出 root）
@@ -791,6 +797,21 @@ pub fn sanitize_patch_path(path: &str) -> Result<PathBuf, String> {
         }
     }
     Ok(p.to_path_buf())
+}
+
+/// 自 root 起逐分量检查（含末分量），返回第一个符号链接路径。
+///
+/// 末分量也要查：写入会跟随链接覆写根外文件；祖先分量同理（`create_dir_all`
+/// 与删除都会穿过它）。
+fn first_symlink_component(fs: &dyn PatchFs, root: &Path, rel: &str) -> Option<PathBuf> {
+    let mut cur = root.to_path_buf();
+    for seg in Path::new(rel).components() {
+        cur.push(seg);
+        if fs.is_symlink(&cur) {
+            return Some(cur);
+        }
+    }
+    None
 }
 
 /// 多文件补丁应用（root 为目标根目录；FR-PATCH-010 补丁生成 -> 011 应用闭环）
@@ -826,6 +847,16 @@ fn apply_one_file(fs: &dyn PatchFs, root: &Path, f: &PatchFile, opts: &PatchAppl
         Ok(p) => root.join(p),
         Err(e) => return mk(FileApplyStatus::Failed, 0, 0, Some(e)),
     };
+    // 词法护栏只保证「字符串上不逃出 root」：root 内任一分量是符号链接时，
+    // 读/写/删都会跟随它落到 root 之外（git apply 对同语料直接拒绝）。
+    if let Some(link) = first_symlink_component(fs, root, rel) {
+        return mk(
+            FileApplyStatus::Failed,
+            0,
+            0,
+            Some(format!("拒绝符号链接路径（{rel}）：{} 会越过补丁根", link.display())),
+        );
+    }
 
     // 二进制跳过（FR-PATCH-011：二进制文件报告不应用）
     if f.binary {
@@ -937,6 +968,9 @@ mod tests {
         }
         fn remove(&self, _path: &Path) -> std::io::Result<()> {
             Ok(())
+        }
+        fn is_symlink(&self, _path: &Path) -> bool {
+            false
         }
     }
 
@@ -1224,6 +1258,48 @@ Binary files a/img.png and b/img.png differ\n";
         assert_eq!(report.results[0].status, FileApplyStatus::Applied);
         assert_eq!(std::fs::read_to_string(root.join("t.txt")).unwrap(), "1\nTWO\n3\n");
         assert_eq!(report.results[1].status, FileApplyStatus::SkippedBinary);
+    }
+
+    /// R3-02：补丁目标末分量是符号链接时，写入会跟随它改到 root 之外。
+    /// 词法护栏（拒绝对路径 / `..`）挡不住这一层；git apply 同语料直接拒绝。
+    #[cfg(unix)]
+    #[test]
+    fn patch_through_symlink_target_is_rejected() {
+        use std::os::unix::fs::symlink;
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("root");
+        std::fs::create_dir_all(root.join("sub")).unwrap();
+        let outside = dir.path().join("outside");
+        std::fs::create_dir_all(&outside).unwrap();
+        let victim = outside.join("victim.txt");
+        std::fs::write(&victim, "old\n").unwrap();
+        symlink(&victim, root.join("sub").join("link.txt")).unwrap();
+        let patch = "--- a/sub/link.txt\n+++ b/sub/link.txt\n@@ -1,1 +1,1 @@\n-old\n+PATCHED\n";
+        let report = apply_patch(&StdFs, &root, patch, &OPTS).unwrap();
+        assert_eq!(report.results[0].status, FileApplyStatus::Failed, "不得穿过符号链接写根外: {report:?}");
+        let detail = report.results[0].detail.as_deref().unwrap_or("");
+        assert!(detail.contains("符号链接"), "失败明细须说明原因: {detail}");
+        assert_eq!(std::fs::read_to_string(&victim).unwrap(), "old\n", "根外文件必须完好");
+    }
+
+    /// R3-02 变体：祖先分量是符号链接（`root/sub` → 根外目录），
+    /// 写入与 `create_dir_all` 都会穿过它。
+    #[cfg(unix)]
+    #[test]
+    fn patch_through_symlinked_ancestor_is_rejected() {
+        use std::os::unix::fs::symlink;
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("root");
+        std::fs::create_dir_all(&root).unwrap();
+        let outside = dir.path().join("outside");
+        std::fs::create_dir_all(&outside).unwrap();
+        let victim = outside.join("f.txt");
+        std::fs::write(&victim, "old\n").unwrap();
+        symlink(&outside, root.join("sub")).unwrap();
+        let patch = "--- a/sub/f.txt\n+++ b/sub/f.txt\n@@ -1,1 +1,1 @@\n-old\n+PATCHED\n";
+        let report = apply_patch(&StdFs, &root, patch, &OPTS).unwrap();
+        assert_eq!(report.results[0].status, FileApplyStatus::Failed, "不得穿过符号链接父目录写根外: {report:?}");
+        assert_eq!(std::fs::read_to_string(&victim).unwrap(), "old\n", "根外文件必须完好");
     }
 
     #[test]
