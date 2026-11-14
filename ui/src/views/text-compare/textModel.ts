@@ -24,14 +24,19 @@ export interface TextSessionModel {
   summary: DiffSummary;
   undo: UndoState;
   encoding: EncodingId;
-  /** 有未保存编辑（撤销栈非空即视为脏；保存属 P5 保存链路后续） */
-  modified: boolean;
+  /** 逐侧未落盘编辑标记（R3-04：保存按侧清除；父目录刷新与关闭守卫据此判定） */
+  modifiedSides: { left: boolean; right: boolean };
   /** 行内差异 DMP 语义清理开关（引擎 inlineDiff RPC 参数映射） */
   dmpCleanup: boolean;
   /** 折叠状态（会话级：已折叠等值段 key 集合，标签切换恢复） */
   collapsedKeys: number[];
   /** 折叠上下文行数（会话级） */
   contextRows: number;
+}
+
+/** 任一侧有未落盘编辑 */
+export function isTextModified(model: TextSessionModel): boolean {
+  return model.modifiedSides.left || model.modifiedSides.right;
 }
 
 const CACHE_LIMIT = 20;
@@ -71,7 +76,7 @@ export function newTextSessionModel(init: {
     ...init,
     undo: emptyUndoState(),
     encoding: 'auto',
-    modified: false,
+    modifiedSides: { left: false, right: false },
     dmpCleanup: false,
     collapsedKeys: [],
     contextRows: 3,

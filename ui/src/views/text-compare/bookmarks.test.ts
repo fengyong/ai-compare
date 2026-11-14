@@ -80,12 +80,17 @@ describe('文本视图命令总线', () => {
       gotoBookmark: () => { hits++; },
       clearBookmarks: () => { hits++; },
       setBookmarkAtCursor: () => { hits++; },
+      saveFile: () => { hits++; },
+      saveFileAs: () => { hits++; },
     };
     setActiveTextView(actions);
     expect(activeTextView()).toBe(actions);
     activeTextView()?.toggleWrap();
     activeTextView()?.gotoBookmark(1);
     expect(hits).toBe(2);
+    activeTextView()?.saveFile();
+    activeTextView()?.saveFileAs();
+    expect(hits).toBe(4);
     setActiveTextView(null);
     expect(activeTextView()).toBeNull();
   });
@@ -98,6 +103,8 @@ describe('文本视图命令总线', () => {
       gotoBookmark: () => undefined,
       clearBookmarks: () => undefined,
       setBookmarkAtCursor: () => undefined,
+      saveFile: () => undefined,
+      saveFileAs: () => undefined,
     });
     const a = make();
     const b = make();

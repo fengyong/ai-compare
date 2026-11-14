@@ -43,6 +43,10 @@ pub struct TextSessionData {
     pub labels: (String, String),
     /// 会话内单调递增版本号（重要性重判等模型变更时 +1）
     pub rev: u64,
+    /// R3-04：两侧打开时是否带 UTF-8 BOM（保存时原样写回，FR-TXT-013）
+    pub boms: (bool, bool),
+    /// R3-04：两侧是否有未落盘编辑（text/edit 置位，text/save 落盘后清除）
+    pub modified: (bool, bool),
 }
 
 /// 三向合并会话数据（P7，text/merge3/*）

@@ -390,6 +390,11 @@ pub struct EngineCapabilities {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub text_edit: Option<bool>,
+    /// R3-04：编辑内容落盘（text/save）。缺省 **false**（旧引擎无此入口，
+    /// UI 不得把"已保存"当成既成事实）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub text_save: Option<bool>,
 }
 
 /// 许可能力（ADR-009：开源/自用默认全能力；字段为后续门控留位）
@@ -1088,6 +1093,78 @@ pub struct TextEditResult {
     pub section_count: u32,
     pub summary: DiffSummary,
     pub sections: Vec<Section>,
+}
+
+// ---------------------------------------------------------------------------
+// R3-04：text/save（编辑内容落盘，FR-TXT-020 保存 / 另存为 / 备份）
+// ---------------------------------------------------------------------------
+
+/// 保存侧选择。`Both`（缺省）只写**本次会话中被编辑过**的侧，
+/// 未编辑侧不落盘（避免无谓改写 mtime 影响父目录比较判定）；
+/// 显式 `Left`/`Right` 则无条件写该侧（另存为场景）。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub enum TextSaveSide {
+    Left,
+    Right,
+    #[default]
+    Both,
+}
+
+/// text/save 参数。
+///
+/// `leftPath`/`rightPath` 为"另存为"目标（覆盖会话打开时的路径）；
+/// 缺省写回原路径。`backup` 缺省 true：覆盖前把原文件复制为 `<path>.bak`
+/// （FR-TXT-020 备份选项；目标不存在时不产生备份）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct TextSaveParams {
+    pub session_id: String,
+    #[serde(default)]
+    pub side: TextSaveSide,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub left_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub right_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub backup: Option<bool>,
+}
+
+/// 单侧落盘结果。`bytes` 为实际写入字节数（含写回的 BOM）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct TextSaveEntry {
+    pub side: DiffSide,
+    pub path: String,
+    pub bytes: u64,
+    pub line_count: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub backup_path: Option<String>,
+}
+
+/// text/save 应答。保存不改比较模型，故 `rev` 为保存时的会话版本（不递增）；
+/// 成功落盘的侧其"未保存编辑"标记被清除。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct TextSaveResult {
+    pub session_id: String,
+    pub saved: Vec<TextSaveEntry>,
+    pub rev: u64,
+    /// 保存后仍有未保存编辑的侧（Both 语义下未编辑侧不会出现在 saved 中）
+    pub left_modified: bool,
+    pub right_modified: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -3452,6 +3529,7 @@ mod tests {
             picture_compare: Some(true),
             dir_merge: Some(true),
             text_edit: Some(true),
+            text_save: Some(true),
             format_rules: None,
         };
         let s = serde_json::to_string(&c).unwrap();
@@ -3739,6 +3817,7 @@ mod tests {
             picture_compare: None,
             dir_merge: None,
             text_edit: None,
+            text_save: None,
         };
         let s = serde_json::to_string(&c).unwrap();
         assert!(!s.contains("tableCompare") && !s.contains("hexCompare"), "{s}");
@@ -3861,6 +3940,7 @@ mod tests {
         // R3-18 起新能力位缺省 **false**（None）：旧引擎不含该字段时不得假定入口存在
         assert_eq!(v.dir_merge, None, "R3-07 能力位缺省不得为 true");
         assert_eq!(v.text_edit, None, "R3-18 能力位缺省不得为 true");
+        assert_eq!(v.text_save, None, "R3-04 能力位缺省不得为 true");
         // 新引擎序列化携带 threeWayMerge
         let c = EngineCapabilities {
             dir_compare: true,
@@ -3883,12 +3963,54 @@ mod tests {
             picture_compare: Some(true),
             dir_merge: Some(true),
             text_edit: Some(true),
+            text_save: Some(true),
         };
         let s = serde_json::to_string(&c).unwrap();
         assert!(s.contains("threeWayMerge"));
         assert!(s.contains("tableCompare") && s.contains("hexCompare"));
         assert!(s.contains("patchApply") && s.contains("dirExecute"));
         assert!(s.contains("formatRules"));
+    }
+
+    #[test]
+    fn r3_04_text_save_params_defaults_and_roundtrip() {
+        // 最小载荷：只带 sessionId -> side=both、写回原路径、备份开启（由引擎解释）
+        let v: TextSaveParams = serde_json::from_str(r#"{"sessionId":"t1"}"#).unwrap();
+        assert_eq!(v.side, TextSaveSide::Both);
+        assert!(v.left_path.is_none() && v.right_path.is_none() && v.backup.is_none());
+        assert_eq!(
+            serde_json::to_string(&v).unwrap(),
+            r#"{"sessionId":"t1","side":"both"}"#
+        );
+        // 另存为 + 关备份
+        let v: TextSaveParams = serde_json::from_str(
+            r#"{"sessionId":"t1","side":"right","rightPath":"/tmp/out.txt","backup":false}"#,
+        )
+        .unwrap();
+        assert_eq!(v.side, TextSaveSide::Right);
+        assert_eq!(v.right_path.as_deref(), Some("/tmp/out.txt"));
+        assert_eq!(v.backup, Some(false));
+    }
+
+    #[test]
+    fn r3_04_text_save_result_optional_backup_path() {
+        let r = TextSaveResult {
+            session_id: "t1".into(),
+            saved: vec![TextSaveEntry {
+                side: DiffSide::Left,
+                path: "/tmp/a.txt".into(),
+                bytes: 12,
+                line_count: 3,
+                backup_path: None,
+            }],
+            rev: 4,
+            left_modified: false,
+            right_modified: true,
+        };
+        let s = serde_json::to_string(&r).unwrap();
+        assert!(!s.contains("backupPath"), "None 不应序列化为 null: {s}");
+        let back: TextSaveResult = serde_json::from_str(&s).unwrap();
+        assert_eq!(back, r);
     }
 
     // -----------------------------------------------------------------

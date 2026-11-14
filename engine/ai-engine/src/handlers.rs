@@ -76,6 +76,7 @@ pub async fn dispatch(
         ai_protocol::method::TEXT_LINES => text_lines(params, ctx).await,
         ai_protocol::method::TEXT_INLINE_DIFF => text_inline_diff(params, ctx).await,
         ai_protocol::method::TEXT_EDIT => text_edit(params, ctx).await,
+        ai_protocol::method::TEXT_SAVE => text_save(params, ctx).await,
         ai_protocol::method::TEXT_MERGE3_OPEN => merge3_open(params, ctx).await,
         ai_protocol::method::TEXT_MERGE3_SECTIONS => merge3_sections(params, ctx).await,
         ai_protocol::method::TEXT_MERGE3_DECIDE => merge3_decide(params, ctx).await,
@@ -144,6 +145,8 @@ fn initialize() -> Result<Handled, RpcErrorObject> {
             dir_merge: Some(true),
             // R3-18：编辑增量重 diff 入口开放（text/edit，引擎权威重要性）
             text_edit: Some(true),
+            // R3-04：编辑内容落盘入口开放（text/save，含另存为与自动备份）
+            text_save: Some(true),
             dir_background_scan: true,
             dir_filters: true,
             dir_operate: true,
@@ -607,14 +610,14 @@ async fn text_open(
     let right_path = VfsPath::parse(&params.right).map_err(|e| mapping::vfs_error_to_rpc(&e))?;
     let opts_dto = params.options.clone().unwrap_or_default();
 
-    let left_text = ctx
+    let (left_text, left_bom) = ctx
         .vfs
-        .read_file_text(&left_path)
+        .read_file_text_bom(&left_path)
         .await
         .map_err(|e| mapping::vfs_error_to_rpc(&e))?;
-    let right_text = ctx
+    let (right_text, right_bom) = ctx
         .vfs
-        .read_file_text(&right_path)
+        .read_file_text_bom(&right_path)
         .await
         .map_err(|e| mapping::vfs_error_to_rpc(&e))?;
 
@@ -676,6 +679,8 @@ async fn text_open(
                 config,
                 labels: (params.left.clone(), params.right.clone()),
                 rev: 0,
+                boms: (left_bom, right_bom),
+                modified: (false, false),
             }),
         );
     }
@@ -748,6 +753,11 @@ async fn text_edit(
             };
             let entries = edit_entries(table, start, end, &op.text);
             table.replace_lines_entries(start, end, entries);
+            if idx == 0 {
+                data.modified.0 = true;
+            } else {
+                data.modified.1 = true;
+            }
         }
 
         // 4. 引擎权威重 diff
@@ -772,6 +782,140 @@ async fn text_edit(
     Ok(Handled::Value(
         serde_json::to_value(&result).expect("text/edit 结果可序列化"),
     ))
+}
+
+/// text/save：会话行表落盘（R3-04，FR-TXT-020 保存 / 另存为 / 自动备份）。
+///
+/// - `side=both`（缺省）只写会话内被编辑过的侧：未编辑侧不落盘，避免无谓改写
+///   mtime 干扰父目录的时间戳比较判定；显式 left/right 无条件写该侧（另存为）。
+/// - 行尾风格与末尾换行由行表原样保留（`LineTable::to_text` 精确回环），
+///   BOM 按打开时探测结果原样写回（FR-TXT-013）。
+/// - `backup` 缺省 true：覆盖前把原文件复制为 `<path>.bak`；目标不存在时不备份。
+///   备份失败即整次保存失败（不能静默丢掉用户要求的保险）。
+/// - 另存为会把该侧标签改指到新目标（与 BC 一致），否则下一次保存会写回原文件。
+/// - 保存不改比较模型：`rev` 不递增；成功落盘的侧清除未保存编辑标记。
+async fn text_save(
+    params: Option<serde_json::Value>,
+    ctx: &HandlerCtx,
+) -> Result<Handled, RpcErrorObject> {
+    let params: ai_protocol::TextSaveParams = parse_params(params)?;
+    use ai_protocol::TextSaveSide as S;
+
+    // 1. 锁内取快照（行表序列化 + 目标解析），IO 不持会话锁
+    let plan = with_text_session(&ctx.sessions, &params.session_id, |data| {
+        let selected = match params.side {
+            S::Left => [true, false],
+            S::Right => [false, true],
+            S::Both => [data.modified.0, data.modified.1],
+        };
+        let targets = [
+            params.left_path.as_deref().unwrap_or(&data.labels.0),
+            params.right_path.as_deref().unwrap_or(&data.labels.1),
+        ];
+        let tables = [&data.left, &data.right];
+        let boms = [data.boms.0, data.boms.1];
+        let mut plan = Vec::new();
+        for idx in 0..2 {
+            if !selected[idx] {
+                continue;
+            }
+            let path = VfsPath::parse(targets[idx]).map_err(|e| mapping::vfs_error_to_rpc(&e))?;
+            let text = tables[idx].to_text();
+            let mut bytes = Vec::with_capacity(text.len() + if boms[idx] { 3 } else { 0 });
+            if boms[idx] {
+                bytes.extend_from_slice(ai_vfs::UTF8_BOM);
+            }
+            bytes.extend_from_slice(text.as_bytes());
+            plan.push(SavePlan {
+                idx,
+                path,
+                bytes,
+                line_count: u32::try_from(tables[idx].len()).unwrap_or(u32::MAX),
+                retarget: if idx == 0 {
+                    params.left_path.is_some()
+                } else {
+                    params.right_path.is_some()
+                },
+            });
+        }
+        Ok(plan)
+    })
+    .await?;
+
+    // 2. 备份 + 写入（任一侧失败即中止；已写侧不回滚，与 BC 逐侧保存一致）
+    let backup = params.backup.unwrap_or(true);
+    let mut saved = Vec::with_capacity(plan.len());
+    for p in &plan {
+        let backup_path = if backup {
+            let bak = VfsPath::parse(&format!("{}.bak", p.path.as_str()))
+                .map_err(|e| mapping::vfs_error_to_rpc(&e))?;
+            match ctx.vfs.read_file_bytes(&p.path).await {
+                Ok(orig) => {
+                    ctx.vfs
+                        .write_file_bytes(&bak, &orig)
+                        .await
+                        .map_err(|e| mapping::vfs_error_to_rpc(&e))?;
+                    Some(bak.as_str().to_string())
+                }
+                Err(ai_vfs::VfsError::NotFound { .. }) => None,
+                Err(e) => return Err(mapping::vfs_error_to_rpc(&e)),
+            }
+        } else {
+            None
+        };
+        ctx.vfs
+            .write_file_bytes(&p.path, &p.bytes)
+            .await
+            .map_err(|e| mapping::vfs_error_to_rpc(&e))?;
+        saved.push(ai_protocol::TextSaveEntry {
+            side: if p.idx == 0 {
+                ai_protocol::DiffSide::Left
+            } else {
+                ai_protocol::DiffSide::Right
+            },
+            path: p.path.as_str().to_string(),
+            bytes: p.bytes.len() as u64,
+            line_count: p.line_count,
+            backup_path,
+        });
+    }
+
+    // 3. 清除已落盘侧的未保存标记（另存为同时改指标签）
+    let result = with_text_session(&ctx.sessions, &params.session_id, |data| {
+        for (p, entry) in plan.iter().zip(&saved) {
+            if p.idx == 0 {
+                data.modified.0 = false;
+                if p.retarget {
+                    data.labels.0 = entry.path.clone();
+                }
+            } else {
+                data.modified.1 = false;
+                if p.retarget {
+                    data.labels.1 = entry.path.clone();
+                }
+            }
+        }
+        Ok(ai_protocol::TextSaveResult {
+            session_id: params.session_id.clone(),
+            saved,
+            rev: data.rev,
+            left_modified: data.modified.0,
+            right_modified: data.modified.1,
+        })
+    })
+    .await?;
+    Ok(Handled::Value(
+        serde_json::to_value(&result).expect("text/save 结果可序列化"),
+    ))
+}
+
+/// text/save 的单侧落盘计划（锁内算好，锁外做 IO）
+struct SavePlan {
+    idx: usize,
+    path: VfsPath,
+    bytes: Vec<u8>,
+    line_count: u32,
+    retarget: bool,
 }
 
 /// 编辑区间的新行条目：行尾风格随该侧既有风格，文件末尾"有无换行符"语义保留。
@@ -5426,5 +5570,378 @@ mod text_edit_tests {
         assert_eq!(dominant_eol(&LineTable::from_text("a\rb\rc\n")), E::Cr);
         assert_eq!(dominant_eol(&LineTable::from_text("abc")), E::Lf);
         assert_eq!(dominant_eol(&LineTable::from_text("")), E::Lf);
+    }
+
+    // -----------------------------------------------------------------
+    // R3-04：text/save（落盘 / 另存为 / 备份 / 编码签名 / 脏标记）
+    // -----------------------------------------------------------------
+
+    async fn save(
+        c: &HandlerCtx,
+        id: &str,
+        extra: serde_json::Value,
+    ) -> Result<serde_json::Value, RpcErrorObject> {
+        let mut p = json!({"sessionId": id});
+        if let Some(obj) = extra.as_object() {
+            for (k, v) in obj {
+                p[k] = v.clone();
+            }
+        }
+        call(c, "text/save", p).await
+    }
+
+    async fn modified_flags(c: &HandlerCtx, id: &str) -> (bool, bool) {
+        let sessions = c.sessions.lock().await;
+        match sessions.get(id).unwrap() {
+            Session::Text(d) => d.modified,
+            _ => panic!("不是文本会话"),
+        }
+    }
+
+    /// 测试 Provider：`read_only` 全禁写；`refuse_bak` 只禁 `.bak` 写入
+    /// （用于把失败点精确落在备份写入或主写入上）
+    struct TestVfs {
+        fs: ai_vfs::LocalFs,
+        read_only: bool,
+        refuse_bak: bool,
+    }
+
+    #[async_trait::async_trait]
+    impl ai_vfs::VfsProvider for TestVfs {
+        fn scheme(&self) -> &'static str {
+            "test-vfs"
+        }
+        fn capabilities(&self) -> ai_vfs::VfsCaps {
+            if self.read_only {
+                ai_vfs::VfsCaps::READ
+            } else {
+                ai_vfs::VfsCaps::READ.union(ai_vfs::VfsCaps::all_writes())
+            }
+        }
+        async fn stat(&self, p: &VfsPath) -> Result<ai_vfs::StatInfo, ai_vfs::VfsError> {
+            self.fs.stat(p).await
+        }
+        async fn list_dir(
+            &self,
+            p: &VfsPath,
+        ) -> Result<Vec<ai_vfs::VfsDirEntry>, ai_vfs::VfsError> {
+            self.fs.list_dir(p).await
+        }
+        async fn read_file_bytes(&self, p: &VfsPath) -> Result<Vec<u8>, ai_vfs::VfsError> {
+            self.fs.read_file_bytes(p).await
+        }
+        async fn write_file_bytes(&self, p: &VfsPath, data: &[u8]) -> Result<(), ai_vfs::VfsError> {
+            if self.read_only || (self.refuse_bak && p.as_str().ends_with(".bak")) {
+                return Err(ai_vfs::VfsError::Unsupported("test-vfs: 写文件".into()));
+            }
+            self.fs.write_file_bytes(p, data).await
+        }
+    }
+
+    fn vfs(read_only: bool, refuse_bak: bool) -> std::sync::Arc<TestVfs> {
+        std::sync::Arc::new(TestVfs {
+            fs: ai_vfs::LocalFs::new(),
+            read_only,
+            refuse_bak,
+        })
+    }
+
+    /// Both 缺省只写被编辑过的侧：未编辑侧字节不变（mtime 也不该动，
+    /// 否则父目录按时间戳比较会把未改文件判成"更新"）
+    #[tokio::test]
+    async fn save_both_writes_only_edited_side() {
+        let c = ctx();
+        let dir = open(&c, "sv1", "a\nb\nc\n", "a\nB\nc\n", json!({})).await;
+        let edited = edit(
+            &c,
+            "sv1",
+            json!([{"side": "left", "start": 1, "end": 2, "text": "BB"}]),
+        )
+        .await
+        .unwrap();
+        let res = save(&c, "sv1", json!({})).await.unwrap();
+        assert_eq!(res["saved"].as_array().unwrap().len(), 1, "{res}");
+        assert_eq!(res["saved"][0]["side"], "left");
+        assert_eq!(res["saved"][0]["lineCount"], 3);
+        assert_eq!(res["saved"][0]["bytes"], 7);
+        assert_eq!(res["rev"], edited["rev"], "保存不改比较模型，rev 不递增");
+        assert_eq!(res["leftModified"], false);
+        assert_eq!(res["rightModified"], false);
+        assert_eq!(
+            std::fs::read(dir.path().join("L.txt")).unwrap(),
+            b"a\nBB\nc\n"
+        );
+        assert_eq!(
+            std::fs::read(dir.path().join("R.txt")).unwrap(),
+            b"a\nB\nc\n",
+            "未编辑侧不得被改写"
+        );
+        assert!(!dir.path().join("R.txt.bak").exists());
+    }
+
+    /// 备份缺省开启：.bak 保存的是**覆盖前**内容；backup=false 不动已有 .bak
+    #[tokio::test]
+    async fn save_backup_default_on_and_opt_out() {
+        let c = ctx();
+        let dir = open(&c, "sv2", "old\n", "x\n", json!({})).await;
+        edit(
+            &c,
+            "sv2",
+            json!([{"side": "left", "start": 0, "end": 1, "text": "new"}]),
+        )
+        .await
+        .unwrap();
+        let res = save(&c, "sv2", json!({})).await.unwrap();
+        let bak = dir.path().join("L.txt.bak");
+        assert_eq!(std::fs::read(&bak).unwrap(), b"old\n");
+        assert_eq!(
+            res["saved"][0]["backupPath"],
+            bak.to_string_lossy().as_ref()
+        );
+
+        edit(
+            &c,
+            "sv2",
+            json!([{"side": "left", "start": 0, "end": 1, "text": "newer"}]),
+        )
+        .await
+        .unwrap();
+        let res2 = save(&c, "sv2", json!({"backup": false})).await.unwrap();
+        assert!(res2["saved"][0].get("backupPath").is_none(), "{res2}");
+        assert_eq!(
+            std::fs::read(&bak).unwrap(),
+            b"old\n",
+            "关备份不得改写已有 .bak"
+        );
+        assert_eq!(std::fs::read(dir.path().join("L.txt")).unwrap(), b"newer\n");
+    }
+
+    /// 行尾风格与"末尾无换行"必须逐字节保留（CRLF 文件不得被保存成 LF）
+    #[tokio::test]
+    async fn save_preserves_crlf_and_absent_final_newline() {
+        let c = ctx();
+        let dir = open(&c, "sv3", "a\r\nb\r\nc", "a\r\nb\r\nc", json!({})).await;
+        edit(
+            &c,
+            "sv3",
+            json!([{"side": "left", "start": 1, "end": 2, "text": "B"}]),
+        )
+        .await
+        .unwrap();
+        save(&c, "sv3", json!({})).await.unwrap();
+        assert_eq!(
+            std::fs::read(dir.path().join("L.txt")).unwrap(),
+            b"a\r\nB\r\nc"
+        );
+    }
+
+    /// BOM 原样写回：带 BOM 的侧保留签名，不带 BOM 的侧不得被加上（FR-TXT-013）
+    #[tokio::test]
+    async fn save_preserves_bom_per_side() {
+        let c = ctx();
+        let dir = tempfile::tempdir().unwrap();
+        let l = dir.path().join("L.txt");
+        let r = dir.path().join("R.txt");
+        std::fs::write(&l, b"\xEF\xBB\xBFa\nb\n").unwrap();
+        std::fs::write(&r, b"a\nb\n").unwrap();
+        call(
+            &c,
+            "text/open",
+            json!({"sessionId": "sv4", "left": l.to_string_lossy(), "right": r.to_string_lossy()}),
+        )
+        .await
+        .unwrap();
+        edit(
+            &c,
+            "sv4",
+            json!([
+                {"side": "left", "start": 0, "end": 1, "text": "A"},
+                {"side": "right", "start": 0, "end": 1, "text": "A"}
+            ]),
+        )
+        .await
+        .unwrap();
+        save(&c, "sv4", json!({})).await.unwrap();
+        assert_eq!(std::fs::read(&l).unwrap(), b"\xEF\xBB\xBFA\nb\n");
+        assert_eq!(std::fs::read(&r).unwrap(), b"A\nb\n");
+    }
+
+    /// 另存为：原文件不动、新目标不产生备份、该侧标签改指新目标
+    /// （否则下一次缺省保存会把内容写回原文件）
+    #[tokio::test]
+    async fn save_as_retargets_side_and_keeps_original() {
+        let c = ctx();
+        let dir = open(&c, "sv5", "orig\n", "r\n", json!({})).await;
+        let l = dir.path().join("L.txt");
+        let out = dir.path().join("out.txt");
+        edit(
+            &c,
+            "sv5",
+            json!([{"side": "left", "start": 0, "end": 1, "text": "edited"}]),
+        )
+        .await
+        .unwrap();
+        let res = save(
+            &c,
+            "sv5",
+            json!({"side": "left", "leftPath": out.to_string_lossy()}),
+        )
+        .await
+        .unwrap();
+        assert_eq!(std::fs::read(&out).unwrap(), b"edited\n");
+        assert_eq!(
+            std::fs::read(&l).unwrap(),
+            b"orig\n",
+            "另存为不得改写原文件"
+        );
+        assert!(
+            res["saved"][0].get("backupPath").is_none(),
+            "新目标不存在 -> 不备份"
+        );
+        assert!(!dir.path().join("out.txt.bak").exists());
+
+        edit(
+            &c,
+            "sv5",
+            json!([{"side": "left", "start": 0, "end": 1, "text": "again"}]),
+        )
+        .await
+        .unwrap();
+        save(&c, "sv5", json!({})).await.unwrap();
+        assert_eq!(
+            std::fs::read(&out).unwrap(),
+            b"again\n",
+            "后续保存应写新目标"
+        );
+        assert_eq!(std::fs::read(&l).unwrap(), b"orig\n");
+    }
+
+    /// 无编辑时保存是空操作：不写文件、不产生 .bak
+    #[tokio::test]
+    async fn save_without_edits_is_noop() {
+        let c = ctx();
+        let dir = open(&c, "sv6", "a\n", "b\n", json!({})).await;
+        let res = save(&c, "sv6", json!({})).await.unwrap();
+        assert_eq!(res["saved"].as_array().unwrap().len(), 0, "{res}");
+        assert_eq!(res["rev"], 0);
+        assert!(!dir.path().join("L.txt.bak").exists());
+        assert!(!dir.path().join("R.txt.bak").exists());
+    }
+
+    /// 显式指定侧：未编辑也写（另存为/强制覆盖场景）
+    #[tokio::test]
+    async fn save_explicit_side_writes_unmodified_side() {
+        let c = ctx();
+        let dir = open(&c, "sv7", "a\n", "b\n", json!({})).await;
+        let res = save(&c, "sv7", json!({"side": "right"})).await.unwrap();
+        assert_eq!(res["saved"].as_array().unwrap().len(), 1, "{res}");
+        assert_eq!(res["saved"][0]["side"], "right");
+        assert_eq!(std::fs::read(dir.path().join("R.txt.bak")).unwrap(), b"b\n");
+        assert!(!dir.path().join("L.txt.bak").exists());
+    }
+
+    /// 删空一侧：落盘为 0 字节文件（不是"保留原内容"）
+    #[tokio::test]
+    async fn save_empty_side_writes_zero_bytes() {
+        let c = ctx();
+        let dir = open(&c, "sv8", "a\nb\n", "b\n", json!({})).await;
+        edit(&c, "sv8", json!([{"side": "left", "start": 0, "text": ""}]))
+            .await
+            .unwrap();
+        let res = save(&c, "sv8", json!({})).await.unwrap();
+        assert_eq!(res["saved"][0]["bytes"], 0);
+        assert_eq!(res["saved"][0]["lineCount"], 0);
+        assert_eq!(std::fs::read(dir.path().join("L.txt")).unwrap(), b"");
+    }
+
+    /// 落盘失败不得清除脏标记（否则 UI 会以为已保存而丢掉编辑）
+    #[tokio::test]
+    async fn save_failure_keeps_modified_flag() {
+        let c = ctx();
+        let dir = open(&c, "sv9", "a\n", "b\n", json!({})).await;
+        edit(
+            &c,
+            "sv9",
+            json!([{"side": "left", "start": 0, "end": 1, "text": "A"}]),
+        )
+        .await
+        .unwrap();
+        let bad = dir.path().join("no-such-dir").join("out.txt");
+        let err = save(
+            &c,
+            "sv9",
+            json!({"side": "left", "leftPath": bad.to_string_lossy(), "backup": false}),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.code, codes::PATH_NOT_FOUND, "{err:?}");
+        assert_eq!(modified_flags(&c, "sv9").await, (true, false));
+        assert_eq!(std::fs::read(dir.path().join("L.txt")).unwrap(), b"a\n");
+    }
+
+    /// 只读 Provider：写能力缺失必须报错，不得静默"保存成功"（R3-12 同类）。
+    /// backup=false 让失败点落在**主写入**上（否则先失败的是备份写入）。
+    #[tokio::test]
+    async fn save_on_readonly_provider_reports_error() {
+        let mut c = ctx();
+        c.vfs = vfs(true, false);
+        let dir = open(&c, "sv10", "a\n", "b\n", json!({})).await;
+        edit(
+            &c,
+            "sv10",
+            json!([{"side": "left", "start": 0, "end": 1, "text": "A"}]),
+        )
+        .await
+        .unwrap();
+        let err = save(&c, "sv10", json!({"backup": false}))
+            .await
+            .unwrap_err();
+        assert!(err.message.contains("不支持的操作"), "{err:?}");
+        assert_eq!(modified_flags(&c, "sv10").await, (true, false));
+        assert_eq!(std::fs::read(dir.path().join("L.txt")).unwrap(), b"a\n");
+    }
+
+    /// 备份写入失败即整次保存失败：主文件不得被覆盖（用户要求的保险没做成）
+    #[tokio::test]
+    async fn save_aborts_when_backup_write_fails() {
+        let mut c = ctx();
+        c.vfs = vfs(false, true);
+        let dir = open(&c, "sv11", "a\n", "b\n", json!({})).await;
+        edit(
+            &c,
+            "sv11",
+            json!([{"side": "left", "start": 0, "end": 1, "text": "A"}]),
+        )
+        .await
+        .unwrap();
+        let err = save(&c, "sv11", json!({})).await.unwrap_err();
+        assert!(err.message.contains("不支持的操作"), "{err:?}");
+        assert_eq!(modified_flags(&c, "sv11").await, (true, false));
+        assert_eq!(std::fs::read(dir.path().join("L.txt")).unwrap(), b"a\n");
+        assert!(!dir.path().join("L.txt.bak").exists());
+    }
+
+    /// 未知会话 / 非文本会话：明确报错
+    #[tokio::test]
+    async fn save_rejects_unknown_and_non_text_session() {
+        let c = ctx();
+        let err = save(&c, "nope", json!({})).await.unwrap_err();
+        assert_eq!(err.code, codes::SESSION_NOT_FOUND);
+
+        let dir = tempfile::tempdir().unwrap();
+        let dl = dir.path().join("dl");
+        let dr = dir.path().join("dr");
+        std::fs::create_dir(&dl).unwrap();
+        std::fs::create_dir(&dr).unwrap();
+        call(
+            &c,
+            "dir/open",
+            json!({"sessionId": "d1", "left": dl.to_string_lossy(), "right": dr.to_string_lossy()}),
+        )
+        .await
+        .unwrap();
+        let err = save(&c, "d1", json!({})).await.unwrap_err();
+        assert_eq!(err.code, codes::INVALID_PARAMS);
+        assert!(err.message.contains("不是文本会话"), "{err:?}");
     }
 }

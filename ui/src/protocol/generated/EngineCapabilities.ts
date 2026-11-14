@@ -87,4 +87,9 @@ dirMerge?: boolean,
  * R3-18：编辑增量重 diff（text/edit）。缺省 **false**（旧引擎无此入口，
  * UI 回落客户端重 diff；不得假定能力存在）。
  */
-textEdit?: boolean, };
+textEdit?: boolean, 
+/**
+ * R3-04：编辑内容落盘（text/save）。缺省 **false**（旧引擎无此入口，
+ * UI 不得把"已保存"当成既成事实）。
+ */
+textSave?: boolean, };

@@ -23,6 +23,7 @@
         "tableCompare": true,
         "textCompare": true,
         "textEdit": true,
+        "textSave": true,
         "threeWayMerge": true
       },
       "engine": {

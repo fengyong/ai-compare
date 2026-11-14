@@ -7,8 +7,10 @@ import {
   getEngineCapabilities,
   openText,
   requestInlineDiff,
+  saveText,
   trackSession,
 } from '../../ipc/engineProcess';
+import { useShell } from '../../shell/store';
 import { RpcError } from '../../protocol/client';
 import { S } from '../../strings';
 import { sessionService } from '../../session/service';
@@ -90,10 +92,12 @@ import {
 } from './undoStack';
 import {
   getTextSession,
+  isTextModified,
   newTextSessionModel,
   putTextSession,
   type TextSessionModel,
 } from './textModel';
+import { runTextSave, saveRequestsFor, type SaveRequest } from './textSave';
 import { AlignedPane, type AlignedPaneHandle, type PaneContentInput } from './AlignedPane';
 import { FindPanel, type FindPanelState } from './FindPanel';
 import { OverviewBar } from './OverviewBar';
@@ -455,8 +459,68 @@ export function TextCompareView({ tab }: { tab: Tab }) {
   const applySideContent = useCallback((model: TextSessionModel, side: 'left' | 'right', lines: string[]): void => {
     if (side === 'left') model.leftLines = lines;
     else model.rightLines = lines;
-    model.modified = true;
+    model.modifiedSides[side] = true;
   }, []);
+
+  // ---- R3-04：保存 / 另存为（FR-TXT-020；落盘由引擎 text/save 执行）----
+  const [saveNotice, setSaveNotice] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  /** 活动窗格侧（另存为的作用对象，与 BC 一致） */
+  const activeSideRef = useRef<'left' | 'right'>('left');
+
+  const doSave = useCallback(async (requests: SaveRequest[]): Promise<void> => {
+    const model = modelRef.current;
+    if (!model || requests.length === 0) {
+      setSaveNotice(S.text.saveNothing);
+      return;
+    }
+    setSaving(true);
+    try {
+      const out = await runTextSave(model.sessionId, requests, { save: saveText });
+      // 只清除真正落盘的侧；另存为把该侧目标改指新路径（下次保存不再写原文件）
+      for (const e of out.saved) {
+        model.modifiedSides[e.side] = false;
+        if (e.side === 'left') model.leftPath = e.path;
+        else model.rightPath = e.path;
+      }
+      putTextSession(model);
+      if (out.unsupported) {
+        setSaveNotice(S.text.saveUnsupported);
+        return;
+      }
+      if (out.error !== null) {
+        setSaveNotice(`${S.text.saveFail}: ${out.error}`);
+        return;
+      }
+      const paths = out.saved.map((e) => e.path).join('、');
+      const backups = out.saved.filter((e) => e.backupPath !== undefined).length;
+      setSaveNotice(
+        backups > 0
+          ? `${S.text.saved}：${paths}（${S.text.savedBackupSuffix} ${backups}）`
+          : `${S.text.saved}：${paths}`
+      );
+    } finally {
+      setSaving(false);
+    }
+  }, []);
+
+  const doSaveAs = useCallback(
+    (side: 'left' | 'right') => {
+      const model = modelRef.current;
+      if (!model) return;
+      useShell.getState().openPrompt({
+        title: `${S.text.saveAsTitle}（${side === 'left' ? S.text.paneLeft : S.text.paneRight}）`,
+        initialValue: side === 'left' ? model.leftPath : model.rightPath,
+        onSubmit: (value) => {
+          if (value === null) return;
+          const path = value.trim();
+          if (!path) return;
+          void doSave([{ side, path }]);
+        },
+      });
+    },
+    [doSave]
+  );
 
   // ---- 初始加载（缓存水合优先，避免引擎重开覆盖 UI 侧编辑）----
   useEffect(() => {
@@ -812,7 +876,7 @@ export function TextCompareView({ tab }: { tab: Tab }) {
     async (enc: EncodingId) => {
       const model = modelRef.current;
       if (!model || enc === model.encoding) return;
-      if (model.modified && !window.confirm(S.text.encodingDiscardConfirm)) return;
+      if (isTextModified(model) && !window.confirm(S.text.encodingDiscardConfirm)) return;
       model.encoding = enc;
       putTextSession(model);
       try {
@@ -830,7 +894,7 @@ export function TextCompareView({ tab }: { tab: Tab }) {
         model.sections = loaded.sections;
         model.summary = loaded.summary;
         model.undo = emptyUndoState();
-        model.modified = false;
+        model.modifiedSides = { left: false, right: false };
         collapsedRef.current = defaultCollapsedKeys(
           buildAlignedDocs(model.sections, model.leftLines, model.rightLines).left.rows,
           contextRowsRef.current
@@ -880,9 +944,14 @@ export function TextCompareView({ tab }: { tab: Tab }) {
       },
       clearBookmarks: () => setBookmarks(clearBookmarks()),
       setBookmarkAtCursor: (slot) => setBookmarks((m) => setBookmarkSlot(m, slot, currentLine())),
+      saveFile: () => {
+        const m = modelRef.current;
+        if (m) void doSave(saveRequestsFor(m.modifiedSides));
+      },
+      saveFileAs: () => doSaveAs(activeSideRef.current),
     });
     return dispose;
-  }, [revealRow]);
+  }, [revealRow, doSave, doSaveAs]);
 
   // ---- Ctrl+F / F3 / Esc（视图级快捷键）----
   const onKeyDown = useCallback(
@@ -950,7 +1019,7 @@ export function TextCompareView({ tab }: { tab: Tab }) {
           {model.leftLines.length.toLocaleString('zh-CN')} {S.text.linesUnit} ⇄{' '}
           {model.rightLines.length.toLocaleString('zh-CN')} {S.text.linesUnit}
         </span>
-        {model.modified && (
+        {isTextModified(model) && (
           <span className="aic-dirty-chip" title={S.text.modifiedDot}>
             ●
           </span>
@@ -973,6 +1042,22 @@ export function TextCompareView({ tab }: { tab: Tab }) {
         </button>
         <button className="nav" onClick={doRedo} disabled={model.undo.redo.length === 0} title={S.text.redo}>
           ↷
+        </button>
+        <button
+          className="nav"
+          onClick={() => void doSave(saveRequestsFor(model.modifiedSides))}
+          disabled={saving || !isTextModified(model)}
+          title={S.text.saveFileHint}
+        >
+          {S.text.saveFile}
+        </button>
+        <button
+          className="nav"
+          onClick={() => doSaveAs(activeSideRef.current)}
+          disabled={saving}
+          title={S.text.saveFileAsHint}
+        >
+          {S.text.saveFileAs}
         </button>
         <button className="nav" onClick={() => setFindOpen((v) => !v)} title={S.text.find}>
           {S.text.find}
@@ -1102,6 +1187,11 @@ export function TextCompareView({ tab }: { tab: Tab }) {
         <span className="meta dim">{inlineSource}</span>
         <span className="meta dim">{rediffSource}</span>
         {rediffNotice && <span className="meta warn">{rediffNotice}</span>}
+        {saveNotice && (
+          <span className={`meta${saveNotice.startsWith(S.text.saveFail) || saveNotice === S.text.saveUnsupported ? ' warn' : ' dim'}`}>
+            {saveNotice}
+          </span>
+        )}
       </div>
 
       {findOpen && (
@@ -1128,7 +1218,9 @@ export function TextCompareView({ tab }: { tab: Tab }) {
             onUserEdit,
             onScroll: onPaneScroll,
             onUnfold: onUnfoldRange,
-            onSelection: () => undefined,
+            onSelection: () => {
+              activeSideRef.current = 'left';
+            },
           }}
           registerHandle={registerPaneHandle('left')}
         />
@@ -1142,7 +1234,9 @@ export function TextCompareView({ tab }: { tab: Tab }) {
             onUserEdit,
             onScroll: onPaneScroll,
             onUnfold: onUnfoldRange,
-            onSelection: () => undefined,
+            onSelection: () => {
+              activeSideRef.current = 'right';
+            },
           }}
           registerHandle={registerPaneHandle('right')}
         />
