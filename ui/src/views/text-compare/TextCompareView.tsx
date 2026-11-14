@@ -91,6 +91,17 @@ import { OverviewBar } from './OverviewBar';
 import { DiffListPanel } from './DiffListPanel';
 import { detectLangId } from './langDetect';
 import { loadLangExtension } from './langPacks';
+import {
+  BOOKMARK_SLOTS,
+  bookmarkLabel,
+  clearBookmarks,
+  nextBookmarkLine,
+  prevBookmarkLine,
+  setBookmark as setBookmarkSlot,
+  toggleBookmark,
+  type BookmarkMap,
+} from './bookmarks';
+import { setActiveTextView } from './textViewBus';
 
 type FindMatch = { pane: 'left' | 'right'; line: number; from: number; to: number };
 type FindInfo = { matches: FindMatch[]; compiled: CompiledQuery; error: string | null };
@@ -134,6 +145,10 @@ export function TextCompareView({ tab }: { tab: Tab }) {
     side: 'left',
   });
   const [findIdx, setFindIdx] = useState(0);
+  /** FR-TXT-002 自动换行（工具栏「换行」按钮 / 视图菜单） */
+  const [wrap, setWrap] = useState(false);
+  /** FR-TXT-023 书签：编号 0-9 → 0 基对齐行号 */
+  const [bookmarks, setBookmarks] = useState<BookmarkMap>({});
 
   // ------------------------------------------------------------------
   // 非响应式会话数据（textModel 缓存 + refs）
@@ -164,6 +179,10 @@ export function TextCompareView({ tab }: { tab: Tab }) {
   findStateRef.current = findState;
   const findIdxRef = useRef(0);
   findIdxRef.current = findIdx;
+  const wrapRef = useRef(false);
+  wrapRef.current = wrap;
+  const bookmarksRef = useRef<BookmarkMap>({});
+  bookmarksRef.current = bookmarks;
   /** 最近一次语法高亮扩展（refreshDecorations 复用） */
   const langExtRef = useRef<Extension | null>(null);
   /** 窗格 handle 首次双齐后的补同步标记（初始 rebuild 早于窗格挂载，setContent 会落空） */
@@ -297,6 +316,7 @@ export function TextCompareView({ tab }: { tab: Tab }) {
             : null,
         langExtension: ext,
         editable: editingRef.current,
+        bookmarks: bookmarksRef.current,
       });
       hL?.setContent(buildInput('left'));
       hR?.setContent(buildInput('right'));
@@ -367,6 +387,7 @@ export function TextCompareView({ tab }: { tab: Tab }) {
           : null,
       langExtension: langExtRef.current,
       editable: editingRef.current,
+      bookmarks: bookmarksRef.current,
     });
     paneL.current?.setContent(buildInput('left'));
     paneR.current?.setContent(buildInput('right'));
@@ -792,6 +813,29 @@ export function TextCompareView({ tab }: { tab: Tab }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [findState]);
 
+  // ---- FR-TXT-002/023：自动换行与书签变化 → 刷新装饰（书签行标记即时生效）----
+  useEffect(() => {
+    refreshDecorations();
+  }, [wrap, bookmarks, refreshDecorations]);
+
+  // ---- 壳级命令总线注册（换行/书签命令与快捷键统一入口）----
+  useEffect(() => {
+    const currentLine = () => paneL.current?.cursorPos().line ?? paneR.current?.cursorPos().line ?? 0;
+    setActiveTextView({
+      toggleWrap: () => setWrap((v) => !v),
+      toggleBookmark: () => setBookmarks((m) => toggleBookmark(m, currentLine()).map),
+      gotoBookmark: (dir) => {
+        const line = dir === 1
+          ? nextBookmarkLine(bookmarksRef.current, currentLine())
+          : prevBookmarkLine(bookmarksRef.current, currentLine());
+        if (line !== null) revealRow(line);
+      },
+      clearBookmarks: () => setBookmarks(clearBookmarks()),
+      setBookmarkAtCursor: (slot) => setBookmarks((m) => setBookmarkSlot(m, slot, currentLine())),
+    });
+    return () => setActiveTextView(null);
+  }, [revealRow]);
+
   // ---- Ctrl+F / F3 / Esc（视图级快捷键）----
   const onKeyDown = useCallback(
     (ev: React.KeyboardEvent) => {
@@ -842,7 +886,7 @@ export function TextCompareView({ tab }: { tab: Tab }) {
     : S.text.inlineSourceClient;
 
   return (
-    <div className="aic-text" onKeyDown={onKeyDown}>
+    <div className={`aic-text${wrap ? ' wrap-on' : ''}`} onKeyDown={onKeyDown}>
       <div className="aic-text-toolbar">
         <span className="fname" title={text.left.path}>
           {text.left.name}
@@ -885,6 +929,59 @@ export function TextCompareView({ tab }: { tab: Tab }) {
         <button className="nav" onClick={() => setShowDiffList((v) => !v)} title={S.text.diffListTitle}>
           {S.text.diffListTitle}
         </button>
+        {/* FR-TXT-002 自动换行 / FR-TXT-023 书签 */}
+        <button className={`nav${wrap ? ' on' : ''}`} onClick={() => setWrap((v) => !v)} title={S.text.wrapHint}>
+          {S.text.wrap}
+        </button>
+        <button
+          className="nav"
+          onClick={() => setBookmarks((m) => toggleBookmark(m, paneL.current?.cursorPos().line ?? paneR.current?.cursorPos().line ?? 0).map)}
+          title={S.text.bookmarkHint}
+        >
+          {S.text.toggleBookmark}
+        </button>
+        <button
+          className="nav"
+          onClick={() => {
+            const line = prevBookmarkLine(bookmarks, paneL.current?.cursorPos().line ?? 0);
+            if (line !== null) revealRow(line);
+          }}
+          title={S.text.prevBookmarkHint}
+        >
+          {S.text.prevBookmark}
+        </button>
+        <button
+          className="nav"
+          onClick={() => {
+            const line = nextBookmarkLine(bookmarks, paneL.current?.cursorPos().line ?? 0);
+            if (line !== null) revealRow(line);
+          }}
+          title={S.text.nextBookmarkHint}
+        >
+          {S.text.nextBookmark}
+        </button>
+        <button className="nav" onClick={() => setBookmarks(clearBookmarks())} title={S.text.clearBookmarksHint}>
+          {S.text.clearBookmarks}
+        </button>
+        <select
+          className="aic-mini-select"
+          value=""
+          title={S.text.setBookmarkHint}
+          onChange={(e) => {
+            const slot = Number(e.target.value);
+            if (!Number.isInteger(slot)) return;
+            const line = paneL.current?.cursorPos().line ?? paneR.current?.cursorPos().line ?? 0;
+            setBookmarks((m) => setBookmarkSlot(m, slot, line));
+          }}
+        >
+          <option value="">{S.text.setBookmark}</option>
+          {BOOKMARK_SLOTS.map((slot) => (
+            <option key={slot} value={slot}>{slot}</option>
+          ))}
+        </select>
+        <span className="meta dim" title={S.text.bookmarkLabelHint}>
+          {bookmarkLabel(bookmarks) || S.text.noBookmarks}
+        </span>
       </div>
 
       <div className="aic-text-toolbar aic-text-toolbar2">
