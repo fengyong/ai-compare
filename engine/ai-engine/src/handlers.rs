@@ -327,7 +327,7 @@ async fn dir_open_model(
     };
     let mut notifications = Vec::with_capacity(batches.len());
     for (i, b) in batches.into_iter().enumerate() {
-        let delta = batch::make_delta_with_progress(
+        let mut delta = batch::make_delta_with_progress(
             &params.session_id,
             first.rev,
             &b,
@@ -335,6 +335,9 @@ async fn dir_open_model(
             Some(first.progress),
             if i == 0 { first.removals.clone() } else { Vec::new() },
         );
+        if i == 0 {
+            delta.scan_errors = batch::scan_issues(&first.scan_errors);
+        }
         notifications.push(format_aware_delta_notification(
             &params.session_id,
             &delta,
@@ -565,7 +568,7 @@ fn push_delta(
 ) {
     let batches = batch::batch_rows(d.upserts.clone(), max_batch);
     for (i, b) in batches.into_iter().enumerate() {
-        let delta = batch::make_delta_with_progress(
+        let mut delta = batch::make_delta_with_progress(
             session_id,
             d.rev,
             &b,
@@ -573,6 +576,9 @@ fn push_delta(
             Some(d.progress),
             if i == 0 { d.removals.clone() } else { Vec::new() },
         );
+        if i == 0 {
+            delta.scan_errors = batch::scan_issues(&d.scan_errors);
+        }
         let _ = out.send(crate::server::Outbound::Notification(
             ai_protocol::RpcServerNotification::new(ai_protocol::method::DIR_DELTA, &delta),
         ));
@@ -1804,17 +1810,18 @@ fn delta_notifications(
         .into_iter()
         .enumerate()
         .map(|(i, b)| {
-            ai_protocol::RpcServerNotification::new(
-                ai_protocol::method::DIR_DELTA,
-                batch::make_delta_with_progress(
-                    session_id,
-                    d.rev,
-                    &b,
-                    d.stats,
-                    Some(d.progress),
-                    if i == 0 { d.removals.clone() } else { Vec::new() },
-                ),
-            )
+            let mut delta = batch::make_delta_with_progress(
+                session_id,
+                d.rev,
+                &b,
+                d.stats,
+                Some(d.progress),
+                if i == 0 { d.removals.clone() } else { Vec::new() },
+            );
+            if i == 0 {
+                delta.scan_errors = batch::scan_issues(&d.scan_errors);
+            }
+            ai_protocol::RpcServerNotification::new(ai_protocol::method::DIR_DELTA, delta)
         })
         .collect()
 }

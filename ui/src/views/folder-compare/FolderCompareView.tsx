@@ -281,11 +281,14 @@ export function FolderCompareView({ tab }: { tab: Tab }) {
   // ---- 展开/折叠（dir/expand；mock/真实引擎 upsert 幂等） ----
   const toggleDir = (row: DirRow): void => {
     if (!row.hasChildren) return;
+    // 展开地址取真实 rel（树形 id 恰好等于 rel，但地址模型以侧路径为准，R3-03）
+    const path = row.leftPath ?? row.rightPath;
+    if (!path) return;
     const isOpen = expanded.has(row.id);
     setExpanded(toggleExpanded(expanded, row.id));
     if (!isOpen) {
       // 惰性会话消费 dir/expand（真实引擎推子项 delta；mock 重推幂等）
-      expandDir({ sessionId: cache.sessionId, path: row.id, depth: 1 }).catch((err: unknown) => {
+      expandDir({ sessionId: cache.sessionId, path, depth: 1 }).catch((err: unknown) => {
         setNotice(S.folder.expandFailed(err instanceof Error ? err.message : String(err)));
       });
     }

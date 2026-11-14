@@ -2233,6 +2233,8 @@ async fn exec_sync(
             has_children: r.kind == EntryKind::Dir,
             hidden: false,
             suppressed: false,
+            left_path: r.left.as_ref().map(|_| r.rel_path.clone()),
+            right_path: r.right.as_ref().map(|_| r.rel_path.clone()),
         })
         .collect();
     let selection: Option<Vec<String>> = if state.select_masks.is_empty() {
@@ -2913,6 +2915,7 @@ mod tests {
             children: Vec::new(),
             expanded: false,
             aligned_with: None,
+            scan_failed: false,
         };
         let left_only = row(DirEntryStatus::LeftOnly, true, false);
         let diff = row(DirEntryStatus::ContentDiff, true, true);

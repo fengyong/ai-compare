@@ -108,6 +108,8 @@ pub struct DirNode {
     pub expanded: bool,
     /// 非同名配对（手动对齐/覆盖对齐，FR-DIR-022/023）
     pub aligned_with: Option<NodeId>,
+    /// list_dir 失败（权限/IO）。该目录内容未知，不得聚合成 DirSame。
+    pub scan_failed: bool,
 }
 
 impl DirNode {
@@ -172,6 +174,7 @@ pub async fn scan(
         children: Vec::new(),
         expanded: true,
         aligned_with: None,
+        scan_failed: false,
     }];
 
     // BFS 队列：(目录节点 id, 左路径, 右路径, 层级)。只有两侧都存在的目录展开。
@@ -240,6 +243,7 @@ pub async fn scan(
                 children: Vec::new(),
                 expanded: false,
                 aligned_with: None,
+                scan_failed: false,
             });
             arena[dir_id as usize].children.push(id);
 
@@ -280,20 +284,37 @@ pub fn aggregate_all(arena: &mut [DirNode]) {
 }
 
 /// 由子项聚合目录状态（FR-DIR-002）：
+/// 本目录 list_dir 失败、或任一子项未判定（Unknown / 自身扫描失败）-> Unknown；
 /// 任一子项存在差异（ContentDiff/QuickDiff/DirDiff）或孤立项（单侧）-> DirDiff；
-/// 全部相同（含空目录）-> DirSame。未判定（Unknown）子项不触发差异。
+/// 全部相同（含空目录）-> DirSame。
+///
+/// 为什么 Unknown 必须上推而不是落到 DirSame：比较工具的基本原则是「不可把
+/// 未知当相同」。读不到的子目录里可能藏着差异，报 DirSame 会让用户以为已核对。
 pub fn aggregate_children(dir: &DirNode, arena: &[DirNode]) -> DirEntryStatus {
-    let diff = dir.children.iter().any(|&c| {
-        matches!(
-            arena[c as usize].status,
+    if dir.scan_failed {
+        return DirEntryStatus::Unknown;
+    }
+    let mut unknown = false;
+    let mut diff = false;
+    for &c in &dir.children {
+        let child = &arena[c as usize];
+        if child.scan_failed || child.status == DirEntryStatus::Unknown {
+            unknown = true;
+        }
+        if matches!(
+            child.status,
             DirEntryStatus::ContentDiff
                 | DirEntryStatus::QuickDiff
                 | DirEntryStatus::DirDiff
                 | DirEntryStatus::LeftOnly
                 | DirEntryStatus::RightOnly
-        )
-    });
-    if diff {
+        ) {
+            diff = true;
+        }
+    }
+    if unknown {
+        DirEntryStatus::Unknown
+    } else if diff {
         DirEntryStatus::DirDiff
     } else {
         DirEntryStatus::DirSame
@@ -315,6 +336,8 @@ pub fn rows_from_arena(arena: &[DirNode]) -> Vec<DirRow> {
             has_children: n.kind == EntryKind::Dir,
             hidden: false,
             suppressed: false,
+            left_path: n.left.as_ref().map(|_| n.rel_path.clone()),
+            right_path: n.right.as_ref().map(|_| n.rel_path.clone()),
         })
         .collect()
 }

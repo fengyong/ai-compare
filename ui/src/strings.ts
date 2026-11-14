@@ -487,6 +487,8 @@ export const S = {
     filterResult: (visible: number, hidden: number) => `过滤完成：可见 ${visible} 项，隐藏 ${hidden} 项`,
     suppressedBadge: '已抑制',
     expandFailed: (msg: string) => `展开失败：${msg}`,
+    scanErrorCount: '项无法读取',
+    scanErrorHint: '扫描失败的路径（内容未参与比较，状态显示为「未知」）：',
   },
 
   text: {

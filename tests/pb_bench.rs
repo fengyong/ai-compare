@@ -99,6 +99,8 @@ fn pb10_delta_serialization_100k() {
             has_children: false,
             hidden: false,
             suppressed: false,
+            left_path: Some(format!("d{}/m{}/f{:06}.bin", i % 48, (i / 48) % 32, i)),
+            right_path: Some(format!("d{}/m{}/f{:06}.bin", i % 48, (i / 48) % 32, i)),
         })
         .collect();
 
@@ -118,6 +120,7 @@ fn pb10_delta_serialization_100k() {
                 total: Some(n as u32),
             }),
             batch: ai_protocol::BatchInfo { index: idx as u32, has_more: true },
+            scan_errors: Vec::new(),
         };
         let s = serde_json::to_string(&delta).expect("序列化");
         bytes += s.len();

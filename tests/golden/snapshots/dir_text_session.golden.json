@@ -53,6 +53,7 @@
       },
       "removals": [],
       "rev": 1,
+      "scanErrors": [],
       "sessionId": "s1",
       "stats": {
         "contentDiff": 3,
@@ -71,10 +72,12 @@
           "left": {
             "size": 64
           },
+          "leftPath": "bin_diff.bin",
           "name": "bin_diff.bin",
           "right": {
             "size": 64
           },
+          "rightPath": "bin_diff.bin",
           "status": "contentDiff"
         },
         {
@@ -84,10 +87,12 @@
           "left": {
             "size": 1024
           },
+          "leftPath": "bin_same.bin",
           "name": "bin_same.bin",
           "right": {
             "size": 1024
           },
+          "rightPath": "bin_same.bin",
           "status": "same"
         },
         {
@@ -97,10 +102,12 @@
           "left": {
             "size": 19
           },
+          "leftPath": "changed.txt",
           "name": "changed.txt",
           "right": {
             "size": 24
           },
+          "rightPath": "changed.txt",
           "status": "contentDiff"
         },
         {
@@ -111,6 +118,7 @@
           "right": {
             "size": 8
           },
+          "rightPath": "new_name.txt",
           "status": "rightOnly"
         },
         {
@@ -120,6 +128,7 @@
           "left": {
             "size": 8
           },
+          "leftPath": "old_name.txt",
           "name": "old_name.txt",
           "status": "leftOnly"
         },
@@ -130,6 +139,7 @@
           "left": {
             "size": 2
           },
+          "leftPath": "only_left.txt",
           "name": "only_left.txt",
           "status": "leftOnly"
         },
@@ -141,6 +151,7 @@
           "right": {
             "size": 2
           },
+          "rightPath": "only_right.txt",
           "status": "rightOnly"
         },
         {
@@ -150,10 +161,12 @@
           "left": {
             "size": 17
           },
+          "leftPath": "same.txt",
           "name": "same.txt",
           "right": {
             "size": 17
           },
+          "rightPath": "same.txt",
           "status": "same"
         },
         {
@@ -163,10 +176,12 @@
           "left": {
             "size": 10
           },
+          "leftPath": "size_diff.bin",
           "name": "size_diff.bin",
           "right": {
             "size": 12
           },
+          "rightPath": "size_diff.bin",
           "status": "contentDiff"
         },
         {
@@ -176,10 +191,12 @@
           "left": {
             "size": 96
           },
+          "leftPath": "sub",
           "name": "sub",
           "right": {
             "size": 96
           },
+          "rightPath": "sub",
           "status": "dirSame"
         }
       ]

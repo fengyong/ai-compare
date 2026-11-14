@@ -7,9 +7,13 @@ import type { DirStatsSnapshot } from './dirRowCache';
  * 同时充当图例（颜色 = 语义）。计数对齐生成协议 DirStats。
  */
 export function DirStatsBar({ snapshot }: { snapshot: DirStatsSnapshot }) {
-  const { stats, scanState, progress } = snapshot;
+  const { stats, scanState, progress, scanErrors } = snapshot;
   const percent =
     progress && progress.total ? Math.min(100, Math.round((progress.scanned / progress.total) * 100)) : null;
+  const errorHint =
+    scanErrors.length > 0
+      ? `${S.folder.scanErrorHint}\n${scanErrors.map((e) => `${e.path}：${e.message}`).join('\n')}`
+      : undefined;
 
   return (
     <>
@@ -39,6 +43,11 @@ export function DirStatsBar({ snapshot }: { snapshot: DirStatsSnapshot }) {
           <b>{formatCount(stats.dirSame)}</b> {S.folder.stats.dirSame}
         </span>
       </div>
+      {scanErrors.length > 0 && (
+        <span className="aic-stat-chip" style={{ color: 'var(--aic-st-error)' }} title={errorHint}>
+          <b>{formatCount(scanErrors.length)}</b> {S.folder.scanErrorCount}
+        </span>
+      )}
       <span className="spacer" />
       {scanState === 'running' && (
         <span className="aic-progress">

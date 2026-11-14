@@ -45,6 +45,14 @@ pub fn make_delta(
     make_delta_with_progress(session_id, rev, batch, stats, None, Vec::new())
 }
 
+/// 引擎内部 (rel, 消息) 扫描错误 -> 协议载荷
+pub fn scan_issues(errors: &[(String, String)]) -> Vec<ai_protocol::DirScanIssue> {
+    errors
+        .iter()
+        .map(|(path, message)| ai_protocol::DirScanIssue { path: path.clone(), message: message.clone() })
+        .collect()
+}
+
 /// 组装 dir/delta 通知载荷（带进度与移除集；P2 惰性扫描路径）
 pub fn make_delta_with_progress(
     session_id: &str,
@@ -62,6 +70,7 @@ pub fn make_delta_with_progress(
         stats,
         progress,
         batch: BatchInfo { index: batch.index, has_more: batch.has_more },
+        scan_errors: Vec::new(),
     }
 }
 
@@ -81,6 +90,8 @@ mod tests {
             has_children: false,
             hidden: false,
             suppressed: false,
+            left_path: None,
+            right_path: None,
         }
     }
 

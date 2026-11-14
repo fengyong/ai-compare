@@ -26,6 +26,8 @@ function row(partial: Partial<DirRow> & { id: string }): DirRow {
     hasChildren: partial.hasChildren ?? false,
     hidden: false,
     suppressed: false,
+    leftPath: left ? partial.id : undefined,
+    rightPath: right ? partial.id : undefined,
   };
 }
 

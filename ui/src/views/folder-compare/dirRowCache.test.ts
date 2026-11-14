@@ -13,6 +13,8 @@ const row = (id: string, over: Partial<DirRow> = {}): DirRow => ({
   hasChildren: false,
   hidden: false,
   suppressed: false,
+  leftPath: id,
+  rightPath: id,
   ...over,
 });
 
@@ -32,6 +34,7 @@ const delta = (over: Partial<DirDelta> & Pick<DirDelta, 'upserts'>): DirDelta =>
   },
   progress: { scanned: over.upserts.length, total: over.upserts.length },
   batch: { index: 0, hasMore: false },
+  scanErrors: [],
   ...over,
 });
 
@@ -147,5 +150,26 @@ describe('DirRowCache marks', () => {
     expect(c.isMarked('a.txt')).toBe(false);
     expect(c.isMarked('b.txt')).toBe(true);
     expect(c.getMarkCount()).toBe(1);
+  });
+});
+
+/** R3-09：读不到的子树必须可见（引擎经 dir/delta.scanErrors 回传，行状态置未知） */
+describe('DirRowCache scanErrors', () => {
+  it('首批错误进入快照；后续空批次不清掉既有错误', () => {
+    const c = new DirRowCache('s1');
+    expect(c.getStats().scanErrors).toEqual([]);
+    c.applyDelta(delta({ upserts: [row('a.txt')], scanErrors: [{ path: 'sub', message: 'Permission denied' }] }));
+    expect(c.getStats().scanErrors).toEqual([{ path: 'sub', message: 'Permission denied' }]);
+    c.applyDelta(delta({ upserts: [row('b.txt')], batch: { index: 1, hasMore: false } }));
+    expect(c.getStats().scanErrors).toEqual([{ path: 'sub', message: 'Permission denied' }]);
+  });
+
+  it('重扫首批为全量：同路径消息覆盖，已恢复的路径不再报错', () => {
+    const c = new DirRowCache('s1');
+    c.applyDelta(delta({ upserts: [], scanErrors: [{ path: 'sub', message: 'EACCES' }, { path: 'gone', message: 'I/O error' }] }));
+    c.applyDelta(delta({ upserts: [], scanErrors: [{ path: 'sub', message: 'EIO' }] }));
+    expect(c.getStats().scanErrors).toEqual([{ path: 'sub', message: 'EIO' }]);
+    c.applyDelta(delta({ upserts: [] }));
+    expect(c.getStats().scanErrors).toEqual([]);
   });
 });
