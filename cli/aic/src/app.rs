@@ -411,10 +411,13 @@ pub fn cmd_merge(args: &[String]) -> ExitCode {
             "--marker" => kind = MergeOutputKind::Marker,
             "--diff3" => marker_style = MarkerStyle::Diff3,
             "--conflict-exit-code" => match next(&mut i).and_then(|v| v.parse::<u8>().ok()) {
-                // 0 恒表示"相同/成功"（见 lib.rs 退出码契约），冲突码不得为 0，
-                // 否则 VCS/CI 会把"有冲突"误判为合并成功。
-                Some(0) => {
-                    return arg_error("--conflict-exit-code 不可为 0（0 恒表示\"相同/成功\"）")
+                // 冲突码不得占用既有语义码，否则 VCS/CI 会把"有冲突"误判为
+                // 成功(0)/错误(2)/二进制差异(11)/相似(12)/规则差异(13)。
+                // 14 是 FR-CLI-004 的冲突码本身，1 是默认值，均放行。
+                Some(n @ (0 | 2 | 11 | 12 | 13)) => {
+                    return arg_error(&format!(
+                        "--conflict-exit-code 不可为 {n}（该码已占用：0 相同/2 错误/11 二进制差异/12 相似/13 规则差异）"
+                    ))
                 }
                 Some(n) => conflict_exit_code = n,
                 None => return arg_error("--conflict-exit-code 需要数字参数（默认 1；14 = FR-CLI-004 冲突码）"),
