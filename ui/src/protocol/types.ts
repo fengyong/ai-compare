@@ -67,6 +67,17 @@ export type { MergeOutputResult } from './generated/MergeOutputResult';
 export type { MergeSectionsParams } from './generated/MergeSectionsParams';
 export type { MergeSectionsResult } from './generated/MergeSectionsResult';
 
+/* P11：报告生成（report/generate）生成类型 */
+export type { ReportColorMode } from './generated/ReportColorMode';
+export type { ReportDirColumns } from './generated/ReportDirColumns';
+export type { ReportDirDisplayFilter } from './generated/ReportDirDisplayFilter';
+export type { ReportDisplayFilter } from './generated/ReportDisplayFilter';
+export type { ReportGenerateParams } from './generated/ReportGenerateParams';
+export type { ReportGenerateResult } from './generated/ReportGenerateResult';
+export type { ReportLayout } from './generated/ReportLayout';
+export type { ReportPatchStyle } from './generated/ReportPatchStyle';
+export type { ReportWrapMode } from './generated/ReportWrapMode';
+
 export type { CancelParams } from './generated/CancelParams';
 export type { CharRange } from './generated/CharRange';
 export type { ClientInfo } from './generated/ClientInfo';
