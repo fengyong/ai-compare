@@ -54,6 +54,7 @@
 | 2026-11-14 04:0x | Agent「M3/P7 三向合并引擎」（ai-core merge3 + ai-protocol 本波协议权 + ai-engine + aic merge + diff3/git 对拍） | ✅ 完成并波次联合验收通过（04:3x）：workspace **420/0 全绿**、clippy 零警、e2e 过；**git merge-file 对拍 28/28 逐字节一致（100%）**，GNU diff3 18/28（差异归类：GNU -A bracketed 语义 vs git 语义，以 git 一致为准）；重要性开关冲突缩小行为有测试；提交入库 |
 | 2026-11-14 04:3x | Agent「M3/P9 表格/十六进制引擎」（ai-core 表格列模型+hex 字节视图模型 + ai-protocol 本波协议权 + ai-engine + cli） | ✅ 完成并波次联合验收通过（05:4x）：workspace **603/0 全绿**（+183）、clippy 零警、e2e 过；对拍 csv 18/18、xxd 6/6、git apply 11/11 结论一致（5 差异全归类）；**dir/execute 接线完成（P6 积压清偿）**；提交入库 |
 | 2026-11-14 05:5x | Agent「M3/P10 文件格式与规则体系」（引擎 formats/rules 注册表+检测+持久化+协议+设置 UI；strings.ts 归 P10） | ✅ **全部完成并验收**（07:4x）：引擎侧（主会话接手收尾，699 全绿）+ UI 侧（SendMessage 续跑成功，383 测试 +22、build/lint/e2e 全绿、浏览器冒烟含持久化还原）；已提交；遗留——设置→text/open rules 运行时接线（入口在 text-compare 视图，权限外）移交下波协调 |
+| 2026-11-14 07:5x | Agent「M3/P11 报告引擎与脚本处理器」（ai-core report 8 布局 + 脚本处理器 31 命令 + 协议权 + aic report/script） | 运行中 |
 | 2026-11-14 05:5x | Agent「M3/P6b 文件夹视图遗留批」（ui/views/folder-compare 独占：批量重命名对话框/编辑菜单命令/空格标记；不动 strings.ts/store.ts/viewRegistry） | ✅ 完成并验收提交（07:1x）：UI 361 测试（+42）、build/lint/e2e 全绿（agent 冒烟已过+主会话复验门禁；中断于最后门禁，实测全绿）；批量重命名 DOS 掩码+正则/空格标记/编辑命令/快速比较/复制路径/基文件夹导航 |
 | 2026-11-13 23:36 | Agent「P4 UI 壳与会话体系」（ui/，主页/多窗口/会话持久化/ViewRegistry） | ✅ 完成并验收（含一次并发中断+SendMessage 原地续跑）：134/134 测试（+83）、build/lint/e2e:engine 全绿、浏览器冒烟全流程通过（00:47 主会话复验）；遗留项见 ui/README P4 边界 |
 
