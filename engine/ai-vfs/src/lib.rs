@@ -311,6 +311,13 @@ pub trait VfsProvider: Send + Sync {
 
     fn capabilities(&self) -> VfsCaps;
 
+    /// 按路径协商能力位。单来源 Provider 与 [`VfsProvider::capabilities`] 相同；
+    /// 路由型 Provider（RouteFs）必须按目标来源回答——混合会话里
+    /// 「本地左侧可写 + 远程右侧只读」不能用一个全局能力位表达。
+    fn capabilities_for(&self, _path: &VfsPath) -> VfsCaps {
+        self.capabilities()
+    }
+
     async fn stat(&self, path: &VfsPath) -> Result<StatInfo, VfsError>;
 
     async fn list_dir(&self, path: &VfsPath) -> Result<Vec<VfsDirEntry>, VfsError>;

@@ -480,7 +480,8 @@ async fn mkdir_parents(vfs: &dyn VfsProvider, roots: &(VfsPath, VfsPath), side: 
 /// 单文件复制：优先 VFS 原生 copy_file（含 mtime 保留）；
 /// 无 COPY 能力位时 read+write 组合降级（跨 Provider 组合）
 async fn copy_file_via(vfs: &dyn VfsProvider, src: &VfsPath, dst: &VfsPath, rel: &str) -> Result<(), String> {
-    if vfs.capabilities().has(VfsCaps::COPY) {
+    let copyable = |p: &VfsPath| vfs.capabilities_for(p).has(VfsCaps::COPY);
+    if copyable(src) && copyable(dst) {
         return vfs
             .copy_file(src, dst)
             .await
@@ -530,7 +531,7 @@ async fn copy_tree_inner(vfs: &dyn VfsProvider, src_dir: &VfsPath, dst_dir: &Vfs
 /// 删除（side 内；recursive 仅用于目录；对已不存在目标返回 Skipped）
 async fn remove_side(vfs: &dyn VfsProvider, roots: &(VfsPath, VfsPath), rel: &str, side: Side, strict_missing: bool) -> Result<OpStatus, String> {
     let target = resolve(roots, side, rel);
-    if !vfs.capabilities().has(VfsCaps::DELETE) {
+    if !vfs.capabilities_for(&target).has(VfsCaps::DELETE) {
         return Err(format!("目标侧不支持删除（能力位缺失，{side}）"));
     }
     let stat = match vfs.stat(&target).await {
@@ -553,21 +554,21 @@ async fn remove_side(vfs: &dyn VfsProvider, roots: &(VfsPath, VfsPath), rel: &st
 
 /// 同侧改名（优先 VFS 原子 rename）
 async fn rename_side(vfs: &dyn VfsProvider, roots: &(VfsPath, VfsPath), rel: &str, side: Side, new_name: &str) -> Result<(), String> {
-    if !vfs.capabilities().has(VfsCaps::MOVE) {
+    let src = resolve(roots, side, rel);
+    if !vfs.capabilities_for(&src).has(VfsCaps::MOVE) {
         return Err(format!("目标侧不支持改名（能力位缺失，{side}）"));
     }
     validate(vfs, roots, &FileOp::Rename { path: rel.to_string(), side, new_name: new_name.to_string() }).await?;
-    let src = resolve(roots, side, rel);
     let dst = side_root(roots, side).join(&parent_rel(rel)).join(new_name);
     vfs.rename(&src, &dst).await.map_err(|e| format!("改名失败（{side}）: {rel} → {new_name}: {e}"))
 }
 
 /// 时间戳（mtime_ms=0 取对侧；FR-DIR-065 touch）
 async fn touch_side(vfs: &dyn VfsProvider, roots: &(VfsPath, VfsPath), rel: &str, side: Side, mtime_ms: u64) -> Result<(), String> {
-    if !vfs.capabilities().has(VfsCaps::TOUCH) {
+    let target = resolve(roots, side, rel);
+    if !vfs.capabilities_for(&target).has(VfsCaps::TOUCH) {
         return Err(format!("目标侧不支持修改时间戳（能力位缺失，{side}）"));
     }
-    let target = resolve(roots, side, rel);
     let mtime = if mtime_ms > 0 {
         mtime_ms
     } else {
@@ -586,10 +587,10 @@ async fn touch_side(vfs: &dyn VfsProvider, roots: &(VfsPath, VfsPath), rel: &str
 
 /// 新建文件夹（父目录链自动创建；目标已存在报错）
 async fn mkdir_side(vfs: &dyn VfsProvider, roots: &(VfsPath, VfsPath), rel: &str, side: Side) -> Result<(), String> {
-    if !vfs.capabilities().has(VfsCaps::MKDIR) {
+    let target = resolve(roots, side, rel);
+    if !vfs.capabilities_for(&target).has(VfsCaps::MKDIR) {
         return Err(format!("目标侧不支持创建目录（能力位缺失，{side}）"));
     }
-    let target = resolve(roots, side, rel);
     if vfs.stat(&target).await.is_ok() {
         return Err(format!("目标已存在（{side}）: {rel}"));
     }

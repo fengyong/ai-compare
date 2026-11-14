@@ -107,6 +107,77 @@ class EngineClient {
   }
 }
 
+// ---------------- 最小 zip 夹具（stored，无压缩；避免依赖外部 zip 命令） ----------------
+const CRC_TABLE = (() => {
+  const t = new Int32Array(256);
+  for (let i = 0; i < 256; i++) {
+    let c = i;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    t[i] = c;
+  }
+  return t;
+})();
+const crc32 = (buf) => {
+  let c = -1;
+  for (const b of buf) c = CRC_TABLE[(c ^ b) & 0xff] ^ (c >>> 8);
+  return (c ^ -1) >>> 0;
+};
+
+function buildStoredZip(entries) {
+  const locals = [];
+  const centrals = [];
+  let offset = 0;
+  for (const [name, data] of entries) {
+    const nb = Buffer.from(name, 'utf8');
+    const crc = crc32(data);
+    const lh = Buffer.alloc(30);
+    lh.writeUInt32LE(0x04034b50, 0);
+    lh.writeUInt16LE(20, 4);
+    lh.writeUInt16LE(0, 6);
+    lh.writeUInt16LE(0, 8); // stored
+    lh.writeUInt32LE(crc, 14);
+    lh.writeUInt32LE(data.length, 18);
+    lh.writeUInt32LE(data.length, 22);
+    lh.writeUInt16LE(nb.length, 26);
+    locals.push(lh, nb, data);
+    const ch = Buffer.alloc(46);
+    ch.writeUInt32LE(0x02014b50, 0);
+    ch.writeUInt16LE(20, 4);
+    ch.writeUInt16LE(20, 6);
+    ch.writeUInt32LE(crc, 16);
+    ch.writeUInt32LE(data.length, 20);
+    ch.writeUInt32LE(data.length, 24);
+    ch.writeUInt16LE(nb.length, 28);
+    ch.writeUInt32LE(offset, 42);
+    centrals.push(ch, nb);
+    offset += lh.length + nb.length + data.length;
+  }
+  const cd = Buffer.concat(centrals);
+  const eocd = Buffer.alloc(22);
+  eocd.writeUInt32LE(0x06054b50, 0);
+  eocd.writeUInt16LE(entries.length, 8);
+  eocd.writeUInt16LE(entries.length, 10);
+  eocd.writeUInt32LE(cd.length, 12);
+  eocd.writeUInt32LE(offset, 16);
+  return Buffer.concat([...locals, cd, eocd]);
+}
+
+/** 只读中心目录取条目名（够用来断言"归档里多了哪个文件"） */
+function readStoredZipNames(buf) {
+  const eocd = buf.lastIndexOf(Buffer.from([0x50, 0x4b, 0x05, 0x06]));
+  const count = buf.readUInt16LE(eocd + 10);
+  let p = buf.readUInt32LE(eocd + 16);
+  const names = [];
+  for (let i = 0; i < count; i++) {
+    const nameLen = buf.readUInt16LE(p + 28);
+    const extraLen = buf.readUInt16LE(p + 30);
+    const commentLen = buf.readUInt16LE(p + 32);
+    names.push(buf.subarray(p + 46, p + 46 + nameLen).toString('utf8'));
+    p += 46 + nameLen + extraLen + commentLen;
+  }
+  return names;
+}
+
 // ---------------- 场景语料 ----------------
 
 const dir = mkdtempSync(join(tmpdir(), 'aic-e2e-'));
@@ -692,6 +763,51 @@ try {
   ok((await rpcCode('hex/open', { ...hexArgs, sessionId: 'e2e-table-1' })).includes('411'), '句柄跨种类冲突也报 411');
   await client.request('session/close', { sessionId: 'e2e-table-1' });
   await client.request('session/close', { sessionId: 'e2e-hex-1' });
+
+  // 6.6 R3-14：真实引擎的 zip:// 路由（此前 HandlerCtx 固定 LocalFs，桌面端 zip 不可用）
+  const zipPath = join(dir, 'repo.zip');
+  writeFileSync(zipPath, buildStoredZip([['a.txt', Buffer.from('alpha\nbeta\n')]]));
+  const zipLocal = join(dir, 'zip-local.txt');
+  writeFileSync(zipLocal, 'alpha\nCHANGED\n');
+  const zipUri = `zip://${zipPath}!/a.txt`;
+  await client.request('text/open', { sessionId: 'e2e-zip-1', left: zipUri, right: zipLocal });
+  const zipLines = await client.request('text/lines', {
+    sessionId: 'e2e-zip-1',
+    side: 'left',
+    start: 0,
+    count: 10,
+  });
+  ok(
+    JSON.stringify(zipLines.lines) === JSON.stringify(['alpha', 'beta']),
+    'text/open 读到了 zip 内条目',
+    JSON.stringify(zipLines.lines),
+  );
+  const zipRight = await client.request('text/lines', {
+    sessionId: 'e2e-zip-1',
+    side: 'right',
+    start: 0,
+    count: 10,
+  });
+  ok(zipRight.lines[1] === 'CHANGED', 'zip 侧与本地侧混合会话成立');
+  await client.request('session/close', { sessionId: 'e2e-zip-1' });
+
+  const zipSrcRoot = join(dir, 'ZipSrc');
+  mkdirSync(zipSrcRoot, { recursive: true });
+  writeFileSync(join(zipSrcRoot, 'new.txt'), 'FROM-LOCAL');
+  await client.request('dir/open', {
+    sessionId: 'e2e-zip-2',
+    left: zipSrcRoot,
+    right: `zip://${zipPath}!/`,
+    depth: 1,
+  });
+  const zipExec = await client.request('dir/execute', {
+    sessionId: 'e2e-zip-2',
+    ops: [{ kind: 'copy', path: 'new.txt', side: 'left' }],
+  });
+  ok(zipExec.failed.length === 0, '本地→zip 复制未被能力位拒绝', JSON.stringify(zipExec.failed));
+  const zipEntries = readStoredZipNames(readFileSync(zipPath));
+  ok(zipEntries.includes('new.txt'), '复制真的写回了归档', zipEntries.join(','));
+  await client.request('session/close', { sessionId: 'e2e-zip-2' });
 
   // 7. 会话清理 + shutdown
   ok((await client.request('session/close', { sessionId: 'e2e-dir-1' })) === null, 'session/close dir 会话');
