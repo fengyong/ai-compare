@@ -172,6 +172,10 @@ export class MockEngine {
   private readonly mergeSessions = new Map<string, MockMergeSession>();
   private readonly tableSessions = new Map<string, { seed: number; columns: Array<{ name: string; ty: string; left: number | null; right: number | null }>; rowCount?: number }>();
   private readonly hexSessions = new Map<string, { seed: number; leftSize: number; rightSize: number }>();
+  private readonly pictureSessions = new Map<
+    string,
+    { seed: number; width: number; height: number }
+  >();
   /** P7：三向文本合并会话（块模板 + 显式决策表 + rev） */
   private readonly merge3Sessions = new Map<string, MockMerge3Session>();
   /** dir/filter 差分基线（会话 id -> 上次发出的行 id 集） */
@@ -337,7 +341,7 @@ export class MockEngine {
     if (!p || typeof p.sessionId !== 'string' || p.sessionId === '') {
       throw new InvalidParams('sessionId 不能为空');
     }
-    if (this.dirSessions.has(p.sessionId) || this.textSessions.has(p.sessionId)) {
+    if (this.hasAnySession(p.sessionId)) {
       throw new RpcErr(CODE.SESSION_EXISTS, `会话已存在: ${p.sessionId}`);
     }
     const rows = buildDirModel(p.left, p.right);
@@ -834,7 +838,7 @@ export class MockEngine {
     if (!p || typeof p.sessionId !== 'string' || p.sessionId === '') {
       throw new InvalidParams('sessionId 不能为空');
     }
-    if (this.dirSessions.has(p.sessionId) || this.textSessions.has(p.sessionId)) {
+    if (this.hasAnySession(p.sessionId)) {
       throw new RpcErr(CODE.SESSION_EXISTS, `会话已存在: ${p.sessionId}`);
     }
     const seed = baseName(p.left ?? '') || baseName(p.right ?? '') || 'file';
@@ -1062,12 +1066,13 @@ export class MockEngine {
     if (!p || typeof p.sessionId !== 'string' || p.sessionId === '') {
       throw new InvalidParams('sessionId 不能为空');
     }
-    if (this.dirSessions.has(p.sessionId) || this.textSessions.has(p.sessionId)) {
+    if (this.hasAnySession(p.sessionId)) {
       throw new RpcErr(CODE.SESSION_EXISTS, `会话已存在: ${p.sessionId}`);
     }
     const seed = (p.left ?? '').length + (p.right ?? '').length;
     const w = 512 + (seed % 3) * 128;
     const h = 384 + (seed % 2) * 64;
+    this.pictureSessions.set(p.sessionId, { seed, width: w, height: h });
     const block = p.options?.block ?? 32;
     const tolerance = p.options?.tolerance ?? 8;
     const bx = Math.ceil(w / block);
@@ -1116,7 +1121,7 @@ export class MockEngine {
     if (!p || typeof p.sessionId !== 'string' || p.sessionId === '') {
       throw new InvalidParams('sessionId 不能为空');
     }
-    if (this.dirSessions.has(p.sessionId) || this.textSessions.has(p.sessionId)) {
+    if (this.hasAnySession(p.sessionId)) {
       throw new RpcErr(CODE.SESSION_EXISTS, `会话已存在: ${p.sessionId}`);
     }
     const seed = (p.left ?? '').length + (p.right ?? '').length;
@@ -1232,7 +1237,7 @@ export class MockEngine {
     if (!p || typeof p.sessionId !== 'string' || p.sessionId === '') {
       throw new InvalidParams('sessionId 不能为空');
     }
-    if (this.dirSessions.has(p.sessionId) || this.textSessions.has(p.sessionId)) {
+    if (this.hasAnySession(p.sessionId)) {
       throw new RpcErr(CODE.SESSION_EXISTS, `会话已存在: ${p.sessionId}`);
     }
     const seed = (p.left ?? '').length + (p.right ?? '').length;
@@ -1504,6 +1509,7 @@ export class MockEngine {
       this.mergeSessions.has(id) ||
       this.tableSessions.has(id) ||
       this.hexSessions.has(id) ||
+      this.pictureSessions.has(id) ||
       this.merge3Sessions.has(id)
     );
   }
@@ -1513,6 +1519,9 @@ export class MockEngine {
     this.textSessions.delete(p.sessionId);
     this.mergeSessions.delete(p.sessionId);
     this.merge3Sessions.delete(p.sessionId);
+    this.pictureSessions.delete(p.sessionId);
+    this.tableSessions.delete(p.sessionId);
+    this.hexSessions.delete(p.sessionId);
     this.lastIds.delete(p.sessionId);
     return null;
   }
