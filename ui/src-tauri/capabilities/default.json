@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "主窗口：引擎 stdio 透传依赖事件订阅（engine-stdout/stderr/exit）",
+  "windows": ["main"],
+  "permissions": ["core:event:default"]
+}

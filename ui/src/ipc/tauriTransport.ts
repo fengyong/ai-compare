@@ -1,6 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import { LineBuffer } from '../protocol/jsonrpc';
 import type { Transport } from '../protocol/transport';
 
 /**
@@ -34,17 +33,15 @@ export class TauriEngineTransport implements Transport {
   private closeHandler?: (reason?: string) => void;
   private unlisteners: UnlistenFn[] = [];
   private stopped = false;
-  /** 保险：即使 Rust 按行推送，仍过一遍行缓冲防止任何拼接假设 */
-  private readonly buffer = new LineBuffer();
   private sendChain: Promise<void> = Promise.resolve();
 
   async start(): Promise<void> {
     // 先注册事件监听再启动进程，避免竞态丢失首条输出
     this.unlisteners.push(
       await listen<string>('engine-stdout', (ev) => {
-        for (const line of this.buffer.push(ev.payload)) {
-          this.lineHandler?.(line);
-        }
+        // 壳层 BufReader::lines() 已按整行推送并剥掉换行符：再过行缓冲会永远凑不出
+        // 整行，导致所有应答被吞（initialize 超时）。此处 payload 即一条完整 NDJSON。
+        if (ev.payload.length > 0) this.lineHandler?.(ev.payload);
       })
     );
     this.unlisteners.push(

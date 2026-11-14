@@ -45,6 +45,7 @@ struct EngineStartInfo {
     engine: String,
 }
 
+#[cfg(debug_assertions)]
 fn dev_engine_path() -> PathBuf {
     // ui/src-tauri → 仓库根 target/debug（workspace 根统一输出，docs/03 §7；
     // 根 Cargo.toml 未设 target-dir，workspace 默认 target/ 在仓库根）
@@ -68,11 +69,16 @@ fn resolve_engine_path() -> Result<PathBuf, String> {
         tried.push(format!("AI_ENGINE_PATH={p}（不存在）"));
     }
 
-    let dev = dev_engine_path();
-    if dev.is_file() {
-        return Ok(dev);
+    // dev 约定路径只在 debug 构建生效：release 包必须用随包引擎，
+    // 否则会命中开发机上的 target/debug 二进制（慢且与包内版本不一致）
+    #[cfg(debug_assertions)]
+    {
+        let dev = dev_engine_path();
+        if dev.is_file() {
+            return Ok(dev);
+        }
+        tried.push(dev.display().to_string());
     }
-    tried.push(dev.display().to_string());
 
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
