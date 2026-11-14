@@ -1736,9 +1736,15 @@ input:focus {
 .aic-picture-stats { display: flex; gap: 18px; padding: 4px 12px; font-size: 12px; color: var(--fg-dim, #999); border-bottom: 1px solid var(--border, #333); }
 .aic-picture-stats b { color: var(--fg, #eee); }
 .aic-picture-error { color: var(--danger, #e5534b); }
-.aic-picture-canvas-host { flex: 1; overflow: auto; display: flex; justify-content: center; align-items: flex-start; padding: 8px; background: #1a1a1a; }
-.aic-picture-canvas { max-width: 100%; image-rendering: pixelated; border: 1px solid var(--border, #333); }
-.aic-picture-imgs img { display: none; }
+.aic-picture-canvas-host { flex: 1; min-height: 0; overflow: auto; display: flex; gap: 8px; justify-content: flex-start; align-items: flex-start; padding: 8px; background: #1a1a1a; }
+.aic-picture-pane { position: relative; flex: 1 1 0; min-width: 0; height: 100%; overflow: auto; border: 1px solid var(--border, #333); background: #111; display: flex; flex-direction: column; }
+.aic-picture-pane-head { position: sticky; top: 0; z-index: 2; padding: 2px 8px; font-size: 11px; color: var(--fg-dim, #999); background: var(--bg-header, #252526); border-bottom: 1px solid var(--border, #333); }
+.aic-picture-layer { display: block; max-width: none; transform-origin: top left; image-rendering: pixelated; transition: opacity 0.12s linear; }
+.aic-picture-diff { position: absolute; top: 0; left: 0; z-index: 1; pointer-events: none; transform-origin: top left; image-rendering: pixelated; }
+.aic-picture-toolbar { flex-wrap: wrap; gap: 8px; }
+.aic-picture-toolbar button { padding: 1px 6px; font-size: 11px; }
+.aic-picture-toolbar .sep { color: var(--fg-dim, #777); }
+.aic-picture-check { white-space: nowrap; }
 
 /* ---- P14：表格比较视图 ---- */
 .aic-table { display: flex; flex-direction: column; height: 100%; overflow: hidden; }
