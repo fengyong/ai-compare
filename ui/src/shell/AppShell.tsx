@@ -12,6 +12,7 @@ import { TableCompareView } from '../views/table-compare/TableCompareView';
 import { HexCompareView } from '../views/hex-compare/HexCompareView';
 import { Merge3View } from '../views/merge3/Merge3View';
 import { ClipboardHistoryPanel } from '../views/home/ClipboardHistoryPanel';
+import { ReportDialog } from '../views/report/ReportDialog';
 import type { Tab } from './store';
 import { TextCompareView } from '../views/text-compare/TextCompareView';
 import { applyTheme } from '../theme/palette';
@@ -214,6 +215,11 @@ export function AppShell() {
           {engineState.message}
         </span>
         <span className="spacer" />
+        {activeTab && activeTab.kind !== 'home' && (
+          <button className="aic-report-entry" onClick={() => useShell.getState().openReportDialog()}>
+            {S.report.open}
+          </button>
+        )}
         {notice && (
           <span className="aic-notice" onClick={() => setNotice(null)}>
             {notice}
@@ -234,6 +240,7 @@ export function AppShell() {
       <SaveAsDialog />
       <PromptDialog />
       <ClipboardHistoryPanel />
+      <ReportDialog />
     </div>
   );
 }

@@ -28,6 +28,8 @@ import type {
   MergeOutputResult,
   MergeSectionsParams,
   MergeSectionsResult,
+  ReportGenerateParams,
+  ReportGenerateResult,
   SessionCloseParams,
   SessionCloseResult,
   TextInlineDiffParams,
@@ -468,6 +470,23 @@ export async function merge3Decide(params: MergeDecideParams): Promise<MergeDeci
 export async function merge3Output(params: MergeOutputParams): Promise<MergeOutputResult> {
   const c = await getEngineClient();
   return c.request<MergeOutputResult>('text/merge3/output', params, 60_000);
+}
+
+/**
+ * P11：报告生成（report/generate；FR-RPT-001/002）。
+ * ts-rs 把 u64 的 offset/limit 生成为 bigint，但 NDJSON 传输必须是 number
+ * （JSON.stringify 不支持 bigint），故此处把这两个字段收窄为 number，
+ * 与 P14 hex/bytes 的 offset 处理同口径。
+ */
+export type ReportParams = Omit<ReportGenerateParams, 'offset' | 'limit'> & {
+  offset?: number;
+  limit?: number;
+};
+
+/** report/generate：会话快照 + 布局参数 → 报告内容（可 offset/limit 分块） */
+export async function generateReport(params: ReportParams): Promise<ReportGenerateResult> {
+  const c = await getEngineClient();
+  return c.request<ReportGenerateResult>('report/generate', params, 120_000);
 }
 
 // ==================================================================

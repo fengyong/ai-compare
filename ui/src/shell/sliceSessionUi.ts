@@ -3,6 +3,7 @@ import { sessionService } from '../session/service';
 import type { SessionKind } from '../session/model';
 import { S } from '../strings';
 import type { SessionSlice, ShellStore, Tab } from './shellState';
+import { sessionIdOfTab } from '../views/report/reportModel';
 
 /** 会话 slice（SES-001~006）：打开已保存会话 / 保存 / 另存 / 锁定 / 关闭确认 */
 export const createSessionSlice: StateCreator<ShellStore, [], [], SessionSlice> = (set, get) => ({
@@ -215,7 +216,7 @@ export const createUiSlice: StateCreator<
   ShellStore,
   [],
   [],
-  Pick<ShellStore, 'notice' | 'setNotice' | 'settingsDialog' | 'openSettings' | 'closeSettings' | 'prompt' | 'openPrompt' | 'resolvePrompt' | 'clipboardPanelOpen' | 'toggleClipboardPanel'>
+  Pick<ShellStore, 'notice' | 'setNotice' | 'settingsDialog' | 'openSettings' | 'closeSettings' | 'prompt' | 'openPrompt' | 'resolvePrompt' | 'clipboardPanelOpen' | 'toggleClipboardPanel' | 'reportDialog' | 'openReportDialog' | 'closeReportDialog'>
 > = (set, get) => ({
   notice: null,
   setNotice(msg) {
@@ -240,5 +241,20 @@ export const createUiSlice: StateCreator<
   clipboardPanelOpen: false,
   toggleClipboardPanel(open) {
     set({ clipboardPanelOpen: open ?? !get().clipboardPanelOpen });
+  },
+  reportDialog: null,
+  openReportDialog() {
+    const st = get();
+    const win = st.windows.find((w) => w.id === st.activeWindowId);
+    const tab = win?.tabs.find((t) => t.id === win.activeTabId);
+    const sessionId = tab ? sessionIdOfTab(tab) : null;
+    if (!tab || !sessionId) {
+      st.setNotice(S.report.noSession);
+      return;
+    }
+    set({ reportDialog: { sessionId, kind: tab.kind } });
+  },
+  closeReportDialog() {
+    set({ reportDialog: null });
   },
 });

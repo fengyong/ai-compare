@@ -281,6 +281,15 @@ export function registerBuiltinCommands(reg: CommandRegistry): void {
   });
 
   reg.register({
+    id: 'app.report',
+    title: '会话报告',
+    category: '工具',
+    phaseNote: 'FR-RPT-001/002：报告对话框（布局/布局级选项/输出目标）',
+    when: (ctx) => ctx.activeTabKind !== null && ctx.activeTabKind !== 'home',
+    run: () => useShell.getState().openReportDialog(),
+  });
+
+  reg.register({
     id: 'text.compareWithClipboard',
     title: '与剪贴板比较',
     category: '视图',

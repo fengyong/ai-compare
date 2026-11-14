@@ -219,6 +219,10 @@ export interface UiSlice {
   /** 队列 4：剪贴板历史面板（FR-CLIP-001） */
   clipboardPanelOpen: boolean;
   toggleClipboardPanel(open?: boolean): void;
+  /** 队列 5：报告对话框（FR-RPT-001） */
+  reportDialog: { sessionId: string; kind: string } | null;
+  openReportDialog(): void;
+  closeReportDialog(): void;
 }
 
 export type ShellStore = WindowsSlice & TabsSlice & SessionSlice & UiSlice;

@@ -66,6 +66,8 @@ import type {
   MergeOutputResult,
   MergeSectionsParams,
   MergeSectionsResult,
+  ReportGenerateParams,
+  ReportGenerateResult,
 } from '../protocol/types';
 import type { InlineSpanDto } from '../protocol/generated/InlineSpanDto';
 import { wordDiff } from '../lib/inlineDiffCore';
@@ -254,6 +256,9 @@ export class MockEngine {
         return { result: this.merge3Decide(params as MergeDecideParams), notifications: [] };
       case 'text/merge3/output':
         return { result: this.merge3Output(params as MergeOutputParams), notifications: [] };
+      // P11：报告生成（report/generate；FR-RPT-001/002）
+      case 'report/generate':
+        return { result: this.reportGenerate(params as ReportGenerateParams), notifications: [] };
       case 'text/inlineDiff':
         return { result: this.textInlineDiff(params as TextInlineDiffParams), notifications: [] };
       case 'session/close':
@@ -289,6 +294,8 @@ export class MockEngine {
         dirOperate: true,
         // P7：text/merge3/* 四方法已同形实现
         threeWayMerge: true,
+        // P11：report/generate 已同形实现
+        reports: true,
       },
       license: { proUnlocked: true },
     };
@@ -1223,6 +1230,67 @@ export class MockEngine {
       hasConflicts: unresolved.length > 0,
       decidedCount: s.decisions.size,
     };
+  }
+
+  // ---------------- P11：报告生成（report/generate） ----------------
+
+  /** report/generate：确定性演示报告 + offset/limit 分块（同形于 handlers.rs） */
+  private reportGenerate(p: ReportGenerateParams): ReportGenerateResult {
+    if (!p || typeof p.sessionId !== 'string' || p.sessionId === '') {
+      throw new InvalidParams('sessionId 不能为空');
+    }
+    if (!this.hasAnySession(p.sessionId)) {
+      throw new RpcErr(CODE.SESSION_NOT_FOUND, `会话不存在: ${p.sessionId}`);
+    }
+    const layout = p.layout ?? 'summary';
+    const chars = Array.from(this.mockReportContent(layout, p));
+    const total = chars.length;
+    const offset = Math.max(0, Math.min(Number(p.offset ?? 0), total));
+    const limit = p.limit === undefined || p.limit === null ? total : Math.max(0, Number(p.limit));
+    const slice = chars.slice(offset, offset + limit).join('');
+    return {
+      layout,
+      content: slice,
+      totalChars: total,
+      offset,
+      hasMore: offset + Array.from(slice).length < total,
+    };
+  }
+
+  /** 演示报告内容：布局决定格式，选项回显进正文以便 UI 验证参数生效 */
+  private mockReportContent(layout: string, p: ReportGenerateParams): string {
+    const title = p.title ?? 'ai-compare report';
+    const opts = [
+      `display=${p.display ?? 'all'}`,
+      `dirDisplay=${p.dirDisplay ?? 'all'}`,
+      `ignoreUnimportant=${p.ignoreUnimportant ?? false}`,
+      `lineNumbers=${p.lineNumbers ?? false}`,
+      `color=${p.color ?? 'color'}`,
+      `wrap=${p.wrap ?? 'none'}`,
+      `patchStyle=${p.patchStyle ?? 'unified'}`,
+      `delimiter=${p.delimiter ?? 'csv'}`,
+      `contextLines=${p.contextLines ?? 3}`,
+    ].join(' ');
+    switch (layout) {
+      case 'html':
+        return `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title></head><body><h1>${title}</h1><p>${opts}</p><table><tr><th>左</th><th>右</th><th>状态</th></tr><tr><td>alpha</td><td>ALPHA</td><td>change</td></tr></table></body></html>`;
+      case 'xml':
+        return `<report kind="text" layout="xml"><title>${title}</title><options>${opts}</options><row left="alpha" right="ALPHA" kind="change"/></report>`;
+      case 'csv': {
+        const sep = p.delimiter === 'tsv' ? '\t' : ',';
+        return `left${sep}right${sep}kind\nalpha${sep}ALPHA${sep}change\nshared${sep}shared${sep}equal\n`;
+      }
+      case 'patch':
+        return `--- ${title} (left)\n+++ ${title} (right)\n@@ -1,3 +1,3 @@\n shared\n-alpha\n+ALPHA\n`;
+      case 'sideBySide':
+        return `${title}\n${opts}\n左\t右\t状态\nalpha\tALPHA\tchange\nshared\tshared\tequal\n`;
+      case 'interleaved':
+        return `${title}\n${opts}\n  shared\n- alpha\n+ ALPHA\n`;
+      case 'tree':
+        return `${title}\n${opts}\nL/\n  alpha\n  shared\nR/\n  ALPHA\n  shared\n`;
+      default:
+        return `${title}\n布局: ${layout}\n${opts}\n差异清单:\n  alpha ⇄ ALPHA (change)\n  shared (equal)\n统计: 3 行 / 1 处差异\n`;
+    }
   }
 
   private requireMerge3(id: string): MockMerge3Session {

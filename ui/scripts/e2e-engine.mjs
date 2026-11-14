@@ -268,7 +268,53 @@ try {
     `hasConflicts=${plain?.hasConflicts}`
   );
 
-  // 5. 会话清理 + shutdown
+  // 6. P11：report/generate（FR-RPT-001/002；真实引擎布局族 + 分块流）
+  const rpt = await client.request('report/generate', {
+    sessionId: 'e2e-text-1', layout: 'summary', title: 'e2e report',
+  });
+  ok(
+    rpt?.layout === 'summary' && typeof rpt.content === 'string' && rpt.content.length > 0 &&
+      rpt.totalChars > 0 && rpt.hasMore === false,
+    'report/generate summary 全量报告',
+    `chars=${rpt?.totalChars}`
+  );
+  const rptPatch = await client.request('report/generate', {
+    sessionId: 'e2e-text-1', layout: 'patch',
+  });
+  ok(rptPatch?.content?.startsWith('--- '), 'report/generate patch 布局');
+
+  const rptFirst = await client.request('report/generate', {
+    sessionId: 'e2e-text-1', layout: 'xml', offset: 0, limit: 10,
+  });
+  ok(
+    rptFirst?.hasMore === true && Array.from(rptFirst.content).length === 10,
+    'report/generate 分块首块',
+    `hasMore=${rptFirst?.hasMore}`
+  );
+  let rptAssembled = rptFirst.content;
+  let rptOff = 10;
+  while (rptOff < rptFirst.totalChars) {
+    const blk = await client.request('report/generate', {
+      sessionId: 'e2e-text-1', layout: 'xml', offset: rptOff, limit: 7,
+    });
+    rptAssembled += blk.content;
+    rptOff += Array.from(blk.content).length;
+    if (!blk.hasMore || blk.content.length === 0) break;
+  }
+  const rptFull = await client.request('report/generate', {
+    sessionId: 'e2e-text-1', layout: 'xml', offset: 0, limit: rptFirst.totalChars,
+  });
+  ok(rptAssembled === rptFull.content, 'report/generate 分块拼接 == 全量');
+  // 本客户端把 JSON-RPC error 包装成 Error("RPC <code>: <message>")
+  let rptGhostMsg = '';
+  try {
+    await client.request('report/generate', { sessionId: 'ghost', layout: 'summary' });
+  } catch (e) {
+    rptGhostMsg = String(e?.message ?? e);
+  }
+  ok(rptGhostMsg.includes('410'), 'report/generate 未知会话报 SESSION_NOT_FOUND(410)', rptGhostMsg);
+
+  // 7. 会话清理 + shutdown
   ok((await client.request('session/close', { sessionId: 'e2e-dir-1' })) === null, 'session/close dir 会话');
   ok((await client.request('session/close', { sessionId: 'e2e-text-1' })) === null, 'session/close text 会话');
   ok((await client.request('session/close', { sessionId: 'e2e-merge3-1' })) === null, 'session/close merge3 会话');

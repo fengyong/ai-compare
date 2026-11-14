@@ -176,6 +176,53 @@ describe('MockEngine P0 协议面', () => {
     await client.close();
   });
 
+  it('report/generate 同形：布局族 / 选项回显 / 分块流 / 未知会话', async () => {
+    const client = await newClient();
+    await client.request('text/open', {
+      sessionId: 'rpt-1', left: '/demo/a.txt', right: '/demo/b.txt', options: null,
+    });
+    const full = await client.request<{ content: string; totalChars: number; hasMore: boolean }>(
+      'report/generate',
+      { sessionId: 'rpt-1', layout: 'summary', title: 'demo title', lineNumbers: true }
+    );
+    expect(full.content).toContain('demo title');
+    expect(full.content).toContain('lineNumbers=true');
+    expect(full.hasMore).toBe(false);
+    expect(full.totalChars).toBe(Array.from(full.content).length);
+
+    const html = await client.request<{ content: string }>('report/generate', {
+      sessionId: 'rpt-1', layout: 'html', color: 'mono',
+    });
+    expect(html.content).toContain('<!doctype html>');
+    expect(html.content).toContain('color=mono');
+
+    const first = await client.request<{ content: string; offset: number; hasMore: boolean; totalChars: number }>(
+      'report/generate',
+      { sessionId: 'rpt-1', layout: 'xml', offset: 0, limit: 10 }
+    );
+    expect(first.hasMore).toBe(true);
+    expect(Array.from(first.content).length).toBe(10);
+    let assembled = first.content;
+    let off = 10;
+    while (off < first.totalChars) {
+      const blk = await client.request<{ content: string; offset: number; hasMore: boolean }>(
+        'report/generate',
+        { sessionId: 'rpt-1', layout: 'xml', offset: off, limit: 7 }
+      );
+      assembled += blk.content;
+      off += Array.from(blk.content).length;
+      if (!blk.hasMore || blk.content.length === 0) break;
+    }
+    const whole = await client.request<{ content: string }>('report/generate', {
+      sessionId: 'rpt-1', layout: 'xml', offset: 0, limit: 10000,
+    });
+    expect(assembled).toBe(whole.content);
+    await expect(
+      client.request('report/generate', { sessionId: 'ghost', layout: 'summary' })
+    ).rejects.toMatchObject({ code: 410 });
+    await client.close();
+  });
+
   it('text/open 的 clipboard:// 规格取剪贴板历史文本（FR-CLIP-002 mock 同形）', async () => {
     const client = await newClient();
     const leftSpec = clipboardStore.registerText('alpha\nshared\n');
