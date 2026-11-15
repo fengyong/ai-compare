@@ -93,3 +93,31 @@ describe('BrowserFileStore：删除连 .bak 一起清', () => {
     await expect(store.deleteFile('s.json')).resolves.toBeUndefined();
   });
 });
+
+describe('MemoryFileStore：二进制写（演示资产）', () => {
+  it('writeBinaryFile 精确存非 UTF-8 字节', async () => {
+    const store = new MemoryFileStore();
+    const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0xff, 0x00, 0xfe]);
+    await store.writeBinaryFile('/img.png', bytes);
+    expect(store.peekBinary('/img.png')).toEqual(bytes);
+  });
+
+  it('覆盖产生二进制 .bak；deleteFile 连二进制 .bak 一起清', async () => {
+    const store = new MemoryFileStore();
+    await store.writeBinaryFile('/b.dat', new Uint8Array([1, 2]));
+    await store.writeBinaryFile('/b.dat', new Uint8Array([3, 4]));
+    expect(store.peekBinary('/b.dat')).toEqual(new Uint8Array([3, 4]));
+    expect(store.peekBinary('/b.dat.bak')).toEqual(new Uint8Array([1, 2]));
+    await store.deleteFile('/b.dat');
+    expect(store.peekBinary('/b.dat')).toBeNull();
+    expect(store.peekBinary('/b.dat.bak')).toBeNull();
+  });
+
+  it('文本与二进制互不串扰（独立存储面）', async () => {
+    const store = new MemoryFileStore();
+    await store.writeFile('/x', 'text');
+    await store.writeBinaryFile('/x', new Uint8Array([0xff]));
+    expect(store.peek('/x')).toBe('text');
+    expect(store.peekBinary('/x')).toEqual(new Uint8Array([0xff]));
+  });
+});

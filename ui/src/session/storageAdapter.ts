@@ -22,6 +22,17 @@ export interface KvFileStore {
   deleteFile(path: string): Promise<void>;
 }
 
+/**
+ * 二进制写能力（演示数据资产：PNG/ZIP/非 UTF-8 编码）。
+ *
+ * 与 KvFileStore 分离而非并入：设置层只读写 UTF-8 文本，无需二进制面；只有
+ * 演示落盘（seedDemoDirs）需要它。Tauri/Memory 后端实现，Browser 后端不实现
+ * （浏览器 dev 走 mock 引擎，不落盘真实演示目录）。
+ */
+export interface BinaryFileStore {
+  writeBinaryFile(path: string, bytes: Uint8Array): Promise<void>;
+}
+
 export interface AppDirs {
   /** 设置根目录（便携模式下 = exe 目录） */
   baseDir: string;
@@ -74,8 +85,9 @@ export async function resolveSettingPaths(): Promise<Record<
 // Memory
 // ------------------------------------------------------------------
 
-export class MemoryFileStore implements KvFileStore {
+export class MemoryFileStore implements KvFileStore, BinaryFileStore {
   private files = new Map<string, string>();
+  private binary = new Map<string, Uint8Array>();
 
   async readFile(path: string): Promise<string | null> {
     return this.files.get(path) ?? null;
@@ -86,10 +98,18 @@ export class MemoryFileStore implements KvFileStore {
     this.applyPlan(path, plan);
   }
 
+  async writeBinaryFile(path: string, bytes: Uint8Array): Promise<void> {
+    const prev = this.binary.get(path);
+    if (prev) this.binary.set(`${path}.bak`, prev);
+    this.binary.set(path, bytes);
+  }
+
   async deleteFile(path: string): Promise<void> {
     this.files.delete(path);
     // .bak 必须一起删：否则删除后走恢复协议会把旧文档复活（R3-13）
     this.files.delete(`${path}.bak`);
+    this.binary.delete(path);
+    this.binary.delete(`${path}.bak`);
   }
 
   /** 按 AtomicWritePlan 语义应用（测试可断言 .bak/.tmp 的中间状态） */
@@ -106,6 +126,11 @@ export class MemoryFileStore implements KvFileStore {
   /** 测试辅助：直读内部表 */
   peek(path: string): string | null {
     return this.files.get(path) ?? null;
+  }
+
+  /** 测试辅助：直读二进制表 */
+  peekBinary(path: string): Uint8Array | null {
+    return this.binary.get(path) ?? null;
   }
 }
 
@@ -152,7 +177,7 @@ export class BrowserFileStore implements KvFileStore {
 // Tauri（Rust 壳原子写）
 // ------------------------------------------------------------------
 
-export class TauriFileStore implements KvFileStore {
+export class TauriFileStore implements KvFileStore, BinaryFileStore {
   async readFile(path: string): Promise<string | null> {
     const r = await invoke<{ found: boolean; contents: string | null }>('settings_read', { path });
     return r.found ? (r.contents ?? '') : null;
@@ -160,6 +185,11 @@ export class TauriFileStore implements KvFileStore {
 
   async writeFile(path: string, contents: string): Promise<void> {
     await invoke('settings_write', { path, contents });
+  }
+
+  async writeBinaryFile(path: string, bytes: Uint8Array): Promise<void> {
+    // Vec<u8> 经 serde 从 JSON number[] 反序列化；演示资产体量小，数组开销可接受
+    await invoke('settings_write_bytes', { path, contents: Array.from(bytes) });
   }
 
   async deleteFile(path: string): Promise<void> {
