@@ -38,13 +38,12 @@
 
 ## 当前阶段与断点
 
-**当前**：M1 Walking Skeleton（docs/04 P0 阶段）双线并行开发中——引擎线 agent、UI 线 agent 均在后台运行。
+**当前**：M4 V2.0（docs/04 P12~P14）——P0 需求全量闭环、桌面体验版（`.app`/`.dmg`，引擎随包）已可交付；第三轮深度 review（R3，输入第三方报告 `REVIEW-2026-11-15.md` 26 项 + 自查新增 R3-27/28）已收尾：可达缺陷全部修复，架构/契约/发行/工具级不确信项按「不确信就记录待决」登记（REVIEW.md §8）。最新门禁与交付状态见文末「第三轮 review（R3）收尾」节。
 
-**下一步（任一 agent 完成后）**：
-1. 验收该线交付物（引擎线：`cargo build/test/clippy` 全绿、协议收发演示、aic 退出码；UI 线：`pnpm build/test` 全绿、cargo check）
-2. 两线都完成后做集成验收：引擎+UI 对接联调、`aic diff` 与 `diff -u` 对拍、PB-04 冒烟基准 → M1 打勾 + git commit
-3. M1 完成后进入 M2（docs/04 P1 diff 核心完备化 + P2 目录引擎完备化可并行），23:00 后加大并行度
-4. 断点恢复入口：若两 agent 均中断且无登记，按本节从第 1 步重新验收重启
+**下一步（断点恢复入口）**：
+1. 待用户拍板的契约级决策（REVIEW.md §7.7 / §8.2）：CLI 退出码 BC-vs-GNU、重要性回传 RPC、合并 EOL 语义；R3 待决项——u64→bigint 类型收敛、取消粒度/出站背压架构、CSP 信任边界、跨平台发行/公证/README/LICENSE、巨型文件重构、rustfmt 全量债务/cargo-deny 执行点。
+2. 平台/发布能力项（P13 后半 / 队列 9）：媒体·版本·注册表比较、主题 i18n 壳集成、命令面板、设置>命令自定义页、自动更新与公证安装程序、FTPS/SFTP、SNAPSHOT 全量格式。
+3. 续作纪律：门禁全绿 → 每项独立 commit（验收写进提交信息）→ 更新本文件；push 另行授权；架构/性能变更先只读讨论再动代码；测不到就说测不到。
 
 ## 运行中任务登记
 
@@ -360,3 +359,20 @@
   - **安装**：`bash scripts/build-app.sh --dmg` 重打包 → 验签通过 → 覆盖 `/Applications/ai-compare.app`（旧包移至 /tmp 保留）。**在安装版二进制上实测**：平铺切换 upserts 含子树文件且 removals 空、切回树形展开态保留、`rescan:true` 刷出外部新建文件；Update 计划仅 `sub/h.txt` 且右较新文件保留 `NEWER-RIGHT`；镜像计划 delete 先于 copy、右盘终态 `A.txt=LEFT`。GUI 启动渲染正常（引擎子进程随会话拉起）
   - **文档校准**：本文件 M2/V1.0 的「P0 全量闭环/覆盖」声明更正为不成立；BC 审计表 5 行改 ⚠ 并登记缺口；REVIEW.md §7 补 R2-10/11/12、子 agent 两条声称的逐条裁定（原始机理均被否证、相邻真缺陷成立）、门禁与变异矩阵
   - **待用户拍板（REVIEW.md §7.7）**：CLI 退出码 BC-vs-GNU（76 调用点）、重要性编辑后保持（新 RPC vs TS 复刻）、合并 EOL 语义（vs git merge-file）
+
+## 第三轮深度 Review（R3）收尾 + 体验版重装（2026-11-15 09:1x；用户指令「对 REVIEW-2026-11-15.md 指出的问题确认自主决策全部修复直至完成」）
+
+**评审报告**：第三方 `REVIEW-2026-11-15.md`（26 项 R3-01…R3-26，未跟踪，归属其所有者会话）+ 自查补 R3-27/R3-28，共 28 项。逐项处置全表（含提交 hash）见 `REVIEW.md §8.1`，待决证据 + 修法 + 为何后置见 §8.2，门禁复验见 §8.4。
+
+**处置结论（截至代码 HEAD `7c4f809`）**：28 项中 **22 项完全修复**（R3-01…R3-20、R3-27、R3-28）、**5 项部分修复**（R3-21/22/23/24/26：可达子项已修，架构/契约/工具/法律子项登记待决）、**1 项完全待决**（R3-25 巨型单文件重构）。
+- **P0 数据安全**：两条符号链接根外写入（递归复制 `96f564a`、补丁应用 `5ceed84`）。
+- **可达功能缺陷全修**：平铺/手动对齐行地址 + 目录扫描失败误判相同（`5dde3f5`）、文本编辑真实落盘 + 脏保护（`3acd46c`/`9841b7d`）、三向合并末尾换行/输出落盘/文件夹合并真实 RPC（`6493247`/`105e786`/`a604bc2`）、会话保存重开 + 崩溃恢复全 7 类（`457e43b`/`892bd2a`）、table/hex 411/410 竞态（`71b15f8`/`b5e24fa`）、zip 回写失败误报成功 + 设置原子耐久（`23f43d0`）、GUI RouteFs/编码权威/目录内容比较三方式（`0bb022a`/`d7722d7`/`652341a`）、父子会话闭环 + 差异导航（`861b53a` 等）、编辑后重 diff 重要性不抹平（`bec61f6`）、文本首开丢规则（`77fa72d`）、切标签丢目录视图状态（`7c4f809`）。
+- **待决项均非可达缺陷**（门禁全绿、真实链路正确）：R3-21(b) u64→bigint 类型 hygiene、R3-22(c) 取消粒度 + (d) 无界 channel 背压（架构）、R3-23 CSP（无注入汇且无法在真实 WKWebView 验证）、R3-24 跨平台/公证/README/LICENSE（需用户凭据与许可证拍板）、R3-25 巨型文件重构（纯结构、风险高收益零）、R3-26 rustfmt 全 workspace + cargo-deny（机械 churn / 装工具）。按「架构变更先只读讨论」「测不到就说测不到」「不擅自装工具/盲改契约」记录待用户拍板（§8.2）。
+
+**formats/rules 接线闭环**：R3-27 文本首开丢比较规则（壳预开无规则 → 视图 411 复用）已修，rules/formatRules 在 open→编辑→重 diff→保存全链路贯通；mergeSave/dirMerge 真实 RPC 经 e2e:engine 实测。
+
+**门禁（R3-28 提交后全量复验，详见 §8.4）**：引擎 `cargo test --workspace` **987/0**（3 ignored）+ clippy 零警；壳独立 workspace **15/0**（含 confine_within 5 测试）+ clippy 零警；协议 drift `generated_bindings_match_ui` 通过（192 .ts 逐字节一致）；UI `tsc -b` 0 错、`vitest` **729/0**（72 文件）、`lint`/`build`/`e2e:engine`/`format:check` 全绿。R3-28 组件 rehydrate（视图层零 `.test.tsx`）由真实浏览器 headless Chrome + CDP **10/10 断言 + 双向变异**补足（savedView=null → 4 条断言变红，证非空跑）。
+
+**体验版重装（用户指令「编译最新代码在我本机安装上方便我体验」）**：`bash scripts/build-app.sh --dmg` 重打包 → `ai-compare.app`（5.20 MiB）+ DMG；旧包移至 `/tmp/ai-compare.app.prev-20261115-091107` 保留（未删除），新包覆盖 `/Applications/ai-compare.app`。**在安装版上实测**：codesign `valid on disk` + `satisfies its Designated Requirement`；主二进制 5416656 B、随包引擎 9118736 B（均 Nov 15 09:11）；随包引擎 RPC `initialize`（protocolVersion "1.0"）返回完整能力（cancel/deltaBatching/dirCompareContent/dirMerge/textSave/mergeSave/formatRules/threeWayMerge…）后干净 shutdown；GUI `open` 进程存活（PID 97173）无崩溃报告。**诚实边界**：UI 断言在 vite dev（纯 Chrome，同源）上跑；安装版 Tauri WKWebView 无法被现有 CDP 基建驱动，故以 codesign + 随包引擎 RPC 握手 + 进程存活验证，未声称在真实 WebView 上跑过 UI 断言。
+
+> 本条目取代上文「最新交付状态（2026-11-14 21:5x，HEAD `fe04624`，引擎 822 / UI 477）」过期快照；当前代码 HEAD `7c4f809`，门禁 987 / 15 / 729。文档校准（REVIEW.md §8.3 + 本条目）随同一 docs 提交落盘。
