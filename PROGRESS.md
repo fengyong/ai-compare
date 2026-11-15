@@ -726,3 +726,76 @@ UI `vitest` **772/0**（75 文件，基线 763 + 本轮 9 组件级；另新增 
   `ui/node_modules/.vitest-cache`（被新位置取代的旧缓存）；保留 `ui/.vitest-fs-cache/`（生效中的缓存，
   已被 `ui/.gitignore` 忽略）。删除后复跑 UI 测试仍 772/0。
 
+
+---
+
+## DeepSeek Flash 下一批开发（2026-11-15）：D0 复核 / D1A / D1B / D2
+
+> 输入任务书 `DEEPSEEK-NEXT-ROUND-2026-11-15.md`；交付报告 `DEEPSEEK-DELIVERY-2026-11-15.md`。
+> 基线确认：开工 HEAD 为 `b628d60`（= 任务书 `92fa3a0` 之后的 SpaceBunny D0 修复提交
+> `fix(dir): 修复右侧解除对齐的角色反转`）。本轮**未重置/未改写**任何既有提交，未 push。
+
+### D0 右侧 unalign（复核，不重复提交）
+
+- 提交归属：`b628d60`（SpaceBunny）。本轮只做**验证**，未改动该链路。
+- 实测证据（真实引擎 e2e）：`✓ 右侧入口解除后恢复为两个孤立项（leftOnly=1 + rightOnly=1）`
+  `✓ 解除后镜像计划恢复为「复制 + 删除」` `✓ 异名复制执行无失败` / `✓ 右侧真实文件被写成左侧内容`。
+- 结论：D0 已闭环，无需追加修复。
+
+### D1A 零值省略字段的 TS 形状（`15ea193`）
+
+- 清单：33 个字段 / 12 个类型（`DirRow.hidden`、`DirStats.dirDiff`、
+  `FileFormatSpec.masks|description|grammar|tabStops|…`、`MergeChunkDto.baseLines|leftLines|rightLines`、
+  `TextManualAlignSpec.*`、`GrammarItemSpec.*`、`RulesSetParams.*` 等）。
+- 方案：ts-rs **10.1 → 12.0.1**（v10 的 `ts(optional)` 对非 Option 字段直接编译期报错；
+  v12 由 `serde(default) + skip_serializing` 推导可选键）。仅移除 3 处已冗余的
+  `ts(type="Array<string> | undefined")`；**未改任何 serde 属性** → 线上 JSON 值零变化。
+- 护栏：生成物级对账（`skip ⇔ 可选键`、非 Option 省略字段必须带 `default`）+ 四态运行时测试；
+  三条变异（去掉 default / 去掉 skip / 抹掉生成物的 `?`）均验证变红。
+
+### D1B 本地重复协议类型收敛（`93b4eb3`）
+
+- 8 处同名镜像收敛到生成类型：`DirExecute*` ×5（`types.ts`）、`CharRange`（`inlineDiffCore`）、
+  `Importance` ×2（`cmDecorations`/`overview`）。镜像与生成类型的真实漂移已修：
+  `detail` 由「必填可空」→「可选键」、`targetSide/targetPath/newName` 去掉 `| null`、
+  succeeded 项补齐必填 `status`。
+- 新增 `ui/src/protocol/mirrorGuard.test.ts`（同名声明即失败，变异验证通过）。
+- `as unknown as` 共 13 处经逐处核验仍必要（泛型键合并/记录索引），未删也未新增。
+
+### D2 独立文本编辑视图（`b96642a`，FR-EDIT-001 第一阶段）
+
+- 协议（向后兼容）：`TextOpenParams.right` → `Option<String>`（**省略 = 单文件会话**：
+  只建左表、不读右文件、不跑 diff）+ 能力位 `capabilities.textOpenOne`（缺省 false）。
+  旧客户端始终带 `right`，行为逐字节不变（e2e 有专门断言）。
+- UI：新会话类型 `text-edit` + 标签 `kind:'edit'`；四个入口（主页大按钮、拖放、目录行右键、
+  文本比较工具栏）；单窗格 CM6 宿主（原生撤销/重做/剪贴板），不复用对齐窗格。
+- 保存单一来源 `saveEditDoc`：**先 `text/edit` 收敛再 `text/save`**，工具栏 / Ctrl+S
+  （`saveSessionForTab` 分流）/ 关闭守卫三处共用；失败不清脏、不关闭、不假报成功。
+- 崩溃重放：按路径认领旧会话的未落盘编辑，以引擎真值为基准重新收敛；
+  同一文档的 `text/edit` 串行化（WeakMap 链）避免并发重复应用。
+- 只读降级：引擎无 `text/edit` 时只读打开并提示原因，保存按钮禁用。
+- 已知边界（写入代码注释与 e2e 断言）：行数组无法表达「末行为空且无行尾符」，
+  末行回车等价于补行尾符（落盘字节正确，重开后行数少 1）。要彻底消除需协议再暴露
+  「末行是否有行尾符」，超出本阶段。
+
+### 全量门禁（本轮实测）
+
+- 引擎 `cargo test --locked --workspace` **1057/0**（基线 1051，+6：D1A 2 条协议护栏、D2 4 条单侧会话）；
+  `clippy -D warnings` 零警、`fmt --check` 0 diff、`cargo deny check` 四项 ok、
+  `cargo test -p ai-protocol --features ts generated_bindings_match_ui` 通过。
+- 壳 workspace：**19/0** + clippy 零警 + fmt 0 diff。
+- UI：`vitest` **824/0（81 文件）**（基线 772/75，+52 用例 / +6 文件）、`tsc -b --force` 0 错、
+  `lint` / `build` / `format:check` 全绿、`pnpm e2e:engine`（新增 D2 段 19 条断言）、
+  `pnpm verify:demo` 全过。
+- `git diff --check` 干净：ts-rs 生成物在「字段后跟文档注释」时行尾固定带一个空格
+  （98 个文件一致、可逐字节复现），用 `.gitattributes` **只对 `src/protocol/generated/*.ts`**
+  关闭行尾空白检查，其余源码照旧。
+
+### 本轮未验证 / 未完成
+
+- **D3（只读补丁视图，任务书标注"可选"）未开始**。D2 已完整闭环，但按任务书 §0.3-9
+  「Token 不足时完整交付当前包后停止，不留下多个基本完成」，不开启新包。
+- **真实桌面 WebView 的编辑视图 GUI 未实测**：本轮证据等级为「引擎 e2e（真实字节）+ jsdom 组件
+  测试（真实 CM6 实例）」，不等于 GUI 点击链路；人工清单见交付报告。
+- 编辑视图**不支持在会话内切换编码**（保留打开时编码；切换仍走文本比较视图的既有路径）。
+- 多文件搜索、SCC 签入签出不属本阶段（任务书明示不在本包）。
