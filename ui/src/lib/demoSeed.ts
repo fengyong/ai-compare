@@ -65,7 +65,7 @@ const GUIDE = `# 演示数据体验指南
 - 树形/平铺：工具栏切换；平铺下用「手动对齐」处理改名行。
 - 隐藏文件：.env / .gitignore / .hidden/secret.txt（按隐藏文件开关显隐）。
 - 嵌套与空目录：nested/deep/a/b/c.txt；nested/empty-left(.gitkeep 仅左)。
-- 大文件：large/big.txt（4000 行，右侧 3 处改动；Ctrl+Down 跳差异）。
+- 大文件：large/big.txt（4000 行，右侧 3 处改动；用工具栏「下一处差异」跳转）。
 
 ## 文本比较（双击文本文件）
 - 代码：src/main.rs、src/app.py、src/index.ts。
@@ -73,7 +73,7 @@ const GUIDE = `# 演示数据体验指南
 - BOM：text/bom.txt（左 UTF-8 BOM / 右无 BOM）。
 - Unicode：text/unicode.txt（中文 + emoji，两侧相同）。
 - 编码：encoding/gb18030.txt（GB18030）、encoding/utf16.txt（UTF-16LE+BOM）；
-  在文本视图编码下拉手动选择对应编码查看正确中文。
+  打开即自动检测编码并正确显示中文，也可在文本视图编码下拉手动覆盖。
 
 ## 表格比较（双击 csv/tsv/tab）
 - data/users.csv、data/users.tsv（不同）；data/products.tab（相同）。
