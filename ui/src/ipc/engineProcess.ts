@@ -147,6 +147,20 @@ export function getEngineCapabilities(): EngineCapabilities | null {
   return engineCapabilities;
 }
 
+/**
+ * R3-22：把 UI「取消」按钮接到引擎的请求级 CancelFlag。
+ * 客户端按 `capabilities.cancelMethods` 门控；返回是否真的发出了 `$/cancel`
+ * （false = 引擎未声明该能力或当前没有在途请求，调用方不应宣称「已取消引擎任务」）。
+ */
+export function cancelEngineRequest(method: string): boolean {
+  return client?.cancelInFlight(method) ?? false;
+}
+
+/** R3-22：会话级取消 —— 停止 dir/open 应答后仍在运行的后台扫描。 */
+export function cancelEngineSession(sessionId: string): boolean {
+  return client?.cancelSession(sessionId) ?? false;
+}
+
 /** 生成引擎侧会话句柄（客户端分配；前缀便于日志排查） */
 export function newSessionId(kind: EngineSessionKind): string {
   const rand =

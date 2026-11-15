@@ -9,10 +9,11 @@ import { LineBuffer } from './jsonrpc';
  * LineBuffer 的粘包/半包重组在同一文件内覆盖。
  */
 
+/** 旧引擎形态：只有全局 cancel，没有 R3-22 的精确清单（用于测兼容降级） */
 const INIT_RESULT = {
   protocolVersion: '1.0',
   engineInfo: { name: 'test-engine', version: '0.0.0' },
-  capabilities: { viewKinds: [], features: [] },
+  capabilities: { cancel: true, viewKinds: [], features: [] },
 };
 
 class MockStream implements Transport {
@@ -20,6 +21,8 @@ class MockStream implements Transport {
   private closeHandler?: (reason?: string) => void;
   readonly sent: string[] = [];
   private stopped = false;
+
+  constructor(private readonly initResult: unknown = INIT_RESULT) {}
 
   async start(): Promise<void> {}
   async stop(): Promise<void> {
@@ -56,7 +59,7 @@ class MockStream implements Transport {
   /** 自动应答第一个未应答的请求（initialize 握手用） */
   answerInitialize(): void {
     const first = JSON.parse(this.sent[0]) as { id: number; method: string };
-    if (first.method === 'initialize') this.reply(first.id, INIT_RESULT);
+    if (first.method === 'initialize') this.reply(first.id, this.initResult);
   }
   close(reason?: string): void {
     this.closeHandler?.(reason);
@@ -66,13 +69,20 @@ class MockStream implements Transport {
 /** 让 bootstrap 的微任务链跑完（写入 initialize 请求） */
 const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
-async function makeClient(opts?: ConstructorParameters<typeof RpcClient>[1]) {
-  const stream = new MockStream();
+async function makeClient(
+  opts?: ConstructorParameters<typeof RpcClient>[1],
+  initResult: unknown = INIT_RESULT,
+) {
+  const stream = new MockStream(initResult);
   const client = new RpcClient(stream, opts);
   await flush();
   stream.answerInitialize();
   await client.ready;
   return { stream, client };
+}
+
+function withCapabilities(caps: Record<string, unknown>): Record<string, unknown> {
+  return { ...INIT_RESULT, capabilities: caps };
 }
 
 describe('RpcClient', () => {
@@ -167,6 +177,122 @@ describe('RpcClient', () => {
         method: '$/cancel',
         params: { id: sentId },
       });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('R3-22：能力清单不含该方法时超时不发 $/cancel', async () => {
+    vi.useFakeTimers();
+    try {
+      const stream = new MockStream(
+        withCapabilities({
+          cancel: true,
+          cancelMethods: ['dir/open', 'dir/execute'],
+          sessionCancel: true,
+        }),
+      );
+      const client = new RpcClient(stream);
+      await vi.advanceTimersByTimeAsync(0);
+      stream.answerInitialize();
+      await vi.advanceTimersByTimeAsync(0);
+      await client.ready;
+      const p = client.request('text/open', undefined, 50);
+      await vi.advanceTimersByTimeAsync(1);
+      const expectation = expect(p).rejects.toMatchObject({ code: LOCAL_ERROR.TIMEOUT });
+      vi.advanceTimersByTime(60);
+      await expectation;
+      expect(stream.sent.some((l) => l.includes('$/cancel'))).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('R3-22：能力清单命中的方法超时仍发 $/cancel', async () => {
+    vi.useFakeTimers();
+    try {
+      const stream = new MockStream(
+        withCapabilities({ cancel: true, cancelMethods: ['slow/method'], sessionCancel: true }),
+      );
+      const client = new RpcClient(stream);
+      await vi.advanceTimersByTimeAsync(0);
+      stream.answerInitialize();
+      await vi.advanceTimersByTimeAsync(0);
+      await client.ready;
+      const p = client.request('slow/method', undefined, 50);
+      await vi.advanceTimersByTimeAsync(1);
+      const expectation = expect(p).rejects.toMatchObject({ code: LOCAL_ERROR.TIMEOUT });
+      vi.advanceTimersByTime(60);
+      await expectation;
+      const cancel = stream.sent.find((l) => l.includes('$/cancel'));
+      expect(cancel).toBeDefined();
+      expect(JSON.parse(cancel!)).toMatchObject({ method: '$/cancel' });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('R3-22：cancelInFlight 只对已声明方法的在途请求发通知', async () => {
+    const { stream, client } = await makeClient(
+      undefined,
+      withCapabilities({
+        cancel: true,
+        cancelMethods: ['dir/execute'],
+        sessionCancel: true,
+      }),
+    );
+    // 无在途请求时不应发取消
+    expect(client.cancelInFlight('dir/execute')).toBe(false);
+    const p = client.request('dir/execute', {}, 60_000);
+    await flush();
+    const reqId = (JSON.parse(stream.sent[stream.sent.length - 1]) as { id: number }).id;
+    // 表外方法不应发取消
+    expect(client.cancelInFlight('text/open')).toBe(false);
+    expect(client.cancelInFlight('dir/execute')).toBe(true);
+    await flush();
+    const cancel = stream.sent.find((l) => l.includes('$/cancel'));
+    expect(cancel).toBeDefined();
+    expect(JSON.parse(cancel!)).toMatchObject({ method: '$/cancel', params: { id: reqId } });
+    stream.reply(reqId, { ok: true });
+    await expect(p).resolves.toEqual({ ok: true });
+  });
+
+  it('R3-22：cancelSession 按 sessionCancel 能力位门控且不伪造请求 id', async () => {
+    const off = await makeClient(
+      undefined,
+      withCapabilities({ cancel: true, cancelMethods: [], sessionCancel: false }),
+    );
+    expect(off.client.cancelSession('d1')).toBe(false);
+    await flush();
+    expect(off.stream.sent.some((l) => l.includes('$/cancel'))).toBe(false);
+
+    const on = await makeClient(
+      undefined,
+      withCapabilities({ cancel: true, cancelMethods: [], sessionCancel: true }),
+    );
+    expect(on.client.cancelSession('d1')).toBe(true);
+    await flush();
+    const cancel = on.stream.sent.find((l) => l.includes('$/cancel'));
+    expect(cancel).toBeDefined();
+    const parsed = JSON.parse(cancel!) as { params: Record<string, unknown> };
+    expect(parsed.params).toEqual({ sessionId: 'd1' });
+  });
+
+  it('R3-22：cancel:false 的引擎超时不发取消（旧引擎也不过度承诺）', async () => {
+    vi.useFakeTimers();
+    try {
+      const stream = new MockStream(withCapabilities({ cancel: false }));
+      const client = new RpcClient(stream);
+      await vi.advanceTimersByTimeAsync(0);
+      stream.answerInitialize();
+      await vi.advanceTimersByTimeAsync(0);
+      await client.ready;
+      const p = client.request('slow/method', undefined, 50);
+      await vi.advanceTimersByTimeAsync(1);
+      const expectation = expect(p).rejects.toMatchObject({ code: LOCAL_ERROR.TIMEOUT });
+      vi.advanceTimersByTime(60);
+      await expectation;
+      expect(stream.sent.some((l) => l.includes('$/cancel'))).toBe(false);
     } finally {
       vi.useRealTimers();
     }

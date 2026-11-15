@@ -391,8 +391,21 @@ pub struct EngineCapabilities {
     pub text_compare: bool,
     /// 行内差异懒计算入口（P0 协议定义类型，RPC 入口 P1 开放）
     pub inline_diff: bool,
-    /// 支持 `$/cancel`
+    /// 引擎实现 `$/cancel`（LSP 语义）。**作用域由下面两个字段精确界定**：
+    /// `cancel_methods` 列出可请求级取消的方法，`session_cancel` 声明会话级
+    /// 后台扫描取消。旧引擎不含这两个可选字段时，UI 按 `cancel` 布尔降级。
     pub cancel: bool,
+    /// R3-22：真正消费请求级 `CancelFlag` 的方法名清单
+    /// （`method::CANCELLABLE_METHODS`）。缺省 None = 旧引擎无精确清单，
+    /// 此时 UI 回落到 `cancel` 布尔的旧语义；有清单时必须按清单判断。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub cancel_methods: Option<Vec<String>>,
+    /// R3-22：支持 `$/cancel {sessionId}` 在 `dir/open` 应答后停止会话级后台扫描。
+    /// 缺省 None = 不支持（旧引擎）；UI 不得假定可用。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub session_cancel: Option<bool>,
     /// dir/delta 分批推送
     pub delta_batching: bool,
     /// 分批的单批最大行数
@@ -403,13 +416,15 @@ pub struct EngineCapabilities {
     #[cfg_attr(feature = "ts", ts(optional))]
     pub lines_read: Option<bool>,
     /// P2：dir/open 惰性 + 后台扫描（lazyScan 参数与 dir/progress 通知）
-    #[serde(default = "default_true")]
+    /// R3-22：缺省改为 **false**，与其余能力位「旧载荷不含该字段 = 不支持」
+    /// 口径一致；此前 `default_true` 会让旧引擎载荷被误判为支持（过度承诺）。
+    #[serde(default)]
     pub dir_background_scan: bool,
     /// P2：dir/filter（三类过滤器引擎侧求值）
-    #[serde(default = "default_true")]
+    #[serde(default)]
     pub dir_filters: bool,
     /// P2：dir/operate（同步状态机 operate 计划）
-    #[serde(default = "default_true")]
+    #[serde(default)]
     pub dir_operate: bool,
     /// P7：三向文本合并入口（text/merge3/* 四方法）
     /// 可选字段（缺省 None）：旧引擎载荷不含该字段 = 不支持该能力，不得假定为 true
@@ -2961,13 +2976,40 @@ pub struct SessionCloseParams {
     pub session_id: String,
 }
 
-/// 取消通知载荷（LSP 风格：按请求 id 取消）
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// 取消通知载荷（LSP 风格：按请求 id 取消；R3-22 增加会话级取消）。
+///
+/// 两种目标可单独或同时出现：
+/// - `id`：在途请求，请求应答后 registration 注销即失效；
+/// - `sessionId`：`dir/open` 应答后仍要停止的会话级后台扫描。
+///
+/// `id` 从必填改为可选是兼容式演进：旧载荷 `{"id":7}` 语义不变；
+/// 新载荷 `{"sessionId":"d1"}` 不再需要伪造一个请求 id。
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 #[serde(rename_all = "camelCase")]
 pub struct CancelParams {
-    pub id: RequestId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub id: Option<RequestId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub session_id: Option<String>,
+}
+
+impl CancelParams {
+    pub fn for_request(id: RequestId) -> Self {
+        CancelParams { id: Some(id), session_id: None }
+    }
+
+    pub fn for_session(session_id: impl Into<String>) -> Self {
+        CancelParams { id: None, session_id: Some(session_id.into()) }
+    }
+
+    /// 至少有一个非空目标；空载荷是无效通知（引擎侧告警并忽略）。
+    pub fn has_target(&self) -> bool {
+        self.id.is_some() || self.session_id.as_deref().is_some_and(|s| !s.is_empty())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -3824,6 +3866,8 @@ mod tests {
             text_compare: true,
             inline_diff: true,
             cancel: true,
+            cancel_methods: None,
+            session_cancel: None,
             delta_batching: true,
             max_delta_batch_rows: 512,
             lines_read: Some(true),
@@ -4145,6 +4189,8 @@ mod tests {
             text_compare: true,
             inline_diff: true,
             cancel: true,
+            cancel_methods: None,
+            session_cancel: None,
             delta_batching: true,
             max_delta_batch_rows: 512,
             lines_read: Some(true),
@@ -4294,6 +4340,8 @@ mod tests {
             text_compare: true,
             inline_diff: true,
             cancel: true,
+            cancel_methods: None,
+            session_cancel: None,
             delta_batching: true,
             max_delta_batch_rows: 512,
             lines_read: Some(true),
@@ -4603,5 +4651,89 @@ mod tests {
         assert_eq!(back, res);
         assert!(s.contains("\"totalChars\":4"));
         assert!(s.contains("\"hasMore\":false"));
+    }
+
+    // ------------------------------------------------------------------
+    // R3-22：取消契约（旧载荷兼容 + 精确能力声明）
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn cancel_params_old_payload_still_targets_request() {
+        let p: CancelParams = serde_json::from_str(r#"{"id":7}"#).unwrap();
+        assert_eq!(p.id, Some(RequestId::Number(7)));
+        assert_eq!(p.session_id, None);
+        assert!(p.has_target());
+        // 线上不产生 null 噪声：旧载荷形态逐字节保持
+        assert_eq!(serde_json::to_string(&p).unwrap(), r#"{"id":7}"#);
+    }
+
+    #[test]
+    fn cancel_params_session_target_roundtrip() {
+        let p = CancelParams::for_session("d1");
+        let s = serde_json::to_string(&p).unwrap();
+        assert_eq!(s, r#"{"sessionId":"d1"}"#, "会话级取消不得伪造请求 id: {s}");
+        let back: CancelParams = serde_json::from_str(&s).unwrap();
+        assert_eq!(back, p);
+        assert_eq!(back.id, None);
+        assert!(back.has_target());
+    }
+
+    #[test]
+    fn cancel_params_empty_target_is_invalid() {
+        let empty: CancelParams = serde_json::from_str("{}").unwrap();
+        assert!(!empty.has_target());
+        let blank = CancelParams::for_session("");
+        assert!(!blank.has_target(), "空 sessionId 不是有效取消目标");
+        let both: CancelParams =
+            serde_json::from_str(r#"{"id":3,"sessionId":"d1"}"#).unwrap();
+        assert!(both.has_target());
+        assert_eq!(both.id, Some(RequestId::Number(3)));
+        assert_eq!(both.session_id.as_deref(), Some("d1"));
+    }
+
+    #[test]
+    fn cancellable_methods_are_precise_not_global() {
+        use crate::method::{self, CANCELLABLE_METHODS};
+        assert_eq!(CANCELLABLE_METHODS.len(), 4);
+        for m in CANCELLABLE_METHODS {
+            assert!(method::is_cancellable(m), "{m} 应可取消");
+        }
+        // 长任务但不接 CancelFlag 的方法不得出现在清单里
+        for m in [
+            method::TEXT_OPEN,
+            method::TEXT_INLINE_DIFF,
+            method::REPORT_GENERATE,
+            method::DIR_FILTER,
+            method::DIR_EXPAND,
+            method::SESSION_CLOSE,
+        ] {
+            assert!(!method::is_cancellable(m), "{m} 未接 CancelFlag，不得声明可取消");
+        }
+    }
+
+    #[test]
+    fn capabilities_cancel_scope_and_old_payload_defaults() {
+        // 旧引擎载荷无精确清单：三个可选字段必须为「不支持/未声明」
+        let old = r#"{"dirCompare":true,"textCompare":true,"inlineDiff":false,"cancel":true,"deltaBatching":true,"maxDeltaBatchRows":512,"dirBackgroundScan":true,"dirFilters":true,"dirOperate":true}"#;
+        let v: EngineCapabilities = serde_json::from_str(old).unwrap();
+        assert_eq!(v.cancel_methods, None);
+        assert_eq!(v.session_cancel, None);
+        assert!(v.dir_background_scan, "旧载荷显式 true 仍按 true");
+
+        // 更老的载荷（连三个 P2 能力位都没有）不得被默认成 true
+        let older = r#"{"dirCompare":true,"textCompare":true,"inlineDiff":false,"cancel":false,"deltaBatching":true,"maxDeltaBatchRows":512}"#;
+        let v2: EngineCapabilities = serde_json::from_str(older).unwrap();
+        assert!(!v2.dir_background_scan);
+        assert!(!v2.dir_filters);
+        assert!(!v2.dir_operate);
+
+        let mut c: EngineCapabilities = serde_json::from_str(old).unwrap();
+        c.cancel_methods = Some(
+            crate::method::CANCELLABLE_METHODS.iter().map(|m| m.to_string()).collect(),
+        );
+        c.session_cancel = Some(true);
+        let s = serde_json::to_string(&c).unwrap();
+        assert!(s.contains("\"cancelMethods\":["), "新能力清单要上线: {s}");
+        assert!(s.contains("\"sessionCancel\":true"), "会话级取消能力要上线: {s}");
     }
 }

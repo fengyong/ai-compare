@@ -16,6 +16,7 @@
 //!   （docs/03 §8.3 引擎 panic 边界）。
 
 pub mod batch;
+pub mod cancel;
 pub mod handlers;
 pub mod log;
 pub mod mapping;

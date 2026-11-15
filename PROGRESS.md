@@ -491,3 +491,56 @@
 - **未做（独立专项）**：`Option` 字段的 TS 可选性。本批次只处理了 5 个 `Option<u64>`；其余约 160 个 `Option<T>` 仍导出为必填 `T | null`，而 serde 会省略键。修它需批量加 `ts(optional)` 并可能牵动 UI 数十处类型检查，按「每工作包独立」未夹带，登记为后续专项。
 - **未验证**：真实桌面 WebView 上的数值展示；非 macOS 平台；> 2^53 的出站值（引擎业务字段实际量级远低于该上限，出站未加运行时断言，仅靠协议约定 + 入站约束）。
 - 手写请求/响应类型（`engineProcess.ts` 的 hex/table 等）仍与生成类型重复，但不是双重 cast，本批次未清理。
+
+## HY4 批次 3 工作包 A：R3-22 取消能力声明与会话级取消（2026-11-15，自主工作模式）
+
+依据 `HY4-NEXT-ROUND-2026-11-15.md` §4.1 / §8 批次 3。基线 `b4a620f`（引擎 1006/0、UI 751/0、壳 18/0）。**本工作包只做真实取消，出站背压另立工作包 B，未混做。**
+
+### 修复前实测
+
+- `initialize` 只有全局 `cancel: true`，但 `dispatch` 里只有 `dir/open`、`dir/execute`、`dir/mergeScan`、`dir/mergeExecute` 传了 `CancelFlag`；`text/open`、长 diff、`report/generate` 等从不消费取消旗标。
+- `CancelRegistry` 只有一张 `request id -> flag` 表，`process_request` 应答后立即 `unregister` → `dir/open` 应答后仍在跑的后台扫描无法按原 id 取消。
+- UI `client.ts` 超时无条件发 `$/cancel`；`FolderSyncView` 取消按钮只置本地 `cancelRef`，与引擎 CancelFlag 完全断开。
+
+### 实际修改的生产链路
+
+- **协议**（`ai-protocol`）：`method::CANCELLABLE_METHODS` 作为唯一事实源（4 个方法）+ `is_cancellable`；`EngineCapabilities` 增可选 `cancelMethods` / `sessionCancel`；三个 P2 老能力位的 `serde(default = "default_true")` 改为 `default`（缺省 false，消除旧载荷过度承诺）；`CancelParams.id` 改可选并新增可选 `sessionId`（`has_target()` 校验至少一个目标）。
+- **引擎**（`ai-engine`）：新增 `cancel.rs` 双层注册表（request 索引 + session 索引，同一 `Arc<AtomicBool>`）；`server.rs` 的 `$/cancel` 同时受理 `{id}` / `{sessionId}` / 两者，EOF 时 `cancel_all_sessions()`；`HandlerCtx` 持有共享注册表。`dir/open` 模型路径成功后把请求旗标提升为会话旗标（DirModel 的 worker / pump 持有的正是同一个 Arc）；`session/close` 注销会话索引并置位旗标终止后台任务。
+- **能力声明**：`initialize` 按 `CANCELLABLE_METHODS` 精确输出 `cancelMethods`，`sessionCancel=true`。
+- **UI**：`client.ts` 保存握手能力集，超时按 `cancelMethods` 门控（旧引擎无清单时按 `cancel` 布尔降级）；新增 `cancelInFlight(method)` / `cancelSession(sessionId)`；`engineProcess.ts` 导出 `cancelEngineRequest` / `cancelEngineSession`；`FolderSyncView` 取消按钮同时调用 `cancelEngineRequest('dir/execute')`（本地标记仅能阻止后续批次，在途批次需引擎置位）。
+- **mock / 生成绑定 / 快照**：mock 如实声明 `cancelMethods: []`、`sessionCancel: false` 并安全忽略 `$/cancel`；重生成 `EngineCapabilities.ts` / `CancelParams.ts`；按有意的能力位变更重固化 3 个 golden 快照与录制回放 fixture（差异仅 initialize 应答新增 `cancelMethods` 4 项 + `sessionCancel: true`，已逐行 review）。
+
+### 协议兼容处理
+
+旧载荷 `{"id":7}` 逐字节不变且语义不变（`CancelParams.id` 改可选、`skip_serializing_if`）；新增 `{"sessionId":"d1"}` 无需伪造请求 id；两个新能力位均为可选 `Option`，旧引擎载荷缺省为 `None`（UI 降级到 `cancel` 布尔）；旧引擎无 `sessionCancel` 时 UI 不发会话级取消。golden/replay 的 inbound 保持逐字重放。
+
+### 新增回归测试（17 条）
+
+- 协议层 5 条：旧/新取消载荷兼容与 `has_target`、能力清单精确性、老载荷缺省口径。
+- `cancel.rs` 4 条：请求注销后会话索引仍可命中、全量取消、关闭重开不继承已取消状态。
+- `server.rs` 1 条：`process_request` 结束后 request 索引清零、会话旗标仍可置位。
+- `handlers.rs` 4 条：initialize 精确声明、已取消旗标下 `dir/open` 回 `-32800` 而 `text/open` 不受影响、`dir/execute` 消费取消、`dir/open` 绑定→应答后取消→close→同 id 重开。
+- 真实 stdio 交互式 E2E 3 条（新增 `InteractiveEngine`：保持 stdin 打开，按「收到应答再发取消」时序）：initialize 能力清单精确、慢速大输入（每侧 1200 文件 / 内容比较）在途取消回 `-32800` 且同语料不取消能成功 / 表外 `text/open` 不受影响、应答后按 `sessionId` 取消收到 `dir/progress(cancelled)` + close 后 500ms 零通知 + 同 id 重开成功 + 引擎正常退出。
+- UI 5 条：清单不含该方法时超时不发取消、清单命中仍发、`cancelInFlight` 门控、`cancelSession` 门控且不伪造 id、`cancel:false` 不发。
+
+### 真实运行验证
+
+- 慢扫描取消 E2E **连续重跑 8/8 全绿**（排除竞态 flaky）；会话级取消 E2E 观察到 `dir/progress(cancelled)` 而非仅 UI 改文案，Cancelled 之后无 `dir/delta`，close 后 500ms 无新通知。
+- 变异验证（回退修复，回归确实变红）：
+
+| 变异 | 结果 |
+| --- | --- |
+| 注释掉 `dir/open` 的 `bind_session_flag` | 会话级 E2E FAILED（收不到 cancelled）+ handlers 单测 FAILED |
+| `client.ts` 超时改回无条件发 `$/cancel` | UI 2/20 FAILED |
+| `initialize` 的 `cancelMethods` 改成 `["text/open"]` | 能力声明 E2E FAILED |
+
+### 全量门禁（本次实测，提交前复跑）
+
+引擎 `cargo test --workspace` **1023/0**（1006 + 17）、clippy `-D warnings` 零警；协议 drift `generated_bindings_match_ui` 通过；壳独立 workspace **18/0** + clippy 零警；UI `tsc -b` 0 错、`vitest` **756/0**（72 文件，751 + 5）、`lint` / `build` / `format:check` 全绿；`e2e:engine`、`verify:demo` 全过。
+
+### 仍未验证 / 未完成
+
+- **未验证**：真实桌面 WebView 上点击「同步取消」按钮的 GUI 流程（仅跑了协议/引擎链路与 UI 单测）；非 macOS 平台；`dir/mergeScan` / `dir/mergeExecute` 的取消只由既有 `execute_ops` 语义与能力清单静态对齐覆盖，未单独做慢速 E2E。
+- **工作包 B（出站有界背压）尚未开始**：出站仍是 `mpsc::unbounded_channel`，慢读者可致内存无界增长；按指导 §4.2 单独实现并做暂停读者压力测试。
+- `cancelEngineSession` 目前只有客户端 API 与真实引擎 E2E 验证，UI 尚无入口（会话级后台扫描取消由 `session/close` 承担）。
+- 批次 4（CI / rustfmt / cargo-deny）待办；`manualAlign` 异名合并缺陷、R3-21 剩余 `Option<T>` TS 可选性专项仍未修。

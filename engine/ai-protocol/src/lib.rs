@@ -112,6 +112,26 @@ pub mod method {
     pub const SESSION_CLOSE: &str = "session/close";
     /// 取消请求（UI -> 引擎通知，LSP 风格）
     pub const CANCEL: &str = "$/cancel";
+
+    /// R3-22：真正把请求级 `CancelFlag` 贯穿到执行循环的方法。
+    ///
+    /// `$/cancel {id}` 只对这张表里的方法生效。此前 `capabilities.cancel = true`
+    /// 被 UI 读作「所有方法都可取消」，实际上 `text/open`、长 diff、
+    /// `report/generate` 等从未消费取消旗标 —— 属于过度承诺。
+    /// `initialize` 用本表生成 `cancelMethods`，UI 按表门控取消通知。
+    ///
+    /// 引擎侧 `handlers::dispatch` 中把 `cancel` 传入 handler 的分支必须与
+    /// 本表一一对应（有 `dispatch_cancel_methods_are_wired` 回归锁定）。
+    pub const CANCELLABLE_METHODS: &[&str] = &[
+        DIR_OPEN,
+        DIR_EXECUTE,
+        DIR_MERGE_SCAN,
+        DIR_MERGE_EXECUTE,
+    ];
+
+    pub fn is_cancellable(method: &str) -> bool {
+        CANCELLABLE_METHODS.contains(&method)
+    }
 }
 
 /// TS 再生成入口：`cargo test -p ai-protocol --features ts -- --ignored regenerate_ui_bindings`。

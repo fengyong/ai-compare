@@ -1,14 +1,19 @@
 import type { Transport } from './transport';
-import type { ClientInfo, InitializeResult } from './types';
+import type { ClientInfo, EngineCapabilities, InitializeResult } from './types';
 
 /**
  * JSON-RPC 2.0 客户端（NDJSON over stdio 之上的协议语义层，docs/03 §2.3）。
  *
  * 职责：
  * - initialize 握手（ready Promise，握手成功前拒绝业务请求）
- * - 请求/应答关联（自增 id）、超时 + `$/cancel`（LSP 风格）
+ * - 请求/应答关联（自增 id）、超时 + 按能力位门控的 `$/cancel`（R3-22）
  * - 引擎 → UI 通知分发（dir/delta、progress 等）
  * - 写入序列化（所有发送按序排队），非法行不中断会话
+ *
+ * R3-22：`capabilities.cancelMethods` 精确界定哪些方法真的消费请求级
+ * CancelFlag；超时只对这些方法发取消。`sessionCancel` 单独声明会话级
+ * 后台扫描取消。旧引擎无清单时按 `cancel` 布尔降级，不得凭全局 true
+ * 对任意方法发取消通知并声称「已取消」。
  */
 
 /** 协议层错误码（docs/03 附录 B：领域错误码 + RPC 内部细分） */
@@ -35,7 +40,7 @@ export const LOCAL_ERROR = {
 export interface RpcClientOptions {
   clientInfo?: ClientInfo;
   protocolVersion?: string;
-  /** 默认请求超时；超时后自动发送 $/cancel 并拒绝 */
+  /** 默认请求超时；超时后按能力位决定是否发 $/cancel，然后拒绝 */
   defaultTimeoutMs?: number;
   /** 非法帧/未知应答等协议级异常（不致命，供日志/遥测） */
   onProtocolError?: (err: Error, rawLine: string) => void;
@@ -58,6 +63,8 @@ export class RpcClient {
   private readonly handlers = new Map<string, Set<(params: unknown) => void>>();
   private writeQueue: Promise<void> = Promise.resolve();
   private closed = false;
+  /** initialize 协商出的能力集（握手完成前为 null，此时不发取消） */
+  private cancelCapabilities: EngineCapabilities | null = null;
 
   /** initialize 握手 Promise：resolve 即连接可用（能力协商完成） */
   readonly ready: Promise<InitializeResult>;
@@ -73,7 +80,7 @@ export class RpcClient {
     await this.transport.start();
     this.transport.onMessage((line) => this.handleLine(line));
     this.transport.onClose((reason) => this.handleTransportClose(reason));
-    return this.request<InitializeResult>(
+    const info = await this.request<InitializeResult>(
       'initialize',
       {
         clientInfo: this.opts.clientInfo ?? { name: 'ai-compare-ui', version: '0.1.0' },
@@ -81,6 +88,8 @@ export class RpcClient {
       },
       15_000,
     );
+    this.cancelCapabilities = info?.capabilities ?? null;
+    return info;
   }
 
   /** 发起请求；params 由调用方按 protocol/types.ts 构造 */
@@ -96,8 +105,10 @@ export class RpcClient {
     return new Promise<T>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
-        // LSP 风格取消：引擎侧 CancellationToken 贯穿（docs/03 §2.3.2）
-        this.notify(CANCEL_METHOD, { id });
+        // R3-22：只对引擎声明可取消的方法发通知。此前无条件发送，
+        // 让 text/open / 长 diff / report 等未接 CancelFlag 的方法也被
+        // 当成「可取消」（UI 文案与引擎实际行为不符）。
+        if (this.canCancelRequest(method)) this.notify(CANCEL_METHOD, { id });
         reject(
           new RpcError(LOCAL_ERROR.TIMEOUT, `请求超时（${timeoutMs}ms）: ${method}`, { method }),
         );
@@ -111,6 +122,31 @@ export class RpcClient {
   notify(method: string, params?: unknown): void {
     if (this.closed) return;
     this.write(JSON.stringify({ jsonrpc: '2.0', method, params }));
+  }
+
+  /**
+   * 取消某方法当前在途的请求（UI「取消」按钮 → 引擎 CancelFlag）。
+   * 只有引擎声明该方法可取消时才发；返回是否真的发出了通知。
+   */
+  cancelInFlight(method: string): boolean {
+    if (this.closed || !this.canCancelRequest(method)) return false;
+    const ids: number[] = [];
+    for (const [id, entry] of this.pending) {
+      if (entry.method === method) ids.push(id);
+    }
+    if (ids.length === 0) return false;
+    for (const id of ids) this.notify(CANCEL_METHOD, { id });
+    return true;
+  }
+
+  /**
+   * 会话级取消：停止 `dir/open` 应答后仍在跑的后台扫描。
+   * 旧引擎无 `sessionCancel` 能力位时不发（发了也不会被消费）。
+   */
+  cancelSession(sessionId: string): boolean {
+    if (this.closed || !sessionId || !this.canCancelSession()) return false;
+    this.notify(CANCEL_METHOD, { sessionId });
+    return true;
   }
 
   /** 订阅引擎通知；返回取消订阅函数 */
@@ -130,6 +166,7 @@ export class RpcClient {
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
+    this.cancelCapabilities = null;
     this.rejectAllPending(new RpcError(LOCAL_ERROR.CLOSED, '连接已关闭'));
     this.handlers.clear();
     try {
@@ -144,6 +181,21 @@ export class RpcClient {
   }
 
   // ------------------------------------------------------------------
+
+  /** 请求级取消是否对该方法生效（能力清单优先，旧引擎按 cancel 布尔降级） */
+  private canCancelRequest(method: string): boolean {
+    const caps = this.cancelCapabilities;
+    if (!caps) return false;
+    const list = caps.cancelMethods;
+    if (Array.isArray(list)) return list.includes(method);
+    return caps.cancel === true;
+  }
+
+  /** 会话级取消是否可用（旧引擎无该能力位时不得假定支持） */
+  private canCancelSession(): boolean {
+    const caps = this.cancelCapabilities;
+    return !!caps && caps.cancel === true && caps.sessionCancel === true;
+  }
 
   private write(line: string): void {
     // 串行化：保证引擎收到的请求顺序与调用顺序一致（invoke 跨 IPC 边界时不依赖宿主保序）

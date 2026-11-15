@@ -9,9 +9,22 @@ export type EngineCapabilities = { dirCompare: boolean, textCompare: boolean,
  */
 inlineDiff: boolean, 
 /**
- * 支持 `$/cancel`
+ * 引擎实现 `$/cancel`（LSP 语义）。**作用域由下面两个字段精确界定**：
+ * `cancel_methods` 列出可请求级取消的方法，`session_cancel` 声明会话级
+ * 后台扫描取消。旧引擎不含这两个可选字段时，UI 按 `cancel` 布尔降级。
  */
 cancel: boolean, 
+/**
+ * R3-22：真正消费请求级 `CancelFlag` 的方法名清单
+ * （`method::CANCELLABLE_METHODS`）。缺省 None = 旧引擎无精确清单，
+ * 此时 UI 回落到 `cancel` 布尔的旧语义；有清单时必须按清单判断。
+ */
+cancelMethods?: Array<string>, 
+/**
+ * R3-22：支持 `$/cancel {sessionId}` 在 `dir/open` 应答后停止会话级后台扫描。
+ * 缺省 None = 不支持（旧引擎）；UI 不得假定可用。
+ */
+sessionCancel?: boolean, 
 /**
  * dir/delta 分批推送
  */
@@ -27,6 +40,8 @@ maxDeltaBatchRows: number,
 linesRead?: boolean, 
 /**
  * P2：dir/open 惰性 + 后台扫描（lazyScan 参数与 dir/progress 通知）
+ * R3-22：缺省改为 **false**，与其余能力位「旧载荷不含该字段 = 不支持」
+ * 口径一致；此前 `default_true` 会让旧引擎载荷被误判为支持（过度承诺）。
  */
 dirBackgroundScan: boolean, 
 /**

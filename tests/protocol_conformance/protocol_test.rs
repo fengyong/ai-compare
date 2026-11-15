@@ -8,7 +8,7 @@
 //! 5. `text/merge3/open` 同参数幂等（重挂载不得清空已提交的冲突决策）；
 //! 6. handler panic 必须转为 -32603 InternalError（不得让请求永不应答）。
 
-use std::io::{Read, Write};
+use std::io::{BufRead, Read, Write};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -446,4 +446,297 @@ fn rpc_numeric_fields_are_json_numbers() {
             }
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// R3-22 工作包 A：真实 stdio 交互下的取消能力声明与生命周期
+// ---------------------------------------------------------------------------
+
+/// 保持 stdin 打开的交互式引擎。
+///
+/// `run_engine_raw` 一次性写完就关 stdin，无法表达「先收到应答、再发取消」
+/// 这一真实时序；而 `$/cancel {sessionId}` 正是要在应答之后才生效。
+struct InteractiveEngine {
+    child: std::process::Child,
+    stdin: Option<std::process::ChildStdin>,
+    rx: std::sync::mpsc::Receiver<Value>,
+    all: Vec<Value>,
+}
+
+impl InteractiveEngine {
+    fn spawn() -> Self {
+        harness::ensure_engine_fresh();
+        let mut cmd = Command::new(harness::engine_bin());
+        cmd.arg("--stdio")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        let mut child = cmd.spawn().expect("启动 ai-engine");
+        let stdin = child.stdin.take().expect("stdin");
+        let stdout = child.stdout.take().expect("stdout");
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            for line in std::io::BufReader::new(stdout).lines() {
+                let Ok(line) = line else { break };
+                if line.trim().is_empty() {
+                    continue;
+                }
+                let Ok(v) = serde_json::from_str::<Value>(&line) else { break };
+                if tx.send(v).is_err() {
+                    break;
+                }
+            }
+        });
+        InteractiveEngine { child, stdin: Some(stdin), rx, all: Vec::new() }
+    }
+
+    fn send(&mut self, v: &Value) {
+        let w = self.stdin.as_mut().expect("stdin 仍打开");
+        writeln!(w, "{v}").expect("写入请求");
+        w.flush().expect("刷新 stdin");
+    }
+
+    /// 等待满足条件的消息；途中收到的全部消息记入 `all`（顺序即线上顺序）。
+    fn wait_for(&mut self, pred: impl Fn(&Value) -> bool, timeout: Duration) -> Option<Value> {
+        let deadline = Instant::now() + timeout;
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return None;
+            }
+            match self.rx.recv_timeout(remaining) {
+                Ok(v) => {
+                    let hit = pred(&v);
+                    self.all.push(v.clone());
+                    if hit {
+                        return Some(v);
+                    }
+                }
+                Err(_) => return None,
+            }
+        }
+    }
+
+    /// 观察一段静默期，返回其间到达的消息数（用于证明后台任务已退出）。
+    fn quiet_for(&mut self, d: Duration) -> usize {
+        let before = self.all.len();
+        let deadline = Instant::now() + d;
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                break;
+            }
+            match self.rx.recv_timeout(remaining) {
+                Ok(v) => self.all.push(v),
+                Err(_) => break,
+            }
+        }
+        self.all.len() - before
+    }
+
+    fn finish(mut self, wait: Duration) -> (Vec<Value>, bool) {
+        drop(self.stdin.take()); // EOF → 引擎退出
+        let deadline = Instant::now() + wait;
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                break;
+            }
+            match self.rx.recv_timeout(remaining) {
+                Ok(v) => self.all.push(v),
+                Err(_) => break,
+            }
+        }
+        let mut exited = false;
+        let poll_deadline = Instant::now() + wait;
+        while Instant::now() < poll_deadline {
+            match self.child.try_wait().expect("try_wait") {
+                Some(_) => {
+                    exited = true;
+                    break;
+                }
+                None => std::thread::sleep(Duration::from_millis(20)),
+            }
+        }
+        if !exited {
+            let _ = self.child.kill();
+        }
+        let _ = self.child.wait();
+        (self.all, exited)
+    }
+}
+
+fn by_id(m: &Value, id: i64) -> bool {
+    m.get("id").and_then(|v| v.as_i64()) == Some(id)
+}
+
+fn is_cancelled_progress(m: &Value) -> bool {
+    m.get("method") == Some(&json!("dir/progress"))
+        && m["params"]["phase"] == json!("cancelled")
+}
+
+/// 每侧 files 个文件分在 subdirs 个子目录：内容比较下扫描需要多个 await 周期，
+/// 保证「慢速大输入」不是一句话，而是取消通知确实能在扫描进行中到达。
+fn big_trees(files: usize, subdirs: usize) -> (tempfile::TempDir, String, String) {
+    let d = tempfile::tempdir().unwrap();
+    let l = d.path().join("L");
+    let r = d.path().join("R");
+    for i in 0..subdirs {
+        std::fs::create_dir_all(l.join(format!("d{i}"))).unwrap();
+        std::fs::create_dir_all(r.join(format!("d{i}"))).unwrap();
+    }
+    for i in 0..files {
+        let rel = format!("d{}/f{i}.txt", i % subdirs);
+        std::fs::write(l.join(&rel), format!("LEFT-{i}")).unwrap();
+        std::fs::write(r.join(&rel), format!("RIGHT-{i}")).unwrap();
+    }
+    (
+        d,
+        l.to_string_lossy().into_owned(),
+        r.to_string_lossy().into_owned(),
+    )
+}
+
+/// 能力声明必须精确到方法；`cancel:true` 不再被当成「所有方法可取消」。
+#[test]
+fn initialize_declares_precise_cancel_scope() {
+    let inputs = vec![init_req(1), harness::req(2, "shutdown", json!({}))];
+    let outputs = harness::run_engine(&inputs, None);
+    let caps = &resp_by_id(&outputs, 1)["result"]["capabilities"];
+    assert_eq!(caps["cancel"], true);
+    let methods: Vec<&str> = caps["cancelMethods"]
+        .as_array()
+        .expect("cancelMethods 必须出现")
+        .iter()
+        .filter_map(|v| v.as_str())
+        .collect();
+    assert_eq!(
+        methods,
+        vec!["dir/open", "dir/execute", "dir/mergeScan", "dir/mergeExecute"]
+    );
+    assert_eq!(caps["sessionCancel"], true);
+    for m in ["text/open", "text/inlineDiff", "report/generate", "dir/filter"] {
+        assert!(!methods.contains(&m), "{m} 未接 CancelFlag，不得声明可取消");
+    }
+}
+
+/// 请求级取消：慢速大输入在途发 `$/cancel {id}`，引擎必须及时停止并回
+/// -32800；同一语料不取消时正常成功（证明确实是取消改变了结果，而非语料出错）。
+/// 表外方法 text/open 在同样旗标下不受影响（能力表准确）。
+#[test]
+fn request_cancel_stops_long_scan_and_uncancellable_method_is_unaffected() {
+    let (dir, l, r) = big_trees(1200, 24);
+    let lp = dir.path().join("left.txt");
+    let rp = dir.path().join("right.txt");
+    std::fs::write(&lp, "alpha\n").unwrap();
+    std::fs::write(&rp, "beta\n").unwrap();
+
+    let mut e = InteractiveEngine::spawn();
+    e.send(&init_req(1));
+    assert!(e.wait_for(|m| by_id(m, 1), Duration::from_secs(10)).is_some());
+
+    let scan = json!({
+        "sessionId": "d1",
+        "left": l,
+        "right": r,
+        "depth": null,
+        "criteria": {"mtimeToleranceSec": 0, "contentCompare": "always"}
+    });
+    e.send(&harness::req(2, "dir/open", scan.clone()));
+    e.send(&harness::note("$/cancel", json!({"id": 2})));
+    let cancelled = e
+        .wait_for(|m| by_id(m, 2), Duration::from_secs(30))
+        .expect("取消后仍必须应答");
+    assert_eq!(
+        cancelled["error"]["code"], -32800,
+        "请求级取消必须回 -32800（不是让请求永不应答），实际: {cancelled:?}"
+    );
+
+    // 对照 1：同一语料不取消能正常扫完（排除语料/路径本身有问题）
+    e.send(&harness::req(3, "dir/open", scan));
+    let ok = e
+        .wait_for(|m| by_id(m, 3), Duration::from_secs(30))
+        .expect("未取消的扫描必须应答");
+    assert!(ok["result"]["rowCount"].is_number(), "对照扫描应成功: {ok:?}");
+
+    // 对照 2：text/open 不在能力清单里，取消旗标不影响它
+    e.send(&harness::req(
+        4,
+        "text/open",
+        json!({"sessionId": "t1", "left": lp.to_string_lossy(), "right": rp.to_string_lossy()}),
+    ));
+    e.send(&harness::note("$/cancel", json!({"id": 4})));
+    let text = e
+        .wait_for(|m| by_id(m, 4), Duration::from_secs(10))
+        .expect("表外方法也必须应答");
+    assert!(text.get("result").is_some(), "表外方法不应被请求级取消中断: {text:?}");
+
+    e.send(&harness::req(5, "shutdown", json!({})));
+    let (_all, exited) = e.finish(Duration::from_secs(5));
+    assert!(exited, "取消后的会话仍可正常关闭并退出引擎");
+}
+
+/// 会话级取消：`dir/open` 应答后按 sessionId 取消，后台扫描/pump 必须停止；
+/// close 后不再有通知；同 sessionId 可干净重开，不继承已取消状态。
+#[test]
+fn session_cancel_after_response_close_and_reopen_are_clean() {
+    let (_dir, l, r) = big_trees(900, 16);
+    let open = json!({
+        "sessionId": "d1",
+        "left": l,
+        "right": r,
+        "depth": 3,
+        "lazyScan": true,
+        "criteria": {"mtimeToleranceSec": 0, "contentCompare": "always"}
+    });
+
+    let mut e = InteractiveEngine::spawn();
+    e.send(&init_req(1));
+    assert!(e.wait_for(|m| by_id(m, 1), Duration::from_secs(10)).is_some());
+
+    e.send(&harness::req(2, "dir/open", open.clone()));
+    let opened = e
+        .wait_for(|m| by_id(m, 2), Duration::from_secs(20))
+        .expect("dir/open 应答");
+    assert!(opened["result"]["sessionId"] == json!("d1"), "打开成功: {opened:?}");
+
+    // 应答之后再取消：旧实现此时已注销请求 id，后台扫描再也停不下来
+    e.send(&harness::note("$/cancel", json!({"sessionId": "d1"})));
+    assert!(
+        e.wait_for(is_cancelled_progress, Duration::from_secs(10)).is_some(),
+        "会话级取消后必须收到 dir/progress(cancelled)，而不是只有 UI 改文案"
+    );
+    let cancelled_idx = e
+        .all
+        .iter()
+        .position(is_cancelled_progress)
+        .expect("已记录 cancelled 事件");
+
+    e.send(&harness::req(3, "session/close", json!({"sessionId": "d1"})));
+    assert!(e.wait_for(|m| by_id(m, 3), Duration::from_secs(10)).is_some());
+
+    let noise = e.quiet_for(Duration::from_millis(500));
+    assert_eq!(noise, 0, "close 后后台 pump/worker 必须退出，不再产生通知");
+    assert!(
+        !e.all[cancelled_idx + 1..]
+            .iter()
+            .any(|m| m.get("method") == Some(&json!("dir/delta"))),
+        "取消之后不得再推脏 delta"
+    );
+
+    // 关闭后重开同 sessionId：新旗标不继承旧的已取消状态
+    e.send(&harness::req(4, "dir/open", open));
+    let reopened = e
+        .wait_for(|m| by_id(m, 4), Duration::from_secs(20))
+        .expect("重开必须应答");
+    assert!(
+        reopened.get("result").is_some(),
+        "取消后关闭重开应成功（无泄漏/无 411），实际: {reopened:?}"
+    );
+
+    e.send(&harness::req(5, "session/close", json!({"sessionId": "d1"})));
+    e.send(&harness::req(6, "shutdown", json!({})));
+    let (all, exited) = e.finish(Duration::from_secs(5));
+    assert!(exited, "引擎必须正常退出（无悬挂后台任务）");
+    assert!(by_id(resp_by_id(&all, 6), 6), "shutdown 应答不得被取消流程吞掉");
 }

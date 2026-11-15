@@ -12,6 +12,8 @@ use crate::handlers::{dispatch, HandlerCtx, Handled};
 use crate::log;
 use crate::ServerOptions;
 
+pub use crate::cancel::CancelRegistry;
+
 /// 目录比较会话数据
 #[derive(Clone, Default)]
 pub struct DirSessionData {
@@ -163,42 +165,6 @@ pub enum Session {
 pub type SessionMapInner = HashMap<String, Session>;
 pub type SessionMap = Arc<Mutex<SessionMapInner>>;
 
-/// 取消注册表：请求 id key -> 取消旗标
-#[derive(Default)]
-pub struct CancelRegistry {
-    flags: StdMutex<HashMap<String, Arc<AtomicBool>>>,
-}
-
-impl CancelRegistry {
-    pub fn new() -> Self {
-        CancelRegistry { flags: StdMutex::new(HashMap::new()) }
-    }
-
-    pub fn register(&self, key: &str) -> Arc<AtomicBool> {
-        let flag = Arc::new(AtomicBool::new(false));
-        self.flags.lock().expect("取消注册表锁").insert(key.to_string(), Arc::clone(&flag));
-        flag
-    }
-
-    pub fn cancel(&self, key: &str) {
-        if let Some(flag) = self.flags.lock().expect("取消注册表锁").get(key) {
-            flag.store(true, Ordering::SeqCst);
-        }
-    }
-
-    pub fn unregister(&self, key: &str) {
-        self.flags.lock().expect("取消注册表锁").remove(key);
-    }
-
-    pub fn len(&self) -> usize {
-        self.flags.lock().expect("取消注册表锁").len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-}
-
 /// 出站消息
 #[derive(Debug)]
 pub enum Outbound {
@@ -250,8 +216,8 @@ impl Recorder {
 /// 运行 stdio 服务端直到 EOF / shutdown。
 pub async fn run_stdio(opts: ServerOptions) -> std::io::Result<()> {
     let max_batch = opts.max_delta_batch_rows();
-    let ctx = HandlerCtx::new(max_batch);
     let cancels = Arc::new(CancelRegistry::new());
+    let ctx = HandlerCtx::with_cancels(max_batch, Arc::clone(&cancels));
     let (recorder, record_err) = Recorder::open(opts.record_path.as_deref());
     if let Some(msg) = record_err {
         log::warn(format!("--record 录制已禁用（{msg}）"));
@@ -370,7 +336,7 @@ pub async fn run_stdio(opts: ServerOptions) -> std::io::Result<()> {
             }
             let id = req.id.clone();
             let key = id.cancel_key();
-            let cancel_flag = cancels.register(&key);
+            let cancel_flag = cancels.register_request(&key);
             let fut = process_request(req, clone_ctx(&ctx), Arc::clone(&cancels), cancel_flag, tx.clone());
             let prev = chain_prev.take();
             chain_prev = Some(tokio::spawn(async move {
@@ -392,10 +358,19 @@ pub async fn run_stdio(opts: ServerOptions) -> std::io::Result<()> {
                 match serde_json::from_value::<ai_protocol::CancelParams>(
                     notif.params.unwrap_or(serde_json::Value::Null),
                 ) {
-                    Ok(p) => {
-                        log::info(format!("收到取消: {}", p.id));
-                        cancels.cancel(&p.id.cancel_key());
+                    // R3-22：请求级与会话级可单独或同时出现。旧载荷 {id} 语义不变；
+                    // 新载荷 {sessionId} 在 dir/open 应答后仍能停止后台扫描。
+                    Ok(p) if p.has_target() => {
+                        if let Some(id) = &p.id {
+                            let hit = cancels.cancel_request(&id.cancel_key());
+                            log::info(format!("收到请求级取消: {id}（命中={hit}）"));
+                        }
+                        if let Some(sid) = p.session_id.as_deref().filter(|s| !s.is_empty()) {
+                            let hit = cancels.cancel_session(sid);
+                            log::info(format!("收到会话级取消: {sid}（命中={hit}）"));
+                        }
                     }
+                    Ok(_) => log::warn("$/cancel 缺少 id/sessionId，已忽略"),
                     Err(e) => log::warn(format!("$/cancel 参数不合法: {e}")),
                 }
             } else {
@@ -413,7 +388,7 @@ pub async fn run_stdio(opts: ServerOptions) -> std::io::Result<()> {
     // 为什么必须做：pump 持有出站通道（UnboundedSender）的克隆。若不取消，
     // 出站通道永不关闭 → writer_task 的 rx.recv() 永不返回 None →
     // writer.await 永久阻塞 → 客户端 EOF 后引擎进程挂死（只能 kill -9）。
-    cancel_all_dir_sessions(&ctx).await;
+    cancel_all_dir_sessions(&ctx, &cancels).await;
     drop(tx);
     // 正常路径：pump 在下一次轮询（≤150ms）内感知取消 → 退出 → 出站通道关闭 →
     // writer 自然结束。这里只作"pump 异常卡死"的有界保险（5s），
@@ -424,7 +399,12 @@ pub async fn run_stdio(opts: ServerOptions) -> std::io::Result<()> {
 }
 
 /// 取消所有目录会话的后台扫描（触发 pump 退出）
-async fn cancel_all_dir_sessions(ctx: &HandlerCtx) {
+async fn cancel_all_dir_sessions(ctx: &HandlerCtx, cancels: &CancelRegistry) {
+    let stopped = cancels.cancel_all_sessions();
+    if stopped > 0 {
+        log::info(format!("EOF：已取消 {stopped} 个会话级后台扫描"));
+    }
+    // 兜底：历史/非模型路径创建的 DirModel 可能未绑定会话旗标。
     let sessions = ctx.sessions.lock().await;
     for session in sessions.values() {
         if let Session::Dir(data) = session {
@@ -443,6 +423,7 @@ fn clone_ctx(ctx: &HandlerCtx) -> HandlerCtx {
         max_batch_rows: ctx.max_batch_rows,
         formats: Arc::clone(&ctx.formats),
         rules: Arc::clone(&ctx.rules),
+        cancels: Arc::clone(&ctx.cancels),
     }
 }
 
@@ -476,7 +457,7 @@ async fn process_request(
         .await
     }))
     .await;
-    cancels.unregister(&key);
+    cancels.unregister_request(&key);
     let result = match outcome {
         Ok(r) => r,
         Err(join_err) => {
@@ -560,18 +541,47 @@ mod tests {
     use super::*;
 
     #[test]
-    fn cancel_registry_lifecycle() {
+    fn cancel_registry_request_lifecycle() {
         let reg = CancelRegistry::new();
-        let key = "n:1";
-        let flag = reg.register(key);
+        let flag = reg.register_request("n:1");
         assert!(!reg.is_empty());
         assert!(!flag.load(Ordering::SeqCst));
-        reg.cancel(key);
+        assert!(reg.cancel_request("n:1"));
         assert!(flag.load(Ordering::SeqCst));
-        reg.unregister(key);
+        reg.unregister_request("n:1");
         assert!(reg.is_empty());
-        // 未注册的 key 取消是 no-op
-        reg.cancel("n:999");
+        assert!(!reg.cancel_request("n:999"), "未注册的 key 取消是 no-op");
+    }
+
+    /// R3-22：请求应答后 request 索引注销、会话索引保留，后台扫描仍可取消。
+    #[tokio::test]
+    async fn session_cancel_survives_request_completion() {
+        let ctx = HandlerCtx::new(crate::batch::DEFAULT_MAX_BATCH_ROWS);
+        let cancels = Arc::new(CancelRegistry::new());
+        let id = ai_protocol::RequestId::Number(5);
+        let flag = cancels.register_request(&id.cancel_key());
+        let observer = Arc::clone(&flag);
+        cancels.bind_session_flag("d1", Arc::clone(&flag));
+        let (tx, mut rx) = mpsc::unbounded_channel::<Outbound>();
+        let req = ai_protocol::RpcRequest {
+            jsonrpc: ai_protocol::JSONRPC_VERSION.to_string(),
+            id,
+            method: "initialize".to_string(),
+            params: Some(serde_json::json!({
+                "clientInfo": {"name": "t"}, "protocolVersion": "1.0"
+            })),
+        };
+        process_request(req, clone_ctx(&ctx), Arc::clone(&cancels), flag, tx).await;
+        assert!(rx.try_recv().is_ok(), "请求必须应答");
+        assert_eq!(cancels.request_len(), 0, "请求结束必须注销 request 索引");
+        assert_eq!(cancels.session_len(), 1, "会话索引不得随请求结束注销");
+        assert!(cancels.cancel_session("d1"), "应答后仍要能取消后台扫描");
+        assert!(
+            observer.load(Ordering::SeqCst),
+            "会话级取消必须置位 DirModel 后台扫描持有的同一个旗标"
+        );
+        cancels.unregister_session("d1");
+        assert!(cancels.is_empty(), "session/close 后不得残留注册表条目");
     }
 
     #[test]
@@ -619,7 +629,7 @@ mod tests {
         params: Option<serde_json::Value>,
     ) -> Vec<Outbound> {
         let (tx, mut rx) = mpsc::unbounded_channel::<Outbound>();
-        let flag = cancels.register(&id.cancel_key());
+        let flag = cancels.register_request(&id.cancel_key());
         let req = ai_protocol::RpcRequest {
             jsonrpc: ai_protocol::JSONRPC_VERSION.to_string(),
             id,

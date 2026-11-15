@@ -8,6 +8,7 @@ import {
 import type { Tab } from '../../shell/store';
 import { useShell } from '../../shell/store';
 import {
+  cancelEngineRequest,
   executeOperations,
   openFolder,
   planOperations,
@@ -458,6 +459,10 @@ export function FolderSyncView({ tab }: { tab: Tab }) {
             className="mini"
             onClick={() => {
               cancelRef.current = true;
+              // R3-22：本地标记只能阻止后续批次；在途的 dir/execute 必须
+              // 同时把引擎侧 CancelFlag 置位，否则当前批次仍会跑完。
+              // 返回 false 表示引擎未声明该能力（演示引擎只靠本地标记）。
+              cancelEngineRequest('dir/execute');
             }}
           >
             取消

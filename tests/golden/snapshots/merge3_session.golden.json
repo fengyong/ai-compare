@@ -5,6 +5,12 @@
     "result": {
       "capabilities": {
         "cancel": true,
+        "cancelMethods": [
+          "dir/open",
+          "dir/execute",
+          "dir/mergeScan",
+          "dir/mergeExecute"
+        ],
         "deltaBatching": true,
         "dirBackgroundScan": true,
         "dirCompare": true,
@@ -22,6 +28,7 @@
         "patchApply": true,
         "pictureCompare": true,
         "reports": true,
+        "sessionCancel": true,
         "tableCompare": true,
         "textCompare": true,
         "textEdit": true,

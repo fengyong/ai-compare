@@ -2,6 +2,13 @@
 import type { RequestId } from "./RequestId";
 
 /**
- * 取消通知载荷（LSP 风格：按请求 id 取消）
+ * 取消通知载荷（LSP 风格：按请求 id 取消；R3-22 增加会话级取消）。
+ *
+ * 两种目标可单独或同时出现：
+ * - `id`：在途请求，请求应答后 registration 注销即失效；
+ * - `sessionId`：`dir/open` 应答后仍要停止的会话级后台扫描。
+ *
+ * `id` 从必填改为可选是兼容式演进：旧载荷 `{"id":7}` 语义不变；
+ * 新载荷 `{"sessionId":"d1"}` 不再需要伪造一个请求 id。
  */
-export type CancelParams = { id: RequestId, };
+export type CancelParams = { id?: RequestId, sessionId?: string, };

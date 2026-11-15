@@ -337,6 +337,10 @@ export class MockEngine {
         return { result: this.textInlineDiff(params as TextInlineDiffParams), notifications: [] };
       case 'session/close':
         return { result: this.sessionClose(params as SessionCloseParams), notifications: [] };
+      // R3-22：旧客户端仍可能无条件发 $/cancel；演示引擎如实忽略（无长任务），
+      // 不抛 MethodNotFound 以免 .catch 里产生无应答的噪声。
+      case '$/cancel':
+        return { result: null, notifications: [] };
       case 'shutdown': {
         const result: ShutdownResult = null;
         this.dispose();
@@ -359,7 +363,11 @@ export class MockEngine {
         // mock 实现了 text/inlineDiff（P3 生成协议同形演示面）
         inlineDiff: true,
         linesRead: true,
+        // R3-22：演示引擎没有可取消的长任务，如实声明精确清单为空；
+        // 不得沿用真实引擎的清单冒充支持（UI 取消靠视图内本地标记）。
         cancel: true,
+        cancelMethods: [],
+        sessionCancel: false,
         deltaBatching: true,
         maxDeltaBatchRows: MAX_BATCH_ROWS,
         dirBackgroundScan: false,

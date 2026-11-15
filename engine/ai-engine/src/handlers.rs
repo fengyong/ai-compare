@@ -17,6 +17,7 @@ use serde_json::json;
 use tokio::sync::Mutex;
 
 use crate::batch;
+use crate::cancel::CancelRegistry;
 use crate::mapping;
 use crate::server::{DirSessionData, Session, SessionMap, SideEncoding, TextSessionData};
 use crate::pump;
@@ -31,10 +32,16 @@ pub struct HandlerCtx {
     pub formats: Arc<Mutex<ai_core::FormatRegistry>>,
     /// P10：规则集（global/kind/session 三层 + 格式绑定）
     pub rules: Arc<Mutex<ai_core::RuleSet>>,
+    /// R3-22：请求级 + 会话级取消注册表（stdio 服务端与 handler 共用同一实例）
+    pub cancels: Arc<CancelRegistry>,
 }
 
 impl HandlerCtx {
     pub fn new(max_batch_rows: usize) -> Self {
+        Self::with_cancels(max_batch_rows, Arc::new(CancelRegistry::new()))
+    }
+
+    pub fn with_cancels(max_batch_rows: usize, cancels: Arc<CancelRegistry>) -> Self {
         HandlerCtx {
             sessions: Arc::new(Mutex::new(HashMap::new())),
             // R3-14：路由型 provider——无 scheme 走 LocalFs（行为与之前一致），
@@ -43,6 +50,7 @@ impl HandlerCtx {
             max_batch_rows,
             formats: Arc::new(Mutex::new(ai_core::FormatRegistry::builtin())),
             rules: Arc::new(Mutex::new(ai_core::RuleSet::default())),
+            cancels,
         }
     }
 }
@@ -152,7 +160,17 @@ fn initialize(params: Option<serde_json::Value>) -> Result<Handled, RpcErrorObje
             text_compare: true,
             // P3：行内差异懒计算入口开放（text/inlineDiff；超长/超时降级见 inline.rs）
             inline_diff: true,
+            // R3-22：引擎确实实现 `$/cancel`，但只对下面精确声明的范围生效。
+            // 不再让全局 `cancel: true` 被读作「text/open / 长 diff / report
+            // 等所有方法都可取消」。
             cancel: true,
+            cancel_methods: Some(
+                ai_protocol::method::CANCELLABLE_METHODS
+                    .iter()
+                    .map(|m| (*m).to_string())
+                    .collect(),
+            ),
+            session_cancel: Some(true),
             delta_batching: true,
             max_delta_batch_rows: u32::try_from(crate::batch::DEFAULT_MAX_BATCH_ROWS)
                 .unwrap_or(u32::MAX),
@@ -383,6 +401,13 @@ async fn dir_open_model(
             Session::Dir(DirSessionData { model: Some(model.clone()), scan: None, roots: Some((left.clone(), right.clone())) }),
         );
     }
+
+    // R3-22：把本次 dir/open 的请求旗标提升为会话级后台扫描旗标。
+    // DirModel 的 worker / pump 持有的正是 `cancel.0` 这个 Arc，因此
+    // `$/cancel {sessionId}` 在应答后仍能让它们退出（此前请求结束即注销
+    // request 索引，后台扫描再也取消不了）。
+    ctx.cancels
+        .bind_session_flag(&params.session_id, Arc::clone(&cancel.0));
 
     // 常驻 pump：响应入队后推送后台 delta 与 dir/progress（会话关闭时退出）
     pump::spawn(params.session_id.clone(), model, out, ctx.max_batch_rows);
@@ -1421,9 +1446,13 @@ async fn session_close(
     ctx: &HandlerCtx,
 ) -> Result<Handled, RpcErrorObject> {
     let params: ai_protocol::SessionCloseParams = parse_params(params)?;
+    // R3-22：会话生命周期结束 → 注销会话级取消索引（不留注册表条目）。
+    // 幂等：不存在 / 重复 close 同样清理。
+    ctx.cancels.unregister_session(&params.session_id);
     let mut sessions = ctx.sessions.lock().await;
     if let Some(Session::Dir(data)) = sessions.remove(&params.session_id) {
         if let Some(model) = &data.model {
+            // 置位旗标：后台 worker 与常驻 pump 在下一次轮询内退出。
             model.cancel();
         }
     }
@@ -7594,5 +7623,182 @@ mod r3_03_rpc_tests {
         assert!(!d.path().join("outside.txt").exists(), "根外不得产生文件");
     }
 
+}
+
+// ---------------------------------------------------------------------------
+// R3-22 工作包 A：取消能力声明与会话级取消生命周期
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod r3_22_cancel_tests {
+    use super::*;
+    use crate::server::Outbound;
+    use serde_json::json;
+    use std::sync::atomic::Ordering;
+    use tokio::sync::mpsc::unbounded_channel;
+
+    fn ctx() -> HandlerCtx {
+        HandlerCtx::new(512)
+    }
+
+    /// 两侧各若干文件的真实目录树（后台扫描有实际工作可做）
+    fn trees() -> (tempfile::TempDir, std::path::PathBuf, std::path::PathBuf) {
+        let d = tempfile::tempdir().unwrap();
+        let l = d.path().join("L");
+        let r = d.path().join("R");
+        std::fs::create_dir_all(&l).unwrap();
+        std::fs::create_dir_all(&r).unwrap();
+        for i in 0..24 {
+            std::fs::write(l.join(format!("f{i}.txt")), format!("L{i}")).unwrap();
+            std::fs::write(r.join(format!("f{i}.txt")), format!("R{i}")).unwrap();
+        }
+        (d, l, r)
+    }
+
+    async fn call(
+        c: &HandlerCtx,
+        method: &str,
+        params: serde_json::Value,
+        cancel: &ai_dir::CancelFlag,
+    ) -> Result<serde_json::Value, RpcErrorObject> {
+        let (tx, _rx) = unbounded_channel::<Outbound>();
+        dispatch(method, Some(params), c, cancel, tx)
+            .await
+            .map(|h| match h {
+                Handled::Value(v) => v,
+                Handled::WithNotifications { response, .. } => response,
+            })
+    }
+
+    fn open_params(l: &std::path::Path, r: &std::path::Path, session: &str, lazy: bool) -> serde_json::Value {
+        json!({
+            "sessionId": session,
+            "left": l.to_string_lossy(),
+            "right": r.to_string_lossy(),
+            "lazyScan": lazy,
+            "criteria": {"mtimeToleranceSec": 0, "contentCompare": "always"}
+        })
+    }
+
+    /// 能力声明必须精确到方法：不再让 `cancel:true` 被读作「全部可取消」。
+    #[tokio::test]
+    async fn initialize_declares_precise_cancel_scope() {
+        let c = ctx();
+        let v = call(
+            &c,
+            ai_protocol::method::INITIALIZE,
+            json!({"clientInfo": {"name": "r3-22"}, "protocolVersion": "1.0"}),
+            &ai_dir::CancelFlag::new(),
+        )
+        .await
+        .unwrap();
+        let caps: ai_protocol::EngineCapabilities =
+            serde_json::from_value(v["capabilities"].clone()).unwrap();
+        assert!(caps.cancel, "引擎确实实现 $/cancel");
+        let expected: Vec<String> = ai_protocol::method::CANCELLABLE_METHODS
+            .iter()
+            .map(|m| (*m).to_string())
+            .collect();
+        assert_eq!(caps.cancel_methods, Some(expected.clone()), "清单必须来自唯一事实源");
+        assert_eq!(caps.session_cancel, Some(true));
+        for m in [
+            ai_protocol::method::TEXT_OPEN,
+            ai_protocol::method::TEXT_INLINE_DIFF,
+            ai_protocol::method::REPORT_GENERATE,
+            ai_protocol::method::DIR_FILTER,
+        ] {
+            assert!(!expected.iter().any(|x| x == m), "{m} 未接 CancelFlag，不得声明");
+        }
+    }
+
+    /// 请求级取消真的能停住 dir/open 的扫描；表外方法不受该旗标影响。
+    #[tokio::test]
+    async fn request_cancel_stops_scan_only_for_declared_methods() {
+        let (d, l, r) = trees();
+        let c = ctx();
+        let cancelled = ai_dir::CancelFlag::new();
+        cancelled.cancel();
+
+        let err = call(&c, ai_protocol::method::DIR_OPEN, open_params(&l, &r, "d-cancel", false), &cancelled)
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, codes::REQUEST_CANCELLED, "dir/open 在表内必须响应取消: {err:?}");
+
+        // text/open 不在表内：同一个已置位旗标下仍应正常打开（证明能力表不是摆设）
+        let lp = d.path().join("left.txt");
+        let rp = d.path().join("right.txt");
+        std::fs::write(&lp, "alpha\n").unwrap();
+        std::fs::write(&rp, "beta\n").unwrap();
+        let ok = call(
+            &c,
+            ai_protocol::method::TEXT_OPEN,
+            json!({"sessionId": "t-cancel", "left": lp.to_string_lossy(), "right": rp.to_string_lossy()}),
+            &cancelled,
+        )
+        .await;
+        assert!(ok.is_ok(), "表外方法不应被请求级取消旗标影响: {ok:?}");
+    }
+
+    /// 表内另一个方法 dir/execute 也必须真的消费 CancelFlag。
+    #[tokio::test]
+    async fn dir_execute_consumes_request_cancel() {
+        let (_d, l, r) = trees();
+        let c = ctx();
+        call(&c, ai_protocol::method::DIR_OPEN, open_params(&l, &r, "d-exec", false), &ai_dir::CancelFlag::new())
+            .await
+            .unwrap();
+        let cancelled = ai_dir::CancelFlag::new();
+        cancelled.cancel();
+        let res = call(
+            &c,
+            ai_protocol::method::DIR_EXECUTE,
+            json!({
+                "sessionId": "d-exec",
+                "dryRun": true,
+                "ops": [{"kind": "touch", "path": "f0.txt", "side": "left"}]
+            }),
+            &cancelled,
+        )
+        .await
+        .unwrap();
+        assert_eq!(res["cancelled"], true, "取消后剩余操作必须记为 skipped: {res}");
+        assert_eq!(res["skipped"].as_array().unwrap().len(), 1);
+    }
+
+    /// 应答后按 sessionId 取消 → close → 重开：无残留、无继承的已取消状态。
+    #[tokio::test]
+    async fn session_cancel_after_response_close_and_reopen_are_clean() {
+        let (_d, l, r) = trees();
+        let c = ctx();
+
+        let flag = ai_dir::CancelFlag::new();
+        let observer = Arc::clone(&flag.0);
+        let opened = call(&c, ai_protocol::method::DIR_OPEN, open_params(&l, &r, "d1", true), &flag)
+            .await
+            .unwrap();
+        assert!(opened["rowCount"].is_number(), "dir/open 应答: {opened}");
+        assert_eq!(c.cancels.session_len(), 1, "dir/open 必须绑定会话级取消旗标");
+
+        // 模拟 server 在应答后注销 request 索引；会话索引必须仍可命中
+        assert!(c.cancels.cancel_session("d1"), "应答后仍要能取消后台扫描");
+        assert!(observer.load(Ordering::SeqCst), "置位的必须是 DirModel 持有的同一旗标");
+
+        call(
+            &c,
+            ai_protocol::method::SESSION_CLOSE,
+            json!({"sessionId": "d1"}),
+            &ai_dir::CancelFlag::new(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(c.cancels.session_len(), 0, "close 必须注销会话索引");
+
+        let fresh = ai_dir::CancelFlag::new();
+        let fresh_observer = Arc::clone(&fresh.0);
+        let reopened = call(&c, ai_protocol::method::DIR_OPEN, open_params(&l, &r, "d1", true), &fresh).await;
+        assert!(reopened.is_ok(), "取消后关闭再重开应成功: {reopened:?}");
+        assert_eq!(c.cancels.session_len(), 1);
+        assert!(!fresh_observer.load(Ordering::SeqCst), "新会话不得继承旧取消状态");
+        assert!(!c.cancels.cancel_session("d1-no-such"), "未知会话取消是 no-op");
+    }
 }
 
