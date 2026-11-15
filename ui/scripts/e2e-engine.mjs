@@ -955,6 +955,72 @@ try {
   await client.request('session/close', { sessionId: 'e2e-edit-2' });
   await client.request('session/close', { sessionId: 'e2e-edit-1' });
 
+  // 3e. A1：比较视图插入空行（text/edit 载荷与 opsFromPatches 同口径）
+  //     旧实现用 inserted.join('\n')，末行空行会被引擎少解析一行 → 行数校验失败
+  //     → 重放 → 判分叉 → 保存时该空行消失。
+  const A1 = join(dir, 'blank');
+  mkdirSync(A1, { recursive: true });
+  const a1Left = join(A1, 'left.txt');
+  const a1Right = join(A1, 'right.txt');
+  writeFileSync(a1Left, 'a\r\nb\r\nc');
+  writeFileSync(a1Right, 'a\r\nb\r\nc');
+  const a1Open = await client.request('text/open', {
+    sessionId: 'e2e-blank-1',
+    left: a1Left,
+    right: a1Right,
+  });
+  ok(
+    a1Open?.leftLineCount === 3 && a1Open?.rightLineCount === 3,
+    'A1 前置：CRLF + 末行无换行 → 3 行',
+    `${a1Open?.leftLineCount}/${a1Open?.rightLineCount}`,
+  );
+  // 中间插 2 个连续空行（text 必须带行尾符，行数才对得上）
+  const a1Mid = await client.request('text/edit', {
+    sessionId: 'e2e-blank-1',
+    edits: [{ side: 'left', start: 1, end: 1, text: '\n\n' }],
+  });
+  ok(
+    a1Mid?.leftLineCount === 5,
+    'A1 中间 2 空行必须进行表（行数校验通过，不触发重放）',
+    String(a1Mid?.leftLineCount),
+  );
+  // 末尾再插 1 个空行
+  const a1End = await client.request('text/edit', {
+    sessionId: 'e2e-blank-1',
+    edits: [{ side: 'left', start: 5, end: 5, text: '\n' }],
+  });
+  ok(a1End?.leftLineCount === 6, 'A1 末尾空行必须进行表', String(a1End?.leftLineCount));
+  // 右侧对称插入 1 个空行
+  const a1R = await client.request('text/edit', {
+    sessionId: 'e2e-blank-1',
+    edits: [{ side: 'right', start: 1, end: 1, text: '\n' }],
+  });
+  ok(a1R?.rightLineCount === 4, 'A1 右侧插入空行同样进表', String(a1R?.rightLineCount));
+  await client.request('text/save', { sessionId: 'e2e-blank-1', side: 'left', backup: false });
+  await client.request('text/save', { sessionId: 'e2e-blank-1', side: 'right', backup: false });
+  ok(
+    readFileSync(a1Left, 'utf8') === 'a\r\n\r\n\r\nb\r\nc\r\n',
+    'A1 左侧落盘：中间 2 空行 + 末尾补行尾符，全部 CRLF（空行不丢）',
+    JSON.stringify(readFileSync(a1Left, 'utf8')),
+  );
+  ok(
+    readFileSync(a1Right, 'utf8') === 'a\r\n\r\nb\r\nc',
+    'A1 右侧落盘：a 之后插 1 空行，原文按 CRLF 归一',
+    JSON.stringify(readFileSync(a1Right, 'utf8')),
+  );
+  const a1Re = await client.request('text/open', {
+    sessionId: 'e2e-blank-2',
+    left: a1Left,
+    right: a1Right,
+  });
+  ok(
+    a1Re?.leftLineCount === 5 && a1Re?.rightLineCount === 4,
+    'A1 重开行数与落盘一致（末行空行受行数组表达力限制少 1 行，字节已对上）',
+    `${a1Re?.leftLineCount}/${a1Re?.rightLineCount}`,
+  );
+  await client.request('session/close', { sessionId: 'e2e-blank-2' });
+  await client.request('session/close', { sessionId: 'e2e-blank-1' });
+
   // 4. P7：三向文本合并四方法（text/merge3/open|sections|decide|output）
   const m3 = await client.request('text/merge3/open', {
     sessionId: 'e2e-merge3-1',

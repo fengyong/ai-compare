@@ -6178,6 +6178,113 @@ mod p10_tests {
         drop(dir);
     }
 
+    /// A1：比较视图插入空行（左右两侧、中间/末尾、多连续空行）必须进引擎行表
+    ///
+    /// 载荷与 `ui/src/views/text-compare/editPatch.ts::opsFromPatches` 一致：
+    /// 插入内容走 `linesToEditText` 口径——末行是空行时 text 必须带行尾符，
+    /// 否则 `from_text` 少解析一行 → 行数校验失败 → 重放 → 仍不符 → 判分叉，
+    /// 保存时该空行就会被丢掉。
+    #[tokio::test]
+    async fn text_edit_insert_blank_lines_keeps_rows_and_saves_crlf_bytes() {
+        let c = ctx();
+        let dir = tempfile::tempdir().unwrap();
+        let left = dir.path().join("left.txt");
+        let right = dir.path().join("right.txt");
+        // CRLF + 末行无换行：行尾风格与"末尾补行尾符"语义同时被压住
+        std::fs::write(&left, b"a\r\nb\r\nc").unwrap();
+        std::fs::write(&right, b"a\r\nb\r\nc").unwrap();
+        let lpath = left.to_string_lossy().to_string();
+        let rpath = right.to_string_lossy().to_string();
+
+        let v = value_of(
+            text_open(
+                Some(json!({"sessionId":"blank","left":lpath,"right":rpath})),
+                &c,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(v["leftLineCount"], 3);
+
+        // 1) 左侧中间插入 2 个连续空行（text = "\n\n" → 2 行）
+        let e1 = value_of(
+            text_edit(
+                Some(json!({"sessionId":"blank","edits":[{"side":"left","start":1,"end":1,"text":"\n\n"}]})),
+                &c,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(e1["leftLineCount"], 5, "中间 2 个空行必须进行表");
+        assert!(
+            e1["rightLineCount"].as_u64().unwrap() > 0,
+            "重 diff 仍返回右表行数"
+        );
+
+        // 2) 左侧末尾插入 1 个空行（text = "\n"）
+        let e2 = value_of(
+            text_edit(
+                Some(json!({"sessionId":"blank","edits":[{"side":"left","start":5,"end":5,"text":"\n"}]})),
+                &c,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(e2["leftLineCount"], 6, "末尾空行必须进行表");
+
+        // 3) 右侧对称：中间插入 1 个空行
+        let e3 = value_of(
+            text_edit(
+                Some(json!({"sessionId":"blank","edits":[{"side":"right","start":1,"end":1,"text":"\n"}]})),
+                &c,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(e3["rightLineCount"], 4, "右侧插入空行同样进表");
+
+        // 4) 落盘字节：CRLF 归一 + 空行落成真实空行
+        let _ = value_of(
+            text_save(
+                Some(json!({"sessionId":"blank","side":"left","backup":false})),
+                &c,
+            )
+            .await,
+        )
+        .await;
+        let _ = value_of(
+            text_save(
+                Some(json!({"sessionId":"blank","side":"right","backup":false})),
+                &c,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(
+            std::fs::read(&left).unwrap(),
+            b"a\r\n\r\n\r\nb\r\nc\r\n".to_vec(),
+            "左侧：中间 2 空行 + 末尾补的行尾符，全部 CRLF"
+        );
+        assert_eq!(
+            std::fs::read(&right).unwrap(),
+            b"a\r\n\r\nb\r\nc".to_vec(),
+            "右侧：a 之后插入的空行 + 原文按 CRLF 归一"
+        );
+
+        // 5) 重开：行表与落盘一致（末尾空行因无行尾符表达力少 1 行，字节已对上）
+        let reopen = value_of(
+            text_open(
+                Some(json!({"sessionId":"blank-2","left":lpath,"right":rpath})),
+                &c,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(reopen["leftLineCount"], 5, "重开：a/空/空/b/c");
+        assert_eq!(reopen["rightLineCount"], 4, "重开：空/a/b/c");
+        drop(dir);
+    }
+
     /// 单侧保存：UTF-16LE + BOM 签名不被静默改成 UTF-8
     #[tokio::test]
     async fn text_open_single_side_save_keeps_utf16le_bom() {

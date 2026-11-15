@@ -25,6 +25,7 @@
  */
 
 import type { TextEditOp, TextEditResult } from '../../protocol/types';
+import { linesEqual, linesToEditText } from '../../lib/lineTable';
 
 /** 单窗格编辑文档（会话级缓存；标签切换不丢编辑，与 textModel 同构） */
 export interface EditDoc {
@@ -47,34 +48,9 @@ export interface EditDoc {
   diverged: boolean;
 }
 
-/**
- * 文本文档 → 行数组（与 `LineTable::from_text` 的分行口径一致）。
- *
- * `prev` 只用于消除一处**协议表达力导致的歧义**：文档文本 `''` 既可能是
- * "空文件（0 行）"，也可能是"只有一个空行的文件（1 行，内容仅一个行尾符）"——
- * 行数组口径拿不到行尾信息，两者不可区分。此时保持引擎现状（不把 1 行悄悄
- * 变成 0 行），避免"点进编辑器什么都没改就把文件清空"。
- */
-export function docLinesOf(text: string, prev?: readonly string[]): string[] {
-  if (text !== '') return text.split('\n');
-  if (prev && prev.length === 1 && prev[0] === '') return [''];
-  return [];
-}
-
-/** 行数组 → `text/edit` 的 text（末行为空时补行尾符，否则引擎会少解析一行） */
-export function linesToEditText(lines: readonly string[]): string {
-  if (lines.length === 0) return '';
-  const joined = lines.join('\n');
-  return lines[lines.length - 1] === '' ? `${joined}\n` : joined;
-}
-
-/** 行数组相等（判脏/收敛判定） */
-export function linesEqual(a: readonly string[], b: readonly string[]): boolean {
-  if (a === b) return true;
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
-  return true;
-}
+// 行尾换算统一在 `lib/lineTable`（A1：单窗格与双栏比较必须共用一份，
+// 否则"插入空行"这类场景会在两处各自漂移）。此处 re-export 以保持既有导入。
+export { docLinesOf, linesEqual, linesToEditText } from '../../lib/lineTable';
 
 /** 行级最小替换区间（公共前缀/后缀裁剪；无变化返回 null） */
 export interface LineEditSpan {

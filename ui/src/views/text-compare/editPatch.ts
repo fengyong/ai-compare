@@ -13,6 +13,7 @@
  */
 
 import { diffLinesOps } from '../../lib/lineDiffCore';
+import { linesToEditText } from '../../lib/lineTable';
 import type { Side, TextEditOp } from '../../protocol/types';
 import type { AlignedRow } from './alignment';
 
@@ -144,21 +145,24 @@ export function invertSidePatches(patches: SidePatch[]): SidePatch[] {
 /**
  * 单侧补丁 → text/edit 载荷（R3-18 引擎权威重 diff）。
  *
- * `start` 已是"应用时坐标"（见模块文档），与引擎按序应用同口径；
- * `text` 用 `\n` 连接，行尾风格由引擎按该侧既有风格归一。
+ * `start` 已是"应用时坐标"（见模块文档），与引擎按序应用同口径。
+ * `text` **必须**走 `lib/lineTable.linesToEditText`：插入内容末尾是空行时，
+ * `join('\n')` 会让引擎少解析一行（`from_text` 不把结尾换行当新行），
+ * 于是行数校验失败 → 重放 → 仍不符 → 判分叉，比较视图里表现为"插入的空行
+ * 保存后消失"（A1）。行尾风格（CRLF 等）仍由引擎按该侧既有风格归一。
  */
 export function opsFromPatches(side: Side, patches: readonly SidePatch[]): TextEditOp[] {
   return patches.map((p) => ({
     side,
     start: p.start,
     end: p.start + p.removed.length,
-    text: p.inserted.join('\n'),
+    text: linesToEditText(p.inserted),
   }));
 }
 
 /** 整侧重放 op（end 省略 = 到末尾）：引擎态与 UI 态分叉后的收敛手段 */
 export function fullSideReplayOp(side: Side, lines: readonly string[]): TextEditOp {
-  return { side, start: 0, text: lines.join('\n') };
+  return { side, start: 0, text: linesToEditText(lines) };
 }
 
 /**

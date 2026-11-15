@@ -178,14 +178,16 @@ describe('patchesFromLineReplacement：全部替换的复合补丁', () => {
 
 /**
  * 按引擎 text/edit 语义把 op 序列应用到行数组（顺序应用、坐标为应用后坐标、
- * text 以 \n 连接、空串 = 纯删除、end 省略 = 到该侧末尾）。
+ * 空串 = 纯删除、end 省略 = 到该侧末尾）。
+ *
+ * 解析必须走 `engineParse`（`LineTable::from_text` 口径：结尾换行**不**产生新行）。
+ * 旧实现直接 `split('\n')`，等于凭空多出一行，恰好把"插入空行丢行"的缺陷掩盖了。
  */
 function applyOps(lines: string[], ops: TextEditOp[]): string[] {
   const out = [...lines];
   for (const op of ops) {
     const end = op.end ?? out.length;
-    const parts = op.text === '' ? [] : op.text.split('\n');
-    out.splice(op.start, end - op.start, ...parts);
+    out.splice(op.start, end - op.start, ...engineParse(op.text));
   }
   return out;
 }
@@ -228,9 +230,58 @@ describe('opsFromPatches：UI 补丁 → 引擎 text/edit op（R3-18 引擎权�
   it('空补丁列表 → 空 op 列表（调用方据此跳过 RPC）', () => {
     expect(opsFromPatches('left', [])).toEqual([]);
   });
+
+  it('A1 插入空行：text 必须带行尾符，否则引擎少解析一行', () => {
+    // 末尾插入 1 个空行
+    expect(opsFromPatches('left', [{ start: 2, removed: [], inserted: [''] }])).toEqual([
+      { side: 'left', start: 2, end: 2, text: '\n' },
+    ]);
+    // 中间插入 2 个连续空行
+    expect(opsFromPatches('right', [{ start: 1, removed: [], inserted: ['', ''] }])).toEqual([
+      { side: 'right', start: 1, end: 1, text: '\n\n' },
+    ]);
+  });
+
+  it('A1 空行插入在引擎侧的行数与 UI 一致（左右对称、含混合场景）', () => {
+    const cases: Array<{ lines: string[]; patches: SidePatch[] }> = [
+      // 末尾 1 空行
+      { lines: ['a', 'b'], patches: [{ start: 2, removed: [], inserted: [''] }] },
+      // 中间 2 连续空行
+      { lines: ['a', 'b'], patches: [{ start: 1, removed: [], inserted: ['', ''] }] },
+      // 替换为含空行的多行（末行也是空行）
+      { lines: ['a', 'b'], patches: [{ start: 1, removed: ['b'], inserted: ['x', ''] }] },
+      // 删除后留下空行相邻
+      { lines: ['a', '', 'c'], patches: [{ start: 1, removed: [''], inserted: [''] }] },
+    ];
+    for (const { lines, patches } of cases) {
+      for (const side of ['left', 'right'] as const) {
+        const ops = opsFromPatches(side, patches);
+        // 引擎按 from_text 解析每条 op 的 text，再按 [start,end) 替换
+        expect(applyOps(lines, ops)).toEqual(applySidePatches(lines, patches));
+        // 每条 op 的 text 解析出的行数必须等于 UI 期望插入的行数
+        ops.forEach((op, i) => {
+          expect(engineParse(op.text)).toEqual(patches[i].inserted);
+        });
+      }
+    }
+  });
 });
 
+/** 引擎侧解析口径（`LineTable::from_text`） */
+function engineParse(text: string): string[] {
+  if (text === '') return [];
+  const parts = text.split('\n');
+  if (parts.length > 1 && parts[parts.length - 1] === '') parts.pop();
+  return parts;
+}
+
 describe('fullSideReplayOp：整侧重放（引擎态与 UI 态分叉后的收敛手段）', () => {
+  it('A1 末行为空时 text 带行尾符（重放不得丢行）', () => {
+    const op = fullSideReplayOp('right', ['a', '']);
+    expect(op.text).toBe('a\n\n');
+    expect(engineParse(op.text)).toEqual(['a', '']);
+  });
+
   it('end 省略 = 到末尾，text 为全部行', () => {
     expect(fullSideReplayOp('left', ['a', 'b', 'c'])).toEqual({
       side: 'left',
