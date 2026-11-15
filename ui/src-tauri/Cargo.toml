@@ -4,7 +4,9 @@ version = "0.1.0"
 description = "ai-compare 桌面壳（Tauri 2）：窗口 + 引擎进程 spawn/stdio 透传"
 authors = ["ai-compare"]
 edition = "2021"
-rust-version = "1.77.2"
+# 与仓库根 workspace 对齐（根 Cargo.toml rust-version = 1.88）；
+# 旧值 1.77.2 低于实际构建/测试所用工具链，属不一致声明（R3-24）
+rust-version = "1.88"
 
 # 独立 workspace：不并入仓库根 workspace（根 members 为 engine/* 与 cli/*，
 # 且 Tauri 壳的依赖面与引擎 workspace 隔离，符合 ADR-001 的壳/引擎解耦）
