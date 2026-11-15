@@ -62,7 +62,11 @@ export function defaultCollapsedKeys(rows: AlignedRow[], contextRows: number): S
 }
 
 /** 由折叠状态计算隐藏区间（含两端行） */
-export function computeFolds(rows: AlignedRow[], contextRows: number, collapsedKeys: Set<number>): FoldRange[] {
+export function computeFolds(
+  rows: AlignedRow[],
+  contextRows: number,
+  collapsedKeys: Set<number>,
+): FoldRange[] {
   const folds: FoldRange[] = [];
   for (const run of equalRuns(rows)) {
     if (!collapsedKeys.has(run.key) || !runCollapsible(run, contextRows)) continue;

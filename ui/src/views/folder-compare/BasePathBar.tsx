@@ -84,7 +84,10 @@ export function BasePathBar({ left, right, onOpen }: BasePathBarProps) {
     const sideLabel = side === 'left' ? F.navLeft : F.navRight;
     if (editing === side) {
       return (
-        <span key={side} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, minWidth: 220 }}>
+        <span
+          key={side}
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 4, minWidth: 220 }}
+        >
           <span
             style={{
               fontSize: 10,
@@ -106,13 +109,27 @@ export function BasePathBar({ left, right, onOpen }: BasePathBarProps) {
               if (e.key === 'Escape') setEditing(null);
             }}
             onBlur={() => setEditing(null)}
-            style={{ flex: 1, minWidth: 180, fontFamily: 'ui-monospace, Menlo, monospace', fontSize: 12 }}
+            style={{
+              flex: 1,
+              minWidth: 180,
+              fontFamily: 'ui-monospace, Menlo, monospace',
+              fontSize: 12,
+            }}
           />
         </span>
       );
     }
     return (
-      <span key={side} style={{ display: 'inline-flex', alignItems: 'center', gap: 2, minWidth: 0, overflow: 'hidden' }}>
+      <span
+        key={side}
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 2,
+          minWidth: 0,
+          overflow: 'hidden',
+        }}
+      >
         <span
           style={{
             fontSize: 10,
@@ -126,12 +143,19 @@ export function BasePathBar({ left, right, onOpen }: BasePathBarProps) {
           {sideLabel}
         </span>
         {root && (
-          <button style={chipStyle} title={F.navOpenHere(sideLabel)} onClick={() => openWith(side, prefixPath(value, 0) === '/' ? '/' : joinPath(root, []))}>
+          <button
+            style={chipStyle}
+            title={F.navOpenHere(sideLabel)}
+            onClick={() => openWith(side, prefixPath(value, 0) === '/' ? '/' : joinPath(root, []))}
+          >
             /
           </button>
         )}
         {segs.map((seg, i) => (
-          <span key={`${seg}-${i}`} style={{ display: 'inline-flex', alignItems: 'center', minWidth: 0 }}>
+          <span
+            key={`${seg}-${i}`}
+            style={{ display: 'inline-flex', alignItems: 'center', minWidth: 0 }}
+          >
             {i > 0 && <span style={{ color: 'var(--aic-text-dim)' }}>/</span>}
             <button
               style={{ ...chipStyle, whiteSpace: 'nowrap' }}
@@ -142,10 +166,18 @@ export function BasePathBar({ left, right, onOpen }: BasePathBarProps) {
             </button>
           </span>
         ))}
-        <button style={{ ...actionStyle, marginLeft: 4, flex: 'none' }} title={F.navUp(sideLabel)} onClick={() => openWith(side, parentPath(value))}>
+        <button
+          style={{ ...actionStyle, marginLeft: 4, flex: 'none' }}
+          title={F.navUp(sideLabel)}
+          onClick={() => openWith(side, parentPath(value))}
+        >
           ↑
         </button>
-        <button style={{ ...actionStyle, flex: 'none' }} title={F.navEdit(sideLabel)} onClick={() => startEdit(side)}>
+        <button
+          style={{ ...actionStyle, flex: 'none' }}
+          title={F.navEdit(sideLabel)}
+          onClick={() => startEdit(side)}
+        >
           ✎
         </button>
       </span>
@@ -153,7 +185,16 @@ export function BasePathBar({ left, right, onOpen }: BasePathBarProps) {
   };
 
   return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 10, minWidth: 0, flex: 1, overflow: 'hidden' }}>
+    <span
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 10,
+        minWidth: 0,
+        flex: 1,
+        overflow: 'hidden',
+      }}
+    >
       {renderSide('left')}
       {renderSide('right')}
       <button

@@ -59,13 +59,14 @@ export interface RecoveryResult<T> {
 export function recoverWithBackup<T>(
   primary: string | null,
   backup: string | null,
-  parse: (text: string) => T
+  parse: (text: string) => T,
 ): RecoveryResult<T> {
   if (primary !== null) {
     try {
       return { doc: parse(primary), source: 'primary' };
     } catch (err) {
-      const primaryError = err instanceof ParseError || err instanceof Error ? err.message : String(err);
+      const primaryError =
+        err instanceof ParseError || err instanceof Error ? err.message : String(err);
       if (backup !== null) {
         try {
           return { doc: parse(backup), source: 'backup', primaryError };
@@ -84,7 +85,11 @@ export function recoverWithBackup<T>(
   // 主文件不存在：.bak 存在属异常状态（上次原子写中断），仍尝试恢复
   if (backup !== null) {
     try {
-      return { doc: parse(backup), source: 'backup', primaryError: '主文件缺失（上次写入可能被中断）' };
+      return {
+        doc: parse(backup),
+        source: 'backup',
+        primaryError: '主文件缺失（上次写入可能被中断）',
+      };
     } catch (err) {
       return {
         doc: null,

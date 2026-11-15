@@ -33,11 +33,21 @@ async function openMerge3(client: RpcClient, sessionId = 'm3-1'): Promise<MergeO
   });
 }
 
-async function sections(client: RpcClient, sessionId: string, offset: number, count: number): Promise<MergeSectionsResult> {
+async function sections(
+  client: RpcClient,
+  sessionId: string,
+  offset: number,
+  count: number,
+): Promise<MergeSectionsResult> {
   return client.request<MergeSectionsResult>('text/merge3/sections', { sessionId, offset, count });
 }
 
-async function output(client: RpcClient, sessionId: string, mode: 'plain' | 'marker' | null = null, markerStyle: 'merge' | 'diff3' | null = null): Promise<MergeOutputResult> {
+async function output(
+  client: RpcClient,
+  sessionId: string,
+  mode: 'plain' | 'marker' | null = null,
+  markerStyle: 'merge' | 'diff3' | null = null,
+): Promise<MergeOutputResult> {
   return client.request<MergeOutputResult>('text/merge3/output', { sessionId, mode, markerStyle });
 }
 
@@ -74,7 +84,9 @@ describe('MockEngine P7：text/merge3/open + sections', () => {
     const client = await newClient();
     await openMerge3(client);
     const origins = (await sections(client, 'm3-1', 0, 100)).chunks.map((c) => c.origin);
-    expect(new Set(origins)).toEqual(new Set(['stable', 'leftOnly', 'rightOnly', 'bothChanged', 'conflict']));
+    expect(new Set(origins)).toEqual(
+      new Set(['stable', 'leftOnly', 'rightOnly', 'bothChanged', 'conflict']),
+    );
 
     const page = await sections(client, 'm3-1', 0, 4);
     expect(page.offset).toBe(0);
@@ -149,7 +161,11 @@ describe('MockEngine P7：text/merge3/decide（幂等 + 六动作族）', () => 
         action: 'rightThenLeft',
         expect: ['  const mode = "strict";', '  const mode = "fast";'],
       },
-      { action: 'manual', text: '  const mode = "reviewed";\n', expect: ['  const mode = "reviewed";'] },
+      {
+        action: 'manual',
+        text: '  const mode = "reviewed";\n',
+        expect: ['  const mode = "reviewed";'],
+      },
     ];
     for (const c of cases) {
       await client.request('text/merge3/decide', {
@@ -183,13 +199,13 @@ describe('MockEngine P7：text/merge3/decide（幂等 + 六动作族）', () => 
       client.request('text/merge3/decide', {
         sessionId: 'm3-1',
         decisions: [{ chunkId: 999, action: 'left', text: null }],
-      })
+      }),
     ).rejects.toMatchObject({ code: -32602 });
     await expect(
       client.request('text/merge3/decide', {
         sessionId: 'm3-1',
         decisions: [{ chunkId: 3, action: 'manual', text: null }],
-      })
+      }),
     ).rejects.toMatchObject({ code: -32602 });
     await client.close();
   });
@@ -249,7 +265,7 @@ describe('MockEngine P7：错误路径与会话清理', () => {
     await expect(sections(client, 'ghost', 0, 5)).rejects.toMatchObject({ code: 410 });
     await expect(output(client, 'ghost', null, null)).rejects.toMatchObject({ code: 410 });
     await expect(
-      client.request('text/merge3/decide', { sessionId: 'ghost', decisions: [] })
+      client.request('text/merge3/decide', { sessionId: 'ghost', decisions: [] }),
     ).rejects.toMatchObject({ code: 410 });
 
     await openMerge3(client);
@@ -263,13 +279,20 @@ describe('MockEngine P7：错误路径与会话清理', () => {
   it('非合并会话句柄被拒绝；空 sessionId 报 -32602', async () => {
     const client = await newClient();
     await client.request('text/open', {
-      sessionId: 'text-x', left: '/a/x.c', right: '/b/x.c', options: null,
+      sessionId: 'text-x',
+      left: '/a/x.c',
+      right: '/b/x.c',
+      options: null,
     });
     await expect(sections(client, 'text-x', 0, 5)).rejects.toMatchObject({ code: -32602 });
     await expect(
       client.request('text/merge3/open', {
-        sessionId: '', base: '/b', left: '/l', right: '/r', options: null,
-      })
+        sessionId: '',
+        base: '/b',
+        left: '/l',
+        right: '/r',
+        options: null,
+      }),
     ).rejects.toMatchObject({ code: -32602 });
     await client.close();
   });

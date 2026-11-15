@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import type { DirRow } from '../../protocol/types';
-import { buildTreeIndex, expandAll, orderedFlatRows, orderedTreeRows, parentOf, rowDepth, toggleExpanded } from './dirTree';
+import {
+  buildTreeIndex,
+  expandAll,
+  orderedFlatRows,
+  orderedTreeRows,
+  parentOf,
+  rowDepth,
+  toggleExpanded,
+} from './dirTree';
 
 function dirRow(id: string, kind: DirRow['kind'] = 'file', hidden = false): DirRow {
   const side = { size: 1, mtimeMs: 1, attribute: null, unixMode: 0, uid: 0, gid: 0 };
@@ -47,7 +55,13 @@ describe('dirTree：树索引与可见行', () => {
   it('未展开的目录其子树不出现；折叠后回到顶层', () => {
     expect(orderedTreeRows(index, new Set()).map((r) => r.id)).toEqual(['a-dir', 'b.txt']);
     const deep = orderedTreeRows(index, new Set(['a-dir', 'a-dir/sub']));
-    expect(deep.map((r) => r.id)).toEqual(['a-dir', 'a-dir/sub', 'a-dir/sub/deep.txt', 'a-dir/inner.txt', 'b.txt']);
+    expect(deep.map((r) => r.id)).toEqual([
+      'a-dir',
+      'a-dir/sub',
+      'a-dir/sub/deep.txt',
+      'a-dir/inner.txt',
+      'b.txt',
+    ]);
   });
 
   it('toggleExpanded 不可变切换', () => {
@@ -74,8 +88,20 @@ describe('dirTree：树索引与可见行', () => {
 
 /** P6b：表头列排序（FR-DIR-042；与标记/选择正交——均以行 id 为键） */
 describe('dirTree 表头排序', () => {
-  const side = (size: number, mtimeMs: number) => ({ size, mtimeMs, attribute: null, unixMode: 0, uid: 0, gid: 0 });
-  const rowOf = (id: string, size: number, mtimeMs: number, missing: 'left' | 'right' | null = null): DirRow => ({
+  const side = (size: number, mtimeMs: number) => ({
+    size,
+    mtimeMs,
+    attribute: null,
+    unixMode: 0,
+    uid: 0,
+    gid: 0,
+  });
+  const rowOf = (
+    id: string,
+    size: number,
+    mtimeMs: number,
+    missing: 'left' | 'right' | null = null,
+  ): DirRow => ({
     id,
     name: id.split('/').pop() ?? id,
     kind: 'file',
@@ -112,7 +138,11 @@ describe('dirTree 表头排序', () => {
   });
 
   it('树形模式逐层排序（目录先）；buildTreeIndex 可选参不影响默认序', () => {
-    const treeRows = [rowOf('z-dir/x.txt', 1, 1), { ...rowOf('z-dir', 1, 1), kind: 'dir' as const, hasChildren: true }, rowOf('a.txt', 99, 99)];
+    const treeRows = [
+      rowOf('z-dir/x.txt', 1, 1),
+      { ...rowOf('z-dir', 1, 1), kind: 'dir' as const, hasChildren: true },
+      rowOf('a.txt', 99, 99),
+    ];
     const idx = buildTreeIndex(treeRows, { key: 'name', dir: -1 });
     const vis = orderedTreeRows(idx, new Set(['z-dir']));
     // 顶层：z-dir（目录先）> a.txt；z-dir 内：x.txt

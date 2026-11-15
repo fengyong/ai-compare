@@ -63,7 +63,8 @@ export class ReconnectPolicy {
 
   /** 重启 + 握手成功，开始恢复会话 */
   onConnected(): void {
-    if (this.phase !== 'reconnecting' && this.phase !== 'degraded' && this.phase !== 'failed') return;
+    if (this.phase !== 'reconnecting' && this.phase !== 'degraded' && this.phase !== 'failed')
+      return;
     this.setPhase('resyncing');
   }
 

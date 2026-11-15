@@ -69,10 +69,22 @@ export function formatSummary(s: {
 
 const PAGE = 200;
 
-export function TableCompareView({ tab }: { tab: Tab & { kind: 'table'; table: { left: string; right: string; sessionId: string } } }) {
-  const [columns, setColumns] = useState<Array<{ name: string; ty: string; left: number | null; right: number | null }>>([]);
+export function TableCompareView({
+  tab,
+}: {
+  tab: Tab & { kind: 'table'; table: { left: string; right: string; sessionId: string } };
+}) {
+  const [columns, setColumns] = useState<
+    Array<{ name: string; ty: string; left: number | null; right: number | null }>
+  >([]);
   const [rows, setRows] = useState<TableRow[]>([]);
-  const [summary, setSummary] = useState<{ sameRows: number; changedRows: number; addedRows: number; removedRows: number; unimportantRows: number } | null>(null);
+  const [summary, setSummary] = useState<{
+    sameRows: number;
+    changedRows: number;
+    addedRows: number;
+    removedRows: number;
+    unimportantRows: number;
+  } | null>(null);
   const [rowCount, setRowCount] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
@@ -84,7 +96,7 @@ export function TableCompareView({ tab }: { tab: Tab & { kind: 'table'; table: {
       const r = await tableSections({ sessionId: tab.table.sessionId, offset, count: PAGE });
       return r.rows;
     },
-    [tab.table.sessionId]
+    [tab.table.sessionId],
   );
 
   useEffect(() => {
@@ -151,14 +163,22 @@ export function TableCompareView({ tab }: { tab: Tab & { kind: 'table'; table: {
   const statsText = useMemo(() => (summary ? formatSummary(summary) : ''), [summary]);
 
   if (error) {
-    return <div className="aic-table-error">{S.table.loadFail}: {error}</div>;
+    return (
+      <div className="aic-table-error">
+        {S.table.loadFail}: {error}
+      </div>
+    );
   }
 
   return (
     <div className="aic-table">
       <div className="aic-table-toolbar">
-        <span className="aic-table-title">{S.table.title}: {tab.title.replace('表格比较：', '')}</span>
-        {!getEngineCapabilities()?.tableCompare && <span className="aic-table-cap">（mock 演示数据）</span>}
+        <span className="aic-table-title">
+          {S.table.title}: {tab.title.replace('表格比较：', '')}
+        </span>
+        {!getEngineCapabilities()?.tableCompare && (
+          <span className="aic-table-cap">（mock 演示数据）</span>
+        )}
       </div>
       {summary && <div className="aic-table-stats">{statsText}</div>}
       <div className="aic-table-grid" ref={hostRef} onScroll={onScroll}>
@@ -167,7 +187,9 @@ export function TableCompareView({ tab }: { tab: Tab & { kind: 'table'; table: {
             <tr>
               <th className="aic-table-gutter" />
               {columns.map((c, i) => (
-                <th key={i} title={`${c.ty} 列`}>{c.name}</th>
+                <th key={i} title={`${c.ty} 列`}>
+                  {c.name}
+                </th>
               ))}
             </tr>
           </thead>
@@ -178,7 +200,11 @@ export function TableCompareView({ tab }: { tab: Tab & { kind: 'table'; table: {
                 <tr key={i} className={`aic-table-row kind-${row.kind}`}>
                   <td className={`aic-table-gutter ${dot.cls}`} title={dot.title} />
                   {row.cells.map((cell, ci) => (
-                    <td key={ci} className={cellCls(cell.status)} title={`${cell.left ?? '—'} ⇄ ${cell.right ?? '—'}`}>
+                    <td
+                      key={ci}
+                      className={cellCls(cell.status)}
+                      title={`${cell.left ?? '—'} ⇄ ${cell.right ?? '—'}`}
+                    >
                       {cell.right ?? cell.left ?? ''}
                     </td>
                   ))}

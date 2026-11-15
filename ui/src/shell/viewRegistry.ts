@@ -87,7 +87,14 @@ export function createDefaultRegistry(): ViewRegistry {
       kind: 'folder-compare',
       order: 1,
       caps: { panes: 2, editable: false, reports: false, layoutSwitch: false },
-      commands: ['session.save', 'session.saveAs', 'session.lock', 'folder.copyToLeft', 'folder.copyToRight', 'folder.markSelection'],
+      commands: [
+        'session.save',
+        'session.saveAs',
+        'session.lock',
+        'folder.copyToLeft',
+        'folder.copyToRight',
+        'folder.markSelection',
+      ],
     },
     {
       kind: 'text-compare',
@@ -106,19 +113,49 @@ export function createDefaultRegistry(): ViewRegistry {
       kind: 'folder-merge',
       order: 4,
       caps: { panes: 3, editable: false, reports: true, layoutSwitch: false },
-      commands: ['session.save', 'session.saveAs', 'session.lock', 'merge.decideLeft', 'merge.decideRight', 'merge.skip'],
+      commands: [
+        'session.save',
+        'session.saveAs',
+        'session.lock',
+        'merge.decideLeft',
+        'merge.decideRight',
+        'merge.skip',
+      ],
     },
     // 以下三类：视图本体属 P9，注册元数据占位（主页置灰 + 阶段 tooltip）
-    { kind: 'table-compare', order: 5, caps: { panes: 2, editable: false, reports: false, layoutSwitch: true }, commands: [] },
-    { kind: 'hex-compare', order: 6, caps: { panes: 2, editable: false, reports: false, layoutSwitch: true }, commands: [] },
-    { kind: 'picture-compare', order: 7, caps: { panes: 2, editable: false, reports: false, layoutSwitch: true }, commands: [] },
+    {
+      kind: 'table-compare',
+      order: 5,
+      caps: { panes: 2, editable: false, reports: false, layoutSwitch: true },
+      commands: [],
+    },
+    {
+      kind: 'hex-compare',
+      order: 6,
+      caps: { panes: 2, editable: false, reports: false, layoutSwitch: true },
+      commands: [],
+    },
+    {
+      kind: 'picture-compare',
+      order: 7,
+      caps: { panes: 2, editable: false, reports: false, layoutSwitch: true },
+      commands: [],
+    },
     // 队列 3：三向文本合并（FR-TMRG-001~007；消费 P7 的 text/merge3/* 四方法）
     {
       kind: 'text-merge',
       order: 8,
       // 三源窗格（左/右/中）+ 可编辑输出窗格；BC 的合并视图允许编辑输出
       caps: { panes: 3, editable: true, reports: false, layoutSwitch: false },
-      commands: ['session.save', 'session.saveAs', 'session.lock', 'merge3.takeLeft', 'merge3.takeRight', 'merge3.takeBase', 'merge3.manual'],
+      commands: [
+        'session.save',
+        'session.saveAs',
+        'session.lock',
+        'merge3.takeLeft',
+        'merge3.takeRight',
+        'merge3.takeBase',
+        'merge3.manual',
+      ],
     },
   ];
   for (const d of defs) {

@@ -56,7 +56,10 @@ export function joinSettingPath(dir: string, file: string): string {
 }
 
 /** 四个设置文件的最终路径（浏览器返回 null → 调用方走 localStorage 键名） */
-export async function resolveSettingPaths(): Promise<Record<keyof typeof SETTINGS_FILES, string> | null> {
+export async function resolveSettingPaths(): Promise<Record<
+  keyof typeof SETTINGS_FILES,
+  string
+> | null> {
   const dirs = await resolveAppDirs();
   if (!dirs) return null;
   return {
@@ -113,7 +116,11 @@ export class MemoryFileStore implements KvFileStore {
 const LS_PREFIX = 'aic:';
 
 export class BrowserFileStore implements KvFileStore {
-  constructor(private readonly storage: Storage | null = typeof localStorage === 'undefined' ? null : localStorage) {}
+  constructor(
+    private readonly storage: Storage | null = typeof localStorage === 'undefined'
+      ? null
+      : localStorage,
+  ) {}
 
   private key(path: string): string {
     // 浏览器模式下 path 为虚拟文件名（sessions.json 等）；带路径也统一扁平化

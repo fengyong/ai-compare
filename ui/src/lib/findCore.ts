@@ -22,8 +22,7 @@ export interface TextMatch {
 
 /** 编译产物：re 带 g 标志供逐行扫描；wholeWord 由命中后边界校验落实 */
 export type CompiledQuery =
-  | { ok: true; re: RegExp; wholeWord: boolean }
-  | { ok: false; error: string };
+  { ok: true; re: RegExp; wholeWord: boolean } | { ok: false; error: string };
 
 /** 编译查询：正则非法时返回错误（UI 提示，不抛异常）；空 needle 视为未输入 */
 export function compileQuery(q: FindQuery): CompiledQuery {
@@ -93,7 +92,7 @@ export function findNext(
   compiled: CompiledQuery,
   fromLine: number,
   fromCol: number,
-  backward: boolean
+  backward: boolean,
 ): TextMatch | null {
   if (!compiled.ok || lines.length === 0) return null;
   const all = findMatches(lines, compiled);
@@ -112,7 +111,12 @@ export function findNext(
 }
 
 /** 生成单次替换文本（正则模式展开 $1..$99 / $& / $$；文本模式原样） */
-export function expandReplacement(matchedText: string, replacement: string, regex: boolean, groups: string[]): string {
+export function expandReplacement(
+  matchedText: string,
+  replacement: string,
+  regex: boolean,
+  groups: string[],
+): string {
   if (!regex) return replacement;
   return replacement.replace(/\$(\d{1,2}|&|\$)/g, (_whole, token: string) => {
     if (token === '$') return '$';
@@ -127,7 +131,7 @@ export function replaceAllInLine(
   line: string,
   compiled: CompiledQuery,
   replacement: string,
-  regex: boolean
+  regex: boolean,
 ): string | null {
   if (!compiled.ok) return null;
   const ms = matchesInLine(line, 0, compiled);

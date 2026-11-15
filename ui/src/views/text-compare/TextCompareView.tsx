@@ -33,7 +33,12 @@ import {
 } from '../../lib/findCore';
 import { diffLinesOps, summarizeSections, toSections } from '../../lib/lineDiffCore';
 import { buildInlineMarks, mergeDmpMarks, type InlineMark } from '../../lib/inlineDiffCore';
-import { buildAlignedDocs, findDiffSectionAtLine, type AlignedDoc, type AlignedRow } from './alignment';
+import {
+  buildAlignedDocs,
+  findDiffSectionAtLine,
+  type AlignedDoc,
+  type AlignedRow,
+} from './alignment';
 import { loadTextSession, loadTextSessionReuse } from './textSession';
 import { effectiveRulesFor } from './rulesRuntime';
 import type { Importance, Section, TextEditOp } from '../../protocol/types';
@@ -180,7 +185,6 @@ export function TextCompareView({ tab }: { tab: Tab }) {
 
   const paneHandles = () => ({ left: paneL.current, right: paneR.current });
 
-
   const syncCurrentSection = useCallback((id: number | null) => {
     currentSectionIdRef.current = id;
     setCurrentSectionId(id);
@@ -201,13 +205,20 @@ export function TextCompareView({ tab }: { tab: Tab }) {
     async (model: TextSessionModel): Promise<{ left: InlineMark[]; right: InlineMark[] }> => {
       const out: { left: InlineMark[]; right: InlineMark[] } = { left: [], right: [] };
       const targets = model.sections.filter(
-        (s) => s.kind === 'change' && s.left !== null && s.right !== null && s.left.end - s.left.start <= 400
+        (s) =>
+          s.kind === 'change' &&
+          s.left !== null &&
+          s.right !== null &&
+          s.left.end - s.left.start <= 400,
       );
       // 每个替换段一次懒计算 RPC（mock 同步、真实引擎缓存在会话侧）
       const results = await Promise.all(
         targets.map((s) =>
-          requestInlineDiff({ sessionId: model.sessionId, sectionId: s.id }).then((res) => ({ section: s, res }))
-        )
+          requestInlineDiff({ sessionId: model.sessionId, sectionId: s.id }).then((res) => ({
+            section: s,
+            res,
+          })),
+        ),
       );
       for (const { section, res } of results) {
         if (res && res.lines.length > 0) {
@@ -233,7 +244,14 @@ export function TextCompareView({ tab }: { tab: Tab }) {
           const l = model.leftLines[li] ?? '';
           const r = model.rightLines[ri] ?? '';
           if (l.length > 1000 || r.length > 1000) continue;
-          const pairs = buildInlineMarks([l], [r], 0, 0, 1, model.dmpCleanup ? { dmpCleanup: true } : {});
+          const pairs = buildInlineMarks(
+            [l],
+            [r],
+            0,
+            0,
+            1,
+            model.dmpCleanup ? { dmpCleanup: true } : {},
+          );
           for (const m of pairs.left) out.left.push({ line: li, from: m.from, to: m.to });
           for (const m of pairs.right) out.right.push({ line: ri, from: m.from, to: m.to });
         }
@@ -245,7 +263,7 @@ export function TextCompareView({ tab }: { tab: Tab }) {
       }
       return out;
     },
-    []
+    [],
   );
 
   // ---- 查找匹配（对齐文档行坐标；填充行文本为空，天然无匹配） ----
@@ -323,9 +341,8 @@ export function TextCompareView({ tab }: { tab: Tab }) {
       }
       setUiVersion((v) => v + 1);
     },
-    [computeDerived, computeInlineMarks, computeFind, syncCurrentSection]
+    [computeDerived, computeInlineMarks, computeFind, syncCurrentSection],
   );
-
 
   /**
    * 窗格 handle 注册回调：双齐且会话数据已就绪时补一次重建。
@@ -346,7 +363,7 @@ export function TextCompareView({ tab }: { tab: Tab }) {
         void rebuildAndRender(modelRef.current);
       }
     },
-    [rebuildAndRender]
+    [rebuildAndRender],
   );
 
   /**
@@ -431,7 +448,7 @@ export function TextCompareView({ tab }: { tab: Tab }) {
         diverged: () => setRediffNotice(S.text.rediffResyncFailed),
       });
     },
-    [rediffModel, rebuildAndRender]
+    [rediffModel, rebuildAndRender],
   );
 
   const applySideContent = useCallback(
@@ -512,7 +529,7 @@ export function TextCompareView({ tab }: { tab: Tab }) {
         },
       });
     },
-    [doSave]
+    [doSave],
   );
 
   // ---- 初始加载（缓存水合优先，避免引擎重开覆盖 UI 侧编辑）----
@@ -584,7 +601,7 @@ export function TextCompareView({ tab }: { tab: Tab }) {
         });
         collapsedRef.current = defaultCollapsedKeys(
           buildAlignedDocs(model.sections, model.leftLines, model.rightLines).left.rows,
-          contextRowsRef.current
+          contextRowsRef.current,
         );
         await rebuildAndRender(model);
         if (!disposed) setReady(true);
@@ -606,11 +623,15 @@ export function TextCompareView({ tab }: { tab: Tab }) {
       const sideLines = side === 'left' ? model.leftLines : model.rightLines;
       const res = patchSideFromDocEdit(rows, docBefore, docAfter, side, sideLines);
       if (!res) return;
-      model.undo = tryCoalesce(model.undo, { side, patches: res.patches, lastAt: Date.now() }, Date.now());
+      model.undo = tryCoalesce(
+        model.undo,
+        { side, patches: res.patches, lastAt: Date.now() },
+        Date.now(),
+      );
       applySideContent(model, side, res.newLines);
       void rediffAndRender(model, opsFromPatches(side, res.patches));
     },
-    [applySideContent, rediffAndRender]
+    [applySideContent, rediffAndRender],
   );
 
   // ---- 会话级撤销 / 重做（UNDO-001）----
@@ -622,7 +643,7 @@ export function TextCompareView({ tab }: { tab: Tab }) {
       applySideContent(model, entry.side, applySidePatches(cur, patches));
       return opsFromPatches(entry.side, patches);
     },
-    [applySideContent]
+    [applySideContent],
   );
 
   const doUndo = useCallback(() => {
@@ -686,7 +707,7 @@ export function TextCompareView({ tab }: { tab: Tab }) {
         });
       }
     },
-    [refreshDecorations, syncCurrentSection]
+    [refreshDecorations, syncCurrentSection],
   );
 
   // ---- 差异导航（跨折叠：折叠只覆盖等值区，差异行始终可见）----
@@ -716,7 +737,7 @@ export function TextCompareView({ tab }: { tab: Tab }) {
       revealRow(firstRow);
       refreshDecorations();
     },
-    [rebuildAndRender, refreshDecorations, revealRow, syncCurrentSection]
+    [rebuildAndRender, refreshDecorations, revealRow, syncCurrentSection],
   );
 
   // ---- 折叠操作（FR-TXT-020~023）----
@@ -747,7 +768,7 @@ export function TextCompareView({ tab }: { tab: Tab }) {
       for (const k of keys) collapsedRef.current.delete(k);
       refold();
     },
-    [refold]
+    [refold],
   );
 
   const onContextChange = useCallback(
@@ -758,7 +779,7 @@ export function TextCompareView({ tab }: { tab: Tab }) {
       if (derived) collapsedRef.current = allCollapsibleKeys(derived.rows, n);
       refold();
     },
-    [refold]
+    [refold],
   );
 
   // ---- 查找替换（FIND-001）----
@@ -766,7 +787,7 @@ export function TextCompareView({ tab }: { tab: Tab }) {
     () => (ready ? computeFind() : { matches: [], compiled: compileQuery(findState), error: null }),
     // uiVersion：重 diff 后匹配集合变化，需重算
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [ready, computeFind, findState, uiVersion]
+    [ready, computeFind, findState, uiVersion],
   );
 
   const jumpToMatch = useCallback(
@@ -790,20 +811,21 @@ export function TextCompareView({ tab }: { tab: Tab }) {
       }
       refreshDecorations();
     },
-    [rebuildAndRender, refreshDecorations, syncCurrentSection]
+    [rebuildAndRender, refreshDecorations, syncCurrentSection],
   );
 
   const onFind = useCallback(
     (backward: boolean) => {
       const derived = derivedRef.current;
       if (!derived || findInfo.matches.length === 0) return;
-      const pane: 'left' | 'right' = findStateRef.current.side === 'both' ? 'left' : findStateRef.current.side;
+      const pane: 'left' | 'right' =
+        findStateRef.current.side === 'both' ? 'left' : findStateRef.current.side;
       const h = pane === 'left' ? paneL.current : paneR.current;
       const cur = h ? h.cursorPos() : { line: 0, col: 0 };
       const next = findNext(derived[pane].lines, findInfo.compiled, cur.line, cur.col, backward);
       if (next) {
         const idx = findInfo.matches.findIndex(
-          (m) => m.pane === pane && m.line === next.line && m.from === next.from
+          (m) => m.pane === pane && m.line === next.line && m.from === next.from,
         );
         const safe = Math.max(0, idx);
         findIdxRef.current = safe;
@@ -812,7 +834,7 @@ export function TextCompareView({ tab }: { tab: Tab }) {
       }
       if (modelRef.current) void rebuildAndRender(modelRef.current);
     },
-    [findInfo, jumpToMatch, rebuildAndRender]
+    [findInfo, jumpToMatch, rebuildAndRender],
   );
 
   const onReplaceCurrent = useCallback(() => {
@@ -827,11 +849,19 @@ export function TextCompareView({ tab }: { tab: Tab }) {
     const matchedText = view.state.doc.sliceString(line.from + match.from, line.from + match.to);
     let groups: string[] = [];
     if (findStateRef.current.regex) {
-      const re2 = new RegExp(findInfo.compiled.re.source, findInfo.compiled.re.flags.replace('g', ''));
+      const re2 = new RegExp(
+        findInfo.compiled.re.source,
+        findInfo.compiled.re.flags.replace('g', ''),
+      );
       const gm = re2.exec(matchedText);
       groups = gm ? gm.slice(1).map((g) => g ?? '') : [];
     }
-    const rep = expandReplacement(matchedText, findStateRef.current.replacement, findStateRef.current.regex, groups);
+    const rep = expandReplacement(
+      matchedText,
+      findStateRef.current.replacement,
+      findStateRef.current.regex,
+      groups,
+    );
     // CM 事务 → onUserEdit 链路（patch → 撤销入栈 → 重 diff → 回灌）
     view.dispatch({
       changes: { from: line.from + match.from, to: line.from + match.to, insert: rep },
@@ -847,7 +877,9 @@ export function TextCompareView({ tab }: { tab: Tab }) {
     const ops: TextEditOp[] = [];
     for (const pane of panes) {
       const cur = pane === 'left' ? model.leftLines : model.rightLines;
-      const newLines = cur.map((ln) => replaceAllInLine(ln, findInfo.compiled, q.replacement, q.regex) ?? ln);
+      const newLines = cur.map(
+        (ln) => replaceAllInLine(ln, findInfo.compiled, q.replacement, q.regex) ?? ln,
+      );
       const patches = patchesFromLineReplacement(cur, newLines);
       if (patches) {
         model.undo = pushUndo(model.undo, { side: pane, patches, lastAt: Date.now() });
@@ -932,7 +964,7 @@ export function TextCompareView({ tab }: { tab: Tab }) {
         useShell.getState().markContentDirty(tab.id, model.modifiedSides);
         collapsedRef.current = defaultCollapsedKeys(
           buildAlignedDocs(model.sections, model.leftLines, model.rightLines).left.rows,
-          contextRowsRef.current
+          contextRowsRef.current,
         );
         syncCurrentSection(null);
         setNavIndex(-1);
@@ -981,14 +1013,16 @@ export function TextCompareView({ tab }: { tab: Tab }) {
 
   // ---- 壳级命令总线注册（换行/书签命令与快捷键统一入口）----
   useEffect(() => {
-    const currentLine = () => paneL.current?.cursorPos().line ?? paneR.current?.cursorPos().line ?? 0;
+    const currentLine = () =>
+      paneL.current?.cursorPos().line ?? paneR.current?.cursorPos().line ?? 0;
     const dispose = registerTextView({
       toggleWrap: () => setWrap((v) => !v),
       toggleBookmark: () => setBookmarks((m) => toggleBookmark(m, currentLine()).map),
       gotoBookmark: (dir) => {
-        const line = dir === 1
-          ? nextBookmarkLine(bookmarksRef.current, currentLine())
-          : prevBookmarkLine(bookmarksRef.current, currentLine());
+        const line =
+          dir === 1
+            ? nextBookmarkLine(bookmarksRef.current, currentLine())
+            : prevBookmarkLine(bookmarksRef.current, currentLine());
         if (line !== null) revealRow(line);
       },
       clearBookmarks: () => setBookmarks(clearBookmarks()),
@@ -1016,7 +1050,7 @@ export function TextCompareView({ tab }: { tab: Tab }) {
         setFindOpen(false);
       }
     },
-    [findOpen, onFind]
+    [findOpen, onFind],
   );
 
   // ---- 渲染 ----
@@ -1084,8 +1118,8 @@ export function TextCompareView({ tab }: { tab: Tab }) {
           </span>
         )}
         <span className="meta">
-          {S.text.sectionsLabel} <b>{diffCount}</b> ·{' '}
-          {S.text.equalSectionsLabel} <b>{summary.equalSections}</b>
+          {S.text.sectionsLabel} <b>{diffCount}</b> · {S.text.equalSectionsLabel}{' '}
+          <b>{summary.equalSections}</b>
         </span>
         {hidden > 0 && (
           <span className="meta dim" title={S.text.hiddenRowsLabel}>
@@ -1096,10 +1130,20 @@ export function TextCompareView({ tab }: { tab: Tab }) {
         <button className={`nav${editing ? ' on' : ''}`} onClick={() => setEditing((v) => !v)}>
           {editing ? S.text.editingOn : S.text.editingOff}
         </button>
-        <button className="nav" onClick={doUndo} disabled={model.undo.undo.length === 0} title={S.text.undo}>
+        <button
+          className="nav"
+          onClick={doUndo}
+          disabled={model.undo.undo.length === 0}
+          title={S.text.undo}
+        >
           ↶
         </button>
-        <button className="nav" onClick={doRedo} disabled={model.undo.redo.length === 0} title={S.text.redo}>
+        <button
+          className="nav"
+          onClick={doRedo}
+          disabled={model.undo.redo.length === 0}
+          title={S.text.redo}
+        >
           ↷
         </button>
         <button
@@ -1121,16 +1165,32 @@ export function TextCompareView({ tab }: { tab: Tab }) {
         <button className="nav" onClick={() => setFindOpen((v) => !v)} title={S.text.find}>
           {S.text.find}
         </button>
-        <button className="nav" onClick={() => setShowDiffList((v) => !v)} title={S.text.diffListTitle}>
+        <button
+          className="nav"
+          onClick={() => setShowDiffList((v) => !v)}
+          title={S.text.diffListTitle}
+        >
           {S.text.diffListTitle}
         </button>
         {/* FR-TXT-002 自动换行 / FR-TXT-023 书签 */}
-        <button className={`nav${wrap ? ' on' : ''}`} onClick={() => setWrap((v) => !v)} title={S.text.wrapHint}>
+        <button
+          className={`nav${wrap ? ' on' : ''}`}
+          onClick={() => setWrap((v) => !v)}
+          title={S.text.wrapHint}
+        >
           {S.text.wrap}
         </button>
         <button
           className="nav"
-          onClick={() => setBookmarks((m) => toggleBookmark(m, paneL.current?.cursorPos().line ?? paneR.current?.cursorPos().line ?? 0).map)}
+          onClick={() =>
+            setBookmarks(
+              (m) =>
+                toggleBookmark(
+                  m,
+                  paneL.current?.cursorPos().line ?? paneR.current?.cursorPos().line ?? 0,
+                ).map,
+            )
+          }
           title={S.text.bookmarkHint}
         >
           {S.text.toggleBookmark}
@@ -1155,7 +1215,11 @@ export function TextCompareView({ tab }: { tab: Tab }) {
         >
           {S.text.nextBookmark}
         </button>
-        <button className="nav" onClick={() => setBookmarks(clearBookmarks())} title={S.text.clearBookmarksHint}>
+        <button
+          className="nav"
+          onClick={() => setBookmarks(clearBookmarks())}
+          title={S.text.clearBookmarksHint}
+        >
           {S.text.clearBookmarks}
         </button>
         <select
@@ -1171,7 +1235,9 @@ export function TextCompareView({ tab }: { tab: Tab }) {
         >
           <option value="">{S.text.setBookmark}</option>
           {BOOKMARK_SLOTS.map((slot) => (
-            <option key={slot} value={slot}>{slot}</option>
+            <option key={slot} value={slot}>
+              {slot}
+            </option>
           ))}
         </select>
         <span className="meta dim" title={S.text.bookmarkLabelHint}>
@@ -1273,14 +1339,20 @@ export function TextCompareView({ tab }: { tab: Tab }) {
             <span className="dim">{detectedLabels.join(' / ')}</span>
           )}
         </span>
-        <button className={`nav${model.dmpCleanup ? ' on' : ''}`} onClick={onDmpToggle} title={S.text.dmpCleanup}>
+        <button
+          className={`nav${model.dmpCleanup ? ' on' : ''}`}
+          onClick={onDmpToggle}
+          title={S.text.dmpCleanup}
+        >
           {S.text.dmpCleanup}
         </button>
         <span className="meta dim">{inlineSource}</span>
         <span className="meta dim">{rediffSource}</span>
         {rediffNotice && <span className="meta warn">{rediffNotice}</span>}
         {saveNotice && (
-          <span className={`meta${saveNotice.startsWith(S.text.saveFail) || saveNotice === S.text.saveUnsupported ? ' warn' : ' dim'}`}>
+          <span
+            className={`meta${saveNotice.startsWith(S.text.saveFail) || saveNotice === S.text.saveUnsupported ? ' warn' : ' dim'}`}
+          >
             {saveNotice}
           </span>
         )}
@@ -1339,7 +1411,11 @@ export function TextCompareView({ tab }: { tab: Tab }) {
           currentRange={currentRange}
           viewport={viewport}
           onJump={(row) => {
-            const foldsNow = computeFolds(derived.rows, contextRowsRef.current, collapsedRef.current);
+            const foldsNow = computeFolds(
+              derived.rows,
+              contextRowsRef.current,
+              collapsedRef.current,
+            );
             const need = unfoldKeysFor(foldsNow, [row]);
             for (const k of need) collapsedRef.current.delete(k);
             if (need.size > 0 && modelRef.current) void rebuildAndRender(modelRef.current);
@@ -1347,7 +1423,11 @@ export function TextCompareView({ tab }: { tab: Tab }) {
           }}
         />
         {showDiffList && (
-          <DiffListPanel sections={derived.diffSections} currentId={currentSectionId} onGoto={gotoSection} />
+          <DiffListPanel
+            sections={derived.diffSections}
+            currentId={currentSectionId}
+            onGoto={gotoSection}
+          />
         )}
       </div>
     </div>
@@ -1368,7 +1448,10 @@ const EMPTY_INPUT: PaneContentInput = {
 };
 
 /** 当前 section 的对齐行区间（概览条高亮框） */
-function rowRangeOfSection(rows: AlignedRow[], sectionId: number): { fromRow: number; toRow: number } | null {
+function rowRangeOfSection(
+  rows: AlignedRow[],
+  sectionId: number,
+): { fromRow: number; toRow: number } | null {
   let from = -1;
   let to = -1;
   for (let i = 0; i < rows.length; i++) {

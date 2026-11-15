@@ -46,13 +46,7 @@ export const REPORT_LAYOUT_LABELS: Record<ReportLayout, string> = {
 
 /** FR-RPT-001 输出目标：打印机 / HTML 文件或剪贴板 / 纯文本文件或剪贴板 + 浏览器查看 */
 export type ReportTarget =
-  | 'preview'
-  | 'printer'
-  | 'htmlFile'
-  | 'htmlClipboard'
-  | 'textFile'
-  | 'textClipboard'
-  | 'browser';
+  'preview' | 'printer' | 'htmlFile' | 'htmlClipboard' | 'textFile' | 'textClipboard' | 'browser';
 
 export const REPORT_TARGET_LABELS: Record<ReportTarget, string> = {
   preview: '仅预览',
@@ -113,7 +107,11 @@ export function defaultReportForm(kind: ReportKind): ReportForm {
 }
 
 /** 表单 → report/generate 参数（引擎忽略不适用的布局级选项） */
-export function buildReportParams(form: ReportForm, sessionId: string, kind: ReportKind): ReportParams {
+export function buildReportParams(
+  form: ReportForm,
+  sessionId: string,
+  kind: ReportKind,
+): ReportParams {
   const p: ReportParams = { sessionId, layout: form.layout };
   // 标题会进入 HTML 报告（layout=html）与打印窗口，去掉 HTML 敏感字符防止注入
   if (form.title.trim()) p.title = form.title.trim().replace(/[&<>"']/g, '');
@@ -161,16 +159,27 @@ export function wrapReportText(text: string, wrap: ReportWrapMode, columns: numb
 }
 
 export function reportFileName(target: ReportTarget, layout: ReportLayout): string {
-  const ext = target === 'htmlFile' || target === 'htmlClipboard' || layout === 'html' ? 'html'
-    : layout === 'csv' ? 'csv'
-    : layout === 'xml' ? 'xml'
-    : layout === 'patch' ? 'patch'
-    : 'txt';
+  const ext =
+    target === 'htmlFile' || target === 'htmlClipboard' || layout === 'html'
+      ? 'html'
+      : layout === 'csv'
+        ? 'csv'
+        : layout === 'xml'
+          ? 'xml'
+          : layout === 'patch'
+            ? 'patch'
+            : 'txt';
   return `ai-compare-report-${layout}.${ext}`;
 }
 
 export function isHtmlTarget(target: ReportTarget, layout: ReportLayout): boolean {
-  return target === 'htmlFile' || target === 'htmlClipboard' || target === 'printer' || target === 'browser' || layout === 'html';
+  return (
+    target === 'htmlFile' ||
+    target === 'htmlClipboard' ||
+    target === 'printer' ||
+    target === 'browser' ||
+    layout === 'html'
+  );
 }
 
 /** 从任意标签取引擎会话句柄（各 TabData 均有 sessionId） */
@@ -217,7 +226,7 @@ export async function deliverReport(
   text: string,
   target: ReportTarget,
   layout: ReportLayout,
-  notice: (msg: string) => void
+  notice: (msg: string) => void,
 ): Promise<void> {
   if (target === 'preview') return;
   if (target === 'textClipboard' || target === 'htmlClipboard') {

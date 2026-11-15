@@ -42,18 +42,18 @@ export class TauriEngineTransport implements Transport {
         // 壳层 BufReader::lines() 已按整行推送并剥掉换行符：再过行缓冲会永远凑不出
         // 整行，导致所有应答被吞（initialize 超时）。此处 payload 即一条完整 NDJSON。
         if (ev.payload.length > 0) this.lineHandler?.(ev.payload);
-      })
+      }),
     );
     this.unlisteners.push(
       await listen<string>('engine-stderr', (ev) => {
         // 引擎诊断走 console（tracing 日志，docs/03 §6.10）
         console.debug('[ai-engine stderr]', ev.payload);
-      })
+      }),
     );
     this.unlisteners.push(
       await listen<unknown>('engine-exit', () => {
         if (!this.stopped) this.closeHandler?.('引擎进程已退出');
-      })
+      }),
     );
 
     const info = await invoke<EngineStartInfo>('engine_start');

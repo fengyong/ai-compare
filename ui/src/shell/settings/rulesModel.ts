@@ -79,7 +79,7 @@ export function toImportanceOptionsSpec(state: CompareRulesState): {
  */
 export function toRulesSpec(
   state: CompareRulesState,
-  formatId: string | null
+  formatId: string | null,
 ): {
   leadingWsUnimportant: boolean;
   embeddedWsUnimportant: boolean;
@@ -91,7 +91,7 @@ export function toRulesSpec(
 } {
   return {
     ...toImportanceOptionsSpec(state),
-    unimportantElements: formatId ? state.formatBindings[formatId] ?? [] : [],
+    unimportantElements: formatId ? (state.formatBindings[formatId] ?? []) : [],
   };
 }
 
@@ -102,7 +102,7 @@ export function toRulesSpec(
 /** 某格式的语法元素名列表（引用格式层定义；内置目录 + 自定义格式） */
 export function elementsOfFormat(
   formatsState: FileFormatsState,
-  formatId: string | null
+  formatId: string | null,
 ): string[] {
   if (!formatId) return [];
   const fmt = effectiveFormats(formatsState).find((f) => f.id === formatId);
@@ -110,7 +110,10 @@ export function elementsOfFormat(
 }
 
 /** 指定格式的生效"不重要元素"集（绑定优先；未绑定 = 空集） */
-export function effectiveUnimportantElements(state: CompareRulesState, formatId: string | null): string[] {
+export function effectiveUnimportantElements(
+  state: CompareRulesState,
+  formatId: string | null,
+): string[] {
   if (!formatId) return [];
   return state.formatBindings[formatId] ?? [];
 }
@@ -119,7 +122,7 @@ export function effectiveUnimportantElements(state: CompareRulesState, formatId:
 export function toggleElement(
   state: CompareRulesState,
   formatId: string,
-  elementName: string
+  elementName: string,
 ): CompareRulesState {
   const current = state.formatBindings[formatId] ?? [];
   const next = current.includes(elementName)
@@ -135,7 +138,7 @@ export function toggleElement(
 export function setBinding(
   state: CompareRulesState,
   formatId: string,
-  elements: string[]
+  elements: string[],
 ): CompareRulesState {
   return {
     ...state,
@@ -153,7 +156,7 @@ export function setBinding(
  * 层为 null/undefined 跳过。
  */
 export function mergeRuleLayers(
-  layers: Array<Partial<CompareRulesState> | null | undefined>
+  layers: Array<Partial<CompareRulesState> | null | undefined>,
 ): CompareRulesState {
   const out = defaultCompareRulesState();
   for (const layer of layers) {
@@ -172,7 +175,7 @@ export function mergeRuleLayers(
  */
 export function effectiveElementsAcrossLayers(
   layers: Array<Partial<CompareRulesState> | null | undefined>,
-  formatId: string | null
+  formatId: string | null,
 ): string[] {
   for (let i = layers.length - 1; i >= 0; i--) {
     const layer = layers[i];

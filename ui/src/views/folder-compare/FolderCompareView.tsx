@@ -36,10 +36,45 @@ import {
   type Side,
 } from './dirOps';
 import { displayFilterPreset, parseMaskInput, SHOW_ALL_DISPLAY_FILTER } from './dirFilters';
-import { buildTreeIndex, expandAll, orderedFlatRows, orderedTreeRows, toggleExpanded, collapseAll, rowDepth, type DirSortKey, type DirSortSpec } from './dirTree';
-import { gutterCopyDirs, nextSortSpec, paneColumns, scrollSyncPlan, sidePresent, withPaneSelection, type PaneSelections, type PaneSide } from './dirPanes';
-import { clearSelection, emptySelection, invertSelection, onRowClick, runEditSelectCommand, selectAll, type EditSelectCommand, type SelectionState } from './dirSelection';
-import { ConfirmOpsDialog, PlanPreviewDialog, RenameDialog, type ConfirmOpsDialogState, type PlanPreviewDialogState, type RenameDialogState } from './DirOpsDialogs';
+import {
+  buildTreeIndex,
+  expandAll,
+  orderedFlatRows,
+  orderedTreeRows,
+  toggleExpanded,
+  collapseAll,
+  rowDepth,
+  type DirSortKey,
+  type DirSortSpec,
+} from './dirTree';
+import {
+  gutterCopyDirs,
+  nextSortSpec,
+  paneColumns,
+  scrollSyncPlan,
+  sidePresent,
+  withPaneSelection,
+  type PaneSelections,
+  type PaneSide,
+} from './dirPanes';
+import {
+  clearSelection,
+  emptySelection,
+  invertSelection,
+  onRowClick,
+  runEditSelectCommand,
+  selectAll,
+  type EditSelectCommand,
+  type SelectionState,
+} from './dirSelection';
+import {
+  ConfirmOpsDialog,
+  PlanPreviewDialog,
+  RenameDialog,
+  type ConfirmOpsDialogState,
+  type PlanPreviewDialogState,
+  type RenameDialogState,
+} from './DirOpsDialogs';
 import { BatchRenameDialog, type BatchRenameDialogState } from './BatchRenameDialog';
 import { QuickCompareDialog, type QuickCompareDialogState } from './QuickCompareDialog';
 import { ContentCompareDialog, type ContentCompareDialogState } from './ContentCompareDialog';
@@ -157,7 +192,10 @@ export function FolderCompareView({ tab }: { tab: Tab }) {
   const [error, setError] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
   // 两侧独立选择集 + 活动窗格（FR-DIR-003/050）
-  const [paneSel, setPaneSel] = useState<PaneSelections>({ left: emptySelection, right: emptySelection });
+  const [paneSel, setPaneSel] = useState<PaneSelections>({
+    left: emptySelection,
+    right: emptySelection,
+  });
   const [activeSide, setActiveSide] = useState<PaneSide>('left');
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
   const [flat, setFlat] = useState(false);
@@ -215,7 +253,7 @@ export function FolderCompareView({ tab }: { tab: Tab }) {
           otherFilter: null,
           displayFilter: null,
           manualAlign: null,
-        })
+        }),
       )
       .then(() => {
         if (!disposed) {
@@ -250,7 +288,9 @@ export function FolderCompareView({ tab }: { tab: Tab }) {
     void version; // 依赖版本号触发重算（rows 数组原地更新）
     // 表头排序（FR-DIR-042）：树形=逐层排序（目录先、父先于子不变）；平铺=全列表排序。
     // 标记/选择均以行 id 为键，与排序正交。
-    const base = flat ? orderedFlatRows(allRows, sortSpec) : orderedTreeRows(buildTreeIndex(allRows, sortSpec), expanded);
+    const base = flat
+      ? orderedFlatRows(allRows, sortSpec)
+      : orderedTreeRows(buildTreeIndex(allRows, sortSpec), expanded);
     // 仅显示标记（P6b）：客户端过滤，不影响引擎侧显示过滤器
     return markOnly ? base.filter((r) => marks.has(r.id)) : base;
   }, [allRows, flat, expanded, version, sortSpec, markOnly, marks]);
@@ -259,10 +299,13 @@ export function FolderCompareView({ tab }: { tab: Tab }) {
 
   /** 编辑菜单数据面：全量行 + 当前可见性（显示过滤/标记过滤后的实际可见） */
   const editMenuRows = useMemo(
-    () => allRows.map((r) => (visibleIdSet.has(r.id) ? { ...r, visible: true } : { ...r, visible: false })),
+    () =>
+      allRows.map((r) =>
+        visibleIdSet.has(r.id) ? { ...r, visible: true } : { ...r, visible: false },
+      ),
     // version 驱动 visibleIdSet 变化（allRows 原地更新时引用不变），显式声明意图
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [allRows, visibleIdSet, version]
+    [allRows, visibleIdSet, version],
   );
 
   // ---- 虚拟滚动（窗口挂左窗格；右窗格与 gutter 复用同一批 items） ----
@@ -290,8 +333,14 @@ export function FolderCompareView({ tab }: { tab: Tab }) {
       gutter: gutterScrollRef.current,
       right: rightScrollRef.current,
     };
-    const present = Object.entries(nodes).filter((entry): entry is [string, HTMLDivElement] => entry[1] !== null);
-    const plan = scrollSyncPlan(sourceId, el.scrollTop, present.map(([id, node]) => ({ id, top: node.scrollTop })));
+    const present = Object.entries(nodes).filter(
+      (entry): entry is [string, HTMLDivElement] => entry[1] !== null,
+    );
+    const plan = scrollSyncPlan(
+      sourceId,
+      el.scrollTop,
+      present.map(([id, node]) => ({ id, top: node.scrollTop })),
+    );
     for (const p of plan) nodes[p.id]!.scrollTop = p.top;
   };
 
@@ -327,7 +376,12 @@ export function FolderCompareView({ tab }: { tab: Tab }) {
   // ---- 选择（按窗格独立；点击即把该侧设为活动窗格） ----
   const rowClick = (side: PaneSide, row: DirRow, e: React.MouseEvent): void => {
     setActiveSide(side);
-    const next = onRowClick(paneSel[side], row.id, { ctrl: e.ctrlKey || e.metaKey, shift: e.shiftKey }, visibleIds);
+    const next = onRowClick(
+      paneSel[side],
+      row.id,
+      { ctrl: e.ctrlKey || e.metaKey, shift: e.shiftKey },
+      visibleIds,
+    );
     setSelection(next, side);
   };
 
@@ -342,7 +396,13 @@ export function FolderCompareView({ tab }: { tab: Tab }) {
   };
 
   // ---- 过滤器（dir/filter：名称 + 显示 + 抑制 + 平铺） ----
-  const applyFilters = async (patch?: { flat?: boolean; suppress?: boolean; display?: string; filterText?: string; rescan?: boolean }): Promise<void> => {
+  const applyFilters = async (patch?: {
+    flat?: boolean;
+    suppress?: boolean;
+    display?: string;
+    filterText?: string;
+    rescan?: boolean;
+  }): Promise<void> => {
     const nextFlat = patch?.flat ?? flat;
     const nextSuppress = patch?.suppress ?? suppress;
     const nextDisplay = patch?.display ?? displayPreset;
@@ -399,14 +459,22 @@ export function FolderCompareView({ tab }: { tab: Tab }) {
       });
       if (result.failed.length > 0) setShowDetail(true);
     } catch (err: unknown) {
-      const isMethodNotFound = err instanceof Error && 'code' in err && (err as { code?: number }).code === -32601;
-      setNotice(isMethodNotFound ? S.folder.opsEngineUnsupported : S.folder.opsExecuteFailed(err instanceof Error ? err.message : String(err)));
+      const isMethodNotFound =
+        err instanceof Error && 'code' in err && (err as { code?: number }).code === -32601;
+      setNotice(
+        isMethodNotFound
+          ? S.folder.opsEngineUnsupported
+          : S.folder.opsExecuteFailed(err instanceof Error ? err.message : String(err)),
+      );
     } finally {
       setRunning(null);
     }
   };
 
-  const commandOps = (cmd: OpCommandKind, arg?: { newName?: string; side?: Side }): DirExecuteOp[] => {
+  const commandOps = (
+    cmd: OpCommandKind,
+    arg?: { newName?: string; side?: Side },
+  ): DirExecuteOp[] => {
     const { rows, ids } = targetRows();
     return buildOpsForCommand(cmd, rows, ids, arg);
   };
@@ -483,7 +551,8 @@ export function FolderCompareView({ tab }: { tab: Tab }) {
     }
   };
 
-  const trimSlash = (p: string): string => (p.endsWith('/') || p.endsWith('\\') ? p.slice(0, -1) : p);
+  const trimSlash = (p: string): string =>
+    p.endsWith('/') || p.endsWith('\\') ? p.slice(0, -1) : p;
 
   // ---- P6b：批量重命名（FR-DIR-064）对话框与执行链 ----
   const openBatchRename = (): void => {
@@ -555,7 +624,12 @@ export function FolderCompareView({ tab }: { tab: Tab }) {
   const openPreset = async (preset: SyncPreset): Promise<void> => {
     try {
       const paths = selectedCount > 0 ? [...selection.selected] : null;
-      const result = await planOperations({ sessionId: cache.sessionId, preset, rules: null, paths });
+      const result = await planOperations({
+        sessionId: cache.sessionId,
+        preset,
+        rules: null,
+        paths,
+      });
       setPlanState({
         presetLabel: SYNC_PRESET_LABELS[preset],
         plan: result.plan,
@@ -589,12 +663,35 @@ export function FolderCompareView({ tab }: { tab: Tab }) {
       });
       items.push(sep);
     }
-    items.push({ label: S.folder.ctxCopyToRight, disabled: !hasSource('right'), onSelect: () => runOps(commandOps('copyToRight'), S.folder.ctxCopyToRight) });
-    items.push({ label: S.folder.ctxCopyToLeft, disabled: !hasSource('left'), onSelect: () => runOps(commandOps('copyToLeft'), S.folder.ctxCopyToLeft) });
-    items.push({ label: S.folder.ctxMoveToRight, disabled: !hasSource('right'), onSelect: () => runOps(commandOps('moveToRight'), S.folder.ctxMoveToRight) });
-    items.push({ label: S.folder.ctxMoveToLeft, disabled: !hasSource('left'), onSelect: () => runOps(commandOps('moveToLeft'), S.folder.ctxMoveToLeft) });
-    items.push({ label: S.folder.ctxDelete, onSelect: () => runOps(commandOps('delete'), S.folder.ctxDelete) });
-    items.push({ label: S.folder.ctxTouch, disabled: !sourceSide || !row?.[otherSide(sourceSide)], onSelect: () => runOps(commandOps('touch'), S.folder.ctxTouch) });
+    items.push({
+      label: S.folder.ctxCopyToRight,
+      disabled: !hasSource('right'),
+      onSelect: () => runOps(commandOps('copyToRight'), S.folder.ctxCopyToRight),
+    });
+    items.push({
+      label: S.folder.ctxCopyToLeft,
+      disabled: !hasSource('left'),
+      onSelect: () => runOps(commandOps('copyToLeft'), S.folder.ctxCopyToLeft),
+    });
+    items.push({
+      label: S.folder.ctxMoveToRight,
+      disabled: !hasSource('right'),
+      onSelect: () => runOps(commandOps('moveToRight'), S.folder.ctxMoveToRight),
+    });
+    items.push({
+      label: S.folder.ctxMoveToLeft,
+      disabled: !hasSource('left'),
+      onSelect: () => runOps(commandOps('moveToLeft'), S.folder.ctxMoveToLeft),
+    });
+    items.push({
+      label: S.folder.ctxDelete,
+      onSelect: () => runOps(commandOps('delete'), S.folder.ctxDelete),
+    });
+    items.push({
+      label: S.folder.ctxTouch,
+      disabled: !sourceSide || !row?.[otherSide(sourceSide)],
+      onSelect: () => runOps(commandOps('touch'), S.folder.ctxTouch),
+    });
     items.push(sep);
     // ---- P6b：快速比较（FR-DIR-013）/ 批量重命名（FR-DIR-064） ----
     const { ids: targetIds } = targetRows();
@@ -604,7 +701,11 @@ export function FolderCompareView({ tab }: { tab: Tab }) {
       disabled: pickedFiles.length === 0 || pickedFiles.length > 2,
       onSelect: () => openQuickCompare(),
     });
-    items.push({ label: F.batchRename, disabled: pickedFiles.length === 0 && !row, onSelect: () => openBatchRename() });
+    items.push({
+      label: F.batchRename,
+      disabled: pickedFiles.length === 0 && !row,
+      onSelect: () => openBatchRename(),
+    });
     items.push({
       label: F.contentCompare,
       disabled: pickedFiles.length === 0,
@@ -612,7 +713,11 @@ export function FolderCompareView({ tab }: { tab: Tab }) {
     });
     items.push(sep);
     // ---- P6b：复制文件名/完整路径/相对路径（FR-DIR-066） ----
-    items.push({ label: F.ctxCopyName, disabled: !row, onSelect: () => void copyRowText(F.ctxCopyName, (r) => r.name) });
+    items.push({
+      label: F.ctxCopyName,
+      disabled: !row,
+      onSelect: () => void copyRowText(F.ctxCopyName, (r) => r.name),
+    });
     items.push({
       label: F.ctxCopyFullPath,
       disabled: !row,
@@ -622,7 +727,11 @@ export function FolderCompareView({ tab }: { tab: Tab }) {
           return `${base}/${r.id}`;
         }),
     });
-    items.push({ label: F.ctxCopyRelPath, disabled: !row, onSelect: () => void copyRowText(F.ctxCopyRelPath, (r) => r.id) });
+    items.push({
+      label: F.ctxCopyRelPath,
+      disabled: !row,
+      onSelect: () => void copyRowText(F.ctxCopyRelPath, (r) => r.id),
+    });
     items.push(sep);
     items.push({
       label: S.folder.ctxRename,
@@ -666,7 +775,11 @@ export function FolderCompareView({ tab }: { tab: Tab }) {
               const active = col.key !== null && sortSpec?.key === col.key;
               const arrow = active ? (sortSpec!.dir === 1 ? ' ▲' : ' ▼') : '';
               const style: React.CSSProperties = col.key
-                ? { cursor: 'pointer', userSelect: 'none', color: active ? 'var(--aic-text)' : undefined }
+                ? {
+                    cursor: 'pointer',
+                    userSelect: 'none',
+                    color: active ? 'var(--aic-text)' : undefined,
+                  }
                 : {};
               return (
                 <span
@@ -694,7 +807,13 @@ export function FolderCompareView({ tab }: { tab: Tab }) {
           onFocus={() => setActiveSide(side)}
           onScroll={(e) => onPaneScroll(side, e.currentTarget)}
         >
-          <div style={{ height: virtualizer.getTotalSize(), position: 'relative', minWidth: PANE_MIN_WIDTH }}>
+          <div
+            style={{
+              height: virtualizer.getTotalSize(),
+              position: 'relative',
+              minWidth: PANE_MIN_WIDTH,
+            }}
+          >
             {items.map((item) => {
               const row = visibleRows[item.index];
               const present = row ? sidePresent(row, side) : false;
@@ -719,7 +838,10 @@ export function FolderCompareView({ tab }: { tab: Tab }) {
                     if (!row || !present) return;
                     setActiveSide(side);
                     if (!sel.selected.has(row.id)) {
-                      setSelection(onRowClick(sel, row.id, { ctrl: false, shift: false }, visibleIds), side);
+                      setSelection(
+                        onRowClick(sel, row.id, { ctrl: false, shift: false }, visibleIds),
+                        side,
+                      );
                     }
                     setCtxMenu({ x: e.clientX, y: e.clientY, rowId: row.id });
                   }}
@@ -755,7 +877,11 @@ export function FolderCompareView({ tab }: { tab: Tab }) {
       <div className="aic-dir-gutter-head" title={S.folder.contentCol}>
         {S.folder.contentCol}
       </div>
-      <div className="aic-dir-gutter-scroll" ref={gutterScrollRef} onScroll={(e) => syncVertical('gutter', e.currentTarget)}>
+      <div
+        className="aic-dir-gutter-scroll"
+        ref={gutterScrollRef}
+        onScroll={(e) => syncVertical('gutter', e.currentTarget)}
+      >
         <div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
           {items.map((item) => {
             const row = visibleRows[item.index];
@@ -822,22 +948,46 @@ export function FolderCompareView({ tab }: { tab: Tab }) {
       <div className="aic-folder-toolbar">
         {/* P6b：基文件夹导航（FR-DIR-003）——可编辑面包屑，点击层级/↑/⇄ 打开新会话 */}
         <BasePathBar left={folder.left} right={folder.right} onOpen={openBaseSession} />
-        {ready ? <DirStatsBar snapshot={cache.getStats()} /> : <span style={{ color: 'var(--aic-text-dim)' }}>{S.engine.connecting}</span>}
+        {ready ? (
+          <DirStatsBar snapshot={cache.getStats()} />
+        ) : (
+          <span style={{ color: 'var(--aic-text-dim)' }}>{S.engine.connecting}</span>
+        )}
       </div>
 
       {/* P6 第二行工具栏：同步预设 / 视图切换 / 显示过滤 / 名称过滤 / 选择 */}
       <div className="aic-folder-toolbar2">
         <span className="dim">{S.folder.syncTitle}</span>
         {SYNC_PRESETS.map((p) => (
-          <button key={p} className="preset" disabled={!ready} title={SYNC_PRESET_LABELS[p]} onClick={() => void openPreset(p)}>
+          <button
+            key={p}
+            className="preset"
+            disabled={!ready}
+            title={SYNC_PRESET_LABELS[p]}
+            onClick={() => void openPreset(p)}
+          >
             {SYNC_PRESET_LABELS[p]}
           </button>
         ))}
         <span className="sep" />
-        <button className={`toggle${flat ? '' : ' on'}`} disabled={!ready} onClick={() => { setFlat(false); void applyFilters({ flat: false }); }}>
+        <button
+          className={`toggle${flat ? '' : ' on'}`}
+          disabled={!ready}
+          onClick={() => {
+            setFlat(false);
+            void applyFilters({ flat: false });
+          }}
+        >
           {S.folder.treeMode}
         </button>
-        <button className={`toggle${flat ? ' on' : ''}`} disabled={!ready} onClick={() => { setFlat(true); void applyFilters({ flat: true }); }}>
+        <button
+          className={`toggle${flat ? ' on' : ''}`}
+          disabled={!ready}
+          onClick={() => {
+            setFlat(true);
+            void applyFilters({ flat: true });
+          }}
+        >
           {S.folder.flatMode}
         </button>
         <span className="sep" />
@@ -913,7 +1063,10 @@ export function FolderCompareView({ tab }: { tab: Tab }) {
           </button>
           {editMenuOpen && (
             <>
-              <div style={{ position: 'fixed', inset: 0, zIndex: 60 }} onClick={() => setEditMenuOpen(false)} />
+              <div
+                style={{ position: 'fixed', inset: 0, zIndex: 60 }}
+                onClick={() => setEditMenuOpen(false)}
+              />
               <div
                 style={{
                   position: 'absolute',
@@ -933,7 +1086,10 @@ export function FolderCompareView({ tab }: { tab: Tab }) {
               >
                 {EDIT_MENU_ITEMS.map((mi) =>
                   mi.sep ? (
-                    <span key={mi.key} style={{ height: 1, background: 'var(--aic-border)', margin: '3px 0' }} />
+                    <span
+                      key={mi.key}
+                      style={{ height: 1, background: 'var(--aic-border)', margin: '3px 0' }}
+                    />
                   ) : (
                     <button
                       key={mi.key}
@@ -943,16 +1099,34 @@ export function FolderCompareView({ tab }: { tab: Tab }) {
                     >
                       {mi.label}
                     </button>
-                  )
+                  ),
                 )}
                 <span style={{ height: 1, background: 'var(--aic-border)', margin: '3px 0' }} />
-                <button style={editMenuItemStyle} onClick={() => { setSelection(selectAll(visibleIds)); setEditMenuOpen(false); }}>
+                <button
+                  style={editMenuItemStyle}
+                  onClick={() => {
+                    setSelection(selectAll(visibleIds));
+                    setEditMenuOpen(false);
+                  }}
+                >
                   {S.folder.selectAll}
                 </button>
-                <button style={editMenuItemStyle} onClick={() => { setSelection(invertSelection(selection, visibleIds)); setEditMenuOpen(false); }}>
+                <button
+                  style={editMenuItemStyle}
+                  onClick={() => {
+                    setSelection(invertSelection(selection, visibleIds));
+                    setEditMenuOpen(false);
+                  }}
+                >
                   {S.folder.invertSel}
                 </button>
-                <button style={editMenuItemStyle} onClick={() => { setSelection(clearSelection()); setEditMenuOpen(false); }}>
+                <button
+                  style={editMenuItemStyle}
+                  onClick={() => {
+                    setSelection(clearSelection());
+                    setEditMenuOpen(false);
+                  }}
+                >
                   {S.folder.clearSel}
                 </button>
               </div>
@@ -968,10 +1142,18 @@ export function FolderCompareView({ tab }: { tab: Tab }) {
         >
           {F.contentCompare}
         </button>
-        <button className="mini" disabled={!ready} onClick={() => setSelection(selectAll(visibleIds))}>
+        <button
+          className="mini"
+          disabled={!ready}
+          onClick={() => setSelection(selectAll(visibleIds))}
+        >
           {S.folder.selectAll}
         </button>
-        <button className="mini" disabled={!ready} onClick={() => setSelection(invertSelection(selection, visibleIds))}>
+        <button
+          className="mini"
+          disabled={!ready}
+          onClick={() => setSelection(invertSelection(selection, visibleIds))}
+        >
           {S.folder.invertSel}
         </button>
         <button className="mini" disabled={!ready} onClick={() => setSelection(clearSelection())}>
@@ -998,17 +1180,25 @@ export function FolderCompareView({ tab }: { tab: Tab }) {
               key={side}
               className="sel-chip"
               style={{ opacity: activeSide === side ? 1 : 0.5 }}
-              title={activeSide === side ? F.paneActive(SIDE_LABEL[side]) : F.paneInactive(SIDE_LABEL[side])}
+              title={
+                activeSide === side
+                  ? F.paneActive(SIDE_LABEL[side])
+                  : F.paneInactive(SIDE_LABEL[side])
+              }
             >
               {F.paneSelChip(SIDE_LABEL[side], paneSel[side].selected.size)}
             </span>
-          ) : null
+          ) : null,
         )}
         {!flat && (
           <>
             <span className="sep" />
-            <button className="mini" onClick={() => setExpanded(expandAll(allRows))}>{S.folder.expandAll}</button>
-            <button className="mini" onClick={() => setExpanded(collapseAll())}>{S.folder.collapseAll}</button>
+            <button className="mini" onClick={() => setExpanded(expandAll(allRows))}>
+              {S.folder.expandAll}
+            </button>
+            <button className="mini" onClick={() => setExpanded(collapseAll())}>
+              {S.folder.collapseAll}
+            </button>
           </>
         )}
       </div>
@@ -1056,7 +1246,12 @@ export function FolderCompareView({ tab }: { tab: Tab }) {
       </div>
 
       {ctxMenu && (
-        <ContextMenu x={ctxMenu.x} y={ctxMenu.y} items={buildContextMenu(ctxMenu.rowId)} onClose={() => setCtxMenu(null)} />
+        <ContextMenu
+          x={ctxMenu.x}
+          y={ctxMenu.y}
+          items={buildContextMenu(ctxMenu.rowId)}
+          onClose={() => setCtxMenu(null)}
+        />
       )}
       {confirmState && <ConfirmOpsDialog state={confirmState} />}
       {planState && <PlanPreviewDialog state={planState} />}
@@ -1086,7 +1281,21 @@ export function FolderCompareView({ tab }: { tab: Tab }) {
  * 只渲染本侧的 名称/大小/已修改 三列；缺侧由调用方整行留白。
  * suppressed 行整行青绿色 + 徽标；hidden 行不进入 visibleRows（dirTree 过滤）。
  */
-function PaneRowCells({ row, side, depth, expanded, marked, onToggleDir }: { row: DirRow; side: PaneSide; depth: number; expanded: boolean; marked: boolean; onToggleDir(): void }) {
+function PaneRowCells({
+  row,
+  side,
+  depth,
+  expanded,
+  marked,
+  onToggleDir,
+}: {
+  row: DirRow;
+  side: PaneSide;
+  depth: number;
+  expanded: boolean;
+  marked: boolean;
+  onToggleDir(): void;
+}) {
   const vis = statusVisual(row.status);
   const info = row[side];
   const isDir = row.kind === 'dir';

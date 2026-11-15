@@ -34,17 +34,43 @@ export function CompareRulesPage({ value, formatsState, onChange }: Props) {
   const checked = effectiveUnimportantElements(value, formatId);
 
   const flags: Array<{ key: keyof CompareRulesState; label: string; help: string }> = [
-    { key: 'leadingWsUnimportant', label: S.settings.rules.leadingWs, help: S.settings.rules.leadingWsHelp },
-    { key: 'embeddedWsUnimportant', label: S.settings.rules.embeddedWs, help: S.settings.rules.embeddedWsHelp },
-    { key: 'trailingWsUnimportant', label: S.settings.rules.trailingWs, help: S.settings.rules.trailingWsHelp },
-    { key: 'caseUnimportant', label: S.settings.rules.caseInsensitive, help: S.settings.rules.caseHelp },
-    { key: 'eolStyleUnimportant', label: S.settings.rules.eolStyle, help: S.settings.rules.eolHelp },
-    { key: 'encodingUnimportant', label: S.settings.rules.encoding, help: S.settings.rules.encodingHelp },
+    {
+      key: 'leadingWsUnimportant',
+      label: S.settings.rules.leadingWs,
+      help: S.settings.rules.leadingWsHelp,
+    },
+    {
+      key: 'embeddedWsUnimportant',
+      label: S.settings.rules.embeddedWs,
+      help: S.settings.rules.embeddedWsHelp,
+    },
+    {
+      key: 'trailingWsUnimportant',
+      label: S.settings.rules.trailingWs,
+      help: S.settings.rules.trailingWsHelp,
+    },
+    {
+      key: 'caseUnimportant',
+      label: S.settings.rules.caseInsensitive,
+      help: S.settings.rules.caseHelp,
+    },
+    {
+      key: 'eolStyleUnimportant',
+      label: S.settings.rules.eolStyle,
+      help: S.settings.rules.eolHelp,
+    },
+    {
+      key: 'encodingUnimportant',
+      label: S.settings.rules.encoding,
+      help: S.settings.rules.encodingHelp,
+    },
   ];
 
   return (
     <div className="aic-rules-page">
-      <p className="dim" style={st.pageHint}>{S.settings.rules.hint}</p>
+      <p className="dim" style={st.pageHint}>
+        {S.settings.rules.hint}
+      </p>
       <div className="aic-rules-flags" style={st.rulesFlags}>
         {flags.map((f) => (
           <label key={f.key} className="aic-rules-flag" style={st.rulesFlag} title={f.help}>
@@ -71,7 +97,9 @@ export function CompareRulesPage({ value, formatsState, onChange }: Props) {
         </select>
       </div>
       {elements.length === 0 ? (
-        <p className="dim" style={st.pageHint}>{S.settings.rules.noElements}</p>
+        <p className="dim" style={st.pageHint}>
+          {S.settings.rules.noElements}
+        </p>
       ) : (
         <div className="aic-rules-elements" style={st.rulesElements}>
           {elements.map((name) => (
@@ -86,7 +114,9 @@ export function CompareRulesPage({ value, formatsState, onChange }: Props) {
           ))}
         </div>
       )}
-      <p className="dim" style={st.pageHint}>{S.settings.rules.bindingHint}</p>
+      <p className="dim" style={st.pageHint}>
+        {S.settings.rules.bindingHint}
+      </p>
     </div>
   );
 }

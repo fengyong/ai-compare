@@ -29,15 +29,7 @@ export interface FindPanelProps {
   onClose(): void;
 }
 
-function Toggle({
-  label,
-  active,
-  onClick,
-}: {
-  label: string;
-  active: boolean;
-  onClick(): void;
-}) {
+function Toggle({ label, active, onClick }: { label: string; active: boolean; onClick(): void }) {
   return (
     <button className={`aic-find-toggle${active ? ' on' : ''}`} onClick={onClick}>
       {label}
@@ -82,7 +74,9 @@ export function FindPanel({
         />
         <span className="aic-find-count">
           {result.error ? (
-            <span className="aic-find-error">{S.text.findRegexError}: {result.error}</span>
+            <span className="aic-find-error">
+              {S.text.findRegexError}: {result.error}
+            </span>
           ) : result.total > 0 ? (
             `${result.index + 1}/${result.total}`
           ) : result.total === 0 ? (

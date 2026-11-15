@@ -89,9 +89,13 @@ export function ConfirmOpsDialog({ state }: { state: ConfirmOpsDialogState }) {
         <h3 style={{ margin: '0 0 8px' }}>{state.title}</h3>
         <p>{S.folder.confirmOpsListTitle}</p>
         <ExecRows ops={preview} />
-        {state.ops.length > preview.length && <p className="dim">{S.folder.planPreviewMore(state.ops.length - preview.length)}</p>}
+        {state.ops.length > preview.length && (
+          <p className="dim">{S.folder.planPreviewMore(state.ops.length - preview.length)}</p>
+        )}
         <SummaryChips summary={state.summary} />
-        {state.irreversible && <div className="aic-plan-warning">{S.folder.confirmIrreversible}</div>}
+        {state.irreversible && (
+          <div className="aic-plan-warning">{S.folder.confirmIrreversible}</div>
+        )}
         <div className="aic-dialog-actions">
           <button onClick={state.onCancel}>{S.folder.confirmCancel}</button>
           <button className="primary" onClick={state.onConfirm}>
@@ -117,7 +121,7 @@ export function PlanPreviewDialog({ state }: { state: PlanPreviewDialogState }) 
       acc[p.op] = (acc[p.op] ?? 0) + 1;
       return acc;
     },
-    {} as Record<PlannedOpKind, number>
+    {} as Record<PlannedOpKind, number>,
   );
   const stats: string[] = [];
   if (s.copyLeftToRight) stats.push(S.folder.planCopyLR(s.copyLeftToRight));
@@ -136,7 +140,9 @@ export function PlanPreviewDialog({ state }: { state: PlanPreviewDialogState }) 
         ) : (
           <PlanRows ops={state.plan.slice(0, 40)} />
         )}
-        {state.plan.length > 40 && <p className="dim">{S.folder.planPreviewMore(state.plan.length - 40)}</p>}
+        {state.plan.length > 40 && (
+          <p className="dim">{S.folder.planPreviewMore(state.plan.length - 40)}</p>
+        )}
         <div className="aic-plan-stats">
           {stats.map((t) => (
             <span key={t}>
@@ -144,7 +150,9 @@ export function PlanPreviewDialog({ state }: { state: PlanPreviewDialogState }) 
             </span>
           ))}
         </div>
-        {(s.deleteLeft > 0 || s.deleteRight > 0) && <div className="aic-plan-warning">{S.folder.confirmIrreversible}</div>}
+        {(s.deleteLeft > 0 || s.deleteRight > 0) && (
+          <div className="aic-plan-warning">{S.folder.confirmIrreversible}</div>
+        )}
         <div className="aic-dialog-actions">
           <button onClick={state.onCancel}>{S.folder.confirmCancel}</button>
           <button className="primary" disabled={state.plan.length === 0} onClick={state.onConfirm}>
@@ -188,7 +196,11 @@ export function RenameDialog({ state }: { state: RenameDialogState }) {
         </div>
         <div className="aic-dialog-actions">
           <button onClick={state.onCancel}>{S.folder.confirmCancel}</button>
-          <button className="primary" disabled={!name.trim() || name.trim() === state.currentName} onClick={() => state.onOk(name.trim())}>
+          <button
+            className="primary"
+            disabled={!name.trim() || name.trim() === state.currentName}
+            onClick={() => state.onOk(name.trim())}
+          >
             {S.folder.renameOk}
           </button>
         </div>

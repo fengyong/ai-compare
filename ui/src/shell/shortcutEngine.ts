@@ -1,4 +1,11 @@
-import { DEFAULT_BINDINGS, eventMatches, formatBinding, parseBinding, findConflicts, type KeyBinding } from './shortcuts';
+import {
+  DEFAULT_BINDINGS,
+  eventMatches,
+  formatBinding,
+  parseBinding,
+  findConflicts,
+  type KeyBinding,
+} from './shortcuts';
 import { commandRegistry, type CommandContext, type CommandRegistry } from './commands';
 
 /**
@@ -63,11 +70,11 @@ export class ShortcutEngine {
     const next = { ...this.overrides, [commandId]: keys };
     const effective = { ...(this.opts.registry?.defaultBindings() ?? {}), ...next };
     const conflicts = findConflicts(effective).filter(
-      (c) => c.commands.includes(commandId) && c.commands.length > 1
+      (c) => c.commands.includes(commandId) && c.commands.length > 1,
     );
     if (conflicts.length > 0) {
       const ok = this.opts.onConflict?.(
-        conflicts.map((c) => ({ ...c, incoming: formatBinding(parsed) }))
+        conflicts.map((c) => ({ ...c, incoming: formatBinding(parsed) })),
       );
       if (!ok) return false;
     }

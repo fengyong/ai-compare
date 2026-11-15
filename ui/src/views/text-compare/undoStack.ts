@@ -42,7 +42,12 @@ export function pushUndo(st: UndoState, entry: UndoEntry): UndoState {
  * 2. 同点改行链：同侧单补丁单行替换，start 相同且 removed 链相接
  *   （在已有行内连续输入，中间态折叠为 原→终）。
  */
-export function tryCoalesce(st: UndoState, entry: UndoEntry, now: number, maxGapMs = 1000): UndoState {
+export function tryCoalesce(
+  st: UndoState,
+  entry: UndoEntry,
+  now: number,
+  maxGapMs = 1000,
+): UndoState {
   const top = st.undo[st.undo.length - 1];
   if (
     top &&
@@ -63,7 +68,9 @@ export function tryCoalesce(st: UndoState, entry: UndoEntry, now: number, maxGap
     ) {
       const merged: UndoEntry = {
         side: top.side,
-        patches: [{ start: prev.start, removed: [], inserted: [...prev.inserted, ...next.inserted] }],
+        patches: [
+          { start: prev.start, removed: [], inserted: [...prev.inserted, ...next.inserted] },
+        ],
         lastAt: entry.lastAt,
       };
       return { undo: [...st.undo.slice(0, -1), merged], redo: [] };

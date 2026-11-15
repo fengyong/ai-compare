@@ -29,7 +29,12 @@ export interface ClickModifiers {
 export type VisibleIds = readonly string[];
 
 /** 行点击 -> 新选择状态 */
-export function onRowClick(state: SelectionState, rowId: string, mods: ClickModifiers, visible: VisibleIds): SelectionState {
+export function onRowClick(
+  state: SelectionState,
+  rowId: string,
+  mods: ClickModifiers,
+  visible: VisibleIds,
+): SelectionState {
   if (mods.shift) {
     const anchor = state.anchor ?? rowId;
     const start = visible.indexOf(anchor);
@@ -73,7 +78,10 @@ export function clearSelection(): SelectionState {
 }
 
 /** 按谓词选择（编辑菜单"选择较新的/孤立项目"命令数据面；泛型允许完整 DirRow 谓词） */
-export function selectWhere<T extends { id: string; visible: boolean }>(rows: readonly T[], pred: (row: T) => boolean): SelectionState {
+export function selectWhere<T extends { id: string; visible: boolean }>(
+  rows: readonly T[],
+  pred: (row: T) => boolean,
+): SelectionState {
   const selected = new Set<string>();
   for (const row of rows) {
     if (row.visible && pred(row)) selected.add(row.id);
@@ -157,7 +165,7 @@ export function runEditSelectCommand(
   cmd: EditSelectCommand,
   current: SelectionState,
   rows: readonly (DirRow & { visible: boolean })[],
-  visible: VisibleIds
+  visible: VisibleIds,
 ): SelectionState {
   switch (cmd) {
     case 'selectAll':
@@ -169,20 +177,31 @@ export function runEditSelectCommand(
     case 'selectNewerLeft':
     case 'selectNewerRight':
     case 'selectNewerBoth': {
-      const side: Side | null = cmd === 'selectNewerLeft' ? 'left' : cmd === 'selectNewerRight' ? 'right' : null;
-      return selectWhere(rows, (r) => (side === null ? isNewer(r, 'left') || isNewer(r, 'right') : isNewer(r, side)));
+      const side: Side | null =
+        cmd === 'selectNewerLeft' ? 'left' : cmd === 'selectNewerRight' ? 'right' : null;
+      return selectWhere(rows, (r) =>
+        side === null ? isNewer(r, 'left') || isNewer(r, 'right') : isNewer(r, side),
+      );
     }
     case 'selectOlderLeft':
     case 'selectOlderRight':
     case 'selectOlderBoth': {
-      const side: Side | null = cmd === 'selectOlderLeft' ? 'left' : cmd === 'selectOlderRight' ? 'right' : null;
-      return selectWhere(rows, (r) => (side === null ? isOlder(r, 'left') || isOlder(r, 'right') : isOlder(r, side)));
+      const side: Side | null =
+        cmd === 'selectOlderLeft' ? 'left' : cmd === 'selectOlderRight' ? 'right' : null;
+      return selectWhere(rows, (r) =>
+        side === null ? isOlder(r, 'left') || isOlder(r, 'right') : isOlder(r, side),
+      );
     }
     case 'selectOrphanLeft':
     case 'selectOrphanRight':
     case 'selectOrphanBoth': {
-      const side: Side | null = cmd === 'selectOrphanLeft' ? 'left' : cmd === 'selectOrphanRight' ? 'right' : null;
-      return selectWhere(rows, (r) => (side === null ? isOrphan(r.status, 'left') || isOrphan(r.status, 'right') : isOrphan(r.status, side)));
+      const side: Side | null =
+        cmd === 'selectOrphanLeft' ? 'left' : cmd === 'selectOrphanRight' ? 'right' : null;
+      return selectWhere(rows, (r) =>
+        side === null
+          ? isOrphan(r.status, 'left') || isOrphan(r.status, 'right')
+          : isOrphan(r.status, side),
+      );
     }
   }
 }

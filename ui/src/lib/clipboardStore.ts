@@ -46,7 +46,7 @@ export function appendClip(
   text: string,
   ts: number,
   id: number,
-  limits: ClipboardLimits = DEFAULT_CLIP_LIMITS
+  limits: ClipboardLimits = DEFAULT_CLIP_LIMITS,
 ): ClipboardEntry[] {
   if (text.length === 0 || text.length < limits.minLength) return [...history];
   if (history.length > 0 && history[history.length - 1].text === text) return [...history];
@@ -57,7 +57,9 @@ export function appendClip(
 }
 
 /** 最近两条（较旧在左、最新在右，对应 BC 的新文本比较窗格） */
-export function latestTwo(history: readonly ClipboardEntry[]): [ClipboardEntry, ClipboardEntry] | null {
+export function latestTwo(
+  history: readonly ClipboardEntry[],
+): [ClipboardEntry, ClipboardEntry] | null {
   if (history.length < 2) return null;
   return [history[history.length - 2], history[history.length - 1]];
 }
@@ -183,7 +185,8 @@ export class ClipboardStore {
       const parsed = JSON.parse(raw) as ClipboardEntry[];
       if (!Array.isArray(parsed)) return;
       this.entries = parsed.filter(
-        (e) => typeof e?.id === 'number' && typeof e?.text === 'string' && typeof e?.ts === 'number'
+        (e) =>
+          typeof e?.id === 'number' && typeof e?.text === 'string' && typeof e?.ts === 'number',
       );
       this.seq = this.entries.reduce((m, e) => Math.max(m, e.id), 0);
     } catch {

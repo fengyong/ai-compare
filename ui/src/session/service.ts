@@ -74,7 +74,12 @@ export class SessionService {
   private paths: Record<keyof typeof SETTINGS_FILES, string> | null = null;
   private readonly listeners = new Set<() => void>();
 
-  readonly report: InitReport = { recoveredFromBackup: [], lost: [], portable: false, baseDir: null };
+  readonly report: InitReport = {
+    recoveredFromBackup: [],
+    lost: [],
+    portable: false,
+    baseDir: null,
+  };
 
   constructor(private readonly store: KvFileStore = createDefaultFileStore()) {}
 
@@ -98,18 +103,42 @@ export class SessionService {
     }
 
     const recoveredKeys: Array<keyof typeof SETTINGS_FILES> = [];
-    await this.loadDoc('sessions', parseSessionsDoc, (doc) => {
-      this.sessionsDoc = doc as SessionsDoc;
-    }, emptySessionsDoc, recoveredKeys);
-    await this.loadDoc('kindDefaults', parseKindDefaultsDoc, (doc) => {
-      this.kindDefaults = doc as KindDefaultsDoc;
-    }, emptyKindDefaultsDoc, recoveredKeys);
-    await this.loadDoc('settings', parseGlobalSettingsDoc, (doc) => {
-      this.globalSettings = doc as GlobalSettingsDoc;
-    }, emptyGlobalSettingsDoc, recoveredKeys);
-    await this.loadDoc('state', parseStateDoc, (doc) => {
-      this.stateDoc = doc as StateDoc;
-    }, emptyStateDoc, recoveredKeys);
+    await this.loadDoc(
+      'sessions',
+      parseSessionsDoc,
+      (doc) => {
+        this.sessionsDoc = doc as SessionsDoc;
+      },
+      emptySessionsDoc,
+      recoveredKeys,
+    );
+    await this.loadDoc(
+      'kindDefaults',
+      parseKindDefaultsDoc,
+      (doc) => {
+        this.kindDefaults = doc as KindDefaultsDoc;
+      },
+      emptyKindDefaultsDoc,
+      recoveredKeys,
+    );
+    await this.loadDoc(
+      'settings',
+      parseGlobalSettingsDoc,
+      (doc) => {
+        this.globalSettings = doc as GlobalSettingsDoc;
+      },
+      emptyGlobalSettingsDoc,
+      recoveredKeys,
+    );
+    await this.loadDoc(
+      'state',
+      parseStateDoc,
+      (doc) => {
+        this.stateDoc = doc as StateDoc;
+      },
+      emptyStateDoc,
+      recoveredKeys,
+    );
 
     // 恢复路径：主文件损坏但从 .bak 恢复 → 立即回写主文件（修复），下次直读主文件
     for (const key of recoveredKeys) {
@@ -123,10 +152,13 @@ export class SessionService {
     parse: (text: string) => T,
     assign: (doc: T) => void,
     empty: () => T,
-    recoveredKeys?: Array<keyof typeof SETTINGS_FILES>
+    recoveredKeys?: Array<keyof typeof SETTINGS_FILES>,
   ): Promise<void> {
     const path = this.pathOf(fileKey);
-    const [primary, backup] = await Promise.all([this.store.readFile(path), this.store.readFile(`${path}.bak`)]);
+    const [primary, backup] = await Promise.all([
+      this.store.readFile(path),
+      this.store.readFile(`${path}.bak`),
+    ]);
     const r: RecoveryResult<T> = recoverWithBackup(primary, backup, parse);
     if (r.source === 'primary' && r.doc !== null) {
       assign(r.doc);
@@ -140,7 +172,11 @@ export class SessionService {
     }
     if (r.source === 'lost') {
       assign(empty());
-      this.report.lost.push({ file: SETTINGS_FILES[fileKey], primaryError: r.primaryError, backupError: r.backupError });
+      this.report.lost.push({
+        file: SETTINGS_FILES[fileKey],
+        primaryError: r.primaryError,
+        backupError: r.backupError,
+      });
       return;
     }
     // 全新安装：主/备均无
@@ -173,7 +209,8 @@ export class SessionService {
 
   getTree(): SessionTreeVM {
     const folders = new Map<string, { id: string; name: string; children: string[] }>();
-    for (const f of this.sessionsDoc.folders) folders.set(f.id, { ...f, children: [...f.children] });
+    for (const f of this.sessionsDoc.folders)
+      folders.set(f.id, { ...f, children: [...f.children] });
     const sessions = new Map<string, SessionNode>();
     for (const s of this.sessionsDoc.sessions) sessions.set(s.id, { ...s });
     return { rootFolderIds: [...this.sessionsDoc.rootFolderIds], folders, sessions };
@@ -263,7 +300,11 @@ export class SessionService {
   }
 
   /** 另存为：以现有会话为模板创建新命名会话（默认名加"副本"） */
-  async saveAsSession(sourceId: string, name?: string, folderId?: string | null): Promise<SessionNode> {
+  async saveAsSession(
+    sourceId: string,
+    name?: string,
+    folderId?: string | null,
+  ): Promise<SessionNode> {
     const src = this.sessionsDoc.sessions.find((s) => s.id === sourceId);
     if (!src) throw new Error(`会话不存在: ${sourceId}`);
     return this.saveSession(
@@ -275,7 +316,7 @@ export class SessionService {
         folderId: folderId !== undefined ? folderId : src.folderId,
         state: src.state,
       },
-      undefined
+      undefined,
     );
   }
 
@@ -395,7 +436,7 @@ export class SessionService {
     scope: SettingsScope,
     kind: SessionKind,
     sessionId: string | null,
-    patch: SettingsTree
+    patch: SettingsTree,
   ): Promise<void> {
     if (scope === 'parent-pair' || scope === 'parent-kind') {
       // 父会话层写回需要父会话上下文，由调用方直接写父会话 overrides

@@ -15,8 +15,21 @@ export interface KeyBinding {
 }
 
 const NAMED_KEYS = new Set([
-  'space', 'tab', 'enter', 'escape', 'backspace', 'delete', 'insert',
-  'home', 'end', 'pageup', 'pagedown', 'left', 'right', 'up', 'down',
+  'space',
+  'tab',
+  'enter',
+  'escape',
+  'backspace',
+  'delete',
+  'insert',
+  'home',
+  'end',
+  'pageup',
+  'pagedown',
+  'left',
+  'right',
+  'up',
+  'down',
 ]);
 
 function normalizeKeyName(raw: string): string {
@@ -33,7 +46,10 @@ function normalizeKeyName(raw: string): string {
 /** 解析绑定串；非法输入（空、无主键、未知分隔）返回 null */
 export function parseBinding(spec: string): KeyBinding | null {
   if (typeof spec !== 'string') return null;
-  const parts = spec.split('+').map((p) => p.trim()).filter((p) => p !== '');
+  const parts = spec
+    .split('+')
+    .map((p) => p.trim())
+    .filter((p) => p !== '');
   if (parts.length === 0) return null;
   const key = normalizeKeyName(parts[parts.length - 1]);
   if (!key) return null;
@@ -77,16 +93,15 @@ export function eventMatches(
     metaKey: boolean;
   },
   b: KeyBinding,
-  isMacOverride?: boolean
+  isMacOverride?: boolean,
 ): boolean {
   const isMac =
     isMacOverride ??
-    (typeof navigator !== 'undefined' && /mac/i.test(navigator.platform || navigator.userAgent || ''));
+    (typeof navigator !== 'undefined' &&
+      /mac/i.test(navigator.platform || navigator.userAgent || ''));
   const ctrlHit = isMac ? e.metaKey : e.ctrlKey;
   const primaryKey = e.key === ' ' ? 'space' : normalizeKeyName(e.key);
-  return (
-    ctrlHit === b.ctrl && e.altKey === b.alt && e.shiftKey === b.shift && primaryKey === b.key
-  );
+  return ctrlHit === b.ctrl && e.altKey === b.alt && e.shiftKey === b.shift && primaryKey === b.key;
 }
 
 export interface BindingConflict {

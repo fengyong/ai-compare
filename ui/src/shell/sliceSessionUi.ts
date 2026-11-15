@@ -26,7 +26,9 @@ export const createSessionSlice: StateCreator<ShellStore, [], [], SessionSlice> 
     }
     // 锁定会话重开提示（FR-SES-001：锁定后离开会话不保存显示过滤器等状态）
     if (node.locked) {
-      get().setNotice(`${S.session.lockedNoticePrefix}「${node.name}」${S.session.lockedNoticeSuffix}`);
+      get().setNotice(
+        `${S.session.lockedNoticePrefix}「${node.name}」${S.session.lockedNoticeSuffix}`,
+      );
     }
     const link = { sessionId: node.id, name: node.name, kind: node.kind, locked: node.locked };
     const { left, right } = node.specs;
@@ -78,7 +80,7 @@ export const createSessionSlice: StateCreator<ShellStore, [], [], SessionSlice> 
           specs: specsOfTab(tab),
           overrides: sessionService.getSession(tab.sessionLink.sessionId)?.overrides,
         },
-        tab.sessionLink.sessionId
+        tab.sessionLink.sessionId,
       );
       set((st) => ({
         windows: st.windows.map((w) => ({
@@ -139,11 +141,17 @@ export const createSessionSlice: StateCreator<ShellStore, [], [], SessionSlice> 
       windows: st2.windows.map((w) => ({
         ...w,
         tabs: w.tabs.map((t) =>
-          t.id === tab.id && t.sessionLink ? { ...t, sessionLink: { ...t.sessionLink, locked: next } } : t
+          t.id === tab.id && t.sessionLink
+            ? { ...t, sessionLink: { ...t.sessionLink, locked: next } }
+            : t,
         ),
       })),
     }));
-    get().setNotice(next ? `${S.session.lockedOn}「${tab.sessionLink.name}」` : `${S.session.lockedOff}「${tab.sessionLink.name}」`);
+    get().setNotice(
+      next
+        ? `${S.session.lockedOn}「${tab.sessionLink.name}」`
+        : `${S.session.lockedOff}「${tab.sessionLink.name}」`,
+    );
   },
 
   /** 会话树右键重命名（SES-001/FR-HOME-002；输入对话框） */

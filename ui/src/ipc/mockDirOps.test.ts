@@ -45,15 +45,25 @@ describe('MockEngine P6：dir/expand', () => {
     const { client, sessionId, rows } = await openSession();
     const dir = rows.find((r) => r.kind === 'dir');
     expect(dir).toBeTruthy();
-    const directChildren = rows.filter((r) => r.id.startsWith(`${dir!.id}/`) && !r.id.slice(dir!.id.length + 1).includes('/'));
-    const res = await client.request<{ newRows: number }>('dir/expand', { sessionId, path: dir!.id, depth: 1 });
+    const directChildren = rows.filter(
+      (r) => r.id.startsWith(`${dir!.id}/`) && !r.id.slice(dir!.id.length + 1).includes('/'),
+    );
+    const res = await client.request<{ newRows: number }>('dir/expand', {
+      sessionId,
+      path: dir!.id,
+      depth: 1,
+    });
     expect(res.newRows).toBe(directChildren.length);
     await client.close();
   });
 
   it('不存在目录/空路径不报错，newRows=0', async () => {
     const { client, sessionId } = await openSession();
-    const res = await client.request<{ newRows: number }>('dir/expand', { sessionId, path: 'no/such/dir', depth: 1 });
+    const res = await client.request<{ newRows: number }>('dir/expand', {
+      sessionId,
+      path: 'no/such/dir',
+      depth: 1,
+    });
     expect(res.newRows).toBe(0);
     await client.close();
   });
@@ -67,7 +77,13 @@ describe('MockEngine P6：dir/filter', () => {
     client.on('dir/delta', (p) => deltas.push(p as DirDelta));
     const res = await client.request<{ visibleRows: number; hiddenRows: number }>('dir/filter', {
       sessionId,
-      nameFilter: { includeFiles: [], excludeFiles: ['*.md'], includeDirs: [], excludeDirs: [], caseSensitive: null },
+      nameFilter: {
+        includeFiles: [],
+        excludeFiles: ['*.md'],
+        includeDirs: [],
+        excludeDirs: [],
+        caseSensitive: null,
+      },
       otherFilter: null,
       displayFilter: null,
       suppress: null,
@@ -83,7 +99,15 @@ describe('MockEngine P6：dir/filter', () => {
 
   it('显示过滤 + 抑制：hidden 与 suppressed 互斥切换', async () => {
     const { client, sessionId } = await openSession();
-    const diffOnly = { showSame: false, showContentDiff: true, showLeftNewer: true, showRightNewer: true, showLeftOnly: true, showRightOnly: true, showDirDiff: true };
+    const diffOnly = {
+      showSame: false,
+      showContentDiff: true,
+      showLeftNewer: true,
+      showRightNewer: true,
+      showLeftOnly: true,
+      showRightOnly: true,
+      showDirDiff: true,
+    };
     const shown = await client.request<{ visibleRows: number; hiddenRows: number }>('dir/filter', {
       sessionId,
       nameFilter: null,
@@ -93,14 +117,17 @@ describe('MockEngine P6：dir/filter', () => {
       flat: null,
     });
     expect(shown.hiddenRows).toBeGreaterThan(0);
-    const suppressed = await client.request<{ visibleRows: number; hiddenRows: number }>('dir/filter', {
-      sessionId,
-      nameFilter: null,
-      otherFilter: null,
-      displayFilter: diffOnly,
-      suppress: true,
-      flat: null,
-    });
+    const suppressed = await client.request<{ visibleRows: number; hiddenRows: number }>(
+      'dir/filter',
+      {
+        sessionId,
+        nameFilter: null,
+        otherFilter: null,
+        displayFilter: diffOnly,
+        suppress: true,
+        flat: null,
+      },
+    );
     expect(suppressed.hiddenRows).toBe(0);
     expect(suppressed.visibleRows).toBe(shown.visibleRows + shown.hiddenRows);
     await client.close();
@@ -145,11 +172,21 @@ describe('MockEngine P6：dir/filter', () => {
     const { client, sessionId } = await openSession();
     const deltas: DirDelta[] = [];
     client.on('dir/delta', (p) => deltas.push(p as DirDelta));
-    const base = { sessionId, nameFilter: null, otherFilter: null, displayFilter: null, suppress: null, flat: null };
+    const base = {
+      sessionId,
+      nameFilter: null,
+      otherFilter: null,
+      displayFilter: null,
+      suppress: null,
+      flat: null,
+    };
     // 过滤器未变且未请求重扫：no-op（显示类切换不得摧毁行集）
     await client.request('dir/filter', base);
     expect(deltas.length).toBe(0);
-    const res = await client.request<{ visibleRows: number }>('dir/filter', { ...base, rescan: true });
+    const res = await client.request<{ visibleRows: number }>('dir/filter', {
+      ...base,
+      rescan: true,
+    });
     expect(deltas.length).toBeGreaterThan(0);
     const last = deltas[deltas.length - 1];
     expect(last.upserts.length).toBeGreaterThan(0);
@@ -217,13 +254,22 @@ describe('MockEngine P6：dir/operate（5 预设计划）', () => {
 });
 
 describe('MockEngine P6 提案：dir/execute', () => {
-  const copyOp = { kind: 'copy' as const, path: '', side: 'left' as const, targetSide: 'right' as const };
+  const copyOp = {
+    kind: 'copy' as const,
+    path: '',
+    side: 'left' as const,
+    targetSide: 'right' as const,
+  };
 
   it('dryRun 只返回将执行清单不落盘', async () => {
     const { client, sessionId, rows } = await openSession();
     const diff = rows.find((r) => r.status === 'contentDiff' || r.status === 'quickDiff');
     expect(diff).toBeTruthy();
-    const res = await client.request<{ dryRun: boolean; succeeded: { detail: string | null }[]; failed: unknown[] }>('dir/execute', {
+    const res = await client.request<{
+      dryRun: boolean;
+      succeeded: { detail: string | null }[];
+      failed: unknown[];
+    }>('dir/execute', {
       sessionId,
       ops: [{ ...copyOp, path: diff!.id }],
       dryRun: true,
@@ -232,7 +278,11 @@ describe('MockEngine P6 提案：dir/execute', () => {
     expect(res.failed).toEqual([]);
     expect(res.succeeded[0].detail).toContain('DRY');
     // 模型未变：状态仍为差异
-    const after = await client.request<{ rowCount: number }>('dir/expand', { sessionId, path: '', depth: 1 });
+    const after = await client.request<{ rowCount: number }>('dir/expand', {
+      sessionId,
+      path: '',
+      depth: 1,
+    });
     void after;
     await client.close();
   });
@@ -243,10 +293,13 @@ describe('MockEngine P6 提案：dir/execute', () => {
     expect(diff).toBeTruthy();
     const deltas: DirDelta[] = [];
     client.on('dir/delta', (p) => deltas.push(p as DirDelta));
-    const res = await client.request<{ succeeded: unknown[]; failed: unknown[]; total: number }>('dir/execute', {
-      sessionId,
-      ops: [{ kind: 'copy', path: diff!.id, side: 'left', targetSide: 'right' }],
-    });
+    const res = await client.request<{ succeeded: unknown[]; failed: unknown[]; total: number }>(
+      'dir/execute',
+      {
+        sessionId,
+        ops: [{ kind: 'copy', path: diff!.id, side: 'left', targetSide: 'right' }],
+      },
+    );
     expect(res.failed).toEqual([]);
     expect(res.succeeded).toHaveLength(1);
     // delta 回推该行且两侧信息一致
@@ -263,14 +316,17 @@ describe('MockEngine P6 提案：dir/execute', () => {
     expect(lonly).toBeTruthy();
     const deltas: DirDelta[] = [];
     client.on('dir/delta', (p) => deltas.push(p as DirDelta));
-    const res = await client.request<{ succeeded: unknown[]; failed: { detail: string }[] }>('dir/execute', {
-      sessionId,
-      ops: [
-        { kind: 'delete', path: lonly!.id, side: 'left' },
-        { kind: 'delete', path: lonly!.id, side: 'right' }, // 右侧本不存在 -> 失败
-        { kind: 'delete', path: 'ghost.txt', side: 'left' }, // 行不存在 -> 失败
-      ],
-    });
+    const res = await client.request<{ succeeded: unknown[]; failed: { detail: string }[] }>(
+      'dir/execute',
+      {
+        sessionId,
+        ops: [
+          { kind: 'delete', path: lonly!.id, side: 'left' },
+          { kind: 'delete', path: lonly!.id, side: 'right' }, // 右侧本不存在 -> 失败
+          { kind: 'delete', path: 'ghost.txt', side: 'left' }, // 行不存在 -> 失败
+        ],
+      },
+    );
     expect(res.succeeded).toHaveLength(1);
     expect(res.failed).toHaveLength(2);
     expect(res.failed[0].detail).toContain('目标不存在');
@@ -284,20 +340,27 @@ describe('MockEngine P6 提案：dir/execute', () => {
     const { client, sessionId, rows } = await openSession();
     const file = rows.find((r) => r.kind === 'file' && !r.id.includes('/'));
     expect(file).toBeTruthy();
-    const res = await client.request<{ failed: { detail: string }[]; succeeded: unknown[] }>('dir/execute', {
-      sessionId,
-      ops: [
-        { kind: 'delete', path: '', side: 'left' },
-        { kind: 'delete', path: 'a/../b', side: 'left' },
-        { kind: 'delete', path: '/abs', side: 'left' },
-        { kind: 'rename', path: file!.id, side: 'left', newName: 'renamed.txt' },
-      ],
-    });
+    const res = await client.request<{ failed: { detail: string }[]; succeeded: unknown[] }>(
+      'dir/execute',
+      {
+        sessionId,
+        ops: [
+          { kind: 'delete', path: '', side: 'left' },
+          { kind: 'delete', path: 'a/../b', side: 'left' },
+          { kind: 'delete', path: '/abs', side: 'left' },
+          { kind: 'rename', path: file!.id, side: 'left', newName: 'renamed.txt' },
+        ],
+      },
+    );
     expect(res.failed).toHaveLength(3);
     expect(res.failed[0].detail).toContain('空路径');
     expect(res.succeeded).toHaveLength(1);
     // 改名生效：新 id 可查
-    const verify = await client.request<{ newRows: number }>('dir/expand', { sessionId, path: 'renamed.txt', depth: 1 });
+    const verify = await client.request<{ newRows: number }>('dir/expand', {
+      sessionId,
+      path: 'renamed.txt',
+      depth: 1,
+    });
     void verify;
     await client.close();
   });

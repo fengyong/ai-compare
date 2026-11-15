@@ -90,7 +90,11 @@ describe('RpcClient', () => {
 
   it('request/response 往返按 id 关联', async () => {
     const { stream, client } = await makeClient();
-    const p = client.request<{ rows: number }>('dir/rows', { sessionId: 's1', offset: 0, count: 10 });
+    const p = client.request<{ rows: number }>('dir/rows', {
+      sessionId: 's1',
+      offset: 0,
+      count: 10,
+    });
     await flush(); // 写队列经微任务入队
     const sent = JSON.parse(stream.sent[stream.sent.length - 1]) as { id: number };
     stream.reply(sent.id, { rows: 42 });

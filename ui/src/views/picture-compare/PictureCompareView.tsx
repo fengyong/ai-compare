@@ -1,5 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { KeyboardEvent as ReactKeyboardEvent, MouseEvent as ReactMouseEvent, WheelEvent as ReactWheelEvent } from 'react';
+import type {
+  KeyboardEvent as ReactKeyboardEvent,
+  MouseEvent as ReactMouseEvent,
+  WheelEvent as ReactWheelEvent,
+} from 'react';
 import { openPictureIdempotent, trackSession } from '../../ipc/engineProcess';
 import { S } from '../../strings';
 import type { Tab } from '../../shell/store';
@@ -48,7 +52,9 @@ interface PictureOpenData {
 }
 
 /** 统计值格式化（测试锚点：相似度保留两位、像素千分位） */
-export function formatStats(d: Pick<PictureOpenData, 'similarityPct' | 'diffPixels' | 'totalPixels'>): string {
+export function formatStats(
+  d: Pick<PictureOpenData, 'similarityPct' | 'diffPixels' | 'totalPixels'>,
+): string {
   const sim = d.similarityPct.toFixed(2);
   const diff = d.diffPixels.toLocaleString('en-US');
   const total = d.totalPixels.toLocaleString('en-US');
@@ -58,7 +64,7 @@ export function formatStats(d: Pick<PictureOpenData, 'similarityPct' | 'diffPixe
 /** 差异块 -> canvas 叠加矩形（含占比透明度；纯函数可测） */
 export function blockRects(
   blocks: Array<{ x: number; y: number; w: number; h: number; diffRatio: number }>,
-  scale: number
+  scale: number,
 ): Array<{ x: number; y: number; w: number; h: number; alpha: number }> {
   return blocks.map((b) => ({
     x: b.x * scale,
@@ -75,9 +81,9 @@ function drawDemoPattern(
   w: number,
   h: number,
   seed: number,
-  side: 'left' | 'right'
+  side: 'left' | 'right',
 ): void {
-  let rnd = ((seed * 2654435761) % 4294967296) || 1;
+  let rnd = (seed * 2654435761) % 4294967296 || 1;
   ctx.fillStyle = '#141414';
   ctx.fillRect(0, 0, w, h);
   for (let i = 0; i < 24; i++) {
@@ -94,7 +100,10 @@ function drawDemoPattern(
   }
 }
 
-type PictureTab = Tab & { kind: 'picture'; picture: { left: string; right: string; sessionId: string } };
+type PictureTab = Tab & {
+  kind: 'picture';
+  picture: { left: string; right: string; sessionId: string };
+};
 
 export function PictureCompareView({ tab }: { tab: PictureTab }) {
   const [data, setData] = useState<PictureOpenData | null>(null);
@@ -106,7 +115,12 @@ export function PictureCompareView({ tab }: { tab: PictureTab }) {
   const [blinkMs, setBlinkMs] = useState(400);
   const [tick, setTick] = useState(0);
   const [offset, setOffset] = useState({ dx: 0, dy: 0 });
-  const [panStart, setPanStart] = useState<{ x: number; y: number; panX: number; panY: number } | null>(null);
+  const [panStart, setPanStart] = useState<{
+    x: number;
+    y: number;
+    panX: number;
+    panY: number;
+  } | null>(null);
   const hostRef = useRef<HTMLDivElement | null>(null);
   const leftCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const rightCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -192,13 +206,14 @@ export function PictureCompareView({ tab }: { tab: PictureTab }) {
   const stats = useMemo(() => (data ? formatStats(data) : S.picture.loading), [data]);
 
   const geometry = useMemo(
-    () => data
-      ? autoScaleGeometry(
-          { w: data.leftWidth, h: data.leftHeight },
-          { w: data.rightWidth, h: data.rightHeight }
-        )
-      : { left: 1, right: 1 },
-    [data]
+    () =>
+      data
+        ? autoScaleGeometry(
+            { w: data.leftWidth, h: data.leftHeight },
+            { w: data.rightWidth, h: data.rightHeight },
+          )
+        : { left: 1, right: 1 },
+    [data],
   );
 
   const transformFor = (side: 'left' | 'right'): string => {
@@ -242,29 +257,52 @@ export function PictureCompareView({ tab }: { tab: PictureTab }) {
   const visible = blinkSide(blinkMode, tick);
   const blend = blinkMode === 'blend' ? blendPercent(tick) : 1;
   const leftOpacity = blinkMode === 'blink' ? (visible === 'left' ? 1 : 0) : 1;
-  const rightOpacity = blinkMode === 'blink'
-    ? (visible === 'right' ? 1 : 0)
-    : blinkMode === 'blend' ? blend : 1;
+  const rightOpacity =
+    blinkMode === 'blink' ? (visible === 'right' ? 1 : 0) : blinkMode === 'blend' ? blend : 1;
 
   return (
     <div className="aic-picture">
       <div className="aic-picture-toolbar">
-        <span className="aic-picture-title">{S.picture.title}: {tab.title.replace('图片比较：', '')}</span>
+        <span className="aic-picture-title">
+          {S.picture.title}: {tab.title.replace('图片比较：', '')}
+        </span>
         <label>
           {S.picture.tolerance}
-          <input type="range" min={0} max={64} value={tolerance} onChange={(e) => setTolerance(Number(e.target.value))} />
+          <input
+            type="range"
+            min={0}
+            max={64}
+            value={tolerance}
+            onChange={(e) => setTolerance(Number(e.target.value))}
+          />
           <span className="val">{tolerance}</span>
         </label>
         <span className="meta sep">|</span>
-        <button onClick={() => setZoom(zoomOut(zoom))} title={S.picture.zoomOutHint}>{S.picture.zoomOut}</button>
-        <button onClick={() => setZoom(zoomIn(zoom))} title={S.picture.zoomInHint}>{S.picture.zoomIn}</button>
-        <button onClick={onFit} title={S.picture.zoomFitHint}>{S.picture.zoomFit}</button>
-        <button onClick={() => setZoom(actualZoom())} title={S.picture.zoomActualHint}>{S.picture.zoomActual}</button>
-        <span className="meta">{S.picture.zoomLabel} {Math.round(zoom.scale * 100)}%</span>
+        <button onClick={() => setZoom(zoomOut(zoom))} title={S.picture.zoomOutHint}>
+          {S.picture.zoomOut}
+        </button>
+        <button onClick={() => setZoom(zoomIn(zoom))} title={S.picture.zoomInHint}>
+          {S.picture.zoomIn}
+        </button>
+        <button onClick={onFit} title={S.picture.zoomFitHint}>
+          {S.picture.zoomFit}
+        </button>
+        <button onClick={() => setZoom(actualZoom())} title={S.picture.zoomActualHint}>
+          {S.picture.zoomActual}
+        </button>
+        <span className="meta">
+          {S.picture.zoomLabel} {Math.round(zoom.scale * 100)}%
+        </span>
         <span className="meta sep">|</span>
         <label>
           {S.picture.blinkMode}
-          <select value={blinkMode} onChange={(e) => { setBlinkMode(e.target.value as BlinkMode); setTick(0); }}>
+          <select
+            value={blinkMode}
+            onChange={(e) => {
+              setBlinkMode(e.target.value as BlinkMode);
+              setTick(0);
+            }}
+          >
             <option value="off">{S.picture.blinkOff}</option>
             <option value="blink">{S.picture.blinkOn}</option>
             <option value="blend">{S.picture.blend}</option>
@@ -273,26 +311,59 @@ export function PictureCompareView({ tab }: { tab: PictureTab }) {
         {blinkMode !== 'off' && (
           <label>
             {S.picture.blinkSpeed}
-            <input type="range" min={60} max={1200} step={20} value={blinkMs} onChange={(e) => setBlinkMs(Number(e.target.value))} />
+            <input
+              type="range"
+              min={60}
+              max={1200}
+              step={20}
+              value={blinkMs}
+              onChange={(e) => setBlinkMs(Number(e.target.value))}
+            />
             <span className="val">{blinkMs}ms</span>
           </label>
         )}
         <label className="aic-picture-check">
-          <input type="checkbox" checked={autoScale} onChange={(e) => setAutoScale(e.target.checked)} />
+          <input
+            type="checkbox"
+            checked={autoScale}
+            onChange={(e) => setAutoScale(e.target.checked)}
+          />
           {S.picture.autoScale}
         </label>
-        <span className="meta" title={S.picture.offsetHint}>{S.picture.offset} {offset.dx},{offset.dy}</span>
-        <button onClick={() => setOffset({ dx: 0, dy: 0 })} title={S.picture.resetOffsetHint}>{S.picture.resetOffset}</button>
+        <span className="meta" title={S.picture.offsetHint}>
+          {S.picture.offset} {offset.dx},{offset.dy}
+        </span>
+        <button onClick={() => setOffset({ dx: 0, dy: 0 })} title={S.picture.resetOffsetHint}>
+          {S.picture.resetOffset}
+        </button>
       </div>
       <div className="aic-picture-stats">
         {error ? (
-          <span className="aic-picture-error">{S.picture.loadFail}: {error}</span>
+          <span className="aic-picture-error">
+            {S.picture.loadFail}: {error}
+          </span>
         ) : (
           <>
-            <span>{S.picture.similarity}: <b>{stats}</b></span>
-            {data && <span>{S.picture.canvas}: {data.width}×{data.height}</span>}
-            {data && <span>{S.picture.blocks}: {data.blocks.length}{data.truncated ? `（${S.picture.truncated}）` : ''}</span>}
-            {data && <span>{S.picture.sizes}: {data.leftWidth}×{data.leftHeight} ⇄ {data.rightWidth}×{data.rightHeight}</span>}
+            <span>
+              {S.picture.similarity}: <b>{stats}</b>
+            </span>
+            {data && (
+              <span>
+                {S.picture.canvas}: {data.width}×{data.height}
+              </span>
+            )}
+            {data && (
+              <span>
+                {S.picture.blocks}: {data.blocks.length}
+                {data.truncated ? `（${S.picture.truncated}）` : ''}
+              </span>
+            )}
+            {data && (
+              <span>
+                {S.picture.sizes}: {data.leftWidth}×{data.leftHeight} ⇄ {data.rightWidth}×
+                {data.rightHeight}
+              </span>
+            )}
           </>
         )}
       </div>
@@ -310,7 +381,11 @@ export function PictureCompareView({ tab }: { tab: PictureTab }) {
         <div className="aic-picture-pane">
           <div className="aic-picture-pane-head">{S.picture.paneLeft}</div>
           {isDemo ? (
-            <canvas ref={leftCanvasRef} className="aic-picture-layer" style={{ transform: transformFor('left'), opacity: leftOpacity }} />
+            <canvas
+              ref={leftCanvasRef}
+              className="aic-picture-layer"
+              style={{ transform: transformFor('left'), opacity: leftOpacity }}
+            />
           ) : (
             <img
               className="aic-picture-layer"
@@ -323,7 +398,11 @@ export function PictureCompareView({ tab }: { tab: PictureTab }) {
         <div className="aic-picture-pane">
           <div className="aic-picture-pane-head">{S.picture.paneRight}</div>
           {isDemo ? (
-            <canvas ref={rightCanvasRef} className="aic-picture-layer" style={{ transform: transformFor('right'), opacity: rightOpacity }} />
+            <canvas
+              ref={rightCanvasRef}
+              className="aic-picture-layer"
+              style={{ transform: transformFor('right'), opacity: rightOpacity }}
+            />
           ) : (
             <img
               className="aic-picture-layer"

@@ -58,7 +58,7 @@ export function ContextMenu({
           >
             {item.label}
           </button>
-        )
+        ),
       )}
     </div>
   );

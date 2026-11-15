@@ -40,7 +40,7 @@ export interface AlignedDoc {
 export function buildAlignedDocs(
   sections: Section[],
   leftLines: string[],
-  rightLines: string[]
+  rightLines: string[],
 ): { left: AlignedDoc; right: AlignedDoc } {
   const left: AlignedDoc = { lines: [], rows: [] };
   const right: AlignedDoc = { lines: [], rows: [] };
@@ -51,7 +51,7 @@ export function buildAlignedDocs(
     lStart: number,
     lLen: number,
     rStart: number,
-    rLen: number
+    rLen: number,
   ): void => {
     const rowCount = Math.max(lLen, rLen);
     for (let k = 0; k < rowCount; k++) {
@@ -87,14 +87,7 @@ export function buildAlignedDocs(
     const lLen = s.left ? s.left.end - s.left.start : 0;
     const rLen = s.right ? s.right.end - s.right.start : 0;
     if (lLen === 0 && rLen === 0) continue;
-    pushRows(
-      s.id,
-      s.kind,
-      s.left?.start ?? 0,
-      lLen,
-      s.right?.start ?? 0,
-      rLen
-    );
+    pushRows(s.id, s.kind, s.left?.start ?? 0, lLen, s.right?.start ?? 0, rLen);
   }
   return { left, right };
 }
@@ -113,7 +106,7 @@ export function mapLineBySections(
   sections: Section[],
   side: Side,
   line: number,
-  otherLength: number
+  otherLength: number,
 ): number | null {
   if (otherLength <= 0) return null;
   const myKey = side === 'left' ? ('left' as const) : ('right' as const);
@@ -158,7 +151,7 @@ export function mapLineBySections(
 export function findDiffSectionAtLine(
   sections: Section[],
   side: Side,
-  line: number
+  line: number,
 ): Section | null {
   for (const s of sections) {
     if (s.kind === 'equal') continue;
@@ -176,7 +169,7 @@ export function findDiffSectionAtLine(
 export function buildAllInlineMarks(
   sections: Section[],
   leftLines: string[],
-  rightLines: string[]
+  rightLines: string[],
 ): { left: InlineMark[]; right: InlineMark[] } {
   const left: InlineMark[] = [];
   const right: InlineMark[] = [];

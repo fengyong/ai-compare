@@ -15,7 +15,14 @@ import { closeGuardKind, firstPendingGuard, guardOf } from './closeGuard';
 import { resolveViewKind } from './settings/formatsModel';
 import { effectiveFormatsFromSettings } from './settings/formatsRuntime';
 import { effectiveRulesFor } from '../views/text-compare/rulesRuntime';
-import type { ShellStore, Tab, WindowState, WindowsSlice, TabsSlice, OpenTabOpts } from './shellState';
+import type {
+  ShellStore,
+  Tab,
+  WindowState,
+  WindowsSlice,
+  TabsSlice,
+  OpenTabOpts,
+} from './shellState';
 
 /** 窗口 slice（FR-WIN-001/002）：多窗口、拖出标签、合并窗口 */
 export const createWindowsSlice: StateCreator<ShellStore, [], [], WindowsSlice> = (set, get) => ({
@@ -23,7 +30,10 @@ export const createWindowsSlice: StateCreator<ShellStore, [], [], WindowsSlice> 
   activeWindowId: '',
 
   openNewWindow(opts) {
-    const win = makeWindow(`w-${Date.now().toString(36)}-${Math.floor(Math.random() * 1e6)}`, opts?.withHomeTab !== false);
+    const win = makeWindow(
+      `w-${Date.now().toString(36)}-${Math.floor(Math.random() * 1e6)}`,
+      opts?.withHomeTab !== false,
+    );
     set((st) => ({ windows: [...st.windows, win], activeWindowId: win.id }));
   },
 
@@ -40,15 +50,29 @@ export const createWindowsSlice: StateCreator<ShellStore, [], [], WindowsSlice> 
     const remaining = src.tabs.filter((t) => t.id !== tabId);
     const idx = src.tabs.findIndex((t) => t.id === tabId);
     const srcActive =
-      src.activeTabId === tabId ? remaining[Math.max(0, idx - 1)]?.id ?? remaining[0]?.id ?? '' : src.activeTabId;
-    const win = makeWindow(`w-${Date.now().toString(36)}-${Math.floor(Math.random() * 1e6)}`, false);
+      src.activeTabId === tabId
+        ? (remaining[Math.max(0, idx - 1)]?.id ?? remaining[0]?.id ?? '')
+        : src.activeTabId;
+    const win = makeWindow(
+      `w-${Date.now().toString(36)}-${Math.floor(Math.random() * 1e6)}`,
+      false,
+    );
     win.tabs = [found.tab];
     win.activeTabId = tabId;
     win.title = found.tab.title;
     set(() => ({
-      windows: st.windows.map((w) =>
-        w.id === src.id ? { ...w, tabs: remaining, activeTabId: srcActive, title: titleOf(srcActive, remaining) } : w
-      ).concat([win]),
+      windows: st.windows
+        .map((w) =>
+          w.id === src.id
+            ? {
+                ...w,
+                tabs: remaining,
+                activeTabId: srcActive,
+                title: titleOf(srcActive, remaining),
+              }
+            : w,
+        )
+        .concat([win]),
       activeWindowId: win.id,
     }));
   },
@@ -136,8 +160,13 @@ export const createTabsSlice: StateCreator<ShellStore, [], [], TabsSlice> = (set
       return {
         windows: st.windows.map((w) =>
           w.id === targetId
-            ? { ...w, tabs: [...w.tabs, tab], activeTabId: activate ? id : w.activeTabId, title: activate ? title : w.title }
-            : w
+            ? {
+                ...w,
+                tabs: [...w.tabs, tab],
+                activeTabId: activate ? id : w.activeTabId,
+                title: activate ? title : w.title,
+              }
+            : w,
         ),
         activeWindowId: opts.windowId ? targetId : st.activeWindowId,
       };
@@ -161,8 +190,13 @@ export const createTabsSlice: StateCreator<ShellStore, [], [], TabsSlice> = (set
       return {
         windows: st.windows.map((w) =>
           w.id === targetId
-            ? { ...w, tabs: [...w.tabs, tab], activeTabId: activate ? id : w.activeTabId, title: activate ? title : w.title }
-            : w
+            ? {
+                ...w,
+                tabs: [...w.tabs, tab],
+                activeTabId: activate ? id : w.activeTabId,
+                title: activate ? title : w.title,
+              }
+            : w,
         ),
         activeWindowId: opts.windowId ? targetId : st.activeWindowId,
       };
@@ -185,8 +219,13 @@ export const createTabsSlice: StateCreator<ShellStore, [], [], TabsSlice> = (set
       return {
         windows: st.windows.map((w) =>
           w.id === targetId
-            ? { ...w, tabs: [...w.tabs, tab], activeTabId: activate ? id : w.activeTabId, title: activate ? title : w.title }
-            : w
+            ? {
+                ...w,
+                tabs: [...w.tabs, tab],
+                activeTabId: activate ? id : w.activeTabId,
+                title: activate ? title : w.title,
+              }
+            : w,
         ),
         activeWindowId: opts.windowId ? targetId : st.activeWindowId,
       };
@@ -209,8 +248,13 @@ export const createTabsSlice: StateCreator<ShellStore, [], [], TabsSlice> = (set
       return {
         windows: st.windows.map((w) =>
           w.id === targetId
-            ? { ...w, tabs: [...w.tabs, tab], activeTabId: activate ? id : w.activeTabId, title: activate ? title : w.title }
-            : w
+            ? {
+                ...w,
+                tabs: [...w.tabs, tab],
+                activeTabId: activate ? id : w.activeTabId,
+                title: activate ? title : w.title,
+              }
+            : w,
         ),
         activeWindowId: opts.windowId ? targetId : st.activeWindowId,
       };
@@ -232,8 +276,13 @@ export const createTabsSlice: StateCreator<ShellStore, [], [], TabsSlice> = (set
       return {
         windows: st.windows.map((w) =>
           w.id === targetId
-            ? { ...w, tabs: [...w.tabs, tab], activeTabId: activate ? id : w.activeTabId, title: activate ? title : w.title }
-            : w
+            ? {
+                ...w,
+                tabs: [...w.tabs, tab],
+                activeTabId: activate ? id : w.activeTabId,
+                title: activate ? title : w.title,
+              }
+            : w,
         ),
         activeWindowId: opts.windowId ? targetId : st.activeWindowId,
       };
@@ -257,8 +306,13 @@ export const createTabsSlice: StateCreator<ShellStore, [], [], TabsSlice> = (set
       return {
         windows: st.windows.map((w) =>
           w.id === targetId
-            ? { ...w, tabs: [...w.tabs, tab], activeTabId: activate ? id : w.activeTabId, title: activate ? title : w.title }
-            : w
+            ? {
+                ...w,
+                tabs: [...w.tabs, tab],
+                activeTabId: activate ? id : w.activeTabId,
+                title: activate ? title : w.title,
+              }
+            : w,
         ),
         activeWindowId: opts.windowId ? targetId : st.activeWindowId,
       };
@@ -287,7 +341,7 @@ export const createTabsSlice: StateCreator<ShellStore, [], [], TabsSlice> = (set
                 activeTabId: activate ? id : w.activeTabId,
                 title: activate ? title : w.title,
               }
-            : w
+            : w,
         ),
         activeWindowId: opts.windowId ? targetId : st.activeWindowId,
       };
@@ -321,7 +375,9 @@ export const createTabsSlice: StateCreator<ShellStore, [], [], TabsSlice> = (set
         const targetId = opts.windowId ?? st.activeWindowId;
         return {
           windows: st.windows.map((w) =>
-            w.id === targetId ? { ...w, tabs: [...w.tabs, tab], activeTabId: id, title: tab.title } : w
+            w.id === targetId
+              ? { ...w, tabs: [...w.tabs, tab], activeTabId: id, title: tab.title }
+              : w,
           ),
         };
       });
@@ -387,7 +443,9 @@ export const createTabsSlice: StateCreator<ShellStore, [], [], TabsSlice> = (set
       };
       set((st) => ({
         windows: st.windows.map((w) =>
-          w.id === found.windowId ? { ...w, tabs: [...w.tabs, tab], activeTabId: id, title: tab.title } : w
+          w.id === found.windowId
+            ? { ...w, tabs: [...w.tabs, tab], activeTabId: id, title: tab.title }
+            : w,
         ),
         activeWindowId: found.windowId,
       }));
@@ -556,7 +614,9 @@ export const createTabsSlice: StateCreator<ShellStore, [], [], TabsSlice> = (set
         const idx = w.tabs.findIndex((t) => t.id === tabId);
         const tabs = w.tabs.filter((t) => t.id !== tabId);
         const activeTabId =
-          w.activeTabId === tabId ? tabs[Math.max(0, idx - 1)]?.id ?? tabs[0]?.id ?? '' : w.activeTabId;
+          w.activeTabId === tabId
+            ? (tabs[Math.max(0, idx - 1)]?.id ?? tabs[0]?.id ?? '')
+            : w.activeTabId;
         return { ...w, tabs, activeTabId, title: titleOf(activeTabId, tabs) };
       }),
     }));
@@ -641,7 +701,16 @@ export const createTabsSlice: StateCreator<ShellStore, [], [], TabsSlice> = (set
  * 此前清理只覆盖 text/folder/merge3 → 其余类型的会话在引擎侧只增不减（内存泄漏），
  * 且崩溃重放后会拿旧句柄继续请求（410/411）。
  */
-const TAB_SESSION_KINDS = ['text', 'folder', 'sync', 'picture', 'table', 'hex', 'merge', 'merge3'] as const;
+const TAB_SESSION_KINDS = [
+  'text',
+  'folder',
+  'sync',
+  'picture',
+  'table',
+  'hex',
+  'merge',
+  'merge3',
+] as const;
 
 /** 取标签上首个非空的引擎会话句柄（同一标签通常只有一个视图持有会话） */
 export function tabSessionId(tab: Tab): string | undefined {

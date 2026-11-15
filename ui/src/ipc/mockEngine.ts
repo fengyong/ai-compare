@@ -86,7 +86,12 @@ import { wordDiff } from '../lib/inlineDiffCore';
 import { diffLinesOps, toSections } from '../lib/lineDiffCore';
 import { clipboardStore, parseClipSpec } from '../lib/clipboardStore';
 import { hashString, mulberry32 } from '../lib/env';
-import { applyDisplayToRows, fileAllowedBySpec, SHOW_ALL_DISPLAY_FILTER, wildcardMatch } from '../views/folder-compare/dirFilters';
+import {
+  applyDisplayToRows,
+  fileAllowedBySpec,
+  SHOW_ALL_DISPLAY_FILTER,
+  wildcardMatch,
+} from '../views/folder-compare/dirFilters';
 import { parentOf } from '../views/folder-compare/dirTree';
 import { sidePath } from '../views/folder-compare/dirOps';
 
@@ -160,8 +165,22 @@ const BIN_EXTS = ['png', 'so', 'dll', 'bin', 'dat'];
 
 const TOP_DIRS = ['src', 'docs', 'config', 'tests', 'assets', 'scripts'];
 const FILE_STEMS = [
-  'main', 'config', 'utils', 'handler', 'service', 'model', 'index', 'app',
-  'parser', 'render', 'store', 'types', 'api', 'core', 'helper', 'view',
+  'main',
+  'config',
+  'utils',
+  'handler',
+  'service',
+  'model',
+  'index',
+  'app',
+  'parser',
+  'render',
+  'store',
+  'types',
+  'api',
+  'core',
+  'helper',
+  'view',
 ];
 
 /** JSON-RPC 错误码（与 ai-protocol error::codes 对齐） */
@@ -180,8 +199,18 @@ export class MockEngine {
   /** 演示用文件存储：text/save 的覆盖/备份语义在 mock 下也可推演 */
   private readonly files = new Map<string, string>();
   private readonly mergeSessions = new Map<string, MockMergeSession>();
-  private readonly tableSessions = new Map<string, { seed: number; columns: Array<{ name: string; ty: string; left: number | null; right: number | null }>; rowCount?: number }>();
-  private readonly hexSessions = new Map<string, { seed: number; leftSize: number; rightSize: number }>();
+  private readonly tableSessions = new Map<
+    string,
+    {
+      seed: number;
+      columns: Array<{ name: string; ty: string; left: number | null; right: number | null }>;
+      rowCount?: number;
+    }
+  >();
+  private readonly hexSessions = new Map<
+    string,
+    { seed: number; leftSize: number; rightSize: number }
+  >();
   private readonly pictureSessions = new Map<
     string,
     { seed: number; width: number; height: number }
@@ -244,7 +273,10 @@ export class MockEngine {
     this.sink?.(JSON.stringify(msg));
   }
 
-  private dispatch(method: string, params: unknown): { result: unknown; notifications: DirDelta[] } {
+  private dispatch(
+    method: string,
+    params: unknown,
+  ): { result: unknown; notifications: DirDelta[] } {
     switch (method) {
       case 'initialize':
         return { result: this.initialize(), notifications: [] };
@@ -259,13 +291,15 @@ export class MockEngine {
       case 'dir/compareContent':
         return this.dirCompareContent(params as DirCompareContentParams);
       case 'dir/execute':
-        return this.dirExecute(params as { sessionId: string; ops: DirExecuteOp[]; dryRun?: boolean | null });
+        return this.dirExecute(
+          params as { sessionId: string; ops: DirExecuteOp[]; dryRun?: boolean | null },
+        );
       case 'dir/mergeScan':
         return { result: this.mergeScanP(params as DirMergeScanParams), notifications: [] };
       case 'dir/mergePlan':
         return { result: this.mergePlanP(params as DirMergePlanParams), notifications: [] };
       case 'dir/mergeExecute':
-        return { result: this.mergeExecuteP(params as DirMergeExecuteParams), notifications: [] };;
+        return { result: this.mergeExecuteP(params as DirMergeExecuteParams), notifications: [] };
       case 'text/open':
         return { result: this.textOpen(params as TextOpenParams), notifications: [] };
       case 'text/sections':
@@ -372,7 +406,10 @@ export class MockEngine {
     applyNameFilter(session);
     refreshDisplayFlags(session);
     this.dirSessions.set(p.sessionId, session);
-    this.lastIds.set(p.sessionId, currentRows(session).map((r) => r.id));
+    this.lastIds.set(
+      p.sessionId,
+      currentRows(session).map((r) => r.id),
+    );
     return {
       result: this.openResultFor(p.sessionId, session),
       notifications: this.deltaBatchesFor(p.sessionId, session),
@@ -419,7 +456,10 @@ export class MockEngine {
    * dir/expand 同形实现：返回直接子项数并重推这些子项（upsert 幂等，
    * UI 缓存按 id 合并）。真实引擎为惰性扫描出口；mock 全量预建后按需补推。
    */
-  private dirExpand(p: { sessionId: string; path: string; depth: number | null }): { result: unknown; notifications: DirDelta[] } {
+  private dirExpand(p: { sessionId: string; path: string; depth: number | null }): {
+    result: unknown;
+    notifications: DirDelta[];
+  } {
     const s = this.requireDir(p.sessionId);
     const depth = Math.max(1, p.depth ?? 1);
     const direct = s.treeRows.filter((r) => parentOf(r.id) === p.path && !r.hidden);
@@ -613,7 +653,10 @@ export class MockEngine {
    * 差异经 dir/delta 回推；dryRun 只校验不落盘。护栏与真实执行层同形：
    * 空/越界路径拒绝、源缺失失败、逐项收集部分成功。
    */
-  private dirExecute(p: { sessionId: string; ops: DirExecuteOp[]; dryRun?: boolean | null }): { result: DirExecuteResult; notifications: DirDelta[] } {
+  private dirExecute(p: { sessionId: string; ops: DirExecuteOp[]; dryRun?: boolean | null }): {
+    result: DirExecuteResult;
+    notifications: DirDelta[];
+  } {
     const s = this.requireDir(p.sessionId);
     const dryRun = p.dryRun === true;
     const succeeded: DirExecuteResult['succeeded'] = [];
@@ -669,11 +712,19 @@ export class MockEngine {
               failed.push({ op, status: 'failed', detail: `源不存在（${op.side}）: ${op.path}` });
               break;
             }
-            if (!op.newName || op.newName.includes('/') || op.newName === '.' || op.newName === '..') {
+            if (
+              !op.newName ||
+              op.newName.includes('/') ||
+              op.newName === '.' ||
+              op.newName === '..'
+            ) {
               failed.push({ op, status: 'failed', detail: `新名称非法: ${op.newName ?? ''}` });
               break;
             }
-            if (before.has(`${parentOf(op.path)}/${op.newName}`) && parentOf(op.path) + '/' + op.newName !== op.path) {
+            if (
+              before.has(`${parentOf(op.path)}/${op.newName}`) &&
+              parentOf(op.path) + '/' + op.newName !== op.path
+            ) {
               failed.push({ op, status: 'failed', detail: `目标名已存在: ${op.newName}` });
               break;
             }
@@ -700,7 +751,10 @@ export class MockEngine {
               break;
             }
             const otherSide = op.side === 'left' ? 'right' : 'left';
-            const mtime = op.mtimeMs && op.mtimeMs > 0 ? op.mtimeMs : row[otherSide]?.mtimeMs ?? row[op.side]!.mtimeMs;
+            const mtime =
+              op.mtimeMs && op.mtimeMs > 0
+                ? op.mtimeMs
+                : (row[otherSide]?.mtimeMs ?? row[op.side]!.mtimeMs);
             row[op.side]!.mtimeMs = mtime;
             recomputeRowStatus(row);
             touched.add(row.id);
@@ -732,7 +786,11 @@ export class MockEngine {
           }
         }
       } catch (err) {
-        failed.push({ op, status: 'failed', detail: err instanceof Error ? err.message : String(err) });
+        failed.push({
+          op,
+          status: 'failed',
+          detail: err instanceof Error ? err.message : String(err),
+        });
       }
     }
 
@@ -762,7 +820,9 @@ export class MockEngine {
       result: {
         sessionId: s.id,
         total: (p.ops ?? []).length,
-        succeeded: dryRun ? succeeded.map((r) => ({ ...r, detail: `DRY: ${r.op.kind} ${r.op.path}` })) : succeeded,
+        succeeded: dryRun
+          ? succeeded.map((r) => ({ ...r, detail: `DRY: ${r.op.kind} ${r.op.path}` }))
+          : succeeded,
         failed,
         skipped,
         dryRun,
@@ -771,7 +831,6 @@ export class MockEngine {
       notifications,
     };
   }
-
 
   // ---------------- P8：dir/mergeScan / mergePlan / mergeExecute（同形模拟） ----------------
 
@@ -827,7 +886,13 @@ export class MockEngine {
       const row = byPath.get(op.path);
       if (!row) {
         failed++;
-        details.push({ kind: op.kind, path: op.path, reason: op.reason, status: 'failed', detail: '路径不存在于合并模型' });
+        details.push({
+          kind: op.kind,
+          path: op.path,
+          reason: op.reason,
+          status: 'failed',
+          detail: '路径不存在于合并模型',
+        });
         continue;
       }
       if (op.kind === 'keep') {
@@ -836,10 +901,20 @@ export class MockEngine {
         continue;
       }
       const targetSide: 'left' | 'right' = p.target === 'right' ? 'right' : 'left';
-      const guard = sanitizeOpPath({ kind: op.kind === 'deleteTarget' ? 'delete' : 'copy', path: op.path, side: targetSide });
+      const guard = sanitizeOpPath({
+        kind: op.kind === 'deleteTarget' ? 'delete' : 'copy',
+        path: op.path,
+        side: targetSide,
+      });
       if (guard) {
         failed++;
-        details.push({ kind: op.kind, path: op.path, reason: op.reason, status: 'failed', detail: guard });
+        details.push({
+          kind: op.kind,
+          path: op.path,
+          reason: op.reason,
+          status: 'failed',
+          detail: guard,
+        });
         continue;
       }
       if (op.kind === 'deleteTarget') {
@@ -850,7 +925,13 @@ export class MockEngine {
         }
         if (!row[targetSide]) {
           skipped++;
-          details.push({ kind: op.kind, path: op.path, reason: op.reason, status: 'skipped', detail: '目标侧不存在' });
+          details.push({
+            kind: op.kind,
+            path: op.path,
+            reason: op.reason,
+            status: 'skipped',
+            detail: '目标侧不存在',
+          });
           continue;
         }
         row[targetSide] = null;
@@ -862,14 +943,26 @@ export class MockEngine {
       // takeLeft / takeRight：目标侧被对应源覆盖（output 目标落第三目录，演示模型不持有）
       if (p.target === 'output') {
         copied++;
-        details.push({ kind: op.kind, path: op.path, reason: op.reason, status: 'copied', detail: '输出目录（演示模型不持有）' });
+        details.push({
+          kind: op.kind,
+          path: op.path,
+          reason: op.reason,
+          status: 'copied',
+          detail: '输出目录（演示模型不持有）',
+        });
         continue;
       }
       const sourceSide: 'left' | 'right' = op.kind === 'takeLeft' ? 'left' : 'right';
       const src = row[sourceSide];
       if (!src) {
         failed++;
-        details.push({ kind: op.kind, path: op.path, reason: op.reason, status: 'failed', detail: `源侧不存在（${sourceSide}）` });
+        details.push({
+          kind: op.kind,
+          path: op.path,
+          reason: op.reason,
+          status: 'failed',
+          detail: `源侧不存在（${sourceSide}）`,
+        });
         continue;
       }
       row[targetSide] = { ...src };
@@ -925,8 +1018,8 @@ export class MockEngine {
     const gen: { leftLines: string[]; rightLines: string[]; sections: Section[] } =
       leftSpec !== null || rightSpec !== null
         ? genTextPairFromClipboard(
-            leftSpec !== null ? clipboardStore.getText(leftSpec) ?? '' : '',
-            rightSpec !== null ? clipboardStore.getText(rightSpec) ?? '' : ''
+            leftSpec !== null ? (clipboardStore.getText(leftSpec) ?? '') : '',
+            rightSpec !== null ? (clipboardStore.getText(rightSpec) ?? '') : '',
           )
         : genTextPair(seed);
     const summary = summarize(gen.sections);
@@ -982,7 +1075,8 @@ export class MockEngine {
       left: s.leftLines.length,
       right: s.rightLines.length,
     };
-    const spans: Array<{ side: 'left' | 'right'; start: number; end: number; lines: string[] }> = [];
+    const spans: Array<{ side: 'left' | 'right'; start: number; end: number; lines: string[] }> =
+      [];
     for (const op of p.edits) {
       if (op.side !== 'left' && op.side !== 'right') {
         throw new InvalidParams(`非法 side: ${String(op.side)}`);
@@ -992,7 +1086,7 @@ export class MockEngine {
       const end = op.end ?? cur;
       if (!Number.isInteger(start) || start < 0 || start > end || end > cur) {
         throw new InvalidParams(
-          `编辑区间越界: side=${op.side} start=${start} end=${end} 当前行数=${cur}`
+          `编辑区间越界: side=${op.side} start=${start} end=${end} 当前行数=${cur}`,
         );
       }
       // 与引擎 LineTable::from_text 同口径：结尾换行不产生空行；空串 = 零行
@@ -1092,7 +1186,10 @@ export class MockEngine {
     if (!section || !section.left || !section.right) {
       throw new InvalidParams(`section 不存在或非双侧替换段: ${p.sectionId}`);
     }
-    const lineCount = Math.min(section.left.end - section.left.start, section.right.end - section.right.start);
+    const lineCount = Math.min(
+      section.left.end - section.left.start,
+      section.right.end - section.right.start,
+    );
     const lines = [];
     let anyTruncated = false;
     for (let k = 0; k < lineCount; k++) {
@@ -1194,7 +1291,13 @@ export class MockEngine {
     leftRowCount: number;
     rightRowCount: number;
     columns: Array<{ name: string; ty: string; left: number | null; right: number | null }>;
-    summary: { sameRows: number; changedRows: number; addedRows: number; removedRows: number; unimportantRows: number };
+    summary: {
+      sameRows: number;
+      changedRows: number;
+      addedRows: number;
+      removedRows: number;
+      unimportantRows: number;
+    };
   } {
     if (!p || typeof p.sessionId !== 'string' || p.sessionId === '') {
       throw new InvalidParams('sessionId 不能为空');
@@ -1230,12 +1333,16 @@ export class MockEngine {
     };
   }
 
-  private tableOpenColumns(sessionId: string): Array<{ name: string; ty: string; left: number | null; right: number | null }> {
-    return this.tableSessions.get(sessionId)?.columns ?? [
-      { name: 'ID', ty: 'number', left: 0, right: 0 },
-      { name: '名称', ty: 'text', left: 1, right: 1 },
-      { name: '数量', ty: 'number', left: 2, right: 2 },
-    ];
+  private tableOpenColumns(
+    sessionId: string,
+  ): Array<{ name: string; ty: string; left: number | null; right: number | null }> {
+    return (
+      this.tableSessions.get(sessionId)?.columns ?? [
+        { name: 'ID', ty: 'number', left: 0, right: 0 },
+        { name: '名称', ty: 'text', left: 1, right: 1 },
+        { name: '数量', ty: 'number', left: 2, right: 2 },
+      ]
+    );
   }
 
   private tableSections(p: TableSectionsParams): {
@@ -1310,7 +1417,12 @@ export class MockEngine {
     leftSize: number;
     rightSize: number;
     blockCount: number;
-    summary: { sameBytes: number; changedBytes: number; insertedBytes: number; deletedBytes: number };
+    summary: {
+      sameBytes: number;
+      changedBytes: number;
+      insertedBytes: number;
+      deletedBytes: number;
+    };
   } {
     if (!p || typeof p.sessionId !== 'string' || p.sessionId === '') {
       throw new InvalidParams('sessionId 不能为空');
@@ -1640,7 +1752,13 @@ function currentRows(s: MockDirSession): DirRow[] {
 /** 名称过滤（FR-DIR-031 子集：include/exclude 文件掩码 + 排除目录掩码） */
 function applyNameFilter(s: MockDirSession): void {
   const spec = s.nameFilter;
-  if (!spec || (spec.includeFiles.length === 0 && spec.excludeFiles.length === 0 && spec.excludeDirs.length === 0 && spec.includeDirs.length === 0)) {
+  if (
+    !spec ||
+    (spec.includeFiles.length === 0 &&
+      spec.excludeFiles.length === 0 &&
+      spec.excludeDirs.length === 0 &&
+      spec.includeDirs.length === 0)
+  ) {
     return;
   }
   s.treeRows = s.treeRows.filter((row) => {
@@ -1683,7 +1801,8 @@ function deriveFlatRows(s: MockDirSession): DirRow[] {
       const r = g.rs[i];
       const name = l?.name ?? r?.name ?? key;
       const id = n === 1 ? key : `${key}#${i}`;
-      const status: DirEntryStatus = l && r ? statusForPair(l.info!, r.info!) : l ? 'leftOnly' : 'rightOnly';
+      const status: DirEntryStatus =
+        l && r ? statusForPair(l.info!, r.info!) : l ? 'leftOnly' : 'rightOnly';
       out.push({
         id,
         name,
@@ -1730,7 +1849,14 @@ function applyCopyToRow(row: DirRow, targetSide: 'left' | 'right'): void {
 function recomputeRowStatus(row: DirRow): void {
   syncSidePaths(row);
   if (row.kind === 'dir') {
-    row.status = row.left && row.right ? 'dirSame' : row.left ? 'leftOnly' : row.right ? 'rightOnly' : 'unknown';
+    row.status =
+      row.left && row.right
+        ? 'dirSame'
+        : row.left
+          ? 'leftOnly'
+          : row.right
+            ? 'rightOnly'
+            : 'unknown';
     return;
   }
   if (row.left && row.right) {
@@ -1758,28 +1884,36 @@ function syncSidePaths(row: DirRow): void {
  * mock 同步计划（与引擎 sync.rs plan_operations 同口径的 5 预设子集；
  * 目录聚合状态 DirDiff 参与 copy 语义、mirroring 删除另一侧孤立项）。
  */
-function mockPlanOperations(rows: DirRow[], preset: SyncPreset | null, paths: string[] | null): PlannedOperation[] {
+function mockPlanOperations(
+  rows: DirRow[],
+  preset: SyncPreset | null,
+  paths: string[] | null,
+): PlannedOperation[] {
   if (!preset) return [];
   const sel = paths && paths.length > 0 ? new Set(paths) : null;
   const plan: PlannedOperation[] = [];
-  const isDiff = (st: DirEntryStatus) => st === 'contentDiff' || st === 'quickDiff' || st === 'dirDiff';
+  const isDiff = (st: DirEntryStatus) =>
+    st === 'contentDiff' || st === 'quickDiff' || st === 'dirDiff';
   for (const row of rows) {
     if (sel && !sel.has(row.id)) continue;
     const reason = `preset:${preset}`;
     const push = (op: PlannedOperation['op']) => {
       // 计划路径取 op 源侧的真实 rel（平铺 id 是显示消歧名，R3-03）
-      const side = op === 'copyLeftToRight' || op === 'deleteLeft' || op === 'touchLeft' ? 'left' : 'right';
+      const side =
+        op === 'copyLeftToRight' || op === 'deleteLeft' || op === 'touchLeft' ? 'left' : 'right';
       const path = sidePath(row, side);
       if (path !== null) plan.push({ op, path, reason });
     };
     const mt = (info: SideInfo | null) => info?.mtimeMs ?? 0;
     switch (row.status) {
       case 'leftOnly':
-        if (preset === 'mirrorLeftToRight' || preset === 'updateLeftToRight') push('copyLeftToRight');
+        if (preset === 'mirrorLeftToRight' || preset === 'updateLeftToRight')
+          push('copyLeftToRight');
         else if (preset === 'mirrorRightToLeft') push('deleteLeft');
         break;
       case 'rightOnly':
-        if (preset === 'mirrorRightToLeft' || preset === 'updateRightToLeft') push('copyRightToLeft');
+        if (preset === 'mirrorRightToLeft' || preset === 'updateRightToLeft')
+          push('copyRightToLeft');
         else if (preset === 'mirrorLeftToRight') push('deleteRight');
         break;
       default:
@@ -1808,7 +1942,6 @@ function wildcard(mask: string, name: string): boolean {
   return wildcardMatch(mask, name, true);
 }
 
-
 // ==================================================================
 // P8：mock 三路合并模型（确定性；分类语义与引擎 merge3way 同口径）
 // ==================================================================
@@ -1825,23 +1958,88 @@ function buildMergeModel(base: string, left: string, right: string): DirMergeRow
   // (rel, base形态, left形态, right形态)：null=缺失；'same'=与 base 相同内容
   type Entry = [string, Spec | null, Spec | null, Spec | null];
   const catalog: Entry[] = [
-    ['README.md', { name: 'README.md', kind: 'file', content: '# demo\nshared\n' }, { name: 'README.md', kind: 'file', content: '# demo\nshared\n' }, { name: 'README.md', kind: 'file', content: '# demo\nshared\n' }],
-    ['version.json', { name: 'version.json', kind: 'file', content: '{"v":1}' }, { name: 'version.json', kind: 'file', content: '{"v":2}' }, { name: 'version.json', kind: 'file', content: '{"v":1}' }],
-    ['config.yml', { name: 'config.yml', kind: 'file', content: 'mode: basic\n' }, { name: 'config.yml', kind: 'file', content: 'mode: basic\n' }, { name: 'config.yml', kind: 'file', content: 'mode: pro\n' }],
-    ['conflict.c', { name: 'conflict.c', kind: 'file', content: 'int a = 0;\n' }, { name: 'conflict.c', kind: 'file', content: 'int a = 1;\n' }, { name: 'conflict.c', kind: 'file', content: 'int a = 2;\n' }],
-    ['both.c', { name: 'both.c', kind: 'file', content: 'int b = 0;\n' }, { name: 'both.c', kind: 'file', content: 'int b = 9;\n' }, { name: 'both.c', kind: 'file', content: 'int b = 9;\n' }],
-    ['deleted-r.txt', { name: 'deleted-r.txt', kind: 'file', content: 'kept\n' }, { name: 'deleted-r.txt', kind: 'file', content: 'kept\n' }, null],
-    ['deleted-mod.txt', { name: 'deleted-mod.txt', kind: 'file', content: 'v0\n' }, { name: 'deleted-mod.txt', kind: 'file', content: 'v1\n' }, null],
+    [
+      'README.md',
+      { name: 'README.md', kind: 'file', content: '# demo\nshared\n' },
+      { name: 'README.md', kind: 'file', content: '# demo\nshared\n' },
+      { name: 'README.md', kind: 'file', content: '# demo\nshared\n' },
+    ],
+    [
+      'version.json',
+      { name: 'version.json', kind: 'file', content: '{"v":1}' },
+      { name: 'version.json', kind: 'file', content: '{"v":2}' },
+      { name: 'version.json', kind: 'file', content: '{"v":1}' },
+    ],
+    [
+      'config.yml',
+      { name: 'config.yml', kind: 'file', content: 'mode: basic\n' },
+      { name: 'config.yml', kind: 'file', content: 'mode: basic\n' },
+      { name: 'config.yml', kind: 'file', content: 'mode: pro\n' },
+    ],
+    [
+      'conflict.c',
+      { name: 'conflict.c', kind: 'file', content: 'int a = 0;\n' },
+      { name: 'conflict.c', kind: 'file', content: 'int a = 1;\n' },
+      { name: 'conflict.c', kind: 'file', content: 'int a = 2;\n' },
+    ],
+    [
+      'both.c',
+      { name: 'both.c', kind: 'file', content: 'int b = 0;\n' },
+      { name: 'both.c', kind: 'file', content: 'int b = 9;\n' },
+      { name: 'both.c', kind: 'file', content: 'int b = 9;\n' },
+    ],
+    [
+      'deleted-r.txt',
+      { name: 'deleted-r.txt', kind: 'file', content: 'kept\n' },
+      { name: 'deleted-r.txt', kind: 'file', content: 'kept\n' },
+      null,
+    ],
+    [
+      'deleted-mod.txt',
+      { name: 'deleted-mod.txt', kind: 'file', content: 'v0\n' },
+      { name: 'deleted-mod.txt', kind: 'file', content: 'v1\n' },
+      null,
+    ],
     ['lonly.txt', null, { name: 'lonly.txt', kind: 'file', content: 'left only\n' }, null],
     ['ronly.txt', null, null, { name: 'ronly.txt', kind: 'file', content: 'right only\n' }],
-    ['both-new.txt', null, { name: 'both-new.txt', kind: 'file', content: 'identical\n' }, { name: 'both-new.txt', kind: 'file', content: 'identical\n' }],
+    [
+      'both-new.txt',
+      null,
+      { name: 'both-new.txt', kind: 'file', content: 'identical\n' },
+      { name: 'both-new.txt', kind: 'file', content: 'identical\n' },
+    ],
     ['gone.txt', { name: 'gone.txt', kind: 'file', content: 'deleted both sides\n' }, null, null],
-    ['clash', { name: 'clash', kind: 'file', content: 'file\n' }, { name: 'clash', kind: 'dir' }, { name: 'clash', kind: 'file', content: 'file\n' }],
-    ['src', { name: 'src', kind: 'dir' }, { name: 'src', kind: 'dir' }, { name: 'src', kind: 'dir' }],
-    ['src/main.c', { name: 'main.c', kind: 'file', content: 'void main() {}\n' }, { name: 'src/main.c', kind: 'file', content: 'void main() { /* fixed */ }\n' }, { name: 'src/main.c', kind: 'file', content: 'void main() {}\n' }],
-    ['src/util.c', { name: 'src/util.c', kind: 'file', content: 'util v0\n' }, { name: 'src/util.c', kind: 'file', content: 'util v0\n' }, { name: 'src/util.c', kind: 'file', content: 'util v1\n' }],
+    [
+      'clash',
+      { name: 'clash', kind: 'file', content: 'file\n' },
+      { name: 'clash', kind: 'dir' },
+      { name: 'clash', kind: 'file', content: 'file\n' },
+    ],
+    [
+      'src',
+      { name: 'src', kind: 'dir' },
+      { name: 'src', kind: 'dir' },
+      { name: 'src', kind: 'dir' },
+    ],
+    [
+      'src/main.c',
+      { name: 'main.c', kind: 'file', content: 'void main() {}\n' },
+      { name: 'src/main.c', kind: 'file', content: 'void main() { /* fixed */ }\n' },
+      { name: 'src/main.c', kind: 'file', content: 'void main() {}\n' },
+    ],
+    [
+      'src/util.c',
+      { name: 'src/util.c', kind: 'file', content: 'util v0\n' },
+      { name: 'src/util.c', kind: 'file', content: 'util v0\n' },
+      { name: 'src/util.c', kind: 'file', content: 'util v1\n' },
+    ],
     ['src/orphan-dir', null, { name: 'orphan-dir', kind: 'dir' }, null],
-    ['src/orphan-dir/inner.txt', null, { name: 'inner.txt', kind: 'file', content: 'nested orphan\n' }, null],
+    [
+      'src/orphan-dir/inner.txt',
+      null,
+      { name: 'inner.txt', kind: 'file', content: 'nested orphan\n' },
+      null,
+    ],
     ['src/empty-orphan', null, { name: 'empty-orphan', kind: 'dir' }, null],
   ];
   const mkInfo = (size: number): SideInfo => ({
@@ -1867,7 +2065,15 @@ function buildMergeModel(base: string, left: string, right: string): DirMergeRow
     const bi = infoOf(b);
     const li = infoOf(l);
     const ri = infoOf(r);
-    const { category, rowState, conflictLeaf } = classifyMockEntry(kind, b, l, r, bi.size, li.size, ri.size);
+    const { category, rowState, conflictLeaf } = classifyMockEntry(
+      kind,
+      b,
+      l,
+      r,
+      bi.size,
+      li.size,
+      ri.size,
+    );
     const parent = rel.includes('/') ? rel.slice(0, rel.lastIndexOf('/')) : null;
     rows.push({
       relPath: rel,
@@ -1906,10 +2112,22 @@ function classifyMockEntry(
   }
   if (kind === 'dir') {
     // 目录初始按存在性；聚合后重算（空目录孤立也覆盖）
-    const cat: DirMergeCategory = !b && l && !r ? 'leftOnly' : !b && !l && r ? 'rightOnly' : b && !l && !r ? 'baseOnly' : 'same';
+    const cat: DirMergeCategory =
+      !b && l && !r
+        ? 'leftOnly'
+        : !b && !l && r
+          ? 'rightOnly'
+          : b && !l && !r
+            ? 'baseOnly'
+            : 'same';
     return { category: cat, rowState: cat === 'same' ? 'same' : 'orphan', conflictLeaf: false };
   }
-  const eq = (a: { content?: string } | null, b2: { content?: string } | null, as: number, bs: number): boolean => {
+  const eq = (
+    a: { content?: string } | null,
+    b2: { content?: string } | null,
+    as: number,
+    bs: number,
+  ): boolean => {
     if (!a && !b2) return true;
     if (!a || !b2) return false;
     if (as !== bs) return false;
@@ -1959,8 +2177,10 @@ function classifyMockEntry(
 /** mock 目录聚合（Conflict > Orphan > Auto > Same；叠加自身存在性） */
 function aggregateMockRows(rows: DirMergeRow[]): void {
   const depthOrder = [...rows].sort((a, b) => b.depth - a.depth);
-  const rank = (st: DirMergeRowState): number => (st === 'conflict' ? 0 : st === 'orphan' ? 1 : st === 'auto' ? 2 : 3);
-  const worse = (a: DirMergeRowState, b2: DirMergeRowState): DirMergeRowState => (rank(a) <= rank(b2) ? a : b2);
+  const rank = (st: DirMergeRowState): number =>
+    st === 'conflict' ? 0 : st === 'orphan' ? 1 : st === 'auto' ? 2 : 3;
+  const worse = (a: DirMergeRowState, b2: DirMergeRowState): DirMergeRowState =>
+    rank(a) <= rank(b2) ? a : b2;
   for (const row of depthOrder) {
     if (row.kind !== 'dir') continue;
     const children = rows.filter((r) => r.parent === row.relPath);
@@ -1968,7 +2188,13 @@ function aggregateMockRows(rows: DirMergeRow[]): void {
     for (const c of children) state = worse(state, c.rowState);
     row.rowState = state;
     const catRank = (c: DirMergeCategory): number =>
-      c === 'conflict' ? 0 : c === 'leftOnly' || c === 'rightOnly' || c === 'baseOnly' ? 1 : c === 'same' ? 3 : 2;
+      c === 'conflict'
+        ? 0
+        : c === 'leftOnly' || c === 'rightOnly' || c === 'baseOnly'
+          ? 1
+          : c === 'same'
+            ? 3
+            : 2;
     let cat = row.category;
     for (const c of children) {
       if (catRank(c.category) < catRank(cat)) cat = c.category;
@@ -1979,7 +2205,15 @@ function aggregateMockRows(rows: DirMergeRow[]): void {
 }
 
 function mergeScanStats(rows: DirMergeRow[]): DirMergeScanStats {
-  const stats: DirMergeScanStats = { total: rows.length, files: 0, dirs: 0, same: 0, auto: 0, conflict: 0, orphan: 0 };
+  const stats: DirMergeScanStats = {
+    total: rows.length,
+    files: 0,
+    dirs: 0,
+    same: 0,
+    auto: 0,
+    conflict: 0,
+    orphan: 0,
+  };
   for (const r of rows) {
     if (r.kind === 'dir') stats.dirs++;
     else stats.files++;
@@ -2004,7 +2238,8 @@ function mergeScanStats(rows: DirMergeRow[]): DirMergeScanStats {
 /** mock 执行后的行状态重算（演示口径：目标侧对齐源后 = same；单侧 = 孤立） */
 function recomputeMergeRow(row: DirMergeRow): void {
   if (row.kind === 'dir') {
-    row.category = row.left && row.right ? 'same' : row.left ? 'leftOnly' : row.right ? 'rightOnly' : 'baseOnly';
+    row.category =
+      row.left && row.right ? 'same' : row.left ? 'leftOnly' : row.right ? 'rightOnly' : 'baseOnly';
     row.rowState = row.category === 'same' ? 'same' : 'orphan';
     return;
   }
@@ -2033,7 +2268,11 @@ function recomputeMergeRow(row: DirMergeRow): void {
  * mock 合并计划（与引擎 merge3way::plan_merge 同口径）：
  * 有效决策 = 显式决策 > 祖先继承 > Auto；目录决策递归展开；Auto 走默认决策表。
  */
-function mockMergePlan(rows: DirMergeRow[], target: DirMergeTarget, decisions: DirMergePlanParams['decisions']): DirMergePlannedOp[] {
+function mockMergePlan(
+  rows: DirMergeRow[],
+  target: DirMergeTarget,
+  decisions: DirMergePlanParams['decisions'],
+): DirMergePlannedOp[] {
   const childrenOf = new Map<string | null, DirMergeRow[]>();
   for (const r of rows) {
     const list = childrenOf.get(r.parent) ?? [];
@@ -2047,27 +2286,50 @@ function mockMergePlan(rows: DirMergeRow[], target: DirMergeTarget, decisions: D
     return own ?? inherit ?? 'auto';
   };
 
-  const autoDefault = (row: DirMergeRow, t: DirMergeTarget): { kind: DirMergeOpKind; reason: string } => {
+  const autoDefault = (
+    row: DirMergeRow,
+    t: DirMergeTarget,
+  ): { kind: DirMergeOpKind; reason: string } => {
     const cat = row.category;
     switch (cat) {
       case 'same':
-        return t === 'output' ? { kind: 'takeLeft', reason: '三方一致（输出取左）' } : { kind: 'keep', reason: '三方一致' };
+        return t === 'output'
+          ? { kind: 'takeLeft', reason: '三方一致（输出取左）' }
+          : { kind: 'keep', reason: '三方一致' };
       case 'leftChanged':
-        return t === 'left' ? { kind: 'keep', reason: '目标侧即左侧（已含修改）' } : { kind: 'takeLeft', reason: '仅左改 → 取左' };
+        return t === 'left'
+          ? { kind: 'keep', reason: '目标侧即左侧（已含修改）' }
+          : { kind: 'takeLeft', reason: '仅左改 → 取左' };
       case 'rightChanged':
-        return t === 'right' ? { kind: 'keep', reason: '目标侧即右侧（已含修改）' } : { kind: 'takeRight', reason: '仅右改 → 取右' };
+        return t === 'right'
+          ? { kind: 'keep', reason: '目标侧即右侧（已含修改）' }
+          : { kind: 'takeRight', reason: '仅右改 → 取右' };
       case 'bothSame':
-        return t === 'output' ? { kind: 'takeLeft', reason: '两侧同改一致（输出取左，等价取右）' } : { kind: 'keep', reason: '两侧同改一致' };
+        return t === 'output'
+          ? { kind: 'takeLeft', reason: '两侧同改一致（输出取左，等价取右）' }
+          : { kind: 'keep', reason: '两侧同改一致' };
       case 'deletedRight':
-        return t === 'right' ? { kind: 'keep', reason: '目标侧已删除' } : t === 'left' ? { kind: 'deleteTarget', reason: '跟随右侧删除' } : { kind: 'keep', reason: '右侧已删除（输出不含该项）' };
+        return t === 'right'
+          ? { kind: 'keep', reason: '目标侧已删除' }
+          : t === 'left'
+            ? { kind: 'deleteTarget', reason: '跟随右侧删除' }
+            : { kind: 'keep', reason: '右侧已删除（输出不含该项）' };
       case 'deletedLeft':
-        return t === 'left' ? { kind: 'keep', reason: '目标侧已删除' } : t === 'right' ? { kind: 'deleteTarget', reason: '跟随左侧删除' } : { kind: 'keep', reason: '左侧已删除（输出不含该项）' };
+        return t === 'left'
+          ? { kind: 'keep', reason: '目标侧已删除' }
+          : t === 'right'
+            ? { kind: 'deleteTarget', reason: '跟随左侧删除' }
+            : { kind: 'keep', reason: '左侧已删除（输出不含该项）' };
       case 'conflict':
         return { kind: 'keep', reason: '冲突需人工处理' };
       case 'leftOnly':
-        return t === 'left' ? { kind: 'keep', reason: '目标侧即左侧' } : { kind: 'takeLeft', reason: t === 'output' ? '左孤立并入输出' : '左孤立并入目标' };
+        return t === 'left'
+          ? { kind: 'keep', reason: '目标侧即左侧' }
+          : { kind: 'takeLeft', reason: t === 'output' ? '左孤立并入输出' : '左孤立并入目标' };
       case 'rightOnly':
-        return t === 'right' ? { kind: 'keep', reason: '目标侧即右侧' } : { kind: 'takeRight', reason: t === 'output' ? '右孤立并入输出' : '右孤立并入目标' };
+        return t === 'right'
+          ? { kind: 'keep', reason: '目标侧即右侧' }
+          : { kind: 'takeRight', reason: t === 'output' ? '右孤立并入输出' : '右孤立并入目标' };
       case 'baseOnly':
         return { kind: 'keep', reason: '两侧均已删除' };
     }
@@ -2089,8 +2351,15 @@ function mockMergePlan(rows: DirMergeRow[], target: DirMergeTarget, decisions: D
         (target === 'output' && (row.category === 'leftOnly' || row.category === 'rightOnly'));
       if (kids.length === 0 && absentOnTarget) {
         const explicit = eff === 'takeLeft' || eff === 'takeRight' || eff === 'both';
-        const kind: DirMergeOpKind = eff === 'takeRight' || (!explicit && row.category === 'rightOnly') ? 'takeRight' : 'takeLeft';
-        ops.push({ kind, path: row.relPath, reason: explicit ? '决策:目录并入（空目录）' : '孤立空目录并入' });
+        const kind: DirMergeOpKind =
+          eff === 'takeRight' || (!explicit && row.category === 'rightOnly')
+            ? 'takeRight'
+            : 'takeLeft';
+        ops.push({
+          kind,
+          path: row.relPath,
+          reason: explicit ? '决策:目录并入（空目录）' : '孤立空目录并入',
+        });
       }
       const passDown: DirMergeDecision | null = eff === 'auto' ? null : eff;
       for (const c of kids) walk(c, passDown);
@@ -2153,7 +2422,10 @@ function mockMergePlan(rows: DirMergeRow[], target: DirMergeTarget, decisions: D
 }
 
 class RpcErr extends Error {
-  constructor(readonly code: number, message: string) {
+  constructor(
+    readonly code: number,
+    message: string,
+  ) {
     super(message);
     this.name = 'RpcErr';
   }
@@ -2246,7 +2518,7 @@ function buildDirModel(left: string, right: string): DirRow[] {
     id: string,
     kind: DirRow['kind'],
     status: DirEntryStatus,
-    hasChildren: boolean
+    hasChildren: boolean,
   ) => {
     rows.push({
       id,
@@ -2274,12 +2546,16 @@ function buildDirModel(left: string, right: string): DirRow[] {
     pushRow(dir, dir, 'dir', 'dirSame', true);
     const childCount = 6 + Math.floor(rand() * 18);
     for (let i = 0; i < childCount; i++) {
-      const ext = rand() < 0.6 ? TEXT_EXTS[Math.floor(rand() * TEXT_EXTS.length)] : BIN_EXTS[Math.floor(rand() * BIN_EXTS.length)];
+      const ext =
+        rand() < 0.6
+          ? TEXT_EXTS[Math.floor(rand() * TEXT_EXTS.length)]
+          : BIN_EXTS[Math.floor(rand() * BIN_EXTS.length)];
       const name = `${FILE_STEMS[Math.floor(rand() * FILE_STEMS.length)]}${i}.${ext}`;
       const id = `${dir}/${name}`;
       let status = pickStatus(rand);
       // 文本文件更高概率为内容差异，便于演示双击链路
-      if (TEXT_EXTS.includes(ext) && status !== 'contentDiff' && rand() < 0.35) status = 'contentDiff';
+      if (TEXT_EXTS.includes(ext) && status !== 'contentDiff' && rand() < 0.35)
+        status = 'contentDiff';
       if (rand() < 0.08) {
         // 少量二级目录（含孙项）
         pushRow(name, id, 'dir', 'dirSame', true);
@@ -2381,7 +2657,14 @@ function genTextPair(seed: string): GenTextPairResult {
         li++;
         ri++;
       }
-      sections.push({ id: secId++, kind, left: { start: sl, end: li }, right: { start: sr, end: ri }, important: 'important', inline: 'notComputed' });
+      sections.push({
+        id: secId++,
+        kind,
+        left: { start: sl, end: li },
+        right: { start: sr, end: ri },
+        important: 'important',
+        inline: 'notComputed',
+      });
     } else if (kind === 'change') {
       for (let k = 0; k < n; k++) {
         const t = contentLine(li, ext);
@@ -2390,19 +2673,40 @@ function genTextPair(seed: string): GenTextPairResult {
         li++;
         ri++;
       }
-      sections.push({ id: secId++, kind, left: { start: sl, end: li }, right: { start: sr, end: ri }, important: 'important', inline: 'notComputed' });
+      sections.push({
+        id: secId++,
+        kind,
+        left: { start: sl, end: li },
+        right: { start: sr, end: ri },
+        important: 'important',
+        inline: 'notComputed',
+      });
     } else if (kind === 'insert') {
       for (let k = 0; k < n; k++) {
         rightLines.push(`+ ${contentLine(ri, ext).trim()}  (右侧新增)`);
         ri++;
       }
-      sections.push({ id: secId++, kind, left: null, right: { start: sr, end: ri }, important: 'important', inline: 'notComputed' });
+      sections.push({
+        id: secId++,
+        kind,
+        left: null,
+        right: { start: sr, end: ri },
+        important: 'important',
+        inline: 'notComputed',
+      });
     } else {
       for (let k = 0; k < n; k++) {
         leftLines.push(`- ${contentLine(li, ext).trim()}  (左侧独有)`);
         li++;
       }
-      sections.push({ id: secId++, kind, left: { start: sl, end: li }, right: null, important: 'important', inline: 'notComputed' });
+      sections.push({
+        id: secId++,
+        kind,
+        left: { start: sl, end: li },
+        right: null,
+        important: 'important',
+        inline: 'notComputed',
+      });
     }
   };
 
@@ -2508,7 +2812,7 @@ function merge3Tpl(
     unimportant?: boolean;
     autoResolved?: boolean;
     defaultOutput?: string[];
-  } = {}
+  } = {},
 ): Merge3Template {
   const defaultOutput =
     opts.defaultOutput ??
@@ -2543,47 +2847,83 @@ const SAME_END = ['}'];
 const MERGE3_TEMPLATE: Merge3Template[] = [
   merge3Tpl(0, 'stable', rg(0, 2), rg(0, 2), rg(0, 2), SAME_HEAD, SAME_HEAD, SAME_HEAD),
   merge3Tpl(
-    1, 'leftOnly', rg(2, 3), rg(2, 3), rg(2, 3),
-    ['  const retries = 2;'], ['  const retries = 5;'], ['  const retries = 2;']
+    1,
+    'leftOnly',
+    rg(2, 3),
+    rg(2, 3),
+    rg(2, 3),
+    ['  const retries = 2;'],
+    ['  const retries = 5;'],
+    ['  const retries = 2;'],
   ),
   merge3Tpl(2, 'stable', rg(3, 4), rg(3, 4), rg(3, 4), SAME_BODY, SAME_BODY, SAME_BODY),
   merge3Tpl(
-    3, 'conflict', rg(4, 5), rg(4, 5), rg(4, 5),
-    ['  const mode = "safe";'], ['  const mode = "fast";'], ['  const mode = "strict";'],
+    3,
+    'conflict',
+    rg(4, 5),
+    rg(4, 5),
+    rg(4, 5),
+    ['  const mode = "safe";'],
+    ['  const mode = "fast";'],
+    ['  const mode = "strict";'],
     {
       conflictKind: 'modifyModify',
       conflictRows: [{ left: 4, right: 4, unimportant: false }],
       unimportant: false,
-    }
+    },
   ),
   merge3Tpl(
-    4, 'rightOnly', rg(5, 6), rg(5, 6), rg(5, 6),
-    ['  const timeout = 30;'], ['  const timeout = 30;'], ['  const timeout = 60;']
+    4,
+    'rightOnly',
+    rg(5, 6),
+    rg(5, 6),
+    rg(5, 6),
+    ['  const timeout = 30;'],
+    ['  const timeout = 30;'],
+    ['  const timeout = 60;'],
   ),
   merge3Tpl(
-    5, 'bothChanged', rg(6, 7), rg(6, 7), rg(6, 7),
-    ['  const tag = "v0";'], ['  const tag = "v1";'], ['  const tag = "v1";']
+    5,
+    'bothChanged',
+    rg(6, 7),
+    rg(6, 7),
+    rg(6, 7),
+    ['  const tag = "v0";'],
+    ['  const tag = "v1";'],
+    ['  const tag = "v1";'],
   ),
   merge3Tpl(6, 'stable', rg(7, 8), rg(7, 8), rg(7, 8), SAME_TAIL, SAME_TAIL, SAME_TAIL),
   merge3Tpl(
-    7, 'conflict', rg(8, 8), rg(8, 9), rg(8, 9),
-    [], ['  // 本地新增：灰度开关'], ['  // 远端新增：熔断开关'],
+    7,
+    'conflict',
+    rg(8, 8),
+    rg(8, 9),
+    rg(8, 9),
+    [],
+    ['  // 本地新增：灰度开关'],
+    ['  // 远端新增：熔断开关'],
     {
       conflictKind: 'addAdd',
       conflictRows: [{ left: 8, right: 8, unimportant: false }],
       unimportant: false,
-    }
+    },
   ),
   merge3Tpl(
-    8, 'conflict', rg(8, 9), rg(9, 10), rg(9, 10),
-    ['  log("done");'], ['  log("done" );'], ['  log("done");'],
+    8,
+    'conflict',
+    rg(8, 9),
+    rg(9, 10),
+    rg(9, 10),
+    ['  log("done");'],
+    ['  log("done" );'],
+    ['  log("done");'],
     {
       conflictKind: 'modifyModify',
       conflictRows: [{ left: 9, right: 9, unimportant: true }],
       unimportant: true,
       autoResolved: true,
       defaultOutput: ['  log("done" );'],
-    }
+    },
   ),
   merge3Tpl(9, 'stable', rg(9, 10), rg(10, 11), rg(10, 11), SAME_END, SAME_END, SAME_END),
 ];
@@ -2623,7 +2963,10 @@ function merge3OutputForDecision(t: Merge3Template, d: MergeDecisionDto): string
 }
 
 /** 模板 + 决策表 → 引擎 MergeChunkDto（sections/output 共用派生口径） */
-function deriveMergeChunk(t: Merge3Template, decisions: Map<number, MergeDecisionDto>): MergeChunkDto {
+function deriveMergeChunk(
+  t: Merge3Template,
+  decisions: Map<number, MergeDecisionDto>,
+): MergeChunkDto {
   const d = decisions.get(t.id);
   return {
     id: t.id,
@@ -2658,7 +3001,10 @@ function splitClipText(text: string): string[] {
 }
 
 /** 两侧剪贴板文本 → 行表 + 差异段（复用 P1 行 diff 的 UI 侧同形实现） */
-function genTextPairFromClipboard(left: string, right: string): {
+function genTextPairFromClipboard(
+  left: string,
+  right: string,
+): {
   leftLines: string[];
   rightLines: string[];
   sections: Section[];

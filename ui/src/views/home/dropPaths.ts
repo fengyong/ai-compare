@@ -69,7 +69,8 @@ export interface PickedPair {
 /** 路径列表 → 左右对（前两个；其余忽略） */
 export function pickTwoPaths(paths: string[]): PickedPair {
   if (paths.length === 0) return { left: null, right: null, warning: '未识别到拖入的路径' };
-  if (paths.length === 1) return { left: paths[0], right: null, warning: '只识别到一个路径，请再拖入另一侧' };
+  if (paths.length === 1)
+    return { left: paths[0], right: null, warning: '只识别到一个路径，请再拖入另一侧' };
   return { left: paths[0], right: paths[1] };
 }
 
@@ -79,7 +80,8 @@ export async function extractPathsFromDataTransfer(dt: DataTransfer): Promise<st
   const items = dt.items ? Array.from(dt.items) : [];
   for (const item of items) {
     if (item.kind !== 'file') continue;
-    const getter = (item as DataTransferItem & { webkitGetAsEntry?: () => FileSystemEntry | null }).webkitGetAsEntry;
+    const getter = (item as DataTransferItem & { webkitGetAsEntry?: () => FileSystemEntry | null })
+      .webkitGetAsEntry;
     const entry = typeof getter === 'function' ? getter.call(item) : null;
     if (entry) {
       const p = entryFullPath(entry);

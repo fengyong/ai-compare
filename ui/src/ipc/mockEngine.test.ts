@@ -29,7 +29,13 @@ describe('MockEngine P0 协议面', () => {
 
     const opened = await client.request<{ sessionId: string; rowCount: number; scanState: string }>(
       'dir/open',
-      { sessionId: 'dir-1', left: '/a', right: '/b', depth: null, criteria: { mtimeToleranceSec: 2, contentCompare: 'auto' } }
+      {
+        sessionId: 'dir-1',
+        left: '/a',
+        right: '/b',
+        depth: null,
+        criteria: { mtimeToleranceSec: 2, contentCompare: 'auto' },
+      },
     );
     expect(opened.sessionId).toBe('dir-1');
     expect(opened.scanState).toBe('completed');
@@ -68,12 +74,15 @@ describe('MockEngine P0 协议面', () => {
     let start = 0;
     let done = false;
     while (!done) {
-      const res = await client.request<{ start: number; lines: string[]; done: boolean }>('text/lines', {
-        sessionId: text.sessionId,
-        side: 'left',
-        start,
-        count: 3, // 小页：必然多页，验证 done 语义
-      });
+      const res = await client.request<{ start: number; lines: string[]; done: boolean }>(
+        'text/lines',
+        {
+          sessionId: text.sessionId,
+          side: 'left',
+          start,
+          count: 3, // 小页：必然多页，验证 done 语义
+        },
+      );
       expect(res.start).toBe(start);
       all.push(...res.lines);
       done = res.done;
@@ -92,10 +101,14 @@ describe('MockEngine P0 协议面', () => {
       options: null,
     });
     // 找一个 change section
-    const secs = await client.request<{ sections: Array<{ id: number; kind: string; left: { start: number; end: number } | null; right: { start: number; end: number } | null }> }>(
-      'text/sections',
-      { sessionId: opened.sessionId, offset: 0, count: 10_000 }
-    );
+    const secs = await client.request<{
+      sections: Array<{
+        id: number;
+        kind: string;
+        left: { start: number; end: number } | null;
+        right: { start: number; end: number } | null;
+      }>;
+    }>('text/sections', { sessionId: opened.sessionId, offset: 0, count: 10_000 });
     const change = secs.sections.find((s) => s.kind === 'change' && s.left && s.right);
     expect(change).toBeTruthy();
     const res = await client.request<{
@@ -103,7 +116,12 @@ describe('MockEngine P0 协议面', () => {
       sectionId: number;
       kind: string;
       state: string;
-      lines: Array<{ leftLine: number; rightLine: number; spans: Array<{ left: unknown; right: unknown; kind: string }>; truncated: boolean }>;
+      lines: Array<{
+        leftLine: number;
+        rightLine: number;
+        spans: Array<{ left: unknown; right: unknown; kind: string }>;
+        truncated: boolean;
+      }>;
     }>('text/inlineDiff', { sessionId: opened.sessionId, sectionId: change!.id });
     expect(res.sessionId).toBe(opened.sessionId);
     expect(res.sectionId).toBe(change!.id);
@@ -132,7 +150,7 @@ describe('MockEngine P0 协议面', () => {
     }
     // 未知 section → INVALID_PARAMS
     await expect(
-      client.request('text/inlineDiff', { sessionId: opened.sessionId, sectionId: 999_999 })
+      client.request('text/inlineDiff', { sessionId: opened.sessionId, sectionId: 999_999 }),
     ).rejects.toMatchObject({ code: -32602 });
     await client.close();
   });
@@ -150,7 +168,7 @@ describe('MockEngine P0 协议面', () => {
     expect(await client.request('session/close', { sessionId: 'text-2' })).toBeNull();
 
     await expect(
-      client.request('text/sections', { sessionId: 'text-2', offset: 0, count: 10 })
+      client.request('text/sections', { sessionId: 'text-2', offset: 0, count: 10 }),
     ).rejects.toMatchObject({ code: 410 });
     await client.close();
   });
@@ -159,7 +177,7 @@ describe('MockEngine P0 协议面', () => {
     const client = await newClient();
     const pic = await client.request<{ width: number; blocks: unknown[]; similarityPct: number }>(
       'picture/open',
-      { sessionId: 'pic-1', left: '/demo/a.png', right: '/demo/b.png', options: null }
+      { sessionId: 'pic-1', left: '/demo/a.png', right: '/demo/b.png', options: null },
     );
     expect(pic.width).toBeGreaterThan(0);
     expect(Array.isArray(pic.blocks)).toBe(true);
@@ -179,11 +197,14 @@ describe('MockEngine P0 协议面', () => {
   it('report/generate 同形：布局族 / 选项回显 / 分块流 / 未知会话', async () => {
     const client = await newClient();
     await client.request('text/open', {
-      sessionId: 'rpt-1', left: '/demo/a.txt', right: '/demo/b.txt', options: null,
+      sessionId: 'rpt-1',
+      left: '/demo/a.txt',
+      right: '/demo/b.txt',
+      options: null,
     });
     const full = await client.request<{ content: string; totalChars: number; hasMore: boolean }>(
       'report/generate',
-      { sessionId: 'rpt-1', layout: 'summary', title: 'demo title', lineNumbers: true }
+      { sessionId: 'rpt-1', layout: 'summary', title: 'demo title', lineNumbers: true },
     );
     expect(full.content).toContain('demo title');
     expect(full.content).toContain('lineNumbers=true');
@@ -191,15 +212,19 @@ describe('MockEngine P0 协议面', () => {
     expect(full.totalChars).toBe(Array.from(full.content).length);
 
     const html = await client.request<{ content: string }>('report/generate', {
-      sessionId: 'rpt-1', layout: 'html', color: 'mono',
+      sessionId: 'rpt-1',
+      layout: 'html',
+      color: 'mono',
     });
     expect(html.content).toContain('<!doctype html>');
     expect(html.content).toContain('color=mono');
 
-    const first = await client.request<{ content: string; offset: number; hasMore: boolean; totalChars: number }>(
-      'report/generate',
-      { sessionId: 'rpt-1', layout: 'xml', offset: 0, limit: 10 }
-    );
+    const first = await client.request<{
+      content: string;
+      offset: number;
+      hasMore: boolean;
+      totalChars: number;
+    }>('report/generate', { sessionId: 'rpt-1', layout: 'xml', offset: 0, limit: 10 });
     expect(first.hasMore).toBe(true);
     expect(Array.from(first.content).length).toBe(10);
     let assembled = first.content;
@@ -207,18 +232,21 @@ describe('MockEngine P0 协议面', () => {
     while (off < first.totalChars) {
       const blk = await client.request<{ content: string; offset: number; hasMore: boolean }>(
         'report/generate',
-        { sessionId: 'rpt-1', layout: 'xml', offset: off, limit: 7 }
+        { sessionId: 'rpt-1', layout: 'xml', offset: off, limit: 7 },
       );
       assembled += blk.content;
       off += Array.from(blk.content).length;
       if (!blk.hasMore || blk.content.length === 0) break;
     }
     const whole = await client.request<{ content: string }>('report/generate', {
-      sessionId: 'rpt-1', layout: 'xml', offset: 0, limit: 10000,
+      sessionId: 'rpt-1',
+      layout: 'xml',
+      offset: 0,
+      limit: 10000,
     });
     expect(assembled).toBe(whole.content);
     await expect(
-      client.request('report/generate', { sessionId: 'ghost', layout: 'summary' })
+      client.request('report/generate', { sessionId: 'ghost', layout: 'summary' }),
     ).rejects.toMatchObject({ code: 410 });
     await client.close();
   });
@@ -236,10 +264,16 @@ describe('MockEngine P0 协议面', () => {
     expect(r.leftLineCount).toBe(2);
     expect(r.rightLineCount).toBe(2);
     const left = await client.request<{ lines: string[] }>('text/lines', {
-      sessionId: 'clip-mock-1', side: 'left', start: 0, count: 10,
+      sessionId: 'clip-mock-1',
+      side: 'left',
+      start: 0,
+      count: 10,
     });
     const right = await client.request<{ lines: string[] }>('text/lines', {
-      sessionId: 'clip-mock-1', side: 'right', start: 0, count: 10,
+      sessionId: 'clip-mock-1',
+      side: 'right',
+      start: 0,
+      count: 10,
     });
     expect(left.lines).toEqual(['alpha', 'shared']);
     expect(right.lines).toEqual(['beta', 'shared']);

@@ -42,11 +42,18 @@ export const elementsCell: CSSProperties = { color: 'var(--aic-text-dim, #888)',
 
 export const rowActions: CSSProperties = { display: 'flex', gap: 10, marginTop: 10 };
 
-export const editorCell: CSSProperties = { background: 'var(--aic-border, rgba(128,128,128,0.15))' };
+export const editorCell: CSSProperties = {
+  background: 'var(--aic-border, rgba(128,128,128,0.15))',
+};
 
 export const grammarRow: CSSProperties = { display: 'flex', gap: 8, padding: '2px 0' };
 
-export const packArea: CSSProperties = { display: 'flex', flexDirection: 'column', gap: 8, marginTop: 6 };
+export const packArea: CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 8,
+  marginTop: 6,
+};
 
 export const packTextarea: CSSProperties = { width: '100%', fontFamily: 'monospace', fontSize: 11 };
 
@@ -54,10 +61,30 @@ export const packButtons: CSSProperties = { display: 'flex', gap: 10 };
 
 export const messageLine: CSSProperties = { fontSize: 12, color: 'var(--aic-accent, #4a90d9)' };
 
-export const rulesFlags: CSSProperties = { display: 'flex', flexDirection: 'column', gap: 6, marginTop: 8 };
+export const rulesFlags: CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 6,
+  marginTop: 8,
+};
 
-export const rulesFlag: CSSProperties = { display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 };
+export const rulesFlag: CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 8,
+  fontSize: 13,
+};
 
-export const rulesFormatRow: CSSProperties = { display: 'flex', alignItems: 'center', gap: 10, margin: '8px 0' };
+export const rulesFormatRow: CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 10,
+  margin: '8px 0',
+};
 
-export const rulesElements: CSSProperties = { display: 'flex', flexWrap: 'wrap', gap: '6px 18px', margin: '6px 0' };
+export const rulesElements: CSSProperties = {
+  display: 'flex',
+  flexWrap: 'wrap',
+  gap: '6px 18px',
+  margin: '6px 0',
+};

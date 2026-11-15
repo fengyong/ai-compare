@@ -1,9 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  buildAlignedDocs,
-  findDiffSectionAtLine,
-  mapLineBySections,
-} from './alignment';
+import { buildAlignedDocs, findDiffSectionAtLine, mapLineBySections } from './alignment';
 import type { Section } from '../../protocol/types';
 
 /**
@@ -52,8 +48,18 @@ describe('buildAlignedDocs', () => {
     const { left, right } = buildAlignedDocs(sampleSections(), L, R);
     expect(left.lines.slice(0, 3)).toEqual(['l0', 'l1', 'l2']);
     expect(right.lines.slice(0, 3)).toEqual(['r0', 'r1', 'r2']);
-    expect(left.rows[0]).toMatchObject({ leftLine: 0, rightLine: 0, status: 'equal', sectionId: 0 });
-    expect(right.rows[0]).toMatchObject({ leftLine: 0, rightLine: 0, status: 'equal', sectionId: 0 });
+    expect(left.rows[0]).toMatchObject({
+      leftLine: 0,
+      rightLine: 0,
+      status: 'equal',
+      sectionId: 0,
+    });
+    expect(right.rows[0]).toMatchObject({
+      leftLine: 0,
+      rightLine: 0,
+      status: 'equal',
+      sectionId: 0,
+    });
   });
 
   it('change 段：行数取 max，短侧缺行处为 absent（顶对齐）', () => {
@@ -62,8 +68,18 @@ describe('buildAlignedDocs', () => {
     expect(left.lines[3]).toBe('l3');
     expect(left.lines[6]).toBe(''); // 填充
     expect(right.lines[6]).toBe('r6');
-    expect(left.rows[6]).toMatchObject({ leftLine: undefined, rightLine: 6, status: 'absent', sectionId: 1 });
-    expect(right.rows[5]).toMatchObject({ leftLine: 5, rightLine: 5, status: 'changed', sectionId: 1 });
+    expect(left.rows[6]).toMatchObject({
+      leftLine: undefined,
+      rightLine: 6,
+      status: 'absent',
+      sectionId: 1,
+    });
+    expect(right.rows[5]).toMatchObject({
+      leftLine: 5,
+      rightLine: 5,
+      status: 'changed',
+      sectionId: 1,
+    });
   });
 
   it('delete 段：右侧行全为填充 absent', () => {
@@ -71,7 +87,12 @@ describe('buildAlignedDocs', () => {
     // rows 7..8
     expect(left.lines[7]).toBe('l6');
     expect(right.lines[7]).toBe('');
-    expect(left.rows[7]).toMatchObject({ leftLine: 6, rightLine: undefined, status: 'deleted', sectionId: 2 });
+    expect(left.rows[7]).toMatchObject({
+      leftLine: 6,
+      rightLine: undefined,
+      status: 'deleted',
+      sectionId: 2,
+    });
     expect(right.rows[7]).toMatchObject({ status: 'absent', sectionId: 2 });
   });
 

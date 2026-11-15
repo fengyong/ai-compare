@@ -99,7 +99,12 @@ describe('buildInlineMarks', () => {
 
 // ---------------- P5：DMP 语义清理开关（引擎 SemanticCleanup::Dmp 语义对齐） ----------------
 
-import { DMP_SEMANTIC_EDIT_COST, dmpCleanupPairs, mergeDmpMarks, type InlinePair } from './inlineDiffCore';
+import {
+  DMP_SEMANTIC_EDIT_COST,
+  dmpCleanupPairs,
+  mergeDmpMarks,
+  type InlinePair,
+} from './inlineDiffCore';
 
 describe('inlineDiffCore：DMP 语义清理（P5 开关）', () => {
   it('dmpCleanup 开关：被短等值段分隔的相邻编辑块合并', () => {
@@ -116,15 +121,24 @@ describe('inlineDiffCore：DMP 语义清理（P5 开关）', () => {
     const long = 'x'.repeat(DMP_SEMANTIC_EDIT_COST + 1);
     const pairs: InlinePair[] = [
       { left: { start: 0, end: 1 }, right: { start: 0, end: 1 }, equal: false },
-      { left: { start: 1, end: 1 + long.length }, right: { start: 1, end: 1 + long.length }, equal: true },
-      { left: { start: 1 + long.length, end: 2 + long.length }, right: { start: 1 + long.length, end: 2 + long.length }, equal: false },
+      {
+        left: { start: 1, end: 1 + long.length },
+        right: { start: 1, end: 1 + long.length },
+        equal: true,
+      },
+      {
+        left: { start: 1 + long.length, end: 2 + long.length },
+        right: { start: 1 + long.length, end: 2 + long.length },
+        equal: false,
+      },
     ];
     const cleaned = dmpCleanupPairs(pairs);
     expect(cleaned.filter((p) => !p.equal)).toHaveLength(2);
   });
 
   it('等值间隔 ≤ 阈值 → 合并并吸收间隔', () => {
-    const pairs: InlinePair[] = [ // 等值间隔 2 ≤ 4
+    const pairs: InlinePair[] = [
+      // 等值间隔 2 ≤ 4
       { left: { start: 0, end: 1 }, right: { start: 0, end: 1 }, equal: false },
       { left: { start: 1, end: 3 }, right: { start: 1, end: 3 }, equal: true },
       { left: { start: 3, end: 4 }, right: { start: 3, end: 4 }, equal: false },

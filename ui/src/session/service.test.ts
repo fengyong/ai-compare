@@ -6,10 +6,13 @@ import { LockedSessionError, SessionService } from './service';
 
 const S_PATH = SETTINGS_FILES.sessions;
 
-async function makeService(files?: Map<string, string>): Promise<{ svc: SessionService; store: MemoryFileStore }> {
+async function makeService(
+  files?: Map<string, string>,
+): Promise<{ svc: SessionService; store: MemoryFileStore }> {
   const store = new MemoryFileStore();
   if (files) {
-    for (const [k, v] of files) (store as unknown as { files: Map<string, string> }).files.set(k, v);
+    for (const [k, v] of files)
+      (store as unknown as { files: Map<string, string> }).files.set(k, v);
   }
   const svc = new SessionService(store);
   await svc.init();
@@ -55,7 +58,10 @@ describe('session/SessionService', () => {
     const { svc } = await makeService();
     const node = await svc.saveSession(folderCompareInput());
     await new Promise((r) => setTimeout(r, 5));
-    const updated = await svc.saveSession({ ...folderCompareInput('改名'), specs: { left: '/x', right: '/y' } }, node.id);
+    const updated = await svc.saveSession(
+      { ...folderCompareInput('改名'), specs: { left: '/x', right: '/y' } },
+      node.id,
+    );
     expect(updated.name).toBe('改名');
     expect(updated.specs.left).toBe('/x');
     expect(updated.updatedAt > node.updatedAt).toBe(true);
@@ -99,11 +105,13 @@ describe('session/SessionService', () => {
     expect(svc.getSession(node.id)?.locked).toBe(true);
 
     await expect(svc.renameSession(node.id, 'x')).rejects.toThrow(LockedSessionError);
-    await expect(svc.saveSession(folderCompareInput('x'), node.id)).rejects.toThrow(LockedSessionError);
+    await expect(svc.saveSession(folderCompareInput('x'), node.id)).rejects.toThrow(
+      LockedSessionError,
+    );
     await svc.saveSessionState(node.id, { displayFilter: ['diff'] });
     expect(svc.getSession(node.id)?.state.displayFilter).toBeUndefined(); // 状态跳过
     await expect(
-      svc.writeOverride('session', node.kind, node.id, { compare: { mtimeToleranceSec: 1 } })
+      svc.writeOverride('session', node.kind, node.id, { compare: { mtimeToleranceSec: 1 } }),
     ).rejects.toThrow(LockedSessionError);
     await svc.setLocked(node.id, false);
     await svc.saveSessionState(node.id, { displayFilter: ['diff'] });
@@ -127,9 +135,13 @@ describe('session/SessionService', () => {
     const { svc } = await makeService();
     const node = await svc.saveSession(folderCompareInput());
 
-    await svc.writeOverride('global', node.kind, null, { compare: { mtimeToleranceSec: 2, contentCompare: 'auto' } });
+    await svc.writeOverride('global', node.kind, null, {
+      compare: { mtimeToleranceSec: 2, contentCompare: 'auto' },
+    });
     await svc.writeOverride('kind', node.kind, null, { compare: { mtimeToleranceSec: 5 } });
-    await svc.writeOverride('session', node.kind, node.id, { compare: { contentCompare: 'always' } });
+    await svc.writeOverride('session', node.kind, node.id, {
+      compare: { contentCompare: 'always' },
+    });
 
     const eff = svc.resolveSessionEffective(node.kind, svc.getSession(node.id)?.overrides);
     expect(eff.values.compare).toEqual({ mtimeToleranceSec: 5, contentCompare: 'always' });
@@ -150,10 +162,10 @@ describe('session/SessionService', () => {
     const { svc } = await makeService();
     const node = await svc.saveSession(folderCompareInput());
     await expect(
-      svc.writeOverride('parent-pair', node.kind, node.id, { compare: { mtimeToleranceSec: 1 } })
+      svc.writeOverride('parent-pair', node.kind, node.id, { compare: { mtimeToleranceSec: 1 } }),
     ).rejects.toThrow(/父会话/);
     await expect(
-      svc.writeOverride('parent-kind', node.kind, null, { compare: { mtimeToleranceSec: 1 } })
+      svc.writeOverride('parent-kind', node.kind, null, { compare: { mtimeToleranceSec: 1 } }),
     ).rejects.toThrow(/父会话/);
   });
 
@@ -218,7 +230,9 @@ describe('session/SessionService', () => {
     const fid = await svc.createFolder('工作');
     await svc.saveSession({ ...folderCompareInput(), folderId: fid });
     const raw = JSON.parse(serializeDoc(svc.debugSessionsDoc()));
-    expect(Object.keys(raw)).toEqual(expect.arrayContaining(['version', 'folders', 'rootFolderIds', 'sessions']));
+    expect(Object.keys(raw)).toEqual(
+      expect.arrayContaining(['version', 'folders', 'rootFolderIds', 'sessions']),
+    );
     expect(raw.version).toBe(1);
     expect(raw.sessions[0].overrides).toEqual({});
     expect(typeof raw.sessions[0].specs.left).toBe('string');

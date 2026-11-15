@@ -22,7 +22,13 @@ export const SCOPE_LABELS: Record<SettingsScope, string> = {
 /** 拉平后的读取层顺序：低 → 高优先级 */
 export type EffectiveLayer = 'global' | 'kind' | 'parentKind' | 'parentPair' | 'session';
 
-export const LAYER_ORDER: readonly EffectiveLayer[] = ['global', 'kind', 'parentKind', 'parentPair', 'session'];
+export const LAYER_ORDER: readonly EffectiveLayer[] = [
+  'global',
+  'kind',
+  'parentKind',
+  'parentPair',
+  'session',
+];
 
 export type OriginMap = { [group: string]: EffectiveLayer };
 
@@ -47,7 +53,7 @@ export function mergeTrees(base: SettingsTree, override: SettingsTree): Settings
  * origin 取每个组"最后一次出现"的层（即最高优先级定义层）。
  */
 export function resolveEffective(
-  layers: Partial<Record<EffectiveLayer, SettingsTree | null | undefined>>
+  layers: Partial<Record<EffectiveLayer, SettingsTree | null | undefined>>,
 ): EffectiveSettings {
   const values: SettingsTree = {};
   const origin: OriginMap = {};
@@ -67,7 +73,10 @@ export function resolveEffective(
  * 把一组修改写回目标层的树（纯函数：返回新树，不改动入参）。
  * 写入按 组 → 键 粒度合并；键值为 undefined 表示"删除该项覆盖"（回落继承）。
  */
-export function applyPatchToLayer(layer: SettingsTree | null | undefined, patch: SettingsTree): SettingsTree {
+export function applyPatchToLayer(
+  layer: SettingsTree | null | undefined,
+  patch: SettingsTree,
+): SettingsTree {
   const base: SettingsTree = layer ? { ...layer } : {};
   for (const [g, group] of Object.entries(patch)) {
     const merged = { ...base[g], ...group };
@@ -80,7 +89,10 @@ export function applyPatchToLayer(layer: SettingsTree | null | undefined, patch:
 }
 
 /** 单层读取：取某组设置（无则空对象） */
-export function readGroup(tree: SettingsTree | null | undefined, group: string): { [key: string]: unknown } {
+export function readGroup(
+  tree: SettingsTree | null | undefined,
+  group: string,
+): { [key: string]: unknown } {
   return (tree && tree[group]) || {};
 }
 

@@ -61,7 +61,11 @@ export function splitBaseExt(name: string): { base: string; ext: string } {
  * - `#`  = 计数器（首个 `#` 串，宽度 = 串长，零填充；后续 `#` 串按字面量）；
  * - 其余字符按字面量（扩展名需在掩码中显式书写，如 `*.bak`）。
  */
-export function applyDosMask(originalName: string, options: DosRenameOptions, counter: number): string {
+export function applyDosMask(
+  originalName: string,
+  options: DosRenameOptions,
+  counter: number,
+): string {
   const { base } = splitBaseExt(originalName);
   const mask = options.mask;
   let out = '';
@@ -95,7 +99,9 @@ export function applyDosMask(originalName: string, options: DosRenameOptions, co
 }
 
 /** 正则模式编译（视图输入时即时校验；错误信息面向预览行） */
-export function compileRegex(options: RegexRenameOptions): { re: RegExp; groupCount: number } | { error: string } {
+export function compileRegex(
+  options: RegexRenameOptions,
+): { re: RegExp; groupCount: number } | { error: string } {
   if (!options.pattern) return { error: '旧掩码为空' };
   let re: RegExp;
   try {
@@ -113,13 +119,18 @@ export function compileRegex(options: RegexRenameOptions): { re: RegExp; groupCo
   // 模板组引用越界校验（$1..$99 / $&）
   for (const m of options.template.matchAll(/\$(\d{1,2})/g)) {
     const n = Number(m[1]);
-    if (n > groupCount) return { error: `模板引用了不存在的组 $${n}（掩码仅有 ${groupCount} 个捕获组）` };
+    if (n > groupCount)
+      return { error: `模板引用了不存在的组 $${n}（掩码仅有 ${groupCount} 个捕获组）` };
   }
   return { re, groupCount };
 }
 
 /** 正则模板应用（单行）：未命中返回 null（保留原名，非错误）；编译错误抛回调用方 */
-export function applyRegexTemplate(originalName: string, options: RegexRenameOptions, compiled: { re: RegExp }): string | null {
+export function applyRegexTemplate(
+  originalName: string,
+  options: RegexRenameOptions,
+  compiled: { re: RegExp },
+): string | null {
   if (!compiled.re.test(originalName)) return null;
   return originalName.replace(compiled.re, options.template);
 }
@@ -209,8 +220,18 @@ export function planRenames(input: RenamePlanInput): RenamePlan {
       }
     }
 
-    const state: RenameItemState = reason !== null ? 'invalid' : newName === row.name ? 'unchanged' : 'rename';
-    items.push({ row, oldName: row.name, newName, parent, state, reason, conflict: null, conflictReason: null });
+    const state: RenameItemState =
+      reason !== null ? 'invalid' : newName === row.name ? 'unchanged' : 'rename';
+    items.push({
+      row,
+      oldName: row.name,
+      newName,
+      parent,
+      state,
+      reason,
+      conflict: null,
+      conflictReason: null,
+    });
   }
 
   // ---- 冲突判定（仅 state=rename 参与） ----
@@ -268,7 +289,7 @@ function depthOf(id: string): number {
 
 /** 重命名清单 -> dir/execute rename ops（side 取存在侧：左优先，与单项重命名同口径） */
 export function renamesToOps(
-  renames: readonly { row: DirRow; newName: string }[]
+  renames: readonly { row: DirRow; newName: string }[],
 ): { kind: 'rename'; path: string; side: 'left' | 'right'; newName: string }[] {
   const ops: { kind: 'rename'; path: string; side: 'left' | 'right'; newName: string }[] = [];
   for (const it of renames) {

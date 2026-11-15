@@ -26,14 +26,74 @@ describe('shell/store 引擎会话生命周期回归', () => {
   });
 
   it('tabSessionId：覆盖全部持有引擎会话的视图种类', () => {
-    expect(tabSessionId({ id: 't1', kind: 'text', title: 'x', text: { sessionId: 's-text', left: { path: 'l', name: 'l' }, right: { path: 'r', name: 'r' } } })).toBe('s-text');
-    expect(tabSessionId({ id: 't2', kind: 'folder', title: 'x', folder: { left: 'l', right: 'r', sessionId: 's-dir' } })).toBe('s-dir');
-    expect(tabSessionId({ id: 't3', kind: 'sync', title: 'x', sync: { left: 'l', right: 'r', sessionId: 's-sync' } })).toBe('s-sync');
-    expect(tabSessionId({ id: 't4', kind: 'picture', title: 'x', picture: { left: 'l', right: 'r', sessionId: 's-pic' } })).toBe('s-pic');
-    expect(tabSessionId({ id: 't5', kind: 'table', title: 'x', table: { left: 'l', right: 'r', sessionId: 's-tab' } })).toBe('s-tab');
-    expect(tabSessionId({ id: 't6', kind: 'hex', title: 'x', hex: { left: 'l', right: 'r', sessionId: 's-hex' } })).toBe('s-hex');
-    expect(tabSessionId({ id: 't7', kind: 'merge', title: 'x', merge: { base: 'b', left: 'l', right: 'r', sessionId: 's-mrg' } })).toBe('s-mrg');
-    expect(tabSessionId({ id: 't8', kind: 'merge3', title: 'x', merge3: { base: 'b', left: 'l', right: 'r', sessionId: 's-m3' } })).toBe('s-m3');
+    expect(
+      tabSessionId({
+        id: 't1',
+        kind: 'text',
+        title: 'x',
+        text: {
+          sessionId: 's-text',
+          left: { path: 'l', name: 'l' },
+          right: { path: 'r', name: 'r' },
+        },
+      }),
+    ).toBe('s-text');
+    expect(
+      tabSessionId({
+        id: 't2',
+        kind: 'folder',
+        title: 'x',
+        folder: { left: 'l', right: 'r', sessionId: 's-dir' },
+      }),
+    ).toBe('s-dir');
+    expect(
+      tabSessionId({
+        id: 't3',
+        kind: 'sync',
+        title: 'x',
+        sync: { left: 'l', right: 'r', sessionId: 's-sync' },
+      }),
+    ).toBe('s-sync');
+    expect(
+      tabSessionId({
+        id: 't4',
+        kind: 'picture',
+        title: 'x',
+        picture: { left: 'l', right: 'r', sessionId: 's-pic' },
+      }),
+    ).toBe('s-pic');
+    expect(
+      tabSessionId({
+        id: 't5',
+        kind: 'table',
+        title: 'x',
+        table: { left: 'l', right: 'r', sessionId: 's-tab' },
+      }),
+    ).toBe('s-tab');
+    expect(
+      tabSessionId({
+        id: 't6',
+        kind: 'hex',
+        title: 'x',
+        hex: { left: 'l', right: 'r', sessionId: 's-hex' },
+      }),
+    ).toBe('s-hex');
+    expect(
+      tabSessionId({
+        id: 't7',
+        kind: 'merge',
+        title: 'x',
+        merge: { base: 'b', left: 'l', right: 'r', sessionId: 's-mrg' },
+      }),
+    ).toBe('s-mrg');
+    expect(
+      tabSessionId({
+        id: 't8',
+        kind: 'merge3',
+        title: 'x',
+        merge3: { base: 'b', left: 'l', right: 'r', sessionId: 's-m3' },
+      }),
+    ).toBe('s-m3');
     expect(tabSessionId({ id: 't9', kind: 'home', title: 'x' })).toBeUndefined();
   });
 
@@ -47,11 +107,36 @@ describe('shell/store 引擎会话生命周期回归', () => {
     });
 
     const cases = [
-      { id: 'p1', kind: 'picture' as const, title: 'x', picture: { left: 'l', right: 'r', sessionId: 's-pic' } },
-      { id: 't1', kind: 'table' as const, title: 'x', table: { left: 'l', right: 'r', sessionId: 's-tab' } },
-      { id: 'h1', kind: 'hex' as const, title: 'x', hex: { left: 'l', right: 'r', sessionId: 's-hex' } },
-      { id: 's1', kind: 'sync' as const, title: 'x', sync: { left: 'l', right: 'r', sessionId: 's-sync' } },
-      { id: 'm1', kind: 'merge' as const, title: 'x', merge: { base: 'b', left: 'l', right: 'r', sessionId: 's-mrg' } },
+      {
+        id: 'p1',
+        kind: 'picture' as const,
+        title: 'x',
+        picture: { left: 'l', right: 'r', sessionId: 's-pic' },
+      },
+      {
+        id: 't1',
+        kind: 'table' as const,
+        title: 'x',
+        table: { left: 'l', right: 'r', sessionId: 's-tab' },
+      },
+      {
+        id: 'h1',
+        kind: 'hex' as const,
+        title: 'x',
+        hex: { left: 'l', right: 'r', sessionId: 's-hex' },
+      },
+      {
+        id: 's1',
+        kind: 'sync' as const,
+        title: 'x',
+        sync: { left: 'l', right: 'r', sessionId: 's-sync' },
+      },
+      {
+        id: 'm1',
+        kind: 'merge' as const,
+        title: 'x',
+        merge: { base: 'b', left: 'l', right: 'r', sessionId: 's-mrg' },
+      },
     ];
     for (const tab of cases) {
       await cleanupTabEngines(tab as never);
@@ -62,11 +147,36 @@ describe('shell/store 引擎会话生命周期回归', () => {
   it('rebindSession：引擎重连后全部视图种类的句柄都要重绑', () => {
     resetShellForTest();
     const tabs = [
-      { id: 'p1', kind: 'picture' as const, title: 'x', picture: { left: 'l', right: 'r', sessionId: 'old-pic' } },
-      { id: 't1', kind: 'table' as const, title: 'x', table: { left: 'l', right: 'r', sessionId: 'old-tab' } },
-      { id: 'h1', kind: 'hex' as const, title: 'x', hex: { left: 'l', right: 'r', sessionId: 'old-hex' } },
-      { id: 's1', kind: 'sync' as const, title: 'x', sync: { left: 'l', right: 'r', sessionId: 'old-sync' } },
-      { id: 'm1', kind: 'merge3' as const, title: 'x', merge3: { base: 'b', left: 'l', right: 'r', sessionId: 'old-m3' } },
+      {
+        id: 'p1',
+        kind: 'picture' as const,
+        title: 'x',
+        picture: { left: 'l', right: 'r', sessionId: 'old-pic' },
+      },
+      {
+        id: 't1',
+        kind: 'table' as const,
+        title: 'x',
+        table: { left: 'l', right: 'r', sessionId: 'old-tab' },
+      },
+      {
+        id: 'h1',
+        kind: 'hex' as const,
+        title: 'x',
+        hex: { left: 'l', right: 'r', sessionId: 'old-hex' },
+      },
+      {
+        id: 's1',
+        kind: 'sync' as const,
+        title: 'x',
+        sync: { left: 'l', right: 'r', sessionId: 'old-sync' },
+      },
+      {
+        id: 'm1',
+        kind: 'merge3' as const,
+        title: 'x',
+        merge3: { base: 'b', left: 'l', right: 'r', sessionId: 'old-m3' },
+      },
     ];
     useShell.setState((st) => ({
       windows: st.windows.map((w) => ({ ...w, tabs: [...w.tabs, ...(tabs as never[])] })),
@@ -94,7 +204,12 @@ describe('shell/store 引擎会话生命周期回归', () => {
       kind: 'folder' as const,
       title: 'x',
       folder: { left: '/l', right: '/r', sessionId: 'dir-dirty' },
-      sessionLink: { sessionId: 's-x', name: '命名', kind: 'folder-compare' as const, locked: false },
+      sessionLink: {
+        sessionId: 's-x',
+        name: '命名',
+        kind: 'folder-compare' as const,
+        locked: false,
+      },
       dirty: true,
     };
     useShell.setState((st) => ({
@@ -118,7 +233,12 @@ describe('shell/store 引擎会话生命周期回归', () => {
       kind: 'folder' as const,
       title: 'x',
       folder: { left: '/l', right: '/r', sessionId: 'dir-dirty' },
-      sessionLink: { sessionId: 's-x', name: '命名', kind: 'folder-compare' as const, locked: false },
+      sessionLink: {
+        sessionId: 's-x',
+        name: '命名',
+        kind: 'folder-compare' as const,
+        locked: false,
+      },
       dirty: true,
     };
     useShell.setState((st) => ({
@@ -163,7 +283,7 @@ describe('协议客户端：通知订阅者异常隔离', () => {
               engine: { name: 'test', version: '0' },
               capabilities: {},
             },
-          })
+          }),
         );
       }
     }

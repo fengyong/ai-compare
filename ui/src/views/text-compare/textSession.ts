@@ -43,7 +43,7 @@ async function loadAllSections(sessionId: string): Promise<Section[]> {
 export async function loadTextSession(
   opened: TextOpenResult,
   leftPath: string,
-  rightPath: string
+  rightPath: string,
 ): Promise<LoadedTextSession> {
   const sessionId = opened.sessionId;
   const [sections, leftLines, rightLines] = await Promise.all([
@@ -71,7 +71,7 @@ export async function loadTextSession(
 export async function loadTextSessionReuse(
   sessionId: string,
   leftPath: string,
-  rightPath: string
+  rightPath: string,
 ): Promise<LoadedTextSession> {
   const [sections, leftLines, rightLines] = await Promise.all([
     loadAllSections(sessionId),

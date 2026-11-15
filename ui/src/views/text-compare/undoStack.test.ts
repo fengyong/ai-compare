@@ -14,7 +14,13 @@ import {
 } from './undoStack';
 import { applySidePatches } from './editPatch';
 
-const entry = (side: 'left' | 'right', start: number, removed: string[], inserted: string[], at?: number): UndoEntry => ({
+const entry = (
+  side: 'left' | 'right',
+  start: number,
+  removed: string[],
+  inserted: string[],
+  at?: number,
+): UndoEntry => ({
   side,
   patches: [{ start, removed, inserted }],
   lastAt: at,
@@ -54,11 +60,14 @@ function drive(initial: string[], entries: UndoEntry[]) {
 
 describe('undoStack：会话级撤销/重做（UNDO-001）', () => {
   it('LIFO 撤销：后编辑先撤销，行内容逐级还原', () => {
-    const d = drive(['a', 'b', 'c'], [
-      entry('left', 0, ['a'], ['A']),
-      entry('left', 3, [], ['X', 'Y']), // 尾部插入两行
-      entry('left', 1, ['b'], ['B!']),
-    ]);
+    const d = drive(
+      ['a', 'b', 'c'],
+      [
+        entry('left', 0, ['a'], ['A']),
+        entry('left', 3, [], ['X', 'Y']), // 尾部插入两行
+        entry('left', 1, ['b'], ['B!']),
+      ],
+    );
     expect(d.lines).toEqual(['A', 'B!', 'c', 'X', 'Y']);
     expect(d.undo()).toBe(true);
     expect(d.lines).toEqual(['A', 'b', 'c', 'X', 'Y']);

@@ -17,9 +17,12 @@ export function TabBar() {
   const togglePin = useShell((st) => st.togglePin);
   const detachTab = useShell((st) => st.detachTab);
   const reorderTab = useShell((st) => st.reorderTab);
-  const [menu, setMenu] = useState<{ x: number; y: number; items: ContextMenuItem[]; tabId: string } | null>(
-    null
-  );
+  const [menu, setMenu] = useState<{
+    x: number;
+    y: number;
+    items: ContextMenuItem[];
+    tabId: string;
+  } | null>(null);
   const [dragTabId, setDragTabId] = useState<string | null>(null);
   const [dropIndex, setDropIndex] = useState<number | null>(null);
 
@@ -31,7 +34,11 @@ export function TabBar() {
       y,
       tabId: tab.id,
       items: [
-        { label: S.app.closeTab, onSelect: () => void closeTab(tab.id), disabled: tab.kind === 'home' },
+        {
+          label: S.app.closeTab,
+          onSelect: () => void closeTab(tab.id),
+          disabled: tab.kind === 'home',
+        },
         {
           label: S.app.closeOthers,
           onSelect: () => void closeOthers(tab.id),
@@ -43,7 +50,11 @@ export function TabBar() {
           disabled: tab.kind === 'home',
         },
         { separator: true, label: '', onSelect: () => {} },
-        { label: S.app.detachTab, onSelect: () => detachTab(tab.id), disabled: tab.kind === 'home' },
+        {
+          label: S.app.detachTab,
+          onSelect: () => detachTab(tab.id),
+          disabled: tab.kind === 'home',
+        },
       ],
     });
   };
@@ -90,9 +101,21 @@ export function TabBar() {
           }}
           onDragEnd={(e) => {
             // 拖出标签栏（dropTarget 为空且不在标签栏内）→ 拖出成新窗口
-            if (dragTabId === tab.id && e.dataTransfer.dropEffect !== 'move' && dropIndex === null) {
-              const rect = (e.currentTarget as HTMLElement).closest('.aic-tabbar')?.getBoundingClientRect();
-              if (!rect || e.clientX < rect.left || e.clientX > rect.right || e.clientY < rect.top || e.clientY > rect.bottom) {
+            if (
+              dragTabId === tab.id &&
+              e.dataTransfer.dropEffect !== 'move' &&
+              dropIndex === null
+            ) {
+              const rect = (e.currentTarget as HTMLElement)
+                .closest('.aic-tabbar')
+                ?.getBoundingClientRect();
+              if (
+                !rect ||
+                e.clientX < rect.left ||
+                e.clientX > rect.right ||
+                e.clientY < rect.top ||
+                e.clientY > rect.bottom
+              ) {
                 detachTab(tab.id);
               }
             }
@@ -109,7 +132,9 @@ export function TabBar() {
         >
           {tab.pinned && <span className="pin">📌</span>}
           <span>{tab.title}</span>
-          {tab.sessionLink && <span className="link-dot" title={`命名会话「${tab.sessionLink.name}」`} />}
+          {tab.sessionLink && (
+            <span className="link-dot" title={`命名会话「${tab.sessionLink.name}」`} />
+          )}
           {(tab.dirty || tab.contentDirty?.left || tab.contentDirty?.right) && (
             <span
               className="dirty-dot"

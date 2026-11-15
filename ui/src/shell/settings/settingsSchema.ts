@@ -201,13 +201,50 @@ export const COMPARE_RULES_PAGE: SettingsPage = {
   scope: 'session-scoped',
   custom: 'compareRules',
   fields: [
-    { key: 'leadingWsUnimportant', label: '行首空白不重要', type: 'boolean', help: 'FR-TXT-010 空白三类' },
-    { key: 'embeddedWsUnimportant', label: '嵌入空白不重要', type: 'boolean', help: '连续空白折叠为一个空格' },
-    { key: 'trailingWsUnimportant', label: '行尾空白不重要', type: 'boolean', help: 'FR-TXT-010 空白三类' },
-    { key: 'caseUnimportant', label: '字符大小写不重要', type: 'boolean', help: '"其他所有内容"区分大小写开关的反面' },
-    { key: 'eolStyleUnimportant', label: '行尾风格不重要', type: 'boolean', default: true, help: 'CRLF/LF/CR 差异不重要（引擎缺省 true）' },
-    { key: 'encodingUnimportant', label: '纯编码差异不重要', type: 'boolean', default: true, help: '引擎缺省 true' },
-    { key: 'formatBindings', label: '格式绑定（不重要元素）', type: 'text', help: 'formatId -> 不重要语法元素名集（CompareRulesPage 结构化编辑）' },
+    {
+      key: 'leadingWsUnimportant',
+      label: '行首空白不重要',
+      type: 'boolean',
+      help: 'FR-TXT-010 空白三类',
+    },
+    {
+      key: 'embeddedWsUnimportant',
+      label: '嵌入空白不重要',
+      type: 'boolean',
+      help: '连续空白折叠为一个空格',
+    },
+    {
+      key: 'trailingWsUnimportant',
+      label: '行尾空白不重要',
+      type: 'boolean',
+      help: 'FR-TXT-010 空白三类',
+    },
+    {
+      key: 'caseUnimportant',
+      label: '字符大小写不重要',
+      type: 'boolean',
+      help: '"其他所有内容"区分大小写开关的反面',
+    },
+    {
+      key: 'eolStyleUnimportant',
+      label: '行尾风格不重要',
+      type: 'boolean',
+      default: true,
+      help: 'CRLF/LF/CR 差异不重要（引擎缺省 true）',
+    },
+    {
+      key: 'encodingUnimportant',
+      label: '纯编码差异不重要',
+      type: 'boolean',
+      default: true,
+      help: '引擎缺省 true',
+    },
+    {
+      key: 'formatBindings',
+      label: '格式绑定（不重要元素）',
+      type: 'text',
+      help: 'formatId -> 不重要语法元素名集（CompareRulesPage 结构化编辑）',
+    },
   ],
 };
 
@@ -248,7 +285,7 @@ export function fieldDefault(field: FieldDef): unknown {
 export function readFieldValue(
   layer: { [group: string]: { [key: string]: unknown } } | null | undefined,
   group: string,
-  field: FieldDef
+  field: FieldDef,
 ): unknown {
   const v = layer?.[group]?.[field.key];
   return v === undefined ? fieldDefault(field) : v;

@@ -104,7 +104,7 @@ class FoldWidget extends WidgetType {
   constructor(
     readonly fromRow: number,
     readonly toRow: number,
-    readonly hiddenLines: number
+    readonly hiddenLines: number,
   ) {
     super();
   }
@@ -135,14 +135,21 @@ export function buildPaneDecorations(data: PaneViewData, docText: string): Decor
     const cls = lineClassFor(row.status, imp);
     const line = doc.line(i + 1);
     const classes = [cls];
-    if (data.currentSectionId !== null && row.sectionId === data.currentSectionId && row.status !== 'equal') {
+    if (
+      data.currentSectionId !== null &&
+      row.sectionId === data.currentSectionId &&
+      row.status !== 'equal'
+    ) {
       classes.push('cm-aic-line-current');
     }
     // FR-TXT-023：书签编号标记（0-9，行侧显示编号）
     let slot: number | null = null;
     const bm = data.bookmarks ?? {};
     for (let s = 0; s <= 9; s++) {
-      if (bm[s] === i) { slot = s; break; }
+      if (bm[s] === i) {
+        slot = s;
+        break;
+      }
     }
     if (slot !== null) classes.push('cm-aic-line-bookmark');
     const joined = classes.filter(Boolean).join(' ');
@@ -151,7 +158,7 @@ export function buildPaneDecorations(data: PaneViewData, docText: string): Decor
         Decoration.line({
           class: joined,
           ...(slot !== null ? { attributes: { 'data-bookmark': String(slot) } } : {}),
-        }).range(line.from)
+        }).range(line.from),
       );
     }
   }
@@ -175,7 +182,10 @@ export function buildPaneDecorations(data: PaneViewData, docText: string): Decor
     const to = Math.min(line.from + fm.to, line.to);
     if (to > from) {
       ranges.push(
-        Decoration.mark({ class: fm.current ? 'cm-aic-find-current' : 'cm-aic-find-match' }).range(from, to)
+        Decoration.mark({ class: fm.current ? 'cm-aic-find-current' : 'cm-aic-find-match' }).range(
+          from,
+          to,
+        ),
       );
     }
   }
@@ -191,7 +201,7 @@ export function buildPaneDecorations(data: PaneViewData, docText: string): Decor
       ranges.push(
         Decoration.replace({
           widget: new FoldWidget(f.fromRow, f.toRow, f.toRow - f.fromRow + 1),
-        }).range(from, to)
+        }).range(from, to),
       );
     }
   }
@@ -208,7 +218,7 @@ export interface PaneHooks {
 /** 构建单侧窗格的全部 CM6 扩展（静态部分；装饰经 compartment 单独重配） */
 export function buildStaticExtensions(
   data: PaneViewData,
-  hooks: PaneHooks
+  hooks: PaneHooks,
 ): { statics: Extension[]; dataRef: { current: PaneViewData } } {
   // gutter 的 lineMarker 闭包读 dataRef（重配后 rows 更新，gutter 扩展本身保持稳定）
   const dataRef: { current: PaneViewData } = { current: data };
@@ -291,7 +301,7 @@ export const editorTheme = EditorView.theme(
       borderColor: 'var(--aic-accent)',
     },
   },
-  { dark: true }
+  { dark: true },
 );
 
 /**
@@ -301,7 +311,10 @@ export const editorTheme = EditorView.theme(
  */
 export const aicHighlightStyle = HighlightStyle.define([
   { tag: t.comment, color: 'var(--aic-text-dim)', fontStyle: 'italic' },
-  { tag: [t.keyword, t.modifier, t.operatorKeyword, t.controlKeyword, t.moduleKeyword], color: '#c792ea' },
+  {
+    tag: [t.keyword, t.modifier, t.operatorKeyword, t.controlKeyword, t.moduleKeyword],
+    color: '#c792ea',
+  },
   { tag: [t.string, t.special(t.string)], color: '#98c379' },
   { tag: [t.number, t.bool, t.null, t.atom], color: '#d19a66' },
   { tag: [t.function(t.variableName), t.function(t.propertyName)], color: '#61afef' },

@@ -60,7 +60,7 @@ export const TOOLBAR_FAVORITES: readonly string[] = [
 export function toolbarCommands(
   defs: CommandDef[],
   ctx: CommandContext,
-  favorites: readonly string[] = TOOLBAR_FAVORITES
+  favorites: readonly string[] = TOOLBAR_FAVORITES,
 ): CommandDef[] {
   const byId = new Map(defs.map((d) => [d.id, d]));
   return favorites
@@ -90,7 +90,7 @@ export function toolbarLabel(def: CommandDef, layout: ToolbarLayout): string {
 export async function runCommandSafely(
   def: CommandDef,
   ctx: CommandContext,
-  notice: (msg: string) => void
+  notice: (msg: string) => void,
 ): Promise<void> {
   try {
     await def.run(ctx);

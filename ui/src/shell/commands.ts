@@ -2,7 +2,11 @@ import { DEFAULT_BINDINGS, findConflicts, parseBinding, type BindingConflict } f
 import type { ViewCtx } from './viewRegistry';
 import { useShell } from './store';
 import { S } from '../strings';
-import { captureClipboard, compareLatestClipboard, comparePathWithClipboard } from './clipboardActions';
+import {
+  captureClipboard,
+  compareLatestClipboard,
+  comparePathWithClipboard,
+} from './clipboardActions';
 import { activeTextView } from '../views/text-compare/textViewBus';
 import { activeFolderView } from '../views/folder-compare/folderViewBus';
 
@@ -31,7 +35,8 @@ export interface CommandDef {
 
 /** 命令运行上下文 = ViewCtx + 活动标签信息（壳在每次触发时构建） */
 export interface CommandContext extends ViewCtx {
-  activeTabKind: 'home' | 'folder' | 'text' | 'sync' | 'merge' | 'merge3' | 'picture' | 'table' | 'hex' | null;
+  activeTabKind:
+    'home' | 'folder' | 'text' | 'sync' | 'merge' | 'merge3' | 'picture' | 'table' | 'hex' | null;
   activeTabId: string | null;
 }
 
@@ -52,7 +57,7 @@ export class CommandRegistry {
 
   list(): CommandDef[] {
     return [...this.commands.values()].sort(
-      (a, b) => a.category.localeCompare(b.category) || a.title.localeCompare(b.title)
+      (a, b) => a.category.localeCompare(b.category) || a.title.localeCompare(b.title),
     );
   }
 

@@ -65,7 +65,10 @@ describe('dirSelection', () => {
     expect(all.selected.size).toBe(visible.length);
     const inv = invertSelection(all, visible);
     expect(inv.selected.size).toBe(0);
-    const inv2 = invertSelection(onRowClick(emptySelection, 'b.txt', { ctrl: false, shift: false }, visible), visible);
+    const inv2 = invertSelection(
+      onRowClick(emptySelection, 'b.txt', { ctrl: false, shift: false }, visible),
+      visible,
+    );
     expect(inv2.selected.size).toBe(visible.length - 1);
     expect(inv2.selected.has('b.txt')).toBe(false);
     expect(clearSelection().selected.size).toBe(0);
@@ -115,9 +118,30 @@ describe('dirSelection marks', () => {
 
 /** P6b：编辑菜单命令选择器（FR-DIR-050/§3.1.6） */
 describe('dirSelection edit commands', () => {
-  function mkRow(id: string, status: DirRow['status'], lMtime: number, rMtime: number, kind: DirRow['kind'] = 'file'): DirRow {
-    const side = (mtime: number | null) => (mtime === null ? null : { size: 1, mtimeMs: mtime, attribute: null, unixMode: 0, uid: 0, gid: 0 });
-    return { id, name: id.split('/').pop() ?? id, kind, left: side(lMtime), right: side(rMtime), status, hasChildren: kind === 'dir', hidden: false, suppressed: false, leftPath: lMtime === null ? undefined : id, rightPath: rMtime === null ? undefined : id };
+  function mkRow(
+    id: string,
+    status: DirRow['status'],
+    lMtime: number,
+    rMtime: number,
+    kind: DirRow['kind'] = 'file',
+  ): DirRow {
+    const side = (mtime: number | null) =>
+      mtime === null
+        ? null
+        : { size: 1, mtimeMs: mtime, attribute: null, unixMode: 0, uid: 0, gid: 0 };
+    return {
+      id,
+      name: id.split('/').pop() ?? id,
+      kind,
+      left: side(lMtime),
+      right: side(rMtime),
+      status,
+      hasChildren: kind === 'dir',
+      hidden: false,
+      suppressed: false,
+      leftPath: lMtime === null ? undefined : id,
+      rightPath: rMtime === null ? undefined : id,
+    };
   }
 
   const rows = [
@@ -133,22 +157,40 @@ describe('dirSelection edit commands', () => {
   const visibleIds = rows.filter((r) => r.visible).map((r) => r.id);
 
   it('选择较新的（左/右/两侧）', () => {
-    expect([...runEditSelectCommand('selectNewerLeft', emptySelection, rows, visibleIds).selected]).toEqual(['newerL']);
-    expect([...runEditSelectCommand('selectNewerRight', emptySelection, rows, visibleIds).selected]).toEqual(['newerR', 'olderPair']);
-    expect([...runEditSelectCommand('selectNewerBoth', emptySelection, rows, visibleIds).selected]).toEqual(['newerL', 'newerR', 'olderPair']);
+    expect([
+      ...runEditSelectCommand('selectNewerLeft', emptySelection, rows, visibleIds).selected,
+    ]).toEqual(['newerL']);
+    expect([
+      ...runEditSelectCommand('selectNewerRight', emptySelection, rows, visibleIds).selected,
+    ]).toEqual(['newerR', 'olderPair']);
+    expect([
+      ...runEditSelectCommand('selectNewerBoth', emptySelection, rows, visibleIds).selected,
+    ]).toEqual(['newerL', 'newerR', 'olderPair']);
   });
 
   it('选择较旧的（左/右/两侧；与较新互补）', () => {
     expect(isOlder(rows[0], 'left')).toBe(false);
-    expect([...runEditSelectCommand('selectOlderLeft', emptySelection, rows, visibleIds).selected]).toEqual(['newerR', 'olderPair']);
-    expect([...runEditSelectCommand('selectOlderRight', emptySelection, rows, visibleIds).selected]).toEqual(['newerL']);
-    expect([...runEditSelectCommand('selectOlderBoth', emptySelection, rows, visibleIds).selected]).toEqual(['newerL', 'newerR', 'olderPair']);
+    expect([
+      ...runEditSelectCommand('selectOlderLeft', emptySelection, rows, visibleIds).selected,
+    ]).toEqual(['newerR', 'olderPair']);
+    expect([
+      ...runEditSelectCommand('selectOlderRight', emptySelection, rows, visibleIds).selected,
+    ]).toEqual(['newerL']);
+    expect([
+      ...runEditSelectCommand('selectOlderBoth', emptySelection, rows, visibleIds).selected,
+    ]).toEqual(['newerL', 'newerR', 'olderPair']);
   });
 
   it('选择孤立项目（左/右/两侧）', () => {
-    expect([...runEditSelectCommand('selectOrphanLeft', emptySelection, rows, visibleIds).selected]).toEqual(['orphanL']);
-    expect([...runEditSelectCommand('selectOrphanRight', emptySelection, rows, visibleIds).selected]).toEqual(['orphanR']);
-    expect([...runEditSelectCommand('selectOrphanBoth', emptySelection, rows, visibleIds).selected]).toEqual(['orphanL', 'orphanR']);
+    expect([
+      ...runEditSelectCommand('selectOrphanLeft', emptySelection, rows, visibleIds).selected,
+    ]).toEqual(['orphanL']);
+    expect([
+      ...runEditSelectCommand('selectOrphanRight', emptySelection, rows, visibleIds).selected,
+    ]).toEqual(['orphanR']);
+    expect([
+      ...runEditSelectCommand('selectOrphanBoth', emptySelection, rows, visibleIds).selected,
+    ]).toEqual(['orphanL', 'orphanR']);
   });
 
   it('选择所有文件（目录排除、隐藏行排除）', () => {
@@ -163,7 +205,12 @@ describe('dirSelection edit commands', () => {
     expect(all.selected.size).toBe(visibleIds.length);
     const inv = runEditSelectCommand('invert', all, rows, visibleIds);
     expect(inv.selected.size).toBe(0);
-    const one = runEditSelectCommand('invert', { anchor: null, selected: new Set(['newerL']) }, rows, visibleIds);
+    const one = runEditSelectCommand(
+      'invert',
+      { anchor: null, selected: new Set(['newerL']) },
+      rows,
+      visibleIds,
+    );
     expect(one.selected.size).toBe(visibleIds.length - 1);
     expect(one.selected.has('newerL')).toBe(false);
   });

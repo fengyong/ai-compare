@@ -28,7 +28,9 @@ export function HomeView() {
   const openFolderMergeTab = useShell((st) => st.openFolderMergeTab);
   const openTextTab = useShell((st) => st.openTextTab);
   const setNotice = useShell((st) => st.setNotice);
-  const [showPanel, setShowPanel] = useState(() => sessionService.getUiState().showSessionPanel !== false);
+  const [showPanel, setShowPanel] = useState(
+    () => sessionService.getUiState().showSessionPanel !== false,
+  );
   const [mruPaths, setMruPaths] = useState(() => sessionService.getMruPaths('folder-compare'));
   const [left, setLeft] = useState('');
   const [right, setRight] = useState('');
@@ -242,7 +244,10 @@ export function HomeView() {
           <button className="primary" onClick={start}>
             {S.home.start}
           </button>
-          <button title={S.clip.title} onClick={() => useShell.getState().toggleClipboardPanel(true)}>
+          <button
+            title={S.clip.title}
+            onClick={() => useShell.getState().toggleClipboardPanel(true)}
+          >
             {S.clip.history}
           </button>
         </div>
@@ -261,16 +266,17 @@ export function HomeView() {
                 title={`${l} ⇄ ${r ?? ''}`}
                 onClick={() => fillAndMaybeStart(l, r ?? '', !!r)}
               >
-                📁 <span className="pair">{l} ⇄ {r ?? '—'}</span>
+                📁{' '}
+                <span className="pair">
+                  {l} ⇄ {r ?? '—'}
+                </span>
               </button>
             );
           })}
         </div>
       </div>
 
-      {dragOver && (
-        <div className="aic-drop-overlay">{S.home.dropHint}</div>
-      )}
+      {dragOver && <div className="aic-drop-overlay">{S.home.dropHint}</div>}
     </div>
   );
 }

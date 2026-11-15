@@ -7,11 +7,25 @@
  *   引擎 PlannedOperation 计划 -> DirExecuteOp 转换（镜像/更新预设链路）。
  */
 
-import type { DirExecuteOp, DirRow, PlannedOperation, PlannedOpKind, SyncPreset } from '../../protocol/types';
+import type {
+  DirExecuteOp,
+  DirRow,
+  PlannedOperation,
+  PlannedOpKind,
+  SyncPreset,
+} from '../../protocol/types';
 
 export type { DirExecuteOp };
 
-export type OpCommandKind = 'copyToRight' | 'copyToLeft' | 'moveToRight' | 'moveToLeft' | 'delete' | 'rename' | 'touch' | 'newFolder';
+export type OpCommandKind =
+  | 'copyToRight'
+  | 'copyToLeft'
+  | 'moveToRight'
+  | 'moveToLeft'
+  | 'delete'
+  | 'rename'
+  | 'touch'
+  | 'newFolder';
 
 export type Side = 'left' | 'right';
 
@@ -47,7 +61,7 @@ export function buildOpsForCommand(
   cmd: OpCommandKind,
   rows: readonly DirRow[],
   selectedIds: ReadonlySet<string>,
-  arg?: { newName?: string; folderName?: string; parent?: string; side?: Side }
+  arg?: { newName?: string; folderName?: string; parent?: string; side?: Side },
 ): DirExecuteOp[] {
   const byId = new Map(rows.map((r) => [r.id, r]));
   const ops: DirExecuteOp[] = [];
@@ -139,7 +153,15 @@ export interface OpSummary {
 }
 
 export function summarizeOps(ops: DirExecuteOp[]): OpSummary {
-  const s: OpSummary = { copies: 0, moves: 0, deletes: 0, renames: 0, touches: 0, mkdirs: 0, total: ops.length };
+  const s: OpSummary = {
+    copies: 0,
+    moves: 0,
+    deletes: 0,
+    renames: 0,
+    touches: 0,
+    mkdirs: 0,
+    total: ops.length,
+  };
   for (const op of ops) {
     switch (op.kind) {
       case 'copy':
@@ -208,7 +230,15 @@ export interface PlanSummary {
 }
 
 export function summarizePlan(plan: PlannedOperation[]): PlanSummary {
-  const s: PlanSummary = { copyLeftToRight: 0, copyRightToLeft: 0, deleteLeft: 0, deleteRight: 0, touchLeft: 0, touchRight: 0, total: plan.length };
+  const s: PlanSummary = {
+    copyLeftToRight: 0,
+    copyRightToLeft: 0,
+    deleteLeft: 0,
+    deleteRight: 0,
+    touchLeft: 0,
+    touchRight: 0,
+    total: plan.length,
+  };
   for (const p of plan) {
     s[p.op as PlannedOpKind]++;
   }

@@ -50,7 +50,12 @@ export function statusCharCls(c: string): string {
 }
 
 /** 状态字符统计（测试锚点） */
-export function countStatus(status: string): { same: number; changed: number; inserted: number; deleted: number } {
+export function countStatus(status: string): {
+  same: number;
+  changed: number;
+  inserted: number;
+  deleted: number;
+} {
   let same = 0;
   let changed = 0;
   let inserted = 0;
@@ -183,7 +188,9 @@ function HexPane({
               <tr key={line.addr} data-row={i}>
                 <td className="hx-addr">{line.addr.toString(16).padStart(8, '0')}</td>
                 {cells.map((c, k) => (
-                  <td key={k} className={`hx-byte ${c.cls}`}>{c.text}</td>
+                  <td key={k} className={`hx-byte ${c.cls}`}>
+                    {c.text}
+                  </td>
                 ))}
                 <td className="hx-ascii">{line.ascii}</td>
               </tr>
@@ -191,7 +198,9 @@ function HexPane({
           })}
           {!done && loading && (
             <tr>
-              <td colSpan={18} className="hx-loading">{S.hex.loading}</td>
+              <td colSpan={18} className="hx-loading">
+                {S.hex.loading}
+              </td>
             </tr>
           )}
           {error && (
@@ -203,12 +212,18 @@ function HexPane({
           )}
         </tbody>
       </table>
-      <span className="aic-hex-total" style={{ display: 'none' }}>{total}</span>
+      <span className="aic-hex-total" style={{ display: 'none' }}>
+        {total}
+      </span>
     </div>
   );
 }
 
-export function HexCompareView({ tab }: { tab: Tab & { kind: 'hex'; hex: { left: string; right: string; sessionId: string } } }) {
+export function HexCompareView({
+  tab,
+}: {
+  tab: Tab & { kind: 'hex'; hex: { left: string; right: string; sessionId: string } };
+}) {
   const [summary, setSummary] = useState<Summary | null>(null);
   const [sizes, setSizes] = useState<{ leftSize: number; rightSize: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -253,14 +268,22 @@ export function HexCompareView({ tab }: { tab: Tab & { kind: 'hex'; hex: { left:
   };
 
   if (error) {
-    return <div className="aic-hex-error">{S.hex.loadFail}: {error}</div>;
+    return (
+      <div className="aic-hex-error">
+        {S.hex.loadFail}: {error}
+      </div>
+    );
   }
 
   return (
     <div className="aic-hex">
       <div className="aic-hex-toolbar">
-        <span className="aic-hex-title">{S.hex.title}: {tab.title.replace('十六进制比较：', '')}</span>
-        {!getEngineCapabilities()?.hexCompare && <span className="aic-hex-cap">（{S.hex.capNote}）</span>}
+        <span className="aic-hex-title">
+          {S.hex.title}: {tab.title.replace('十六进制比较：', '')}
+        </span>
+        {!getEngineCapabilities()?.hexCompare && (
+          <span className="aic-hex-cap">（{S.hex.capNote}）</span>
+        )}
         <label>
           {S.hex.jump}
           <input
@@ -277,11 +300,23 @@ export function HexCompareView({ tab }: { tab: Tab & { kind: 'hex'; hex: { left:
       </div>
       {summary && (
         <div className="aic-hex-stats">
-          <span>{S.hex.same}: {summary.sameBytes}</span>
-          <span>{S.hex.changed}: {summary.changedBytes}</span>
-          <span>{S.hex.inserted}: {summary.insertedBytes}</span>
-          <span>{S.hex.deleted}: {summary.deletedBytes}</span>
-          {sizes && <span>{S.hex.sizes}: {sizes.leftSize} ⇄ {sizes.rightSize} B</span>}
+          <span>
+            {S.hex.same}: {summary.sameBytes}
+          </span>
+          <span>
+            {S.hex.changed}: {summary.changedBytes}
+          </span>
+          <span>
+            {S.hex.inserted}: {summary.insertedBytes}
+          </span>
+          <span>
+            {S.hex.deleted}: {summary.deletedBytes}
+          </span>
+          {sizes && (
+            <span>
+              {S.hex.sizes}: {sizes.leftSize} ⇄ {sizes.rightSize} B
+            </span>
+          )}
         </div>
       )}
       <div className="aic-hex-host">

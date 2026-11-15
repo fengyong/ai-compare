@@ -9,7 +9,9 @@ import type { DirStatsSnapshot } from './dirRowCache';
 export function DirStatsBar({ snapshot }: { snapshot: DirStatsSnapshot }) {
   const { stats, scanState, progress, scanErrors } = snapshot;
   const percent =
-    progress && progress.total ? Math.min(100, Math.round((progress.scanned / progress.total) * 100)) : null;
+    progress && progress.total
+      ? Math.min(100, Math.round((progress.scanned / progress.total) * 100))
+      : null;
   const errorHint =
     scanErrors.length > 0
       ? `${S.folder.scanErrorHint}\n${scanErrors.map((e) => `${e.path}：${e.message}`).join('\n')}`
@@ -58,13 +60,17 @@ export function DirStatsBar({ snapshot }: { snapshot: DirStatsSnapshot }) {
       {scanState === 'running' && (
         <span className="aic-progress">
           {S.folder.scanning} {formatCount(progress?.scanned ?? 0)} /{' '}
-          {progress?.total !== null && progress?.total !== undefined ? formatCount(progress.total) : '?'}
+          {progress?.total !== null && progress?.total !== undefined
+            ? formatCount(progress.total)
+            : '?'}
           <span className="bar">
             <i style={{ width: `${percent ?? 0}%` }} />
           </span>
         </span>
       )}
-      {scanState === 'completed' && <span style={{ color: 'var(--aic-text-dim)' }}>{S.folder.scanDone}</span>}
+      {scanState === 'completed' && (
+        <span style={{ color: 'var(--aic-text-dim)' }}>{S.folder.scanDone}</span>
+      )}
     </>
   );
 }

@@ -9,14 +9,26 @@
  * - 合并报告文本导出。
  */
 
-import type { DirMergeCategory, DirMergeExecuteResult, DirMergeRow, DirMergeRowState, DirMergeDecision, DirMergeOpKind, DirMergePlannedOp, DirMergeTarget } from '../../protocol/types';
+import type {
+  DirMergeCategory,
+  DirMergeExecuteResult,
+  DirMergeRow,
+  DirMergeRowState,
+  DirMergeDecision,
+  DirMergeOpKind,
+  DirMergePlannedOp,
+  DirMergeTarget,
+} from '../../protocol/types';
 
 // ------------------------------------------------------------------
 // 树/排序
 // ------------------------------------------------------------------
 
 /** DFS 序可见行（父先于子；展开状态折叠子树） */
-export function orderedMergeRows(rows: readonly DirMergeRow[], expanded: ReadonlySet<string>): DirMergeRow[] {
+export function orderedMergeRows(
+  rows: readonly DirMergeRow[],
+  expanded: ReadonlySet<string>,
+): DirMergeRow[] {
   const childrenOf = new Map<string | null, DirMergeRow[]>();
   for (const r of rows) {
     const list = childrenOf.get(r.parent) ?? [];
@@ -24,7 +36,9 @@ export function orderedMergeRows(rows: readonly DirMergeRow[], expanded: Readonl
     childrenOf.set(r.parent, list);
   }
   for (const list of childrenOf.values()) {
-    list.sort((a, b) => (a.kind === b.kind ? a.name.localeCompare(b.name) : a.kind === 'dir' ? -1 : 1));
+    list.sort((a, b) =>
+      a.kind === b.kind ? a.name.localeCompare(b.name) : a.kind === 'dir' ? -1 : 1,
+    );
   }
   const out: DirMergeRow[] = [];
   const walk = (parent: string | null): void => {
@@ -105,7 +119,10 @@ function ancestorChain(relPath: string): string[] {
 }
 
 /** 有效决策 = 自身显式 > 最近祖先显式 > auto */
-export function effectiveDecision(relPath: string, decisions: Readonly<DecisionMap>): DirMergeDecision {
+export function effectiveDecision(
+  relPath: string,
+  decisions: Readonly<DecisionMap>,
+): DirMergeDecision {
   const own = decisions[relPath];
   if (own) return own;
   for (const anc of ancestorChain(relPath)) {
@@ -116,7 +133,12 @@ export function effectiveDecision(relPath: string, decisions: Readonly<DecisionM
 }
 
 /** 设置决策；目录决策传播到全部后代（覆盖后代既有显式决策，交互可预期） */
-export function applyDecisionToTree(rows: readonly DirMergeRow[], decisions: DecisionMap, relPath: string, decision: DirMergeDecision): DecisionMap {
+export function applyDecisionToTree(
+  rows: readonly DirMergeRow[],
+  decisions: DecisionMap,
+  relPath: string,
+  decision: DirMergeDecision,
+): DecisionMap {
   const next: DecisionMap = { ...decisions };
   const isDir = rows.find((r) => r.relPath === relPath)?.kind === 'dir';
   next[relPath] = decision;
@@ -153,7 +175,10 @@ export interface MergeDecisionStats {
   skipDecisions: number;
 }
 
-export function mergeDecisionStats(rows: readonly DirMergeRow[], decisions: Readonly<DecisionMap>): MergeDecisionStats {
+export function mergeDecisionStats(
+  rows: readonly DirMergeRow[],
+  decisions: Readonly<DecisionMap>,
+): MergeDecisionStats {
   let conflicts = 0;
   let conflictsResolved = 0;
   let orphans = 0;
@@ -169,7 +194,8 @@ export function mergeDecisionStats(rows: readonly DirMergeRow[], decisions: Read
       if (r.rowState === 'conflict' && (d === 'takeLeft' || d === 'takeRight')) conflictsResolved++;
     }
     // 继承决策也算"已解决"（目录决策覆盖下的冲突行）
-    if (r.rowState === 'conflict' && !d && effectiveDecision(r.relPath, decisions) !== 'auto') conflictsResolved++;
+    if (r.rowState === 'conflict' && !d && effectiveDecision(r.relPath, decisions) !== 'auto')
+      conflictsResolved++;
   }
   return { conflicts, conflictsResolved, orphans, explicitDecisions, skipDecisions };
 }
@@ -229,7 +255,13 @@ export interface MergePlanStats {
 }
 
 export function summarizeMergePlan(preview: readonly MergePreviewRow[]): MergePlanStats {
-  const s: MergePlanStats = { takeLeft: 0, takeRight: 0, deleteTarget: 0, keep: 0, total: preview.length };
+  const s: MergePlanStats = {
+    takeLeft: 0,
+    takeRight: 0,
+    deleteTarget: 0,
+    keep: 0,
+    total: preview.length,
+  };
   for (const p of preview) {
     if (p.op === 'keep') s.keep++;
     else if (p.op === 'takeLeft') s.takeLeft++;
@@ -242,11 +274,16 @@ export function summarizeMergePlan(preview: readonly MergePreviewRow[]): MergePl
 /** 导出文本报告（DMRG 信息面板/日志面板共用） */
 export function exportMergeReportText(
   meta: { target: DirMergeTarget; base: string; left: string; right: string },
-  result: Pick<DirMergeExecuteResult, 'total' | 'copied' | 'deleted' | 'skipped' | 'failed' | 'cancelled' | 'details'>,
+  result: Pick<
+    DirMergeExecuteResult,
+    'total' | 'copied' | 'deleted' | 'skipped' | 'failed' | 'cancelled' | 'details'
+  >,
 ): string {
   const lines: string[] = [];
   lines.push('ai-compare 文件夹合并报告');
-  lines.push(`合并目标：${meta.target === 'left' ? '左侧' : meta.target === 'right' ? '右侧' : '输出文件夹'}`);
+  lines.push(
+    `合并目标：${meta.target === 'left' ? '左侧' : meta.target === 'right' ? '右侧' : '输出文件夹'}`,
+  );
   lines.push(`基准：${meta.base}`);
   lines.push(`左侧：${meta.left}`);
   lines.push(`右侧：${meta.right}`);

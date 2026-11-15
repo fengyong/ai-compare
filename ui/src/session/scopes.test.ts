@@ -32,7 +32,10 @@ describe('session/scopes', () => {
       parentKind: { compare: { shared: 'pk' } },
     });
     expect(eff2.values.compare.shared).toBe('pk');
-    const eff3 = resolveEffective({ global: { compare: { shared: 'g' } }, kind: { compare: { shared: 'k' } } });
+    const eff3 = resolveEffective({
+      global: { compare: { shared: 'g' } },
+      kind: { compare: { shared: 'k' } },
+    });
     expect(eff3.values.compare.shared).toBe('k');
     const eff4 = resolveEffective({ global: { compare: { shared: 'g' } } });
     expect(eff4.values.compare.shared).toBe('g');
@@ -69,7 +72,9 @@ describe('session/scopes', () => {
     expect(removed.compare).toEqual({ mtimeToleranceSec: 9 });
 
     // 空层写入
-    expect(applyPatchToLayer(null, { sync: { method: 'mirror' } }).sync).toEqual({ method: 'mirror' });
+    expect(applyPatchToLayer(null, { sync: { method: 'mirror' } }).sync).toEqual({
+      method: 'mirror',
+    });
   });
 
   it('availableScopes：无父会话隐藏子会话专属两项', () => {

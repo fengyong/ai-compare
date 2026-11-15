@@ -110,11 +110,11 @@ export function filterChunks(chunks: MergeChunkDto[], filter: Merge3Filter): Mer
       return chunks.filter((c) => c.origin === 'conflict');
     case 'leftChanges':
       return chunks.filter(
-        (c) => c.origin === 'leftOnly' || c.origin === 'bothChanged' || c.origin === 'conflict'
+        (c) => c.origin === 'leftOnly' || c.origin === 'bothChanged' || c.origin === 'conflict',
       );
     case 'rightChanges':
       return chunks.filter(
-        (c) => c.origin === 'rightOnly' || c.origin === 'bothChanged' || c.origin === 'conflict'
+        (c) => c.origin === 'rightOnly' || c.origin === 'bothChanged' || c.origin === 'conflict',
       );
   }
 }
@@ -169,7 +169,8 @@ export function rangeText(r: LineRange): string {
  * 生成类型以 `Array<string> | undefined` 如实声明；UI 按空数组兜底。
  */
 export function paneLines(chunk: MergeChunkDto, side: 'base' | 'left' | 'right'): string[] {
-  const lines = side === 'base' ? chunk.baseLines : side === 'left' ? chunk.leftLines : chunk.rightLines;
+  const lines =
+    side === 'base' ? chunk.baseLines : side === 'left' ? chunk.leftLines : chunk.rightLines;
   return lines ?? [];
 }
 
@@ -233,7 +234,9 @@ function ChunkPane({
                 <span className="m3-range">{rangeText(range)}</span>
                 <span className="m3-origin">{originLabel(c.origin)}</span>
                 {kind && <span className="m3-kind">{kind}</span>}
-                {c.conflictUnimportant && <span className="m3-kind">{S.merge3.stateUnimportant}</span>}
+                {c.conflictUnimportant && (
+                  <span className="m3-kind">{S.merge3.stateUnimportant}</span>
+                )}
               </div>
               {lines.length === 0 ? (
                 <div className="aic-m3-empty">—</div>
@@ -347,7 +350,7 @@ export function Merge3View({ tab }: { tab: Merge3Tab }) {
         setBusy(false);
       }
     },
-    [sessionId, loadSections, refreshOutput]
+    [sessionId, loadSections, refreshOutput],
   );
 
   const decideAll = (action: MergeDecisionKind) => {
@@ -433,7 +436,11 @@ export function Merge3View({ tab }: { tab: Merge3Tab }) {
   };
 
   if (error) {
-    return <div className="aic-m3-error">{S.merge3.loadFail}: {error}</div>;
+    return (
+      <div className="aic-m3-error">
+        {S.merge3.loadFail}: {error}
+      </div>
+    );
   }
 
   return (
@@ -449,16 +456,26 @@ export function Merge3View({ tab }: { tab: Merge3Tab }) {
           {S.merge3.filter}
           <select value={filter} onChange={(e) => setFilter(e.target.value as Merge3Filter)}>
             {MERGE3_FILTERS.map((f) => (
-              <option key={f} value={f}>{filterLabel(f)}</option>
+              <option key={f} value={f}>
+                {filterLabel(f)}
+              </option>
             ))}
           </select>
         </label>
         <label>
-          <input type="checkbox" checked={showBase} onChange={(e) => setShowBase(e.target.checked)} />
+          <input
+            type="checkbox"
+            checked={showBase}
+            onChange={(e) => setShowBase(e.target.checked)}
+          />
           {showBase ? S.merge3.hideBase : S.merge3.showBase}
         </label>
-        <button disabled={busy} onClick={() => decideAll('left')}>{S.merge3.allTakeLeft}</button>
-        <button disabled={busy} onClick={() => decideAll('right')}>{S.merge3.allTakeRight}</button>
+        <button disabled={busy} onClick={() => decideAll('left')}>
+          {S.merge3.allTakeLeft}
+        </button>
+        <button disabled={busy} onClick={() => decideAll('right')}>
+          {S.merge3.allTakeRight}
+        </button>
       </div>
 
       <div className="aic-m3-stats">
@@ -468,9 +485,14 @@ export function Merge3View({ tab }: { tab: Merge3Tab }) {
           unresolved: output?.unresolvedChunks.length ?? 0,
           decided: output?.decidedCount ?? 0,
         })}
-        <span>{S.merge3.rev}: {rev}</span>
         <span>
-          {S.merge3.lineCounts}: {opened ? `${opened.baseLineCount}/${opened.leftLineCount}/${opened.rightLineCount}` : '—'}
+          {S.merge3.rev}: {rev}
+        </span>
+        <span>
+          {S.merge3.lineCounts}:{' '}
+          {opened
+            ? `${opened.baseLineCount}/${opened.leftLineCount}/${opened.rightLineCount}`
+            : '—'}
         </span>
       </div>
 
@@ -484,7 +506,11 @@ export function Merge3View({ tab }: { tab: Merge3Tab }) {
         <span className="m3-manual">■ {S.merge3.stateManual}</span>
       </div>
 
-      {notice && <div className="aic-m3-notice" onClick={() => setNotice(null)}>{notice}</div>}
+      {notice && (
+        <div className="aic-m3-notice" onClick={() => setNotice(null)}>
+          {notice}
+        </div>
+      )}
 
       <div className={`aic-m3-panes${showBase ? '' : ' no-base'}`}>
         {showBase && <ChunkPane side="base" label={S.merge3.basePane} chunks={visible} />}
@@ -493,7 +519,9 @@ export function Merge3View({ tab }: { tab: Merge3Tab }) {
       </div>
 
       <div className="aic-m3-conflicts">
-        <div className="aic-m3-section-head">{S.merge3.originConflict}（{conflicts.length}）</div>
+        <div className="aic-m3-section-head">
+          {S.merge3.originConflict}（{conflicts.length}）
+        </div>
         {conflicts.map((c) => (
           <div key={c.id} className={`aic-m3-decision ${chunkCls(c)}`} data-chunk-id={c.id}>
             <span className="m3-id">#{c.id}</span>
@@ -529,7 +557,9 @@ export function Merge3View({ tab }: { tab: Merge3Tab }) {
                 />
                 <button
                   disabled={busy}
-                  onClick={() => void applyDecisions([{ chunkId: c.id, action: 'manual', text: manualText }])}
+                  onClick={() =>
+                    void applyDecisions([{ chunkId: c.id, action: 'manual', text: manualText }])
+                  }
                 >
                   {S.merge3.manualApply}
                 </button>
@@ -548,7 +578,10 @@ export function Merge3View({ tab }: { tab: Merge3Tab }) {
             <option value="marker">{S.merge3.outputMarker}</option>
           </select>
           {mode === 'marker' && (
-            <select value={markerStyle} onChange={(e) => setMarkerStyle(e.target.value as MergeMarkerStyle)}>
+            <select
+              value={markerStyle}
+              onChange={(e) => setMarkerStyle(e.target.value as MergeMarkerStyle)}
+            >
               <option value="merge">{S.merge3.markerMerge}</option>
               <option value="diff3">{S.merge3.markerDiff3}</option>
             </select>
@@ -561,7 +594,9 @@ export function Merge3View({ tab }: { tab: Merge3Tab }) {
             <input type="checkbox" checked={backup} onChange={(e) => setBackup(e.target.checked)} />
             {S.merge3.backup}
           </label>
-          <button disabled={busy} onClick={() => void refreshOutput()}>{S.merge3.refresh}</button>
+          <button disabled={busy} onClick={() => void refreshOutput()}>
+            {S.merge3.refresh}
+          </button>
         </div>
         {output?.hasConflicts && <div className="aic-m3-warn">{S.merge3.unresolvedHint}</div>}
         <pre className="aic-m3-output-text">{output?.text ?? S.merge3.loading}</pre>

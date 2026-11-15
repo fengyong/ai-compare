@@ -32,7 +32,12 @@ export interface SidePatchResult {
 }
 
 /** 行在侧内容数组中的索引取值（left → leftLine，right → rightLine） */
-function sideIndexOf(row: AlignedRow | undefined, side: Side, fallbackCursor: number, sideLen: number): number | undefined {
+function sideIndexOf(
+  row: AlignedRow | undefined,
+  side: Side,
+  fallbackCursor: number,
+  sideLen: number,
+): number | undefined {
   if (row) {
     const idx = side === 'left' ? row.leftLine : row.rightLine;
     if (idx !== undefined) return idx;
@@ -56,7 +61,7 @@ export function patchSideFromDocEdit(
   docBefore: string[],
   docAfter: string[],
   side: Side,
-  sideLines: string[]
+  sideLines: string[],
 ): SidePatchResult | null {
   const ops = diffLinesOps(docBefore, docAfter);
   let changed = false;
@@ -71,7 +76,11 @@ export function patchSideFromDocEdit(
   };
   const flush = (): void => {
     if (cur && (cur.removed.length > 0 || cur.inserted.length > 0)) {
-      patches.push({ start: cur.origStart + cumDelta, removed: cur.removed, inserted: cur.inserted });
+      patches.push({
+        start: cur.origStart + cumDelta,
+        removed: cur.removed,
+        inserted: cur.inserted,
+      });
       cumDelta += cur.inserted.length - cur.removed.length;
       changed = true;
     }
@@ -157,7 +166,10 @@ export function fullSideReplayOp(side: Side, lines: readonly string[]): TextEdit
  * 新旧行数相同（替换不增删行），连续变化行归并为一个补丁块。
  * 无变化返回 null。
  */
-export function patchesFromLineReplacement(oldLines: string[], newLines: string[]): SidePatch[] | null {
+export function patchesFromLineReplacement(
+  oldLines: string[],
+  newLines: string[],
+): SidePatch[] | null {
   if (oldLines.length !== newLines.length) {
     // 行数不一致（不应发生；防御性回退为整体替换）
     if (oldLines.length === 0 && newLines.length === 0) return null;

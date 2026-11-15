@@ -21,7 +21,7 @@ describe('settings/settingsSchema（P10 两页注册）', () => {
     // 既有三页不受影响
     expect(COMPARE_PAGE.custom).toBeUndefined();
     expect(pageById('compare')).toBe(COMPARE_PAGE);
-    expect(pageById('no-such-page')).toBe(COMPARE_PAGE) /* '未知页回落比较页' */;
+    expect(pageById('no-such-page')).toBe(COMPARE_PAGE); /* '未知页回落比较页' */
   });
 
   it('作用域声明：文件格式 = app（程序级资源），比较规则 = session-scoped（四层）', () => {
@@ -40,8 +40,12 @@ describe('settings/settingsSchema（P10 两页注册）', () => {
   it('readFieldValue：层缺失回落字段缺省（default 优先于 type 推导）', () => {
     const eol = COMPARE_RULES_PAGE.fields.find((f) => f.key === 'eolStyleUnimportant')!;
     expect(readFieldValue(undefined, 'compareRules', eol)).toBe(true);
-    expect(readFieldValue({ compareRules: { eolStyleUnimportant: false } }, 'compareRules', eol)).toBe(false);
+    expect(
+      readFieldValue({ compareRules: { eolStyleUnimportant: false } }, 'compareRules', eol),
+    ).toBe(false);
     const custom = FILE_FORMATS_PAGE.fields.find((f) => f.key === 'custom')!;
-    expect(readFieldValue({}, 'fileFormats', custom)).toBe('') /* '无 default 的 text 字段回落空串' */;
+    expect(readFieldValue({}, 'fileFormats', custom)).toBe(
+      '',
+    ); /* '无 default 的 text 字段回落空串' */
   });
 });
