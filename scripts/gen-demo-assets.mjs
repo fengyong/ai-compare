@@ -204,8 +204,8 @@ const assets = {
   // 编码：GB18030 与 UTF-16LE+BOM，两侧内容不同
   gbL: gb18030('演示项目说明\n版本：一\n作者：张三\n这是一个用于编码检测的中文文本文件。\n'),
   gbR: gb18030('演示项目说明\n版本：二\n作者：李四\n这是一个用于编码检测的中文文本文件，右侧有改动。\n新增一行。\n'),
-  u16L: utf16le('Unicode demo\nversion: one\nline three\n'),
-  u16R: utf16le('Unicode demo\nversion: two\nline three changed\nline four\n'),
+  u16L: utf16le('Unicode 演示\n版本：一\n这是 UTF-16LE 编码的中文文件。\n'),
+  u16R: utf16le('Unicode 演示\n版本：二\n这是 UTF-16LE 编码的中文文件，右侧有改动。\n新增一行。\n'),
   // 二进制（十六进制视图）
   blobL: blob('left'),
   blobR: blob('right'),
