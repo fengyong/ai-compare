@@ -79,7 +79,7 @@ function diffMiddle(
   aEnd: number,
   bStart: number,
   bEnd: number,
-  maxCells: number
+  maxCells: number,
 ): DiffOp[] {
   const aLen = aEnd - aStart;
   const bLen = bEnd - bStart;
@@ -138,9 +138,21 @@ function diffMiddle(
         bEnd: bStart + gj,
       });
     } else if (gi > pi) {
-      ops.push({ type: 'delete', aStart: aStart + pi, aEnd: aStart + gi, bStart: bStart + gj, bEnd: bStart + gj });
+      ops.push({
+        type: 'delete',
+        aStart: aStart + pi,
+        aEnd: aStart + gi,
+        bStart: bStart + gj,
+        bEnd: bStart + gj,
+      });
     } else if (gj > pj) {
-      ops.push({ type: 'insert', aStart: aStart + gi, aEnd: aStart + gi, bStart: bStart + pj, bEnd: bStart + gj });
+      ops.push({
+        type: 'insert',
+        aStart: aStart + gi,
+        aEnd: aStart + gi,
+        bStart: bStart + pj,
+        bEnd: bStart + gj,
+      });
     }
   };
   for (let k = 0; k <= matchI.length; k++) {

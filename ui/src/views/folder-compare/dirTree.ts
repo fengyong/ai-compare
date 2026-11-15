@@ -75,7 +75,10 @@ export function compareRowsBySpec(a: DirRow, b: DirRow, spec: DirSortSpec): numb
   return compareRows(a, b);
 }
 
-export function buildTreeIndex(rows: readonly DirRow[], sort: DirSortSpec | null = null): TreeIndex {
+export function buildTreeIndex(
+  rows: readonly DirRow[],
+  sort: DirSortSpec | null = null,
+): TreeIndex {
   const children = new Map<string, DirRow[]>();
   const byId = new Map<string, DirRow>();
   for (const row of rows) {
@@ -115,7 +118,10 @@ export function orderedTreeRows(index: TreeIndex, expanded: ReadonlySet<string>)
 }
 
 /** 平铺序可见行：全部非隐藏行按名称（或表头排序键）排序（kind dir 不参与） */
-export function orderedFlatRows(rows: readonly DirRow[], sort: DirSortSpec | null = null): DirRow[] {
+export function orderedFlatRows(
+  rows: readonly DirRow[],
+  sort: DirSortSpec | null = null,
+): DirRow[] {
   return rows
     .filter((r) => !r.hidden && r.kind !== 'dir')
     .sort(sort ? (a, b) => compareRowsBySpec(a, b, sort) : compareRows);

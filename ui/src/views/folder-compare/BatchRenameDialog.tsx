@@ -24,7 +24,8 @@ export interface BatchRenameDialogState {
 
 function stateNote(item: RenamePlanItem): { text: string; cls: string } {
   if (item.state === 'invalid') return { text: item.reason ?? '非法', cls: 'bad' };
-  if (item.conflict === 'duplicate' || item.conflict === 'exists') return { text: item.conflictReason ?? '冲突', cls: 'bad' };
+  if (item.conflict === 'duplicate' || item.conflict === 'exists')
+    return { text: item.conflictReason ?? '冲突', cls: 'bad' };
   if (item.state === 'unchanged') return { text: F.batchRenameUnchanged, cls: 'dim' };
   return { text: '', cls: '' };
 }
@@ -45,7 +46,7 @@ export function BatchRenameDialog({ state }: { state: BatchRenameDialogState }) 
         dos: { mask, counterStart },
         regex: { pattern, template },
       }),
-    [state.rows, state.allRows, mode, mask, counterStart, pattern, template]
+    [state.rows, state.allRows, mode, mask, counterStart, pattern, template],
   );
 
   const blocked = plan.conflicts > 0 || plan.renames.length === 0;
@@ -53,13 +54,26 @@ export function BatchRenameDialog({ state }: { state: BatchRenameDialogState }) 
 
   return (
     <div className="aic-modal-mask">
-      <div className="aic-modal aic-dialog" role="dialog" aria-label={F.batchRenameTitle} style={{ width: 640, maxWidth: '92vw' }}>
+      <div
+        className="aic-modal aic-dialog"
+        role="dialog"
+        aria-label={F.batchRenameTitle}
+        style={{ width: 640, maxWidth: '92vw' }}
+      >
         <h3 style={{ margin: '0 0 8px' }}>{F.batchRenameTitle}</h3>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
-          <button className={`toggle${mode === 'dos' ? ' on' : ''}`} style={{ padding: '2px 12px' }} onClick={() => setMode('dos')}>
+          <button
+            className={`toggle${mode === 'dos' ? ' on' : ''}`}
+            style={{ padding: '2px 12px' }}
+            onClick={() => setMode('dos')}
+          >
             {F.batchRenameModeDos}
           </button>
-          <button className={`toggle${mode === 'regex' ? ' on' : ''}`} style={{ padding: '2px 12px' }} onClick={() => setMode('regex')}>
+          <button
+            className={`toggle${mode === 'regex' ? ' on' : ''}`}
+            style={{ padding: '2px 12px' }}
+            onClick={() => setMode('regex')}
+          >
             {F.batchRenameModeRegex}
           </button>
           <span className="dim" style={{ fontSize: 12 }}>
@@ -72,7 +86,11 @@ export function BatchRenameDialog({ state }: { state: BatchRenameDialogState }) 
             <span className="dim" style={{ flex: 'none' }}>
               {F.batchRenameMaskLabel}
             </span>
-            <input value={mask} onChange={(e) => setMask(e.target.value)} style={{ fontFamily: 'ui-monospace, Menlo, monospace' }} />
+            <input
+              value={mask}
+              onChange={(e) => setMask(e.target.value)}
+              style={{ fontFamily: 'ui-monospace, Menlo, monospace' }}
+            />
             <span className="dim" style={{ flex: 'none' }}>
               {F.batchRenameCounterLabel}
             </span>
@@ -80,7 +98,9 @@ export function BatchRenameDialog({ state }: { state: BatchRenameDialogState }) 
               type="number"
               min={0}
               value={counterStart}
-              onChange={(e) => setCounterStart(Math.max(0, Math.floor(Number(e.target.value) || 0)))}
+              onChange={(e) =>
+                setCounterStart(Math.max(0, Math.floor(Number(e.target.value) || 0)))
+              }
               style={{ width: 72 }}
             />
           </div>
@@ -135,23 +155,38 @@ export function BatchRenameDialog({ state }: { state: BatchRenameDialogState }) 
               {preview.map((item, i) => {
                 const note = stateNote(item);
                 return (
-                  <tr key={`${item.row.id}-${i}`} style={{ borderTop: '1px solid var(--aic-border)' }}>
+                  <tr
+                    key={`${item.row.id}-${i}`}
+                    style={{ borderTop: '1px solid var(--aic-border)' }}
+                  >
                     <td style={tdStyle}>{item.oldName}</td>
-                    <td style={{ ...tdStyle, fontFamily: 'ui-monospace, Menlo, monospace' }}>{item.newName ?? '—'}</td>
+                    <td style={{ ...tdStyle, fontFamily: 'ui-monospace, Menlo, monospace' }}>
+                      {item.newName ?? '—'}
+                    </td>
                     <td
                       style={{
                         ...tdStyle,
-                        color: note.cls === 'bad' ? 'var(--aic-st-diff, #d33)' : 'var(--aic-text-dim)',
+                        color:
+                          note.cls === 'bad' ? 'var(--aic-st-diff, #d33)' : 'var(--aic-text-dim)',
                       }}
                     >
-                      {note.text || (item.state === 'rename' ? '✓' : item.state === 'unchanged' ? F.batchRenameUnchanged : F.batchRenameKeepOriginal)}
+                      {note.text ||
+                        (item.state === 'rename'
+                          ? '✓'
+                          : item.state === 'unchanged'
+                            ? F.batchRenameUnchanged
+                            : F.batchRenameKeepOriginal)}
                     </td>
                   </tr>
                 );
               })}
             </tbody>
           </table>
-          {plan.items.length > preview.length && <p className="dim" style={{ margin: '4px 8px' }}>{S.folder.planPreviewMore(plan.items.length - preview.length)}</p>}
+          {plan.items.length > preview.length && (
+            <p className="dim" style={{ margin: '4px 8px' }}>
+              {S.folder.planPreviewMore(plan.items.length - preview.length)}
+            </p>
+          )}
         </div>
 
         <div className="aic-plan-stats" style={{ marginTop: 8 }}>
@@ -176,7 +211,9 @@ export function BatchRenameDialog({ state }: { state: BatchRenameDialogState }) 
             className="primary"
             disabled={blocked}
             title={plan.renames.length === 0 ? F.batchRenameNoSelection : undefined}
-            onClick={() => state.onOk(plan.renames.map((r) => ({ row: r.row, newName: r.newName! })))}
+            onClick={() =>
+              state.onOk(plan.renames.map((r) => ({ row: r.row, newName: r.newName! })))
+            }
           >
             {S.folder.confirmExecute}
           </button>
@@ -186,5 +223,16 @@ export function BatchRenameDialog({ state }: { state: BatchRenameDialogState }) 
   );
 }
 
-const thStyle: React.CSSProperties = { padding: '4px 8px', position: 'sticky', top: 0, background: 'var(--aic-bg-panel)' };
-const tdStyle: React.CSSProperties = { padding: '3px 8px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 260 };
+const thStyle: React.CSSProperties = {
+  padding: '4px 8px',
+  position: 'sticky',
+  top: 0,
+  background: 'var(--aic-bg-panel)',
+};
+const tdStyle: React.CSSProperties = {
+  padding: '3px 8px',
+  whiteSpace: 'nowrap',
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  maxWidth: 260,
+};

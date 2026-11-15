@@ -2,7 +2,12 @@ import { describe, expect, it } from 'vitest';
 import { MockEngine } from './mockEngine';
 import { MockTransport } from './mockTransport';
 import { RpcClient } from '../protocol/client';
-import type { DirMergeRow, DirMergeDecision, DirMergePlannedOp, DirMergeTarget } from '../protocol/types';
+import type {
+  DirMergeRow,
+  DirMergeDecision,
+  DirMergePlannedOp,
+  DirMergeTarget,
+} from '../protocol/types';
 
 /**
  * MockEngine P8 方法集（同形模拟）：dir/mergeScan（三方演示树分类）/
@@ -27,7 +32,8 @@ async function openMerge(client: RpcClient, sessionId = 'merge-1'): Promise<DirM
   return res.rows;
 }
 
-const find = (rows: DirMergeRow[], rel: string): DirMergeRow => rows.find((r) => r.relPath === rel)!;
+const find = (rows: DirMergeRow[], rel: string): DirMergeRow =>
+  rows.find((r) => r.relPath === rel)!;
 
 describe('MockEngine P8：dir/mergeScan', () => {
   it('演示树覆盖全部分类形态', async () => {
@@ -76,7 +82,9 @@ describe('MockEngine P8：dir/mergeScan', () => {
     });
     expect(rescanned.rows).toHaveLength(18);
     const rows = await openMerge(client, 'merge-2');
-    const res = await client.request<{ stats: { total: number; conflict: number; orphan: number; auto: number; same: number } }>('dir/mergeScan', {
+    const res = await client.request<{
+      stats: { total: number; conflict: number; orphan: number; auto: number; same: number };
+    }>('dir/mergeScan', {
       sessionId: 'merge-3',
       base: '/demo/base',
       left: '/demo/left',
@@ -274,14 +282,19 @@ describe('MockEngine P8：输出目标（第三目录）契约', () => {
       outputPath: '/demo/out',
     });
     expect(plan.ops.length).toBeGreaterThan(0);
-    const res = await client.request<{ copied: number; failed: number; target: string }>('dir/mergeExecute', {
-      sessionId: 'merge-1',
-      target: 'output',
-      ops: plan.ops.filter((o) => o.kind !== 'keep'),
-    });
+    const res = await client.request<{ copied: number; failed: number; target: string }>(
+      'dir/mergeExecute',
+      {
+        sessionId: 'merge-1',
+        target: 'output',
+        ops: plan.ops.filter((o) => o.kind !== 'keep'),
+      },
+    );
     expect(res.target).toBe('output');
     expect(res.failed).toBe(0);
-    expect(res.copied).toBe(plan.ops.filter((o) => o.kind === 'takeLeft' || o.kind === 'takeRight').length);
+    expect(res.copied).toBe(
+      plan.ops.filter((o) => o.kind === 'takeLeft' || o.kind === 'takeRight').length,
+    );
     await client.close();
   });
 

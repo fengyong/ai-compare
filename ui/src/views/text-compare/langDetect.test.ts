@@ -27,7 +27,7 @@ describe('langDetect：语法高亮语言探测（FR-TXT-013/014 简化版）', 
 
   it('语言显示名全集覆盖', () => {
     expect(Object.keys(LANG_LABELS).sort()).toEqual(
-      ['javascript', 'json', 'markdown', 'python', 'rust', 'typescript'].sort()
+      ['javascript', 'json', 'markdown', 'python', 'rust', 'typescript'].sort(),
     );
   });
 });

@@ -183,7 +183,10 @@ export const BUILTIN_FORMAT_CATALOG: FileFormatSpec[] = [
     masks: ['*.sh', '*.bash', '*.zsh'],
     description: 'Shell 脚本',
     viewKind: 'text',
-    grammar: [element('注释', [lineCommentItem('#')]), element('字符串', [stringItem('"'), stringItem("'", '')])],
+    grammar: [
+      element('注释', [lineCommentItem('#')]),
+      element('字符串', [stringItem('"'), stringItem("'", '')]),
+    ],
     tabStops: 4,
     independentLines: false,
     columnData: false,
@@ -194,7 +197,10 @@ export const BUILTIN_FORMAT_CATALOG: FileFormatSpec[] = [
     masks: ['*.pl', '*.pm'],
     description: 'Perl 源码',
     viewKind: 'text',
-    grammar: [element('注释', [lineCommentItem('#')]), element('字符串', [stringItem('"'), stringItem("'", '')])],
+    grammar: [
+      element('注释', [lineCommentItem('#')]),
+      element('字符串', [stringItem('"'), stringItem("'", '')]),
+    ],
     tabStops: 4,
     independentLines: false,
     columnData: false,
@@ -205,7 +211,10 @@ export const BUILTIN_FORMAT_CATALOG: FileFormatSpec[] = [
     masks: ['*.rb'],
     description: 'Ruby 源码',
     viewKind: 'text',
-    grammar: [element('注释', [lineCommentItem('#')]), element('字符串', [stringItem('"'), stringItem("'", '')])],
+    grammar: [
+      element('注释', [lineCommentItem('#')]),
+      element('字符串', [stringItem('"'), stringItem("'", '')]),
+    ],
     tabStops: 4,
     independentLines: false,
     columnData: false,
@@ -230,7 +239,10 @@ export const BUILTIN_FORMAT_CATALOG: FileFormatSpec[] = [
     masks: ['*.xml', '*.xsl', '*.xslt', '*.svg', '*.xsd'],
     description: 'XML 文档',
     viewKind: 'text',
-    grammar: [element('注释', [blockCommentItem('<!--', '-->')]), element('字符串', [stringItem('"', ''), stringItem("'", '')])],
+    grammar: [
+      element('注释', [blockCommentItem('<!--', '-->')]),
+      element('字符串', [stringItem('"', ''), stringItem("'", '')]),
+    ],
     tabStops: 4,
     independentLines: false,
     columnData: false,
@@ -241,7 +253,10 @@ export const BUILTIN_FORMAT_CATALOG: FileFormatSpec[] = [
     masks: ['*.json', '*.jsonc', '*.json5'],
     description: 'JSON 数据',
     viewKind: 'text',
-    grammar: [element('注释', [blockCommentItem('/*', '*/'), lineCommentItem('//')]), element('字符串', [stringItem('"')])],
+    grammar: [
+      element('注释', [blockCommentItem('/*', '*/'), lineCommentItem('//')]),
+      element('字符串', [stringItem('"')]),
+    ],
     tabStops: 4,
     independentLines: false,
     columnData: false,
@@ -252,7 +267,10 @@ export const BUILTIN_FORMAT_CATALOG: FileFormatSpec[] = [
     masks: ['*.toml'],
     description: 'TOML 配置',
     viewKind: 'text',
-    grammar: [element('注释', [lineCommentItem('#')]), element('字符串', [stringItem('"""'), stringItem('"'), stringItem("'", '')])],
+    grammar: [
+      element('注释', [lineCommentItem('#')]),
+      element('字符串', [stringItem('"""'), stringItem('"'), stringItem("'", '')]),
+    ],
     tabStops: 4,
     independentLines: false,
     columnData: false,
@@ -484,7 +502,10 @@ export function effectiveFormats(state: FileFormatsState): FileFormatSpec[] {
 }
 
 /** 首个掩码匹配且启用的格式（FR-FMT-001；空掩码不参与） */
-export function firstMatchingFormat(formats: FileFormatSpec[], fileName: string): FileFormatSpec | null {
+export function firstMatchingFormat(
+  formats: FileFormatSpec[],
+  fileName: string,
+): FileFormatSpec | null {
   for (const f of formats) {
     if (!f.enabled || f.masks.length === 0) continue;
     if (f.masks.some((m) => maskMatches(m, fileName))) return f;
@@ -531,7 +552,9 @@ export function shadowedFormatIds(formats: FileFormatSpec[]): Set<string> {
 
 export function upsertCustom(state: FileFormatsState, fmt: FileFormatSpec): FileFormatsState {
   const exists = state.custom.some((f) => f.id === fmt.id);
-  const custom = exists ? state.custom.map((f) => (f.id === fmt.id ? fmt : f)) : [...state.custom, fmt];
+  const custom = exists
+    ? state.custom.map((f) => (f.id === fmt.id ? fmt : f))
+    : [...state.custom, fmt];
   return { ...state, custom };
 }
 
@@ -542,7 +565,7 @@ export function removeCustom(state: FileFormatsState, id: string): FileFormatsSt
 export function setBuiltinOverride(
   state: FileFormatsState,
   id: string,
-  patch: { enabled?: boolean; masks?: string[] }
+  patch: { enabled?: boolean; masks?: string[] },
 ): FileFormatsState {
   const prev = state.builtinOverrides[id] ?? {};
   return {
@@ -571,7 +594,7 @@ export function updateCustomElement(
   state: FileFormatsState,
   formatId: string,
   elementIndex: number,
-  patch: { name?: string; kind?: GrammarItemSpec['kind']; pattern?: string }
+  patch: { name?: string; kind?: GrammarItemSpec['kind']; pattern?: string },
 ): FileFormatsState {
   return {
     ...state,
@@ -597,8 +620,7 @@ export function updateCustomElement(
 // ---------------------------------------------------------------------------
 
 export type ImportResult =
-  | { ok: true; loaded: number; state: FileFormatsState }
-  | { ok: false; error: string };
+  { ok: true; loaded: number; state: FileFormatsState } | { ok: false; error: string };
 
 /** 解析并合并格式集：内置 id 落到 overrides（enabled/masks），其余进 custom */
 export function importFormatPack(state: FileFormatsState, json: string): ImportResult {

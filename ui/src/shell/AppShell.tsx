@@ -180,19 +180,55 @@ export function AppShell() {
         {activeTab?.kind === 'text' && activeTab.text && (
           <TextCompareView key={activeTab.id} tab={activeTab} />
         )}
-        {activeTab?.kind === 'sync' && activeTab.sync && <FolderSyncView key={activeTab.id} tab={activeTab} />}
-        {activeTab?.kind === 'merge' && activeTab.merge && <FolderMergeView key={activeTab.id} tab={activeTab} />}
+        {activeTab?.kind === 'sync' && activeTab.sync && (
+          <FolderSyncView key={activeTab.id} tab={activeTab} />
+        )}
+        {activeTab?.kind === 'merge' && activeTab.merge && (
+          <FolderMergeView key={activeTab.id} tab={activeTab} />
+        )}
         {activeTab?.kind === 'picture' && activeTab.picture && (
-          <PictureCompareView key={activeTab.id} tab={activeTab as Tab & { kind: 'picture'; picture: { left: string; right: string; sessionId: string } }} />
+          <PictureCompareView
+            key={activeTab.id}
+            tab={
+              activeTab as Tab & {
+                kind: 'picture';
+                picture: { left: string; right: string; sessionId: string };
+              }
+            }
+          />
         )}
         {activeTab?.kind === 'table' && activeTab.table && (
-          <TableCompareView key={activeTab.id} tab={activeTab as Tab & { kind: 'table'; table: { left: string; right: string; sessionId: string } }} />
+          <TableCompareView
+            key={activeTab.id}
+            tab={
+              activeTab as Tab & {
+                kind: 'table';
+                table: { left: string; right: string; sessionId: string };
+              }
+            }
+          />
         )}
         {activeTab?.kind === 'hex' && activeTab.hex && (
-          <HexCompareView key={activeTab.id} tab={activeTab as Tab & { kind: 'hex'; hex: { left: string; right: string; sessionId: string } }} />
+          <HexCompareView
+            key={activeTab.id}
+            tab={
+              activeTab as Tab & {
+                kind: 'hex';
+                hex: { left: string; right: string; sessionId: string };
+              }
+            }
+          />
         )}
         {activeTab?.kind === 'merge3' && activeTab.merge3 && (
-          <Merge3View key={activeTab.id} tab={activeTab as Tab & { kind: 'merge3'; merge3: { base: string; left: string; right: string; sessionId: string } }} />
+          <Merge3View
+            key={activeTab.id}
+            tab={
+              activeTab as Tab & {
+                kind: 'merge3';
+                merge3: { base: string; left: string; right: string; sessionId: string };
+              }
+            }
+          />
         )}
       </div>
 
@@ -210,7 +246,9 @@ export function AppShell() {
               {w.title || S.app.homeTab}
             </button>
           ))}
-          <button onClick={() => openNewWindow()} title={S.app.newWindow}>＋</button>
+          <button onClick={() => openNewWindow()} title={S.app.newWindow}>
+            ＋
+          </button>
           <button onClick={() => void mergeAllWindows()} title={S.app.mergeAll}>
             {S.app.mergeAll}
           </button>
@@ -224,7 +262,10 @@ export function AppShell() {
         </span>
         <span className="spacer" />
         {activeTab && activeTab.kind !== 'home' && (
-          <button className="aic-report-entry" onClick={() => useShell.getState().openReportDialog()}>
+          <button
+            className="aic-report-entry"
+            onClick={() => useShell.getState().openReportDialog()}
+          >
             {S.report.open}
           </button>
         )}

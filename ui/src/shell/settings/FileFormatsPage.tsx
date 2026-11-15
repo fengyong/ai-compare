@@ -78,7 +78,9 @@ export function FileFormatsPage({ value, onChange }: Props) {
 
   return (
     <div className="aic-formats-page">
-      <p className="dim" style={st.pageHint}>{S.settings.formats.hint}</p>
+      <p className="dim" style={st.pageHint}>
+        {S.settings.formats.hint}
+      </p>
       <table className="aic-formats-table" style={st.formatsTable}>
         <thead>
           <tr>
@@ -123,7 +125,11 @@ export function FileFormatsPage({ value, onChange }: Props) {
           <button onClick={doImport}>{S.settings.formats.import}</button>
           <button onClick={doExport}>{S.settings.formats.export}</button>
         </div>
-        {message && <div className="aic-formats-message" style={st.messageLine}>{message}</div>}
+        {message && (
+          <div className="aic-formats-message" style={st.messageLine}>
+            {message}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -170,14 +176,21 @@ function FormatRow({
 
   return (
     <>
-      <tr className={format.enabled ? '' : 'disabled'} style={format.enabled ? undefined : st.disabledRow}>
+      <tr
+        className={format.enabled ? '' : 'disabled'}
+        style={format.enabled ? undefined : st.disabledRow}
+      >
         <td style={st.formatsTd}>{order}</td>
         <td style={st.formatsTd}>
           <input type="checkbox" checked={format.enabled} onChange={toggleEnabled} />
         </td>
         <td style={st.formatsTd}>
           {format.id}
-          {shadowed && <span className="aic-shadowed" style={st.shadowedMark}>（{S.settings.formats.shadowed}）</span>}
+          {shadowed && (
+            <span className="aic-shadowed" style={st.shadowedMark}>
+              （{S.settings.formats.shadowed}）
+            </span>
+          )}
           {!isBuiltin && (
             <button
               className="aic-formats-edit"
@@ -204,7 +217,9 @@ function FormatRow({
           ) : (
             <select
               value={format.viewKind}
-              onChange={(e) => onSaveCustom({ ...format, viewKind: e.target.value as FormatViewKind })}
+              onChange={(e) =>
+                onSaveCustom({ ...format, viewKind: e.target.value as FormatViewKind })
+              }
             >
               {VIEW_KINDS.map((k) => (
                 <option key={k} value={k}>
@@ -232,9 +247,11 @@ function FormatRow({
         </td>
       </tr>
       {!isBuiltin && editing && (
-        <tr className="aic-formats-editor-row"><td colSpan={7} style={st.editorCell}>
+        <tr className="aic-formats-editor-row">
+          <td colSpan={7} style={st.editorCell}>
             <CustomGrammarEditor format={format} onSave={onSaveCustom} />
-        </td></tr>
+          </td>
+        </tr>
       )}
     </>
   );
@@ -250,7 +267,10 @@ function CustomGrammarEditor({
 }) {
   const stateHolder = { custom: [format], builtinOverrides: {} } as FileFormatsState;
   return (
-    <div className="aic-grammar-editor" style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '4px 0' }}>
+    <div
+      className="aic-grammar-editor"
+      style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '4px 0' }}
+    >
       {format.grammar.map((el, i) => {
         const item = el.items[0];
         const kind = item?.kind ?? 'delimited';
@@ -261,7 +281,9 @@ function CustomGrammarEditor({
               value={el.name}
               aria-label={`${S.settings.formats.elementName}-${i}`}
               onChange={(e) => {
-                const next = updateCustomElement(stateHolder, format.id, i, { name: e.target.value });
+                const next = updateCustomElement(stateHolder, format.id, i, {
+                  name: e.target.value,
+                });
                 onSave({ ...format, grammar: next.custom[0].grammar });
               }}
             />
@@ -287,14 +309,18 @@ function CustomGrammarEditor({
               aria-label={`${S.settings.formats.elementPattern}-${i}`}
               placeholder={S.settings.formats.elementPattern}
               onChange={(e) => {
-                const next = updateCustomElement(stateHolder, format.id, i, { pattern: e.target.value });
+                const next = updateCustomElement(stateHolder, format.id, i, {
+                  pattern: e.target.value,
+                });
                 onSave({ ...format, grammar: next.custom[0].grammar });
               }}
             />
           </div>
         );
       })}
-      <div className="dim" style={st.pageHint}>{S.settings.formats.grammarHint}</div>
+      <div className="dim" style={st.pageHint}>
+        {S.settings.formats.grammarHint}
+      </div>
     </div>
   );
 }

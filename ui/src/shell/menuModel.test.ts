@@ -13,7 +13,11 @@ import {
   type MenuId,
 } from './menuModel';
 
-const def = (id: string, category: CommandDef['category'], when?: CommandDef['when']): CommandDef => ({
+const def = (
+  id: string,
+  category: CommandDef['category'],
+  when?: CommandDef['when'],
+): CommandDef => ({
   id,
   title: `命令-${id}`,
   category,
@@ -39,7 +43,7 @@ describe('菜单栏分组（附录 F 命令矩阵）', () => {
         def('app.newTab', '窗口'),
         def('app.report', '工具'),
       ],
-      ctx()
+      ctx(),
     );
     expect(groups.map((g) => g.id)).toEqual(MENU_IDS);
     // 按 id 取组：菜单顺序调整不应让断言错位
@@ -68,8 +72,11 @@ describe('工具栏（FR-UI-003）', () => {
       def('app.report', '工具', (c) => c.activeTabKind !== null && c.activeTabKind !== 'home'),
       def('app.other', '工具'),
     ];
-    expect(toolbarCommands(defs, ctx('text'), ['app.newTab', 'app.report', 'app.other']).map((d) => d.id))
-      .toEqual(['app.newTab', 'app.report', 'app.other']);
+    expect(
+      toolbarCommands(defs, ctx('text'), ['app.newTab', 'app.report', 'app.other']).map(
+        (d) => d.id,
+      ),
+    ).toEqual(['app.newTab', 'app.report', 'app.other']);
     const home = toolbarCommands(defs, ctx('home'), ['app.report', 'app.newTab', 'missing']);
     expect(home.map((d) => d.id)).toEqual(['app.newTab']);
     expect(TOOLBAR_FAVORITES.length).toBeGreaterThan(0);
@@ -78,12 +85,20 @@ describe('工具栏（FR-UI-003）', () => {
   it('runCommandSafely 捕获同步/异步命令异常并提示（无未处理 rejection）', async () => {
     const notices: string[] = [];
     const sync: CommandDef = {
-      id: 'x1', title: '同步出错', category: '工具',
-      run: () => { throw new Error('sync-boom'); },
+      id: 'x1',
+      title: '同步出错',
+      category: '工具',
+      run: () => {
+        throw new Error('sync-boom');
+      },
     };
     const asyncDef: CommandDef = {
-      id: 'x2', title: '异步出错', category: '工具',
-      run: async () => { throw new Error('async-boom'); },
+      id: 'x2',
+      title: '异步出错',
+      category: '工具',
+      run: async () => {
+        throw new Error('async-boom');
+      },
     };
     await runCommandSafely(sync, ctx(), (m) => notices.push(m));
     await runCommandSafely(asyncDef, ctx(), (m) => notices.push(m));

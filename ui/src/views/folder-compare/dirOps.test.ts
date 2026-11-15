@@ -57,7 +57,11 @@ describe('dirOps：批次构造（FR-DIR-060 文件夹语义）', () => {
   it('目录整树一个 op；子项同被选中时忽略目录项（FR-DIR-060）', () => {
     const onlyDir = buildOpsForCommand('copyToRight', rows, new Set(['tree']));
     expect(onlyDir.map((o) => o.path)).toEqual(['tree']);
-    const dirAndChild = buildOpsForCommand('copyToRight', rows, new Set(['tree', 'tree/inner.txt']));
+    const dirAndChild = buildOpsForCommand(
+      'copyToRight',
+      rows,
+      new Set(['tree', 'tree/inner.txt']),
+    );
     expect(dirAndChild.map((o) => o.path)).toEqual(['tree/inner.txt']);
   });
 
@@ -74,7 +78,9 @@ describe('dirOps：批次构造（FR-DIR-060 文件夹语义）', () => {
   it('rename 单选 + 新名；touch 双侧对时', () => {
     const ren = buildOpsForCommand('rename', rows, new Set(['a.txt']), { newName: 'b.txt' });
     expect(ren).toEqual([{ kind: 'rename', path: 'a.txt', side: 'left', newName: 'b.txt' }]);
-    const multi = buildOpsForCommand('rename', rows, new Set(['a.txt', 'lonly.txt']), { newName: 'b.txt' });
+    const multi = buildOpsForCommand('rename', rows, new Set(['a.txt', 'lonly.txt']), {
+      newName: 'b.txt',
+    });
     expect(multi).toEqual([]);
     const touch = buildOpsForCommand('touch', rows, new Set(['lonly.txt']));
     expect(touch).toEqual([{ kind: 'touch', path: 'lonly.txt', side: 'left', mtimeMs: 0 }]);
@@ -88,7 +94,9 @@ describe('dirOps：批次构造（FR-DIR-060 文件夹语义）', () => {
     const summary = summarizeOps(ops);
     expect(summary).toMatchObject({ copies: 1, deletes: 1, total: 2 });
     expect(hasIrreversible(ops)).toBe(true);
-    expect(hasIrreversible(buildOpsForCommand('copyToRight', rows, new Set(['a.txt'])))).toBe(false);
+    expect(hasIrreversible(buildOpsForCommand('copyToRight', rows, new Set(['a.txt'])))).toBe(
+      false,
+    );
   });
 
   it('hasSelectedDescendant 判定子项覆盖', () => {
@@ -105,7 +113,14 @@ describe('dirOps：批次构造（FR-DIR-060 文件夹语义）', () => {
 describe('dirOps：行地址取真实侧路径（R3-03）', () => {
   const flat = [
     row({ id: 'x.txt#0', name: 'x.txt', leftPath: 'dup/x.txt', rightPath: 'other/x.txt' }),
-    row({ id: 'x.txt#1', name: 'x.txt', leftPath: 'deep/x.txt', rightPath: undefined, right: noSide, status: 'leftOnly' }),
+    row({
+      id: 'x.txt#1',
+      name: 'x.txt',
+      leftPath: 'deep/x.txt',
+      rightPath: undefined,
+      right: noSide,
+      status: 'leftOnly',
+    }),
   ];
   const sel = new Set(['x.txt#0', 'x.txt#1']);
 
@@ -127,16 +142,18 @@ describe('dirOps：行地址取真实侧路径（R3-03）', () => {
   });
 
   it('rename/touch 同样取真实路径', () => {
-    expect(buildOpsForCommand('rename', flat, new Set(['x.txt#0']), { newName: 'y.txt', side: 'right' })).toEqual([
-      { kind: 'rename', path: 'other/x.txt', side: 'right', newName: 'y.txt' },
-    ]);
+    expect(
+      buildOpsForCommand('rename', flat, new Set(['x.txt#0']), { newName: 'y.txt', side: 'right' }),
+    ).toEqual([{ kind: 'rename', path: 'other/x.txt', side: 'right', newName: 'y.txt' }]);
     expect(buildOpsForCommand('touch', flat, new Set(['x.txt#1']))).toEqual([
       { kind: 'touch', path: 'deep/x.txt', side: 'left', mtimeMs: 0 },
     ]);
   });
 
   it('侧路径缺失时不生成 op —— 不得回退到显示 id', () => {
-    const noPath = [row({ id: 'x.txt#0', name: 'x.txt', leftPath: undefined, rightPath: undefined })];
+    const noPath = [
+      row({ id: 'x.txt#0', name: 'x.txt', leftPath: undefined, rightPath: undefined }),
+    ];
     const ids = new Set(['x.txt#0']);
     expect(buildOpsForCommand('copyToRight', noPath, ids)).toEqual([]);
     expect(buildOpsForCommand('delete', noPath, ids)).toEqual([]);

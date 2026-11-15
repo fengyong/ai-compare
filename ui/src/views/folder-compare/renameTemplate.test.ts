@@ -48,7 +48,9 @@ describe('renameTemplate', () => {
 
   it('DOS：点文件视为无扩展名基底', () => {
     expect(splitBaseExt('.gitignore')).toEqual({ base: '.gitignore', ext: '' });
-    expect(applyDosMask('.gitignore', { mask: '*.bak', counterStart: 1 }, 1)).toBe('.gitignore.bak');
+    expect(applyDosMask('.gitignore', { mask: '*.bak', counterStart: 1 }, 1)).toBe(
+      '.gitignore.bak',
+    );
   });
 
   it('DOS：掩码无通配符 = 整名替换（同名冲突由计划层拦截）', () => {
@@ -100,28 +102,57 @@ describe('renameTemplate', () => {
 
   function row(id: string, name = id.split('/').pop() ?? id): DirRow {
     const side = { size: 1, mtimeMs: 1, attribute: null, unixMode: 0, uid: 0, gid: 0 };
-    return { id, name, kind: 'file', left: side, right: null, status: 'leftOnly', hasChildren: false, hidden: false, suppressed: false, leftPath: id };
+    return {
+      id,
+      name,
+      kind: 'file',
+      left: side,
+      right: null,
+      status: 'leftOnly',
+      hasChildren: false,
+      hidden: false,
+      suppressed: false,
+      leftPath: id,
+    };
   }
 
   const dos = { mask: 'IMG####.jpg', counterStart: 1 };
   const regex: RegexRenameOptions = { pattern: '^(old_)(.+)$', template: 'new_$2' };
 
   it('计划：DOS 批量按行序分配计数器，可执行清单完整', () => {
-    const plan = planRenames({ rows: [row('a.png'), row('b.png')], allRows: [row('a.png'), row('b.png')], mode: 'dos', dos, regex });
+    const plan = planRenames({
+      rows: [row('a.png'), row('b.png')],
+      allRows: [row('a.png'), row('b.png')],
+      mode: 'dos',
+      dos,
+      regex,
+    });
     expect(plan.items.map((i) => i.newName)).toEqual(['IMG0001.jpg', 'IMG0002.jpg']);
     expect(plan.renames).toHaveLength(2);
     expect(plan.conflicts).toBe(0);
   });
 
   it('计划：批次内重名拦截（同掩码同名输出）', () => {
-    const plan = planRenames({ rows: [row('a.png'), row('b.png')], allRows: [row('a.png'), row('b.png')], mode: 'dos', dos: { mask: 'same.jpg', counterStart: 1 }, regex });
+    const plan = planRenames({
+      rows: [row('a.png'), row('b.png')],
+      allRows: [row('a.png'), row('b.png')],
+      mode: 'dos',
+      dos: { mask: 'same.jpg', counterStart: 1 },
+      regex,
+    });
     expect(plan.conflicts).toBe(2);
     expect(plan.renames).toHaveLength(0);
     expect(plan.items.every((i) => i.conflict === 'duplicate')).toBe(true);
   });
 
   it('计划：批次内重名按大小写不敏感判定', () => {
-    const plan = planRenames({ rows: [row('a.png'), row('b.png')], allRows: [row('a.png'), row('b.png')], mode: 'dos', dos: { mask: 'Same.jpg', counterStart: 1 }, regex });
+    const plan = planRenames({
+      rows: [row('a.png'), row('b.png')],
+      allRows: [row('a.png'), row('b.png')],
+      mode: 'dos',
+      dos: { mask: 'Same.jpg', counterStart: 1 },
+      regex,
+    });
     expect(plan.conflicts).toBe(2);
   });
 
@@ -160,13 +191,25 @@ describe('renameTemplate', () => {
   });
 
   it('计划：正则整掩码非法 -> 全部 invalid', () => {
-    const plan = planRenames({ rows: [row('old_a.txt')], allRows: [row('old_a.txt')], mode: 'regex', dos, regex: { pattern: '([bad', template: 'x' } });
+    const plan = planRenames({
+      rows: [row('old_a.txt')],
+      allRows: [row('old_a.txt')],
+      mode: 'regex',
+      dos,
+      regex: { pattern: '([bad', template: 'x' },
+    });
     expect(plan.items[0].state).toBe('invalid');
     expect(plan.conflicts).toBe(1);
   });
 
   it('计划：正则模板注入路径分隔符 -> 非法字符拦截', () => {
-    const plan = planRenames({ rows: [row('old_a.txt')], allRows: [row('old_a.txt')], mode: 'regex', dos, regex: { pattern: '^old_(.*)$', template: 'sub/$1' } });
+    const plan = planRenames({
+      rows: [row('old_a.txt')],
+      allRows: [row('old_a.txt')],
+      mode: 'regex',
+      dos,
+      regex: { pattern: '^old_(.*)$', template: 'sub/$1' },
+    });
     expect(plan.items[0].state).toBe('invalid');
     expect(plan.items[0].reason).toContain('非法字符');
   });
@@ -174,7 +217,13 @@ describe('renameTemplate', () => {
   it('计划：目录行同机制重命名；执行序子先父后', () => {
     const dir = { ...row('old_sub'), kind: 'dir' as const, hasChildren: true };
     const child = row('old_sub/old_c.txt');
-    const plan = planRenames({ rows: [dir, child], allRows: [dir, child], mode: 'regex', dos, regex: { pattern: '^old_', template: 'new_' } });
+    const plan = planRenames({
+      rows: [dir, child],
+      allRows: [dir, child],
+      mode: 'regex',
+      dos,
+      regex: { pattern: '^old_', template: 'new_' },
+    });
     expect(plan.renames.map((r) => r.row.id)).toEqual(['old_sub/old_c.txt', 'old_sub']);
     expect(plan.renames[1].newName).toBe('new_sub');
   });
@@ -182,7 +231,13 @@ describe('renameTemplate', () => {
   it('计划：目录重命名与同父现有行撞名（exists）', () => {
     const dir = { ...row('sub'), kind: 'dir' as const, hasChildren: true };
     const other = row('sub2');
-    const plan = planRenames({ rows: [dir], allRows: [dir, other], mode: 'dos', dos: { mask: 'sub2', counterStart: 1 }, regex });
+    const plan = planRenames({
+      rows: [dir],
+      allRows: [dir, other],
+      mode: 'dos',
+      dos: { mask: 'sub2', counterStart: 1 },
+      regex,
+    });
     expect(plan.items[0].conflict).toBe('exists');
   });
 
@@ -190,14 +245,26 @@ describe('renameTemplate', () => {
     const rows = [row('a.png'), row('b.png')];
     const all = [...rows, row('IMG0001.jpg'), row('IMG0002.jpg')];
     expect(planRenames({ rows, allRows: all, mode: 'dos', dos, regex }).conflicts).toBe(2);
-    const plan2 = planRenames({ rows, allRows: all, mode: 'dos', dos: { mask: 'IMG####.jpg', counterStart: 3 }, regex });
+    const plan2 = planRenames({
+      rows,
+      allRows: all,
+      mode: 'dos',
+      dos: { mask: 'IMG####.jpg', counterStart: 3 },
+      regex,
+    });
     expect(plan2.conflicts).toBe(0);
     expect(plan2.items.map((i) => i.newName)).toEqual(['IMG0003.jpg', 'IMG0004.jpg']);
   });
 
   it('renamesToOps：side 取存在侧（左优先）且载荷同形 DirExecuteOp', () => {
     const r1 = row('old_a.txt');
-    const r2 = { ...row('old_b.txt'), left: null, leftPath: undefined, right: { size: 1, mtimeMs: 1, attribute: null, unixMode: 0, uid: 0, gid: 0 }, rightPath: 'old_b.txt' };
+    const r2 = {
+      ...row('old_b.txt'),
+      left: null,
+      leftPath: undefined,
+      right: { size: 1, mtimeMs: 1, attribute: null, unixMode: 0, uid: 0, gid: 0 },
+      rightPath: 'old_b.txt',
+    };
     const plan = planRenames({ rows: [r1, r2], allRows: [r1, r2], mode: 'regex', dos, regex });
     const ops = renamesToOps(plan.renames.map((r) => ({ row: r.row, newName: r.newName! })));
     expect(ops).toEqual([

@@ -7,7 +7,13 @@
  * - hidden/suppressed 标记重算（抑制过滤器语义：被隐藏行以 suppressed 青绿显示）。
  */
 
-import type { DirEntryStatus, DirRow, DisplayFilterSpec, NameFilterSpec, SideInfo } from '../../protocol/types';
+import type {
+  DirEntryStatus,
+  DirRow,
+  DisplayFilterSpec,
+  NameFilterSpec,
+  SideInfo,
+} from '../../protocol/types';
 
 // ------------------------------------------------------------------
 // 掩码匹配（BC 通配符子集）
@@ -238,7 +244,11 @@ export function displayVisible(row: DirRow, df: DisplayFilterSpec): boolean {
  * 显示过滤 + 抑制重算（mock 引擎 / 本地预演共用）：
  * 返回新数组（不可变；不修改输入行）。
  */
-export function applyDisplayToRows(rows: DirRow[], df: DisplayFilterSpec, suppress: boolean): DirRow[] {
+export function applyDisplayToRows(
+  rows: DirRow[],
+  df: DisplayFilterSpec,
+  suppress: boolean,
+): DirRow[] {
   return rows.map((row) => {
     const hidden = !displayVisible(row, df);
     return { ...row, hidden: hidden && !suppress, suppressed: hidden && suppress };
@@ -261,13 +271,45 @@ export function displayFilterPreset(name: string): DisplayFilterSpec {
         showDirDiff: false,
       };
     case 'leftNewer':
-      return { ...SHOW_ALL_DISPLAY_FILTER, showSame: false, showContentDiff: false, showRightNewer: false, showLeftOnly: false, showRightOnly: false, showDirDiff: false };
+      return {
+        ...SHOW_ALL_DISPLAY_FILTER,
+        showSame: false,
+        showContentDiff: false,
+        showRightNewer: false,
+        showLeftOnly: false,
+        showRightOnly: false,
+        showDirDiff: false,
+      };
     case 'rightNewer':
-      return { ...SHOW_ALL_DISPLAY_FILTER, showSame: false, showContentDiff: false, showLeftNewer: false, showLeftOnly: false, showRightOnly: false, showDirDiff: false };
+      return {
+        ...SHOW_ALL_DISPLAY_FILTER,
+        showSame: false,
+        showContentDiff: false,
+        showLeftNewer: false,
+        showLeftOnly: false,
+        showRightOnly: false,
+        showDirDiff: false,
+      };
     case 'leftOnly':
-      return { ...SHOW_ALL_DISPLAY_FILTER, showSame: false, showContentDiff: false, showLeftNewer: false, showRightNewer: false, showRightOnly: false, showDirDiff: false };
+      return {
+        ...SHOW_ALL_DISPLAY_FILTER,
+        showSame: false,
+        showContentDiff: false,
+        showLeftNewer: false,
+        showRightNewer: false,
+        showRightOnly: false,
+        showDirDiff: false,
+      };
     case 'rightOnly':
-      return { ...SHOW_ALL_DISPLAY_FILTER, showSame: false, showContentDiff: false, showLeftNewer: false, showRightNewer: false, showLeftOnly: false, showDirDiff: false };
+      return {
+        ...SHOW_ALL_DISPLAY_FILTER,
+        showSame: false,
+        showContentDiff: false,
+        showLeftNewer: false,
+        showRightNewer: false,
+        showLeftOnly: false,
+        showDirDiff: false,
+      };
     default:
       return SHOW_ALL_DISPLAY_FILTER;
   }

@@ -34,7 +34,7 @@ export function colorForRow(status: AlignedRow['status'], importance: Importance
 /** 游程编码（相邻同色段合并；rows 为空返回空数组） */
 export function buildOverviewSegments(
   rows: AlignedRow[],
-  importance: Map<number, Importance>
+  importance: Map<number, Importance>,
 ): OverviewSeg[] {
   const segs: OverviewSeg[] = [];
   for (let i = 0; i < rows.length; i++) {
@@ -62,7 +62,7 @@ export function rowAtFraction(totalRows: number, frac: number): number {
 export function viewportFractions(
   totalRows: number,
   topRow: number,
-  bottomRow: number
+  bottomRow: number,
 ): { top: number; height: number } | null {
   if (totalRows <= 0) return null;
   const top = Math.max(0, topRow) / totalRows;

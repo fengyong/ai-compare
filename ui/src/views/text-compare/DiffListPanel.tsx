@@ -22,8 +22,12 @@ const KIND_GLYPH: Record<Section['kind'], string> = {
 };
 
 function rangeText(sec: Section): string {
-  const l = sec.left ? `L${sec.left.start + 1}${sec.left.end - sec.left.start > 1 ? `-${sec.left.end}` : ''}` : null;
-  const r = sec.right ? `R${sec.right.start + 1}${sec.right.end - sec.right.start > 1 ? `-${sec.right.end}` : ''}` : null;
+  const l = sec.left
+    ? `L${sec.left.start + 1}${sec.left.end - sec.left.start > 1 ? `-${sec.left.end}` : ''}`
+    : null;
+  const r = sec.right
+    ? `R${sec.right.start + 1}${sec.right.end - sec.right.start > 1 ? `-${sec.right.end}` : ''}`
+    : null;
   if (l && r) return `${l} ⇄ ${r}`;
   return l ?? r ?? '';
 }

@@ -22,10 +22,20 @@ export function statusVisual(status: DirEntryStatus): StatusVisual {
     case 'same':
       return { tone: 'same', label: S.folder.status.same, centerGlyph: '=', centerClass: 'same' };
     case 'contentDiff':
-      return { tone: 'diff', label: S.folder.status.contentDiff, centerGlyph: '≠', centerClass: 'diff' };
+      return {
+        tone: 'diff',
+        label: S.folder.status.contentDiff,
+        centerGlyph: '≠',
+        centerClass: 'diff',
+      };
     case 'quickDiff':
       // 快速测试判异（mtime 超容差）且未做内容复核：按"疑似不同"展示
-      return { tone: 'diff', label: S.folder.status.quickDiff, centerGlyph: '≈', centerClass: 'diff' };
+      return {
+        tone: 'diff',
+        label: S.folder.status.quickDiff,
+        centerGlyph: '≈',
+        centerClass: 'diff',
+      };
     case 'similar':
       // R3-16：基于规则比较判"仅不重要差异"。BC 行色仍按差异红，
       // 靠中间列 contentsimilar 图标区分（附录 C.1 无独立的"相似"行色）

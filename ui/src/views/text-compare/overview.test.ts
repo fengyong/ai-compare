@@ -1,10 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  buildOverviewSegments,
-  colorForRow,
-  rowAtFraction,
-  viewportFractions,
-} from './overview';
+import { buildOverviewSegments, colorForRow, rowAtFraction, viewportFractions } from './overview';
 import type { AlignedRow } from './alignment';
 
 function rowsOf(pattern: string): AlignedRow[] {
@@ -38,9 +33,7 @@ describe('overview：概览条模型（FR-TXT-030）', () => {
   });
 
   it('buildOverviewSegments：不重要差异段独立成段', () => {
-    const imp = new Map<number, 'important' | 'unimportant' | 'ignored'>([
-      [2, 'unimportant'],
-    ]);
+    const imp = new Map<number, 'important' | 'unimportant' | 'ignored'>([[2, 'unimportant']]);
     const segs = buildOverviewSegments(rowsOf('eec'), imp);
     expect(segs).toEqual([
       { startRow: 0, rows: 2, color: 'equal' },

@@ -12,7 +12,10 @@ import { createShortcutEngine, ShortcutEngine } from './shortcutEngine';
 import type { CommandContext } from './commands';
 import { registerFolderView } from '../views/folder-compare/folderViewBus';
 
-function fakeEvent(key: string, mods: Partial<{ ctrl: boolean; alt: boolean; shift: boolean; meta: boolean }> = {}): KeyboardEvent {
+function fakeEvent(
+  key: string,
+  mods: Partial<{ ctrl: boolean; alt: boolean; shift: boolean; meta: boolean }> = {},
+): KeyboardEvent {
   return {
     key,
     ctrlKey: mods.ctrl ?? false,
@@ -99,10 +102,17 @@ describe('shell/shortcuts 键位引擎', () => {
   it('commandRegistry：内置命令注册齐全且分类可列', () => {
     const ids = commandRegistry.list().map((c) => c.id);
     for (const required of [
-      'session.save', 'session.saveAs', 'session.lock',
-      'app.newTab', 'app.newWindow', 'app.closeTab',
-      'window.mergeAll', 'window.detachTab', 'app.settings',
-      'app.showSessionPanel', 'app.clipboardCompare',
+      'session.save',
+      'session.saveAs',
+      'session.lock',
+      'app.newTab',
+      'app.newWindow',
+      'app.closeTab',
+      'window.mergeAll',
+      'window.detachTab',
+      'app.settings',
+      'app.showSessionPanel',
+      'app.clipboardCompare',
     ]) {
       expect(ids).toContain(required);
     }

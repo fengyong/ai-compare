@@ -17,7 +17,7 @@ import {
 } from './reportModel';
 
 const tab = (kind: string, sessionId?: string) =>
-  ({ kind, [kind]: sessionId ? { sessionId } : undefined } as unknown as Tab);
+  ({ kind, [kind]: sessionId ? { sessionId } : undefined }) as unknown as Tab;
 
 describe('报告布局与表单（FR-RPT-002）', () => {
   it('除 home 外每类会话都有可用布局，且文本/文件夹布局含文档要求项', () => {

@@ -1,4 +1,11 @@
-import type { DirDelta, DirRow, DirScanIssue, DirStats, ScanProgress, ScanState } from '../../protocol/types';
+import type {
+  DirDelta,
+  DirRow,
+  DirScanIssue,
+  DirStats,
+  ScanProgress,
+  ScanState,
+} from '../../protocol/types';
 import { subscribeDirDelta } from '../../ipc/engineProcess';
 
 /**

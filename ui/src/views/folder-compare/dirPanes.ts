@@ -47,7 +47,11 @@ export function nextSortSpec(prev: DirSortSpec | null, key: DirSortKey): DirSort
 /** 两侧独立选择集（FR-DIR-003/050：一侧的点击/全选不得影响另一侧） */
 export type PaneSelections = Record<PaneSide, SelectionState>;
 
-export function withPaneSelection(all: PaneSelections, side: PaneSide, next: SelectionState): PaneSelections {
+export function withPaneSelection(
+  all: PaneSelections,
+  side: PaneSide,
+  next: SelectionState,
+): PaneSelections {
   return { ...all, [side]: next };
 }
 
@@ -61,6 +65,12 @@ export interface ScrollPos {
  * 少了任一条过滤都会形成 scroll 事件回环（赋值 → 事件 → 再赋值）。
  * 纵向（三列 scrollTop）与横向（窗格体 → 该侧表头 scrollLeft）共用。
  */
-export function scrollSyncPlan(sourceId: string, sourceTop: number, others: readonly ScrollPos[]): ScrollPos[] {
-  return others.filter((p) => p.id !== sourceId && p.top !== sourceTop).map((p) => ({ id: p.id, top: sourceTop }));
+export function scrollSyncPlan(
+  sourceId: string,
+  sourceTop: number,
+  others: readonly ScrollPos[],
+): ScrollPos[] {
+  return others
+    .filter((p) => p.id !== sourceId && p.top !== sourceTop)
+    .map((p) => ({ id: p.id, top: sourceTop }));
 }

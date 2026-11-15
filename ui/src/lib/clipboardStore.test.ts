@@ -24,7 +24,8 @@ describe('剪贴板历史纯函数（FR-CLIP-003 限制语义）', () => {
 
   it('条数上限裁剪保留最新 N 条', () => {
     let h: ClipboardEntry[] = [];
-    for (let i = 1; i <= 8; i++) h = appendClip(h, `line-${i}`, i, i, { ...DEFAULT_CLIP_LIMITS, maxEntries: 3 });
+    for (let i = 1; i <= 8; i++)
+      h = appendClip(h, `line-${i}`, i, i, { ...DEFAULT_CLIP_LIMITS, maxEntries: 3 });
     expect(h.map((x) => x.text)).toEqual(['line-6', 'line-7', 'line-8']);
   });
 
@@ -32,7 +33,11 @@ describe('剪贴板历史纯函数（FR-CLIP-003 限制语义）', () => {
     const big = 'x'.repeat(100);
     let h: ClipboardEntry[] = [];
     for (let i = 1; i <= 6; i++) {
-      h = appendClip(h, `${big}${i}`, i, i, { ...DEFAULT_CLIP_LIMITS, maxBytes: 250, maxEntries: 20 });
+      h = appendClip(h, `${big}${i}`, i, i, {
+        ...DEFAULT_CLIP_LIMITS,
+        maxBytes: 250,
+        maxEntries: 20,
+      });
     }
     expect(h.length).toBeGreaterThanOrEqual(2);
     expect(h.length).toBeLessThan(6);
@@ -82,7 +87,9 @@ describe('ClipboardStore 单例行为', () => {
   it('历史已满时 add 仍返回新增条目（裁剪不会误判为过滤）', () => {
     const s = new ClipboardStore('unit-clip-full');
     s.setLimits({ maxEntries: 3 });
-    s.add('a'); s.add('b'); s.add('c');
+    s.add('a');
+    s.add('b');
+    s.add('c');
     const fourth = s.add('d');
     expect(fourth?.text).toBe('d');
     expect(s.list().map((e) => e.text)).toEqual(['b', 'c', 'd']);

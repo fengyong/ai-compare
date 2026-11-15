@@ -37,7 +37,10 @@ describe('文本书签（FR-TXT-023）', () => {
   });
 
   it('十个编号全满且当前行无书签时不新增', () => {
-    const full = Object.fromEntries(BOOKMARK_SLOTS.map((s) => [s, s * 10])) as Record<number, number>;
+    const full = Object.fromEntries(BOOKMARK_SLOTS.map((s) => [s, s * 10])) as Record<
+      number,
+      number
+    >;
     const r = toggleBookmark(full, 999);
     expect(r.slot).toBeNull();
     expect(r.added).toBe(false);
@@ -75,13 +78,27 @@ describe('文本视图命令总线', () => {
   it('注册与注销动作（视图卸载时清空）', () => {
     let hits = 0;
     const actions: TextViewActions = {
-      toggleWrap: () => { hits++; },
-      toggleBookmark: () => { hits++; },
-      gotoBookmark: () => { hits++; },
-      clearBookmarks: () => { hits++; },
-      setBookmarkAtCursor: () => { hits++; },
-      saveFile: () => { hits++; },
-      saveFileAs: () => { hits++; },
+      toggleWrap: () => {
+        hits++;
+      },
+      toggleBookmark: () => {
+        hits++;
+      },
+      gotoBookmark: () => {
+        hits++;
+      },
+      clearBookmarks: () => {
+        hits++;
+      },
+      setBookmarkAtCursor: () => {
+        hits++;
+      },
+      saveFile: () => {
+        hits++;
+      },
+      saveFileAs: () => {
+        hits++;
+      },
     };
     setActiveTextView(actions);
     expect(activeTextView()).toBe(actions);

@@ -80,10 +80,22 @@ export function MenuBar() {
               ))}
               {group.id === 'help' && (
                 <>
-                  <button className="aic-menu-item" onClick={() => { setOpenId(null); notice(S.menu.aboutHint); }}>
+                  <button
+                    className="aic-menu-item"
+                    onClick={() => {
+                      setOpenId(null);
+                      notice(S.menu.aboutHint);
+                    }}
+                  >
                     <span>{S.menu.about}</span>
                   </button>
-                  <button className="aic-menu-item" onClick={() => { setOpenId(null); notice(S.menu.docs); }}>
+                  <button
+                    className="aic-menu-item"
+                    onClick={() => {
+                      setOpenId(null);
+                      notice(S.menu.docs);
+                    }}
+                  >
                     <span>{S.menu.docsLabel}</span>
                   </button>
                 </>

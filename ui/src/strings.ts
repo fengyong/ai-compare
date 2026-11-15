@@ -372,7 +372,8 @@ export const S = {
       kindList: 'Token 列表',
       kindColumn: '列区间',
       kindRowTitle: '页标题',
-      grammarHint: '语法元素供「比较规则」页勾选"不重要"；列表顺序即优先级（FR-FMT-003 五类语法项）。',
+      grammarHint:
+        '语法元素供「比较规则」页勾选"不重要"；列表顺序即优先级（FR-FMT-003 五类语法项）。',
     },
 
     /** P10 比较规则页（FR-TXT-010 设置侧） */
@@ -394,7 +395,8 @@ export const S = {
       formatLabel: '文件格式',
       disabledSuffix: '已禁用',
       noElements: '该格式未定义语法元素（可在「文件格式」页添加）。',
-      bindingHint: '勾选按格式分别记忆（格式绑定）；比较时引擎按文件命中的格式取对应元素集做重要性折叠。',
+      bindingHint:
+        '勾选按格式分别记忆（格式绑定）；比较时引擎按文件命中的格式取对应元素集做重要性折叠。',
     },
   },
 
@@ -502,7 +504,8 @@ export const S = {
     renameLabel: '新名称',
     renameOk: '重命名',
     renameNeedsSelection: '重命名仅支持单个选中项',
-    filterResult: (visible: number, hidden: number) => `过滤完成：可见 ${visible} 项，隐藏 ${hidden} 项`,
+    filterResult: (visible: number, hidden: number) =>
+      `过滤完成：可见 ${visible} 项，隐藏 ${hidden} 项`,
     suppressedBadge: '已抑制',
     expandFailed: (msg: string) => `展开失败：${msg}`,
     scanErrorCount: '项无法读取',
@@ -720,7 +723,8 @@ export const S = {
     opTakeRight: '取右',
     opDelete: '删除目标侧',
     opKeep: '保持不变',
-    textMergePlaceholder: '文本三向合并视图属 P10 交付（当前为占位）：可先用「取左/取右」决策，或到文本比较视图人工处理该文件。',
+    textMergePlaceholder:
+      '文本三向合并视图属 P10 交付（当前为占位）：可先用「取左/取右」决策，或到文本比较视图人工处理该文件。',
     textMergeTitle: '文本合并（占位）',
     textMergeClose: '关闭',
     engineUnsupported: '当前引擎未提供 dir/mergeScan（版本过旧）；演示引擎可完整体验。',

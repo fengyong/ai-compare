@@ -13,7 +13,8 @@ type Loader = () => Promise<Extension> | Extension;
 
 const LOADERS: Record<LangId, Loader> = {
   javascript: () => import('@codemirror/lang-javascript').then((m) => m.javascript()),
-  typescript: () => import('@codemirror/lang-javascript').then((m) => m.javascript({ typescript: true })),
+  typescript: () =>
+    import('@codemirror/lang-javascript').then((m) => m.javascript({ typescript: true })),
   json: () => import('@codemirror/lang-json').then((m) => m.json()),
   markdown: () => import('@codemirror/lang-markdown').then((m) => m.markdown()),
   python: () => import('@codemirror/lang-python').then((m) => m.python()),

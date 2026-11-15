@@ -113,7 +113,12 @@ describe('shell/store 多窗口与标签', () => {
       kind: 'folder' as const,
       title: 'x',
       folder: { left: '/l', right: '/r', sessionId: 'dir-fake-1' },
-      sessionLink: { sessionId: 's-x', name: '命名', kind: 'folder-compare' as const, locked: false },
+      sessionLink: {
+        sessionId: 's-x',
+        name: '命名',
+        kind: 'folder-compare' as const,
+        locked: false,
+      },
       dirty: true,
     };
     useShell.setState((st) => ({

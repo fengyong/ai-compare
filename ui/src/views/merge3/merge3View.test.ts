@@ -38,7 +38,13 @@ function mk(origin: MergeChunkOrigin, extra: Partial<MergeChunkDto> = {}): Merge
   };
 }
 
-const ALL_ORIGINS: MergeChunkOrigin[] = ['stable', 'leftOnly', 'rightOnly', 'bothChanged', 'conflict'];
+const ALL_ORIGINS: MergeChunkOrigin[] = [
+  'stable',
+  'leftOnly',
+  'rightOnly',
+  'bothChanged',
+  'conflict',
+];
 
 describe('merge3 视图：块着色（FR-TMRG-002/005 颜色语义）', () => {
   it('五种来源各自着色，未更改=灰', () => {

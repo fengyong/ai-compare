@@ -129,9 +129,7 @@ export function wordDiff(left: string, right: string, opts: InlineDiffOptions = 
       if (prevI < n || prevJ < m) {
         push({
           left:
-            prevI < n
-              ? { start: a[prevI].start, end: tokenEnd(a, n - 1, left.length) }
-              : undefined,
+            prevI < n ? { start: a[prevI].start, end: tokenEnd(a, n - 1, left.length) } : undefined,
           right:
             prevJ < m
               ? { start: b[prevJ].start, end: tokenEnd(b, m - 1, right.length) }
@@ -147,9 +145,7 @@ export function wordDiff(left: string, right: string, opts: InlineDiffOptions = 
     if (mi > prevI || mj > prevJ) {
       push({
         left:
-          mi > prevI
-            ? { start: a[prevI].start, end: tokenEnd(a, mi - 1, left.length) }
-            : undefined,
+          mi > prevI ? { start: a[prevI].start, end: tokenEnd(a, mi - 1, left.length) } : undefined,
         right:
           mj > prevJ
             ? { start: b[prevJ].start, end: tokenEnd(b, mj - 1, right.length) }
@@ -191,7 +187,11 @@ export function dmpCleanupPairs(pairs: InlinePair[]): InlinePair[] {
     if (out.length >= 2) {
       const eq = out[out.length - 1];
       const prevEdit = out[out.length - 2];
-      const gapLen = eq.left ? eq.left.end - eq.left.start : eq.right ? eq.right.end - eq.right.start : Infinity;
+      const gapLen = eq.left
+        ? eq.left.end - eq.left.start
+        : eq.right
+          ? eq.right.end - eq.right.start
+          : Infinity;
       if (
         eq.equal &&
         !prevEdit.equal &&
@@ -255,7 +255,12 @@ export function buildInlineMarks(
   leftStart: number,
   rightStart: number,
   lineCount: number,
-  limits: { maxSectionLines?: number; maxLineChars?: number; maxCells?: number; dmpCleanup?: boolean } = {}
+  limits: {
+    maxSectionLines?: number;
+    maxLineChars?: number;
+    maxCells?: number;
+    dmpCleanup?: boolean;
+  } = {},
 ): { left: InlineMark[]; right: InlineMark[] } {
   const maxSectionLines = limits.maxSectionLines ?? 400;
   const maxLineChars = limits.maxLineChars ?? 1000;

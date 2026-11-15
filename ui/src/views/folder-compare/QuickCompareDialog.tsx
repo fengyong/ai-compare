@@ -36,8 +36,16 @@ function sameRowSides(row: DirRow): { a: PairSide; b: PairSide } {
 /** 两行模式：各取存在侧（左优先；孤立项取其存在侧） */
 function crossRowSides(rows: readonly DirRow[]): { a: PairSide; b: PairSide } {
   const [r1, r2] = rows;
-  const a = toSide(r1.left ?? r1.right, `A · ${r1.left ? S.folder.leftTag : S.folder.rightTag} · ${r1.name}`, r1.name);
-  const b = toSide(r2.left ?? r2.right, `B · ${r2.left ? S.folder.leftTag : S.folder.rightTag} · ${r2.name}`, r2.name);
+  const a = toSide(
+    r1.left ?? r1.right,
+    `A · ${r1.left ? S.folder.leftTag : S.folder.rightTag} · ${r1.name}`,
+    r1.name,
+  );
+  const b = toSide(
+    r2.left ?? r2.right,
+    `B · ${r2.left ? S.folder.leftTag : S.folder.rightTag} · ${r2.name}`,
+    r2.name,
+  );
   return { a, b };
 }
 
@@ -46,7 +54,8 @@ function toSide(info: SideInfo | null, label: string, name = ''): PairSide {
 }
 
 export function QuickCompareDialog({ state }: { state: QuickCompareDialogState }) {
-  const { a, b } = state.rows.length === 2 ? crossRowSides(state.rows) : sameRowSides(state.rows[0]);
+  const { a, b } =
+    state.rows.length === 2 ? crossRowSides(state.rows) : sameRowSides(state.rows[0]);
   const comparable = a.size !== null && b.size !== null && a.mtimeMs !== null && b.mtimeMs !== null;
   const sizeDiff = comparable && a.size !== b.size;
   const timeDiff = comparable && a.mtimeMs !== b.mtimeMs;
@@ -57,13 +66,22 @@ export function QuickCompareDialog({ state }: { state: QuickCompareDialogState }
   const isContent = statuses.includes('contentDiff');
   const verdict = isContent ? F.quickCompareContentVerdict : F.quickCompareQuickVerdict;
 
-  const cellStyle: React.CSSProperties = { padding: '4px 10px', borderTop: '1px solid var(--aic-border)', whiteSpace: 'nowrap' };
+  const cellStyle: React.CSSProperties = {
+    padding: '4px 10px',
+    borderTop: '1px solid var(--aic-border)',
+    whiteSpace: 'nowrap',
+  };
   const labelStyle: React.CSSProperties = { ...cellStyle, color: 'var(--aic-text-dim)' };
   const diffColor = 'var(--aic-st-diff, #d33)';
 
   return (
     <div className="aic-modal-mask">
-      <div className="aic-modal aic-dialog" role="dialog" aria-label={F.quickCompareTitle} style={{ width: 560, maxWidth: '92vw' }}>
+      <div
+        className="aic-modal aic-dialog"
+        role="dialog"
+        aria-label={F.quickCompareTitle}
+        style={{ width: 560, maxWidth: '92vw' }}
+      >
         <h3 style={{ margin: '0 0 4px' }}>{F.quickCompareTitle}</h3>
         <p className="dim" style={{ margin: '0 0 8px', fontSize: 12 }}>
           {F.quickCompareDesc}
@@ -84,13 +102,21 @@ export function QuickCompareDialog({ state }: { state: QuickCompareDialogState }
             </tr>
             <tr>
               <td style={labelStyle}>{S.folder.sizeCol}</td>
-              <td style={cellStyle}>{a.size === null ? F.quickCompareMissing : formatSize(a.size)}</td>
-              <td style={cellStyle}>{b.size === null ? F.quickCompareMissing : formatSize(b.size)}</td>
+              <td style={cellStyle}>
+                {a.size === null ? F.quickCompareMissing : formatSize(a.size)}
+              </td>
+              <td style={cellStyle}>
+                {b.size === null ? F.quickCompareMissing : formatSize(b.size)}
+              </td>
             </tr>
             <tr>
               <td style={labelStyle}>{S.folder.mtimeCol}</td>
-              <td style={cellStyle}>{a.mtimeMs === null ? F.quickCompareMissing : formatTime(a.mtimeMs)}</td>
-              <td style={cellStyle}>{b.mtimeMs === null ? F.quickCompareMissing : formatTime(b.mtimeMs)}</td>
+              <td style={cellStyle}>
+                {a.mtimeMs === null ? F.quickCompareMissing : formatTime(a.mtimeMs)}
+              </td>
+              <td style={cellStyle}>
+                {b.mtimeMs === null ? F.quickCompareMissing : formatTime(b.mtimeMs)}
+              </td>
             </tr>
             <tr>
               {/* 本地文案：比较判定（待并入 strings.ts） */}
@@ -98,8 +124,12 @@ export function QuickCompareDialog({ state }: { state: QuickCompareDialogState }
               <td style={cellStyle} colSpan={2}>
                 {comparable ? (
                   <>
-                    <span style={sizeDiff ? { color: diffColor } : undefined}>{sizeDiff ? F.quickCompareDiffSize : F.quickCompareSameSize}；</span>
-                    <span style={timeDiff ? { color: diffColor } : undefined}>{timeDiff ? F.quickCompareDiffTime : F.quickCompareSameTime}</span>
+                    <span style={sizeDiff ? { color: diffColor } : undefined}>
+                      {sizeDiff ? F.quickCompareDiffSize : F.quickCompareSameSize}；
+                    </span>
+                    <span style={timeDiff ? { color: diffColor } : undefined}>
+                      {timeDiff ? F.quickCompareDiffTime : F.quickCompareSameTime}
+                    </span>
                   </>
                 ) : (
                   <span className="dim">—（{F.quickCompareMissing}）</span>

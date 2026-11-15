@@ -78,7 +78,7 @@ export async function openClipboardAsText(id: number, notice: Notice): Promise<v
 export async function comparePathWithClipboard(
   leftPath: string,
   clipboard: ClipboardGateway,
-  notice: Notice
+  notice: Notice,
 ): Promise<void> {
   let text = '';
   try {

@@ -48,7 +48,11 @@ export function SettingsDialog({ initialPage, kind, sessionTabId }: Props) {
   const kindOfSession = useKind();
   const effectiveKind = kind ?? kindOfSession;
   const sessionScopeSupported = page.scope === 'session-scoped';
-  const defaultScope: SettingsScope = sessionScopeSupported ? (sessionTabId ? 'session' : 'kind') : 'global';
+  const defaultScope: SettingsScope = sessionScopeSupported
+    ? sessionTabId
+      ? 'session'
+      : 'kind'
+    : 'global';
   const scope: SettingsScope = sessionScopeSupported ? (scopes[page.id] ?? defaultScope) : 'global';
 
   const loadLayer = (s: SettingsScope): SettingsTree => {
@@ -57,8 +61,10 @@ export function SettingsDialog({ initialPage, kind, sessionTabId }: Props) {
     return sessionService.getSession(sessionTabId ?? '')?.overrides ?? {};
   };
 
-  const draft: DraftState =
-    drafts[`${page.id}:${scope}`] ?? { scope, values: cloneTree(loadLayer(scope)) };
+  const draft: DraftState = drafts[`${page.id}:${scope}`] ?? {
+    scope,
+    values: cloneTree(loadLayer(scope)),
+  };
 
   const setFieldValue = (group: string, field: FieldDef, value: unknown) => {
     setGroupKey(group, field.key, value);
@@ -71,7 +77,10 @@ export function SettingsDialog({ initialPage, kind, sessionTabId }: Props) {
       const base = prev[key0] ?? { scope, values: cloneTree(loadLayer(scope)) };
       return {
         ...prev,
-        [key0]: { scope, values: { ...base.values, [group]: { ...base.values[group], [key]: value } } },
+        [key0]: {
+          scope,
+          values: { ...base.values, [group]: { ...base.values[group], [key]: value } },
+        },
       };
     });
   };
@@ -83,7 +92,10 @@ export function SettingsDialog({ initialPage, kind, sessionTabId }: Props) {
       const base = prev[key0] ?? { scope, values: cloneTree(loadLayer(scope)) };
       return {
         ...prev,
-        [key0]: { scope, values: { ...base.values, [group]: { ...base.values[group], ...values } } },
+        [key0]: {
+          scope,
+          values: { ...base.values, [group]: { ...base.values[group], ...values } },
+        },
       };
     });
   };
@@ -94,7 +106,8 @@ export function SettingsDialog({ initialPage, kind, sessionTabId }: Props) {
   const rulesGroup = (draft.values['compareRules'] ?? {}) as Partial<CompareRulesState>;
   const rulesDraft: CompareRulesState = { ...defaultCompareRulesState(), ...rulesGroup };
   const formatsStateForRules: FileFormatsState = (() => {
-    const base = (sessionService.getGlobalSettings()['fileFormats'] ?? {}) as Partial<FileFormatsState>;
+    const base = (sessionService.getGlobalSettings()['fileFormats'] ??
+      {}) as Partial<FileFormatsState>;
     const d = drafts['fileFormats:global'];
     const overlay = (d?.values['fileFormats'] ?? {}) as Partial<FileFormatsState>;
     return { ...defaultFileFormatsState(), ...base, ...overlay };
@@ -117,7 +130,9 @@ export function SettingsDialog({ initialPage, kind, sessionTabId }: Props) {
     };
     return resolveEffective({
       global: overlayFor('global', sessionService.getGlobalSettings()),
-      kind: effectiveKind ? overlayFor('kind', sessionService.getKindDefaults(effectiveKind)) : undefined,
+      kind: effectiveKind
+        ? overlayFor('kind', sessionService.getKindDefaults(effectiveKind))
+        : undefined,
       session:
         sessionTabId && effectiveKind
           ? overlayFor('session', sessionService.getSession(sessionTabId)?.overrides ?? {})
@@ -127,7 +142,12 @@ export function SettingsDialog({ initialPage, kind, sessionTabId }: Props) {
 
   const apply = async () => {
     try {
-      await sessionService.writeOverride(scope, effectiveKind, sessionTabId ? sessionTabId : null, draft.values);
+      await sessionService.writeOverride(
+        scope,
+        effectiveKind,
+        sessionTabId ? sessionTabId : null,
+        draft.values,
+      );
       setDrafts((prev) => {
         const next = { ...prev };
         delete next[`${page.id}:${scope}`];
@@ -146,11 +166,20 @@ export function SettingsDialog({ initialPage, kind, sessionTabId }: Props) {
 
   return (
     <div className="aic-modal-mask" onClick={closeSettings}>
-      <div className="aic-modal aic-settings" role="dialog" aria-label={S.settings.title} onClick={(e) => e.stopPropagation()}>
+      <div
+        className="aic-modal aic-settings"
+        role="dialog"
+        aria-label={S.settings.title}
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="aic-settings-head">
           <b>{S.settings.title}</b>
-          <span className="dim">{S.settings.kindLabel}：{kindName(effectiveKind)}</span>
-          <button className="close" aria-label={S.settings.close} onClick={closeSettings}>×</button>
+          <span className="dim">
+            {S.settings.kindLabel}：{kindName(effectiveKind)}
+          </span>
+          <button className="close" aria-label={S.settings.close} onClick={closeSettings}>
+            ×
+          </button>
         </div>
         <div className="aic-settings-body">
           <nav className="aic-settings-nav">
@@ -202,19 +231,20 @@ export function SettingsDialog({ initialPage, kind, sessionTabId }: Props) {
             {sessionScopeSupported && (
               <div className="aic-settings-scope">
                 <label>{S.settings.scopeLabel}</label>
-                <select
-                  value={scope}
-                  onChange={(e) => setScope(e.target.value as SettingsScope)}
-                >
+                <select value={scope} onChange={(e) => setScope(e.target.value as SettingsScope)}>
                   {scopeOptions.map((s) => (
-                    <option key={s} value={s}>{SCOPE_LABELS[s]}</option>
+                    <option key={s} value={s}>
+                      {SCOPE_LABELS[s]}
+                    </option>
                   ))}
                 </select>
                 <span className="dim">{S.settings.scopeHint}</span>
               </div>
             )}
             <div className="aic-settings-actions">
-              <button className="primary" onClick={() => void apply()}>{S.settings.apply}</button>
+              <button className="primary" onClick={() => void apply()}>
+                {S.settings.apply}
+              </button>
               <button onClick={closeSettings}>{S.settings.close}</button>
             </div>
           </div>
@@ -246,7 +276,10 @@ function SchemaForm({
         const disabled = !!f.phaseNote;
         return (
           <div className="aic-field" key={f.key} title={f.phaseNote ?? f.help ?? ''}>
-            <label>{f.label}{disabled ? `（${f.phaseNote}）` : ''}</label>
+            <label>
+              {f.label}
+              {disabled ? `（${f.phaseNote}）` : ''}
+            </label>
             {f.type === 'boolean' && (
               <input
                 type="checkbox"
@@ -273,7 +306,9 @@ function SchemaForm({
                 onChange={(e) => onChange(f, e.target.value)}
               >
                 {f.options?.map((o) => (
-                  <option key={o.value} value={o.value}>{o.label}</option>
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
                 ))}
               </select>
             )}
@@ -292,11 +327,7 @@ function SchemaForm({
   );
 }
 
-function EffectivePreview({
-  preview,
-}: {
-  preview: ReturnType<typeof resolveEffective>;
-}) {
+function EffectivePreview({ preview }: { preview: ReturnType<typeof resolveEffective> }) {
   const groups = Object.keys(preview.values).sort();
   if (groups.length === 0) return <div className="dim">{S.settings.previewEmpty}</div>;
   const LAYER_LABEL: Record<string, string> = {

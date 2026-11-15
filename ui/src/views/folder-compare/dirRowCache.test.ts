@@ -93,7 +93,7 @@ describe('DirRowCache', () => {
           similar: 0,
         },
         progress: { scanned: 2, total: 2 },
-      })
+      }),
     );
     const snap = c.getStats();
     expect(snap.stats.leftOnly).toBe(1);
@@ -170,10 +170,22 @@ describe('DirRowCache marks', () => {
 
   it('delta removals 同步清标记（防悬挂 id）', () => {
     const c = new DirRowCache('s1');
-    c.applyDelta({ sessionId: 's1', upserts: [row('a.txt'), row('b.txt')], removals: [], stats: null, progress: null } as unknown as DirDelta);
+    c.applyDelta({
+      sessionId: 's1',
+      upserts: [row('a.txt'), row('b.txt')],
+      removals: [],
+      stats: null,
+      progress: null,
+    } as unknown as DirDelta);
     c.toggleMark('a.txt');
     c.toggleMark('b.txt');
-    c.applyDelta({ sessionId: 's1', upserts: [], removals: ['a.txt'], stats: null, progress: null } as unknown as DirDelta);
+    c.applyDelta({
+      sessionId: 's1',
+      upserts: [],
+      removals: ['a.txt'],
+      stats: null,
+      progress: null,
+    } as unknown as DirDelta);
     expect(c.isMarked('a.txt')).toBe(false);
     expect(c.isMarked('b.txt')).toBe(true);
     expect(c.getMarkCount()).toBe(1);
@@ -185,7 +197,12 @@ describe('DirRowCache scanErrors', () => {
   it('首批错误进入快照；后续空批次不清掉既有错误', () => {
     const c = new DirRowCache('s1');
     expect(c.getStats().scanErrors).toEqual([]);
-    c.applyDelta(delta({ upserts: [row('a.txt')], scanErrors: [{ path: 'sub', message: 'Permission denied' }] }));
+    c.applyDelta(
+      delta({
+        upserts: [row('a.txt')],
+        scanErrors: [{ path: 'sub', message: 'Permission denied' }],
+      }),
+    );
     expect(c.getStats().scanErrors).toEqual([{ path: 'sub', message: 'Permission denied' }]);
     c.applyDelta(delta({ upserts: [row('b.txt')], batch: { index: 1, hasMore: false } }));
     expect(c.getStats().scanErrors).toEqual([{ path: 'sub', message: 'Permission denied' }]);
@@ -193,7 +210,15 @@ describe('DirRowCache scanErrors', () => {
 
   it('重扫首批为全量：同路径消息覆盖，已恢复的路径不再报错', () => {
     const c = new DirRowCache('s1');
-    c.applyDelta(delta({ upserts: [], scanErrors: [{ path: 'sub', message: 'EACCES' }, { path: 'gone', message: 'I/O error' }] }));
+    c.applyDelta(
+      delta({
+        upserts: [],
+        scanErrors: [
+          { path: 'sub', message: 'EACCES' },
+          { path: 'gone', message: 'I/O error' },
+        ],
+      }),
+    );
     c.applyDelta(delta({ upserts: [], scanErrors: [{ path: 'sub', message: 'EIO' }] }));
     expect(c.getStats().scanErrors).toEqual([{ path: 'sub', message: 'EIO' }]);
     c.applyDelta(delta({ upserts: [] }));

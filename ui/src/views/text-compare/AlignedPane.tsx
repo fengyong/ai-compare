@@ -42,7 +42,12 @@ export interface AlignedPaneHooks {
   onUndo(): void;
   onRedo(): void;
   /** 用户编辑上报（side, 编辑前对齐行元数据, 编辑前文档行, 编辑后文档行） */
-  onUserEdit(side: 'left' | 'right', rows: AlignedRow[], docBefore: string[], docAfter: string[]): void;
+  onUserEdit(
+    side: 'left' | 'right',
+    rows: AlignedRow[],
+    docBefore: string[],
+    docAfter: string[],
+  ): void;
   /** 滚动上报（滚动同步 + 概览条视口 + 差异列表当前位置） */
   onScroll(side: 'left' | 'right'): void;
   /** 折叠占位条点击展开 */
@@ -110,7 +115,9 @@ export function AlignedPane({ side, head, initial, hooks, registerHandle }: Alig
         doc: initial.docText,
         extensions: [
           ...statics,
-          decorComp.of(EditorView.decorations.of(buildPaneDecorations(toViewData(initial), initial.docText))),
+          decorComp.of(
+            EditorView.decorations.of(buildPaneDecorations(toViewData(initial), initial.docText)),
+          ),
           langComp.of(initial.langExtension ?? []),
           editableComp.of([
             EditorState.readOnly.of(!initial.editable),
@@ -169,7 +176,7 @@ export function AlignedPane({ side, head, initial, hooks, registerHandle }: Alig
         try {
           const effects = [
             decorComp.reconfigure(
-              EditorView.decorations.of(buildPaneDecorations(toViewData(input), input.docText))
+              EditorView.decorations.of(buildPaneDecorations(toViewData(input), input.docText)),
             ),
           ];
           if (prevData.langExtension !== input.langExtension) {
@@ -180,10 +187,13 @@ export function AlignedPane({ side, head, initial, hooks, registerHandle }: Alig
               editableComp.reconfigure([
                 EditorState.readOnly.of(!input.editable),
                 EditorView.editable.of(input.editable),
-              ])
+              ]),
             );
           }
-          v.dispatch({ changes: { from: 0, to: v.state.doc.length, insert: input.docText }, effects });
+          v.dispatch({
+            changes: { from: 0, to: v.state.doc.length, insert: input.docText },
+            effects,
+          });
           // 恢复滚动与光标（编辑重 diff 后行号一般保持；越界时 clamp）
           v.scrollDOM.scrollTop = scrollTop;
           const lineNo = Math.min(curLine + 1, v.state.doc.lines);

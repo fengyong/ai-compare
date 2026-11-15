@@ -234,7 +234,8 @@ export function parseSessionsDoc(text: string): SessionsDoc {
     throw new ParseError('sessions.json 不是合法 JSON');
   }
   if (!isRecord(raw)) throw new ParseError('sessions.json 顶层不是对象');
-  if (raw.version !== 1) throw new ParseError(`不支持的 sessions.json 版本: ${String(raw.version)}`);
+  if (raw.version !== 1)
+    throw new ParseError(`不支持的 sessions.json 版本: ${String(raw.version)}`);
 
   const folders: SessionFolder[] = [];
   if (Array.isArray(raw.folders)) {
@@ -243,7 +244,9 @@ export function parseSessionsDoc(text: string): SessionsDoc {
       folders.push({
         id: f.id,
         name: typeof f.name === 'string' ? f.name : '未命名',
-        children: Array.isArray(f.children) ? f.children.filter((c): c is string => typeof c === 'string') : [],
+        children: Array.isArray(f.children)
+          ? f.children.filter((c): c is string => typeof c === 'string')
+          : [],
       });
     }
   }
@@ -267,12 +270,13 @@ export function parseSessionsDoc(text: string): SessionsDoc {
   }
   const knownIds = new Set([...folders.map((f) => f.id), ...sessions.map((s) => s.id)]);
   const rootFolderIds = Array.isArray(raw.rootFolderIds)
-    ? (raw.rootFolderIds.filter((id): id is string => typeof id === 'string' && knownIds.has(id)))
+    ? raw.rootFolderIds.filter((id): id is string => typeof id === 'string' && knownIds.has(id))
     : [];
   // 根缺省兜底：未被任何文件夹持有的节点视作根（防旧版本/手改文件丢节点）
   const held = new Set<string>();
   for (const f of folders) for (const c of f.children) held.add(c);
-  for (const s of sessions) if (s.folderId && !folders.some((f) => f.id === s.folderId)) s.folderId = null;
+  for (const s of sessions)
+    if (s.folderId && !folders.some((f) => f.id === s.folderId)) s.folderId = null;
   if (rootFolderIds.length === 0) {
     rootFolderIds.push(...folders.map((f) => f.id).filter((id) => !held.has(id)));
   }

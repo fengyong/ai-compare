@@ -33,12 +33,30 @@ const DISPLAY_OPTIONS: Array<[ReportDisplayFilter, string]> = [
 ];
 
 const DIR_DISPLAY_OPTIONS: ReportDirDisplayFilter[] = [
-  'all', 'mismatches', 'noOrphans', 'mismatchesNoOrphans', 'orphans', 'matches',
-  'leftNewer', 'rightNewer', 'leftNewerOrphans', 'rightNewerOrphans', 'leftOrphans', 'rightOrphans',
+  'all',
+  'mismatches',
+  'noOrphans',
+  'mismatchesNoOrphans',
+  'orphans',
+  'matches',
+  'leftNewer',
+  'rightNewer',
+  'leftNewerOrphans',
+  'rightNewerOrphans',
+  'leftOrphans',
+  'rightOrphans',
 ];
 
 const COLUMN_KEYS = [
-  'size', 'timestamp', 'attributes', 'crc', 'vcs', 'revision', 'version', 'owner', 'group',
+  'size',
+  'timestamp',
+  'attributes',
+  'crc',
+  'vcs',
+  'revision',
+  'version',
+  'owner',
+  'group',
 ] as const;
 
 function messageOf(err: unknown): string {
@@ -106,8 +124,15 @@ export function ReportDialog() {
           <div className="aic-rpt-form">
             <label>
               {S.report.layout}
-              <select value={form.layout} onChange={(e) => patch({ layout: e.target.value as ReportLayout })}>
-                {layouts.map((l) => <option key={l} value={l}>{REPORT_LAYOUT_LABELS[l]}</option>)}
+              <select
+                value={form.layout}
+                onChange={(e) => patch({ layout: e.target.value as ReportLayout })}
+              >
+                {layouts.map((l) => (
+                  <option key={l} value={l}>
+                    {REPORT_LAYOUT_LABELS[l]}
+                  </option>
+                ))}
               </select>
             </label>
             <label>
@@ -122,7 +147,9 @@ export function ReportDialog() {
               {S.report.target}
               <select value={target} onChange={(e) => setTarget(e.target.value as ReportTarget)}>
                 {(Object.keys(REPORT_TARGET_LABELS) as ReportTarget[]).map((t) => (
-                  <option key={t} value={t}>{REPORT_TARGET_LABELS[t]}</option>
+                  <option key={t} value={t}>
+                    {REPORT_TARGET_LABELS[t]}
+                  </option>
                 ))}
               </select>
             </label>
@@ -130,21 +157,38 @@ export function ReportDialog() {
             <div className="aic-rpt-section">{S.report.options}</div>
             <label>
               {S.report.display}
-              <select value={form.display} onChange={(e) => patch({ display: e.target.value as ReportDisplayFilter })}>
-                {DISPLAY_OPTIONS.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
+              <select
+                value={form.display}
+                onChange={(e) => patch({ display: e.target.value as ReportDisplayFilter })}
+              >
+                {DISPLAY_OPTIONS.map(([v, label]) => (
+                  <option key={v} value={v}>
+                    {label}
+                  </option>
+                ))}
               </select>
             </label>
             {isDir && (
               <label>
                 {S.report.dirDisplay}
-                <select value={form.dirDisplay} onChange={(e) => patch({ dirDisplay: e.target.value as ReportDirDisplayFilter })}>
-                  {DIR_DISPLAY_OPTIONS.map((v) => <option key={v} value={v}>{v}</option>)}
+                <select
+                  value={form.dirDisplay}
+                  onChange={(e) => patch({ dirDisplay: e.target.value as ReportDirDisplayFilter })}
+                >
+                  {DIR_DISPLAY_OPTIONS.map((v) => (
+                    <option key={v} value={v}>
+                      {v}
+                    </option>
+                  ))}
                 </select>
               </label>
             )}
             <label>
               {S.report.patchStyle}
-              <select value={form.patchStyle} onChange={(e) => patch({ patchStyle: e.target.value as ReportPatchStyle })}>
+              <select
+                value={form.patchStyle}
+                onChange={(e) => patch({ patchStyle: e.target.value as ReportPatchStyle })}
+              >
                 <option value="normal">{S.report.patchNormal}</option>
                 <option value="context">{S.report.patchContext}</option>
                 <option value="unified">{S.report.patchUnified}</option>
@@ -152,21 +196,30 @@ export function ReportDialog() {
             </label>
             <label>
               {S.report.delimiter}
-              <select value={form.delimiter} onChange={(e) => patch({ delimiter: e.target.value as 'csv' | 'tsv' })}>
+              <select
+                value={form.delimiter}
+                onChange={(e) => patch({ delimiter: e.target.value as 'csv' | 'tsv' })}
+              >
                 <option value="csv">CSV</option>
                 <option value="tsv">TSV</option>
               </select>
             </label>
             <label>
               {S.report.color}
-              <select value={form.color} onChange={(e) => patch({ color: e.target.value as ReportColorMode })}>
+              <select
+                value={form.color}
+                onChange={(e) => patch({ color: e.target.value as ReportColorMode })}
+              >
                 <option value="color">{S.report.colorColor}</option>
                 <option value="mono">{S.report.colorMono}</option>
               </select>
             </label>
             <label>
               {S.report.wrap}
-              <select value={form.wrap} onChange={(e) => patch({ wrap: e.target.value as ReportWrapMode })}>
+              <select
+                value={form.wrap}
+                onChange={(e) => patch({ wrap: e.target.value as ReportWrapMode })}
+              >
                 <option value="none">{S.report.wrapNone}</option>
                 <option value="character">{S.report.wrapCharacter}</option>
                 <option value="word">{S.report.wrapWord}</option>
@@ -174,22 +227,44 @@ export function ReportDialog() {
             </label>
             <label>
               {S.report.wrapColumns}
-              <input type="number" min={1} value={form.wrapColumns} onChange={(e) => patch({ wrapColumns: Number(e.target.value) })} />
+              <input
+                type="number"
+                min={1}
+                value={form.wrapColumns}
+                onChange={(e) => patch({ wrapColumns: Number(e.target.value) })}
+              />
             </label>
             <label>
               {S.report.contextLines}
-              <input type="number" min={0} value={form.contextLines} onChange={(e) => patch({ contextLines: Number(e.target.value) })} />
+              <input
+                type="number"
+                min={0}
+                value={form.contextLines}
+                onChange={(e) => patch({ contextLines: Number(e.target.value) })}
+              />
             </label>
             <label className="aic-rpt-check">
-              <input type="checkbox" checked={form.ignoreUnimportant} onChange={(e) => patch({ ignoreUnimportant: e.target.checked })} />
+              <input
+                type="checkbox"
+                checked={form.ignoreUnimportant}
+                onChange={(e) => patch({ ignoreUnimportant: e.target.checked })}
+              />
               {S.report.ignoreUnimportant}
             </label>
             <label className="aic-rpt-check">
-              <input type="checkbox" checked={form.lineNumbers} onChange={(e) => patch({ lineNumbers: e.target.checked })} />
+              <input
+                type="checkbox"
+                checked={form.lineNumbers}
+                onChange={(e) => patch({ lineNumbers: e.target.checked })}
+              />
               {S.report.lineNumbers}
             </label>
             <label className="aic-rpt-check">
-              <input type="checkbox" checked={form.includeFileLinks} onChange={(e) => patch({ includeFileLinks: e.target.checked })} />
+              <input
+                type="checkbox"
+                checked={form.includeFileLinks}
+                onChange={(e) => patch({ includeFileLinks: e.target.checked })}
+              />
               {S.report.includeFileLinks}
             </label>
             {isDir && (
@@ -200,7 +275,9 @@ export function ReportDialog() {
                     <input
                       type="checkbox"
                       checked={form.columns[k]}
-                      onChange={(e) => patch({ columns: { ...form.columns, [k]: e.target.checked } })}
+                      onChange={(e) =>
+                        patch({ columns: { ...form.columns, [k]: e.target.checked } })
+                      }
                     />
                     {k}
                   </label>
@@ -212,14 +289,20 @@ export function ReportDialog() {
           <div className="aic-rpt-preview">
             <div className="aic-rpt-preview-head">
               {S.report.preview}
-              {content && <span>{Array.from(content).length} {S.report.chars}</span>}
+              {content && (
+                <span>
+                  {Array.from(content).length} {S.report.chars}
+                </span>
+              )}
               <button disabled={busy} onClick={() => void generate()}>
                 {busy ? S.report.busy : S.report.generate}
               </button>
             </div>
             {error && <div className="aic-rpt-error">{error}</div>}
             <pre>{content || S.report.busy}</pre>
-            {content && isHtmlTarget(target, form.layout) && <div className="aic-rpt-hint">HTML 输出</div>}
+            {content && isHtmlTarget(target, form.layout) && (
+              <div className="aic-rpt-hint">HTML 输出</div>
+            )}
           </div>
         </div>
       </div>

@@ -1,8 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { DEFAULT_DIR_CRITERIA, type PlannedOpKind, type PlannedOperation, type SyncPreset } from '../../protocol/types';
+import {
+  DEFAULT_DIR_CRITERIA,
+  type PlannedOpKind,
+  type PlannedOperation,
+  type SyncPreset,
+} from '../../protocol/types';
 import type { Tab } from '../../shell/store';
 import { useShell } from '../../shell/store';
-import { executeOperations, openFolder, planOperations, trackSession } from '../../ipc/engineProcess';
+import {
+  executeOperations,
+  openFolder,
+  planOperations,
+  trackSession,
+} from '../../ipc/engineProcess';
 import { S } from '../../strings';
 import { ensureDirCacheAttached } from '../folder-compare/dirRowCache';
 import {
@@ -81,7 +91,7 @@ export function FolderSyncView({ tab }: { tab: Tab }) {
           otherFilter: null,
           displayFilter: null,
           manualAlign: null,
-        })
+        }),
       )
       .then(() => {
         if (!disposed) {
@@ -113,19 +123,32 @@ export function FolderSyncView({ tab }: { tab: Tab }) {
   const visibleRows = useMemo(() => rows.filter((r) => !r.hidden), [rows]);
 
   // ---- 生成计划（dir/operate -> 策略施加 -> 预览行状态机） ----
-  const [basePlan, setBasePlan] = useState<{ ops: PlannedOperation[]; skipped: PlannedOperation[] } | null>(null);
+  const [basePlan, setBasePlan] = useState<{
+    ops: PlannedOperation[];
+    skipped: PlannedOperation[];
+  } | null>(null);
 
   const acceptPlan = async (): Promise<void> => {
     try {
-      const result = await planOperations({ sessionId: cache.sessionId, preset, rules: null, paths: null });
+      const result = await planOperations({
+        sessionId: cache.sessionId,
+        preset,
+        rules: null,
+        paths: null,
+      });
       const base = applyStrategyToPlan(result.plan, visibleRows, strategy);
       setBasePlan(base);
       setOverrides({});
       setPlanRows(buildSyncPlanRows(base.ops, base.skipped, visibleRows, {}));
       setPhase('plan');
     } catch (err: unknown) {
-      const isMethodNotFound = err instanceof Error && 'code' in err && (err as { code?: number }).code === -32601;
-      setNotice(isMethodNotFound ? S.syncView.engineUnsupported : S.syncView.opsFailedMsg(err instanceof Error ? err.message : String(err)));
+      const isMethodNotFound =
+        err instanceof Error && 'code' in err && (err as { code?: number }).code === -32601;
+      setNotice(
+        isMethodNotFound
+          ? S.syncView.engineUnsupported
+          : S.syncView.opsFailedMsg(err instanceof Error ? err.message : String(err)),
+      );
     }
   };
 
@@ -145,13 +168,28 @@ export function FolderSyncView({ tab }: { tab: Tab }) {
     setPhase('running');
     cancelRef.current = false;
     setProgress({ done: 0, total: pendingOps.length });
-    const report: SyncExecReport = { copied: 0, deleted: 0, touched: 0, skipped: 0, failed: 0, total: pendingOps.length, cancelled: false, details: [] };
+    const report: SyncExecReport = {
+      copied: 0,
+      deleted: 0,
+      touched: 0,
+      skipped: 0,
+      failed: 0,
+      total: pendingOps.length,
+      cancelled: false,
+      details: [],
+    };
     for (let i = 0; i < pendingOps.length; i += EXEC_BATCH_SIZE) {
       if (cancelRef.current) {
         const rest = pendingOps.length - i;
         report.cancelled = true;
         report.skipped += rest;
-        for (const op of pendingOps.slice(i)) report.details.push({ kind: op.kind, path: op.path, status: 'skipped', detail: '已取消' });
+        for (const op of pendingOps.slice(i))
+          report.details.push({
+            kind: op.kind,
+            path: op.path,
+            status: 'skipped',
+            detail: '已取消',
+          });
         break;
       }
       const batch = pendingOps.slice(i, i + EXEC_BATCH_SIZE);
@@ -165,16 +203,26 @@ export function FolderSyncView({ tab }: { tab: Tab }) {
         report.failed += part.failed;
         report.details.push(...part.details);
       } catch (err: unknown) {
-        const isMethodNotFound = err instanceof Error && 'code' in err && (err as { code?: number }).code === -32601;
+        const isMethodNotFound =
+          err instanceof Error && 'code' in err && (err as { code?: number }).code === -32601;
         if (isMethodNotFound) {
           setNotice(S.syncView.engineUnsupported);
         } else {
           setNotice(S.syncView.opsFailedMsg(err instanceof Error ? err.message : String(err)));
         }
         report.failed += batch.length;
-        for (const op of batch) report.details.push({ kind: op.kind, path: op.path, status: 'failed', detail: '执行请求失败' });
+        for (const op of batch)
+          report.details.push({
+            kind: op.kind,
+            path: op.path,
+            status: 'failed',
+            detail: '执行请求失败',
+          });
       }
-      setProgress({ done: Math.min(i + EXEC_BATCH_SIZE, pendingOps.length), total: pendingOps.length });
+      setProgress({
+        done: Math.min(i + EXEC_BATCH_SIZE, pendingOps.length),
+        total: pendingOps.length,
+      });
     }
     setReport(report);
     setReportPreset(SYNC_PRESET_LABELS[preset]);
@@ -228,7 +276,12 @@ export function FolderSyncView({ tab }: { tab: Tab }) {
         <div className="aic-sync-setup">
           <div className="aic-sync-row">
             <label>{S.syncView.methodLabel}</label>
-            <select className="aic-mini-select" value={preset} disabled={!ready} onChange={(e) => setPreset(e.target.value as SyncPreset)}>
+            <select
+              className="aic-mini-select"
+              value={preset}
+              disabled={!ready}
+              onChange={(e) => setPreset(e.target.value as SyncPreset)}
+            >
               {SYNC_PRESETS.map((p) => (
                 <option key={p} value={p}>
                   {SYNC_PRESET_LABELS[p]}
@@ -250,20 +303,33 @@ export function FolderSyncView({ tab }: { tab: Tab }) {
               {S.syncView.keepOrphans}
             </label>
             <label className="chk">
-              <input type="checkbox" checked={strategy.leftWins} onChange={(e) => setStrategy({ ...strategy, leftWins: e.target.checked })} />
+              <input
+                type="checkbox"
+                checked={strategy.leftWins}
+                onChange={(e) => setStrategy({ ...strategy, leftWins: e.target.checked })}
+              />
               {strategy.leftWins ? S.syncView.leftWins : S.syncView.newerWins}
             </label>
             <select
               className="aic-mini-select"
               value={strategy.readonlySide}
-              onChange={(e) => setStrategy({ ...strategy, readonlySide: e.target.value as SyncStrategyUi['readonlySide'] })}
+              onChange={(e) =>
+                setStrategy({
+                  ...strategy,
+                  readonlySide: e.target.value as SyncStrategyUi['readonlySide'],
+                })
+              }
             >
               <option value="none">{S.syncView.readonlyNone}</option>
               <option value="left">{S.syncView.readonlyLeft}</option>
               <option value="right">{S.syncView.readonlyRight}</option>
             </select>
             <label className="chk">
-              <input type="checkbox" checked={strategy.syncEmptyDirs} onChange={(e) => setStrategy({ ...strategy, syncEmptyDirs: e.target.checked })} />
+              <input
+                type="checkbox"
+                checked={strategy.syncEmptyDirs}
+                onChange={(e) => setStrategy({ ...strategy, syncEmptyDirs: e.target.checked })}
+              />
               {S.syncView.syncEmptyDirs}
             </label>
           </div>
@@ -278,11 +344,29 @@ export function FolderSyncView({ tab }: { tab: Tab }) {
             <span className="dim">{S.syncView.planDesc}</span>
           </div>
           <div className="aic-sync-stats">
-            {stats.copyL2R > 0 && <span className="chip l2r">{S.syncView.opCopyL2R}× {stats.copyL2R}</span>}
-            {stats.copyR2L > 0 && <span className="chip r2l">{S.syncView.opCopyR2L}× {stats.copyR2L}</span>}
-            {stats.deleteL > 0 && <span className="chip warn">{S.syncView.opDelL}× {stats.deleteL}</span>}
-            {stats.deleteR > 0 && <span className="chip warn">{S.syncView.opDelR}× {stats.deleteR}</span>}
-            <span className="chip">{S.syncView.planKeep}× {stats.keep}</span>
+            {stats.copyL2R > 0 && (
+              <span className="chip l2r">
+                {S.syncView.opCopyL2R}× {stats.copyL2R}
+              </span>
+            )}
+            {stats.copyR2L > 0 && (
+              <span className="chip r2l">
+                {S.syncView.opCopyR2L}× {stats.copyR2L}
+              </span>
+            )}
+            {stats.deleteL > 0 && (
+              <span className="chip warn">
+                {S.syncView.opDelL}× {stats.deleteL}
+              </span>
+            )}
+            {stats.deleteR > 0 && (
+              <span className="chip warn">
+                {S.syncView.opDelR}× {stats.deleteR}
+              </span>
+            )}
+            <span className="chip">
+              {S.syncView.planKeep}× {stats.keep}
+            </span>
           </div>
           {planRows.length === 0 ? (
             <div className="aic-sync-empty">{S.syncView.planEmpty}</div>
@@ -296,11 +380,23 @@ export function FolderSyncView({ tab }: { tab: Tab }) {
               </div>
               <div className="aic-sync-body">
                 {planRows.map((pr) => (
-                  <div key={pr.path} className={`aic-sync-tr${pr.warning ? ' warn' : ''}${pr.source === 'strategySkip' ? ' skipped' : ''}`}>
-                    <span className={pr.direction === 'l2r' ? 'dir-l2r' : pr.direction === 'r2l' ? 'dir-r2l' : ''} title={pr.warning ? S.syncView.planWarnDelete : undefined}>
+                  <div
+                    key={pr.path}
+                    className={`aic-sync-tr${pr.warning ? ' warn' : ''}${pr.source === 'strategySkip' ? ' skipped' : ''}`}
+                  >
+                    <span
+                      className={
+                        pr.direction === 'l2r' ? 'dir-l2r' : pr.direction === 'r2l' ? 'dir-r2l' : ''
+                      }
+                      title={pr.warning ? S.syncView.planWarnDelete : undefined}
+                    >
                       {OP_LABELS[pr.effectiveOp]}
-                      {pr.source === 'override' && <i className="ov-badge">{S.syncView.planSourceUser}</i>}
-                      {pr.source === 'strategySkip' && <i className="ov-badge">{S.syncView.planSourceStrategy}</i>}
+                      {pr.source === 'override' && (
+                        <i className="ov-badge">{S.syncView.planSourceUser}</i>
+                      )}
+                      {pr.source === 'strategySkip' && (
+                        <i className="ov-badge">{S.syncView.planSourceStrategy}</i>
+                      )}
                     </span>
                     <span className="mono" title={pr.path}>
                       {pr.kind === 'dir' ? '📁 ' : ''}
@@ -330,7 +426,11 @@ export function FolderSyncView({ tab }: { tab: Tab }) {
             <button className="mini" onClick={() => setPhase('setup')}>
               {S.syncView.reportBack}
             </button>
-            <button className="mini primary" disabled={pendingOps.length === 0} onClick={() => void runSync()}>
+            <button
+              className="mini primary"
+              disabled={pendingOps.length === 0}
+              onClick={() => void runSync()}
+            >
               {S.syncView.planConfirm}（{pendingOps.length}）
             </button>
           </div>
@@ -342,11 +442,22 @@ export function FolderSyncView({ tab }: { tab: Tab }) {
         <div className="aic-sync-running">
           <span className="aic-progress">
             <span className="bar">
-              <i style={{ width: `${progress.total === 0 ? 100 : Math.round((progress.done / progress.total) * 100)}%` }} />
+              <i
+                style={{
+                  width: `${progress.total === 0 ? 100 : Math.round((progress.done / progress.total) * 100)}%`,
+                }}
+              />
             </span>
-            {progress.total === 0 ? S.syncView.executing : S.syncView.running(progress.done, progress.total)}
+            {progress.total === 0
+              ? S.syncView.executing
+              : S.syncView.running(progress.done, progress.total)}
           </span>
-          <button className="mini" onClick={() => { cancelRef.current = true; }}>
+          <button
+            className="mini"
+            onClick={() => {
+              cancelRef.current = true;
+            }}
+          >
             取消
           </button>
         </div>
@@ -356,7 +467,10 @@ export function FolderSyncView({ tab }: { tab: Tab }) {
       {phase === 'report' && report && (
         <div className="aic-sync-report">
           <div className="aic-sync-row">
-            <b>{S.syncView.reportTitle}{reportPreset ? ` — ${reportPreset}` : ''}</b>
+            <b>
+              {S.syncView.reportTitle}
+              {reportPreset ? ` — ${reportPreset}` : ''}
+            </b>
             {report.cancelled && <span className="chip warn">{S.syncView.reportCancelled}</span>}
           </div>
           <div className="aic-sync-cards">

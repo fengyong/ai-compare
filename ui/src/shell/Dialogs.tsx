@@ -45,7 +45,9 @@ export function CloseGuardDialog() {
           <button className="primary" onClick={() => void resolveCloseGuard('save')}>
             {S.session.saveAndClose}
           </button>
-          <button onClick={() => void resolveCloseGuard('discard')}>{S.session.discardClose}</button>
+          <button onClick={() => void resolveCloseGuard('discard')}>
+            {S.session.discardClose}
+          </button>
           <button onClick={() => void resolveCloseGuard('cancel')}>{S.session.cancel}</button>
         </div>
       </div>
@@ -130,7 +132,9 @@ export function PromptDialog() {
           />
         </div>
         <div className="aic-dialog-actions">
-          <button className="primary" onClick={submit}>确定</button>
+          <button className="primary" onClick={submit}>
+            确定
+          </button>
           <button onClick={() => resolvePrompt(null)}>{S.session.cancel}</button>
         </div>
       </div>

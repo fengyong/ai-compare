@@ -73,7 +73,7 @@ describe('session/model', () => {
         version: 1,
         folders: [{ id: 'f1', name: '工作' }],
         sessions: [{ id: 's1', kind: 'text-compare' }],
-      })
+      }),
     );
     expect(parsed.folders[0].children).toEqual([]);
     const s = parsed.sessions[0];
@@ -94,7 +94,13 @@ describe('session/model', () => {
 
   it('parseSessionsDoc 丢弃未知 kind 的会话节点（前向兼容）', () => {
     const parsed = parseSessionsDoc(
-      JSON.stringify({ version: 1, sessions: [{ id: 'x', kind: 'future-kind' }, { id: 'y', kind: 'folder-compare' }] })
+      JSON.stringify({
+        version: 1,
+        sessions: [
+          { id: 'x', kind: 'future-kind' },
+          { id: 'y', kind: 'folder-compare' },
+        ],
+      }),
     );
     expect(parsed.sessions.map((s) => s.id)).toEqual(['y']);
   });
@@ -103,9 +109,13 @@ describe('session/model', () => {
     const good = parseStateDoc(
       JSON.stringify({
         version: 1,
-        mru: { sessions: ['s-1'], paths: { 'folder-compare': { left: ['/a'], right: ['/b'] } }, max: 5 },
+        mru: {
+          sessions: ['s-1'],
+          paths: { 'folder-compare': { left: ['/a'], right: ['/b'] } },
+          max: 5,
+        },
         ui: { showSessionPanel: false },
-      })
+      }),
     );
     expect(good.mru.max).toBe(5);
     expect(good.mru.paths['folder-compare']).toEqual({ left: ['/a'], right: ['/b'] });
@@ -120,7 +130,10 @@ describe('session/model', () => {
 
   it('parseKindDefaultsDoc：只收已知 kind', () => {
     const doc = parseKindDefaultsDoc(
-      JSON.stringify({ version: 1, kinds: { 'folder-compare': { compare: { mtimeToleranceSec: 1 } }, bogus: {} } })
+      JSON.stringify({
+        version: 1,
+        kinds: { 'folder-compare': { compare: { mtimeToleranceSec: 1 } }, bogus: {} },
+      }),
     );
     expect(doc.kinds['folder-compare']).toEqual({ compare: { mtimeToleranceSec: 1 } });
     expect(doc.kinds['bogus' as never]).toBeUndefined();

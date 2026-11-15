@@ -61,7 +61,6 @@ export function deleteTextSession(sessionId: string): void {
   cache.delete(sessionId);
 }
 
-
 /** 由引擎打开结果构建初始模型（undo 清空、编码 auto、未修改） */
 export function newTextSessionModel(init: {
   sessionId: string;

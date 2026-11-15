@@ -53,7 +53,11 @@ describe('session/storage', () => {
       state: {},
       folderId: null,
     });
-    const r = recoverWithBackup('{"version":1,"sessions":[破损', serializeDoc(doc), parseSessionsDoc);
+    const r = recoverWithBackup(
+      '{"version":1,"sessions":[破损',
+      serializeDoc(doc),
+      parseSessionsDoc,
+    );
     expect(r.source).toBe('backup');
     expect(r.doc?.sessions[0].name).toBe('备份恢复');
     expect(r.primaryError).toBeTruthy();

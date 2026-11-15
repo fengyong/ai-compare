@@ -44,7 +44,9 @@ describe('图片缩放（FR-PIX-004）', () => {
     expect(clampPan(9999, 1, 100, 200)).toBe(40);
     expect(clampPan(-9999, 1, 100, 200)).toBe(-40);
     expect(panTransform({ scale: 2, panX: 10, panY: -5 })).toBe('translate(10px, -5px) scale(2)');
-    expect(panTransform({ scale: 1, panX: 0, panY: 0 }, { dx: 3, dy: 4 })).toBe('translate(3px, 4px) scale(1)');
+    expect(panTransform({ scale: 1, panX: 0, panY: 0 }, { dx: 3, dy: 4 })).toBe(
+      'translate(3px, 4px) scale(1)',
+    );
   });
 });
 

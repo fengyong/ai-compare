@@ -48,8 +48,8 @@ describe('settings/rulesModel（P10 比较规则页纯逻辑）', () => {
     expect(withFmt.unimportantElements).toEqual(['注释']);
     expect(withFmt.caseUnimportant).toBe(false);
 
-    expect(toRulesSpec(st, 'builtin-json').unimportantElements).toEqual([]) /* '未绑定格式' */;
-    expect(toRulesSpec(st, null).unimportantElements).toEqual([]) /* '无格式' */;
+    expect(toRulesSpec(st, 'builtin-json').unimportantElements).toEqual([]); /* '未绑定格式' */
+    expect(toRulesSpec(st, null).unimportantElements).toEqual([]); /* '无格式' */
   });
 
   it('elementsOfFormat：内置格式列出元素名；未知格式为空', () => {
@@ -65,7 +65,9 @@ describe('settings/rulesModel（P10 比较规则页纯逻辑）', () => {
     let st = defaultCompareRulesState();
     st = toggleElement(st, 'builtin-cpp', '注释');
     st = toggleElement(st, 'builtin-cpp', '字符串');
-    expect([...effectiveUnimportantElements(st, 'builtin-cpp')].sort()).toEqual(['注释', '字符串'].sort());
+    expect([...effectiveUnimportantElements(st, 'builtin-cpp')].sort()).toEqual(
+      ['注释', '字符串'].sort(),
+    );
     // 另一格式互不影响
     expect(effectiveUnimportantElements(st, 'builtin-json')).toEqual([]);
     // 去勾
@@ -83,36 +85,50 @@ describe('settings/rulesModel（P10 比较规则页纯逻辑）', () => {
       formatBindings: { 'builtin-json': ['注释'] },
     };
     const merged = mergeRuleLayers([global, kind]);
-    expect(merged.caseUnimportant).toBe(true) /* '低层键保留' */;
-    expect(merged.trailingWsUnimportant).toBe(true) /* '高层键覆盖' */;
-    expect(merged.eolStyleUnimportant).toBe(true) /* '两层都未涉及 = 缺省' */;
+    expect(merged.caseUnimportant).toBe(true); /* '低层键保留' */
+    expect(merged.trailingWsUnimportant).toBe(true); /* '高层键覆盖' */
+    expect(merged.eolStyleUnimportant).toBe(true); /* '两层都未涉及 = 缺省' */
     // 对象整体覆盖（与 mergeTrees 语义一致）
     expect(merged.formatBindings).toEqual({ 'builtin-json': ['注释'] });
 
     // 整层写入（对话框全量表单）= 全键覆盖，符合"更新会话默认值"语义
     const fullKind = defaultCompareRulesState();
     const mergedFull = mergeRuleLayers([global, fullKind]);
-    expect(mergedFull.caseUnimportant).toBe(false) /* '整层全键覆盖' */;
+    expect(mergedFull.caseUnimportant).toBe(false); /* '整层全键覆盖' */
   });
 
   it('生效元素逐层回落（per-format 绑定，非整体覆盖）', () => {
-    const global = { ...defaultCompareRulesState(), formatBindings: { 'builtin-cpp': ['注释', '字符串'] } };
+    const global = {
+      ...defaultCompareRulesState(),
+      formatBindings: { 'builtin-cpp': ['注释', '字符串'] },
+    };
     const kind = { ...defaultCompareRulesState(), formatBindings: { 'builtin-json': ['注释'] } };
     // cpp 在 kind 层无绑定 -> 回落 global
-    expect(effectiveElementsAcrossLayers([global, kind], 'builtin-cpp')).toEqual(['注释', '字符串']);
+    expect(effectiveElementsAcrossLayers([global, kind], 'builtin-cpp')).toEqual([
+      '注释',
+      '字符串',
+    ]);
     // json 取 kind 层
     expect(effectiveElementsAcrossLayers([global, kind], 'builtin-json')).toEqual(['注释']);
     // 无任何层定义 -> 空
     expect(effectiveElementsAcrossLayers([defaultCompareRulesState()], 'builtin-cpp')).toEqual([]);
     // null/undefined 层跳过
-    expect(effectiveElementsAcrossLayers([null, undefined, global], 'builtin-cpp')).toEqual(['注释', '字符串']);
+    expect(effectiveElementsAcrossLayers([null, undefined, global], 'builtin-cpp')).toEqual([
+      '注释',
+      '字符串',
+    ]);
   });
 
   it('会话层覆盖后回落链：session > kind > global（FR-SES-006）', () => {
     const global = { ...defaultCompareRulesState(), formatBindings: { 'builtin-cpp': ['注释'] } };
-    const kind = { ...defaultCompareRulesState(), formatBindings: { 'builtin-cpp': ['注释', '字符串'] } };
+    const kind = {
+      ...defaultCompareRulesState(),
+      formatBindings: { 'builtin-cpp': ['注释', '字符串'] },
+    };
     const session = { ...defaultCompareRulesState(), formatBindings: { 'builtin-cpp': [] } };
-    expect(effectiveElementsAcrossLayers([global, kind, session], 'builtin-cpp')).toEqual([]) /* '会话层显式清空' */;
+    expect(effectiveElementsAcrossLayers([global, kind, session], 'builtin-cpp')).toEqual(
+      [],
+    ); /* '会话层显式清空' */
     const merged = mergeRuleLayers([global, kind, session]);
     expect(merged.formatBindings).toEqual({ 'builtin-cpp': [] });
     expect(toRulesSpec(merged, 'builtin-cpp').unimportantElements).toEqual([]);

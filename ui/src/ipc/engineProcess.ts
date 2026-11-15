@@ -230,7 +230,11 @@ function handleTransportCrash(reason?: string): void {
   reconnectPolicy.onDisconnect();
   if (reconnectPolicy.canAutoRestart()) {
     reconnectPolicy.beginRestart();
-    setSnapshot({ status: 'connecting', message: '引擎连接中断，正在自动重启…', phase: 'reconnecting' });
+    setSnapshot({
+      status: 'connecting',
+      message: '引擎连接中断，正在自动重启…',
+      phase: 'reconnecting',
+    });
     void getEngineClient().catch(() => {
       // 失败已在 doConnect 内落横幅（failed）
     });
@@ -283,7 +287,11 @@ function connectMock(): RpcClient {
   });
   wireNotifications(c);
   reconnectPolicy.settled('ok');
-  setSnapshot({ status: 'mock', message: '演示引擎（内置模拟数据，非真实 ai-engine）', phase: 'mock' });
+  setSnapshot({
+    status: 'mock',
+    message: '演示引擎（内置模拟数据，非真实 ai-engine）',
+    phase: 'mock',
+  });
   return c;
 }
 
@@ -458,7 +466,13 @@ export async function openTable(params: {
   leftRowCount: number;
   rightRowCount: number;
   columns: Array<{ name: string; ty: string; left: number | null; right: number | null }>;
-  summary: { sameRows: number; changedRows: number; addedRows: number; removedRows: number; unimportantRows: number };
+  summary: {
+    sameRows: number;
+    changedRows: number;
+    addedRows: number;
+    removedRows: number;
+    unimportantRows: number;
+  };
 }> {
   const c = await getEngineClient();
   return c.request('table/open', params, 60_000);
@@ -697,7 +711,7 @@ export async function loadSideLines(
   sessionId: string,
   side: 'left' | 'right',
   lineCount: number,
-  fallbackPath: string
+  fallbackPath: string,
 ): Promise<string[]> {
   const c = await getEngineClient();
   const chunk = 4000;
@@ -710,7 +724,7 @@ export async function loadSideLines(
       const res = await c.request<TextLinesResult>(
         'text/lines',
         { sessionId, side, start, count: chunk } satisfies TextLinesParams,
-        60_000
+        60_000,
       );
       lines.push(...res.lines);
       if (res.done || res.lines.length === 0) break;
@@ -745,7 +759,9 @@ async function readLinesViaTauri(path: string): Promise<string[]> {
  * - 能力位为 false 或 RPC 报错（-32601/410 等）→ 返回 null，调用方回落
  *   客户端词级 LCS（lib/inlineDiffCore，同形兜底）。
  */
-export async function requestInlineDiff(params: TextInlineDiffParams): Promise<TextInlineDiffResult | null> {
+export async function requestInlineDiff(
+  params: TextInlineDiffParams,
+): Promise<TextInlineDiffResult | null> {
   const caps = getEngineCapabilities();
   if (!caps?.inlineDiff) return null;
   const c = await getEngineClient();

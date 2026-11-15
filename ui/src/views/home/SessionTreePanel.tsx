@@ -51,7 +51,10 @@ export function SessionTreePanel() {
           label: node.locked ? S.tree.unlock : S.tree.lock,
           onSelect: () => void sessionService.setLocked(node.id, !node.locked),
         },
-        { label: S.tree.rename, onSelect: () => void useShell.getState().renameSessionPrompt(node.id) },
+        {
+          label: S.tree.rename,
+          onSelect: () => void useShell.getState().renameSessionPrompt(node.id),
+        },
         { separator: true, label: '', onSelect: () => {} },
         { label: S.tree.delete, onSelect: () => void sessionService.deleteSession(node.id) },
       ],
@@ -73,7 +76,9 @@ export function SessionTreePanel() {
               setMenu({
                 x: e.clientX,
                 y: e.clientY,
-                items: [{ label: S.tree.delete, onSelect: () => void sessionService.deleteFolder(id) }],
+                items: [
+                  { label: S.tree.delete, onSelect: () => void sessionService.deleteFolder(id) },
+                ],
               });
             }}
           >
@@ -108,9 +113,10 @@ export function SessionTreePanel() {
   return (
     <div className="aic-tree-panel">
       <div className="aic-tree-head">{S.tree.savedTitle}</div>
-      {tree.rootFolderIds.length === 0 && [...tree.sessions.values()].every((s) => s.folderId !== null) && (
-        <div className="aic-tree-empty">{S.tree.empty}</div>
-      )}
+      {tree.rootFolderIds.length === 0 &&
+        [...tree.sessions.values()].every((s) => s.folderId !== null) && (
+          <div className="aic-tree-empty">{S.tree.empty}</div>
+        )}
       {tree.rootFolderIds.map((id) => renderNode(id, 0))}
       {[...tree.sessions.values()]
         .filter((s) => !s.folderId && !tree.rootFolderIds.includes(s.id))
@@ -143,7 +149,11 @@ export function SessionTreePanel() {
         <div
           key={kind}
           className="aic-tree-row session"
-          title={KIND_META[kind].implemented ? undefined : S.tree.newDisabledPrefix + KIND_META[kind].phase}
+          title={
+            KIND_META[kind].implemented
+              ? undefined
+              : S.tree.newDisabledPrefix + KIND_META[kind].phase
+          }
           onContextMenu={(e) => {
             e.preventDefault();
             setMenu({
@@ -164,7 +174,9 @@ export function SessionTreePanel() {
         </div>
       ))}
 
-      {menu && <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => setMenu(null)} />}
+      {menu && (
+        <ContextMenu x={menu.x} y={menu.y} items={menu.items} onClose={() => setMenu(null)} />
+      )}
     </div>
   );
 }

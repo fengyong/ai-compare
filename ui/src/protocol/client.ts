@@ -64,7 +64,7 @@ export class RpcClient {
 
   constructor(
     private readonly transport: Transport,
-    private readonly opts: RpcClientOptions = {}
+    private readonly opts: RpcClientOptions = {},
   ) {
     this.ready = this.bootstrap();
   }
@@ -79,7 +79,7 @@ export class RpcClient {
         clientInfo: this.opts.clientInfo ?? { name: 'ai-compare-ui', version: '0.1.0' },
         protocolVersion: this.opts.protocolVersion ?? '1.0',
       },
-      15_000
+      15_000,
     );
   }
 
@@ -87,7 +87,7 @@ export class RpcClient {
   request<T = unknown>(
     method: string,
     params?: unknown,
-    timeoutMs = this.opts.defaultTimeoutMs ?? 30_000
+    timeoutMs = this.opts.defaultTimeoutMs ?? 30_000,
   ): Promise<T> {
     if (this.closed) {
       return Promise.reject(new RpcError(LOCAL_ERROR.CLOSED, '连接已关闭，无法发送请求'));
@@ -98,7 +98,9 @@ export class RpcClient {
         this.pending.delete(id);
         // LSP 风格取消：引擎侧 CancellationToken 贯穿（docs/03 §2.3.2）
         this.notify(CANCEL_METHOD, { id });
-        reject(new RpcError(LOCAL_ERROR.TIMEOUT, `请求超时（${timeoutMs}ms）: ${method}`, { method }));
+        reject(
+          new RpcError(LOCAL_ERROR.TIMEOUT, `请求超时（${timeoutMs}ms）: ${method}`, { method }),
+        );
       }, timeoutMs);
       this.pending.set(id, { method, resolve: resolve as (v: unknown) => void, reject, timer });
       this.write(JSON.stringify({ jsonrpc: '2.0', id, method, params }));
@@ -150,7 +152,7 @@ export class RpcClient {
       .catch((err) => {
         this.opts.onProtocolError?.(
           err instanceof Error ? err : new Error(String(err)),
-          `[write] ${line.slice(0, 120)}`
+          `[write] ${line.slice(0, 120)}`,
         );
       });
   }
@@ -185,7 +187,7 @@ export class RpcClient {
             jsonrpc: '2.0',
             id: m.id,
             error: { code: -32601, message: `客户端未实现该方法: ${m.method}` },
-          })
+          }),
         );
         return;
       }
@@ -199,7 +201,7 @@ export class RpcClient {
             //（否则会冒泡成未捕获异常，并让后续通知全部丢失）
             this.opts.onProtocolError?.(
               err instanceof Error ? err : new Error(String(err)),
-              `[notify] ${m.method}`
+              `[notify] ${m.method}`,
             );
           }
         }
@@ -239,7 +241,9 @@ export class RpcClient {
   private handleTransportClose(reason?: string): void {
     if (this.closed) return;
     this.closed = true;
-    this.rejectAllPending(new RpcError(LOCAL_ERROR.CLOSED, `连接被关闭${reason ? `: ${reason}` : ''}`));
+    this.rejectAllPending(
+      new RpcError(LOCAL_ERROR.CLOSED, `连接被关闭${reason ? `: ${reason}` : ''}`),
+    );
     this.handlers.clear();
     this.opts.onTransportClose?.(reason);
   }

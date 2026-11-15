@@ -77,7 +77,10 @@ describe('dirPanes：表头排序循环（FR-DIR-042）', () => {
 });
 
 describe('dirPanes：两侧选择独立（FR-DIR-003/050）', () => {
-  const sel = (ids: string[]): SelectionState => ({ anchor: ids[0] ?? null, selected: new Set(ids) });
+  const sel = (ids: string[]): SelectionState => ({
+    anchor: ids[0] ?? null,
+    selected: new Set(ids),
+  });
 
   it('写入一侧不影响另一侧，且不改动原对象', () => {
     const base: PaneSelections = { left: sel(['a.txt']), right: sel(['b.txt', 'c.txt']) };

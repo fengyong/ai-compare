@@ -1,11 +1,6 @@
 import { useEffect, useRef } from 'react';
 import type { AlignedRow } from './alignment';
-import {
-  OVERVIEW_COLORS,
-  buildOverviewSegments,
-  rowAtFraction,
-  type Importance,
-} from './overview';
+import { OVERVIEW_COLORS, buildOverviewSegments, rowAtFraction, type Importance } from './overview';
 import type { FoldRange } from './folding';
 
 /**
@@ -27,7 +22,14 @@ export interface OverviewBarProps {
   onJump(row: number): void;
 }
 
-export function OverviewBar({ rows, importance, folds, currentRange, viewport, onJump }: OverviewBarProps) {
+export function OverviewBar({
+  rows,
+  importance,
+  folds,
+  currentRange,
+  viewport,
+  onJump,
+}: OverviewBarProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const jumpRef = useRef(onJump);

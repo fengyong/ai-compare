@@ -32,7 +32,8 @@ export const DEFAULT_SYNC_STRATEGY: SyncStrategyUi = {
 };
 
 /** 逐项操作改写（FR-SYNC-003 操作菜单；auto = 预设计划原样） */
-export type RowOpOverride = 'auto' | 'keep' | 'copyLeftToRight' | 'copyRightToLeft' | 'deleteLeft' | 'deleteRight';
+export type RowOpOverride =
+  'auto' | 'keep' | 'copyLeftToRight' | 'copyRightToLeft' | 'deleteLeft' | 'deleteRight';
 
 export const ROW_OVERRIDE_LABELS: Record<RowOpOverride, string> = {
   auto: '按预设',
@@ -83,7 +84,10 @@ export function applyStrategyToPlan(
 
     // 1. 只读侧跳过
     if (strategy.readonlySide !== 'none' && writesTo(op.op, strategy.readonlySide)) {
-      skipped.push({ ...op, reason: `${op.reason}; strategy:readonlySide(${strategy.readonlySide})` });
+      skipped.push({
+        ...op,
+        reason: `${op.reason}; strategy:readonlySide(${strategy.readonlySide})`,
+      });
       continue;
     }
 
@@ -93,7 +97,12 @@ export function applyStrategyToPlan(
     }
 
     // 3. 删除孤儿开关
-    if (!strategy.deleteOrphans && (op.op === 'deleteLeft' || op.op === 'deleteRight') && row && (row.status === 'leftOnly' || row.status === 'rightOnly')) {
+    if (
+      !strategy.deleteOrphans &&
+      (op.op === 'deleteLeft' || op.op === 'deleteRight') &&
+      row &&
+      (row.status === 'leftOnly' || row.status === 'rightOnly')
+    ) {
       skipped.push({ ...op, reason: `${op.reason}; strategy:keepOrphans` });
       continue;
     }
@@ -104,7 +113,10 @@ export function applyStrategyToPlan(
       row &&
       row.kind === 'dir' &&
       isLeafOrphanDir(op.path, row) &&
-      (op.op === 'copyLeftToRight' || op.op === 'copyRightToLeft' || op.op === 'deleteLeft' || op.op === 'deleteRight')
+      (op.op === 'copyLeftToRight' ||
+        op.op === 'copyRightToLeft' ||
+        op.op === 'deleteLeft' ||
+        op.op === 'deleteRight')
     ) {
       skipped.push({ ...op, reason: `${op.reason}; strategy:skipEmptyDir` });
       continue;
@@ -170,11 +182,25 @@ export function buildSyncPlanRows(
     const row = byId.get(op.path);
     const override = overrides[op.path] ?? 'auto';
     const effectiveOp = override === 'keep' ? 'keep' : override === 'auto' ? 'keep' : override;
-    out.push(toPlanRow(op.path, row, effectiveOp, override === 'auto' ? 'strategySkip' : 'override', op.reason));
+    out.push(
+      toPlanRow(
+        op.path,
+        row,
+        effectiveOp,
+        override === 'auto' ? 'strategySkip' : 'override',
+        op.reason,
+      ),
+    );
   }
   return out;
 
-  function toPlanRow(path: string, row: DirRow | undefined, effectiveOp: PlannedOpKind | 'keep', source: SyncPlanRow['source'], reason: string): SyncPlanRow {
+  function toPlanRow(
+    path: string,
+    row: DirRow | undefined,
+    effectiveOp: PlannedOpKind | 'keep',
+    source: SyncPlanRow['source'],
+    reason: string,
+  ): SyncPlanRow {
     return {
       path,
       name: row?.name ?? path.split('/').pop() ?? path,
@@ -182,7 +208,12 @@ export function buildSyncPlanRows(
       effectiveOp,
       source,
       warning: effectiveOp === 'deleteLeft' || effectiveOp === 'deleteRight',
-      direction: effectiveOp === 'copyLeftToRight' ? 'l2r' : effectiveOp === 'copyRightToLeft' ? 'r2l' : 'none',
+      direction:
+        effectiveOp === 'copyLeftToRight'
+          ? 'l2r'
+          : effectiveOp === 'copyRightToLeft'
+            ? 'r2l'
+            : 'none',
       reason,
     };
   }
@@ -209,7 +240,14 @@ export interface SyncPlanStats {
 }
 
 export function summarizeSyncPlan(planRows: readonly SyncPlanRow[]): SyncPlanStats {
-  const s: SyncPlanStats = { copyL2R: 0, copyR2L: 0, deleteL: 0, deleteR: 0, keep: 0, total: planRows.length };
+  const s: SyncPlanStats = {
+    copyL2R: 0,
+    copyR2L: 0,
+    deleteL: 0,
+    deleteR: 0,
+    keep: 0,
+    total: planRows.length,
+  };
   for (const pr of planRows) {
     if (pr.effectiveOp === 'keep') s.keep++;
     else if (pr.effectiveOp === 'copyLeftToRight') s.copyL2R++;
@@ -247,9 +285,24 @@ export function reportFromExecute(result: {
     return 'copied';
   };
   const details = [
-    ...result.failed.map((r) => ({ kind: r.op.kind, path: r.op.path, status: 'failed', detail: r.detail })),
-    ...result.skipped.map((r) => ({ kind: r.op.kind, path: r.op.path, status: 'skipped', detail: r.detail })),
-    ...result.succeeded.map((r) => ({ kind: r.op.kind, path: r.op.path, status: classify(r.op), detail: r.detail })),
+    ...result.failed.map((r) => ({
+      kind: r.op.kind,
+      path: r.op.path,
+      status: 'failed',
+      detail: r.detail,
+    })),
+    ...result.skipped.map((r) => ({
+      kind: r.op.kind,
+      path: r.op.path,
+      status: 'skipped',
+      detail: r.detail,
+    })),
+    ...result.succeeded.map((r) => ({
+      kind: r.op.kind,
+      path: r.op.path,
+      status: classify(r.op),
+      detail: r.detail,
+    })),
   ];
   return {
     copied: result.succeeded.filter((r) => classify(r.op) === 'copied').length,
@@ -264,7 +317,10 @@ export function reportFromExecute(result: {
 }
 
 /** 导出文本报告（FR-SYNC 报告/日志需求；剪贴板/下载共用） */
-export function exportSyncReportText(meta: { preset: string; strategy: SyncStrategyUi; left: string; right: string; dryRun: boolean }, report: SyncExecReport): string {
+export function exportSyncReportText(
+  meta: { preset: string; strategy: SyncStrategyUi; left: string; right: string; dryRun: boolean },
+  report: SyncExecReport,
+): string {
   const lines: string[] = [];
   lines.push(`ai-compare 文件夹同步报告${meta.dryRun ? '（试运行）' : ''}`);
   lines.push(`预设：${meta.preset}`);

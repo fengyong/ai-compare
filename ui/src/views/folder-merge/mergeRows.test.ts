@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import type { DirMergeRow, DirMergeDecision, DirMergeOpKind, DirMergePlannedOp } from '../../protocol/types';
+import type {
+  DirMergeRow,
+  DirMergeDecision,
+  DirMergeOpKind,
+  DirMergePlannedOp,
+} from '../../protocol/types';
 import {
   applyDecisionToTree,
   defaultExpanded,
@@ -18,7 +23,12 @@ let seq = 0;
 /** 行构造（relPath/形态/分类/状态） */
 function mrow(
   relPath: string,
-  opts: Partial<Pick<DirMergeRow, 'kind' | 'category' | 'rowState' | 'parent' | 'conflictLeaf' | 'left' | 'right' | 'base'>> = {},
+  opts: Partial<
+    Pick<
+      DirMergeRow,
+      'kind' | 'category' | 'rowState' | 'parent' | 'conflictLeaf' | 'left' | 'right' | 'base'
+    >
+  > = {},
 ): DirMergeRow {
   seq++;
   const kind = opts.kind ?? 'file';
@@ -27,11 +37,16 @@ function mrow(
     name: relPath.split('/').pop() ?? relPath,
     kind,
     base: opts.base ?? null,
-    left: opts.left ?? (kind === 'dir' ? { size: 0, mtimeMs: seq, attribute: null, unixMode: 0, uid: 0, gid: 0 } : null),
+    left:
+      opts.left ??
+      (kind === 'dir'
+        ? { size: 0, mtimeMs: seq, attribute: null, unixMode: 0, uid: 0, gid: 0 }
+        : null),
     right: opts.right ?? null,
     category: opts.category ?? 'same',
     rowState: opts.rowState ?? 'same',
-    parent: opts.parent ?? (relPath.includes('/') ? relPath.slice(0, relPath.lastIndexOf('/')) : null),
+    parent:
+      opts.parent ?? (relPath.includes('/') ? relPath.slice(0, relPath.lastIndexOf('/')) : null),
     depth: relPath.split('/').length,
     conflictLeaf: opts.conflictLeaf ?? false,
   };
@@ -41,9 +56,20 @@ function mrow(
 function mixedRows(): DirMergeRow[] {
   return [
     mrow('d', { kind: 'dir', category: 'conflict', rowState: 'conflict' }),
-    mrow('d/cf', { parent: 'd', category: 'conflict', rowState: 'conflict', conflictLeaf: true, left: { size: 1, mtimeMs: 1, attribute: null, unixMode: 0, uid: 0, gid: 0 }, right: { size: 2, mtimeMs: 2, attribute: null, unixMode: 0, uid: 0, gid: 0 } }),
+    mrow('d/cf', {
+      parent: 'd',
+      category: 'conflict',
+      rowState: 'conflict',
+      conflictLeaf: true,
+      left: { size: 1, mtimeMs: 1, attribute: null, unixMode: 0, uid: 0, gid: 0 },
+      right: { size: 2, mtimeMs: 2, attribute: null, unixMode: 0, uid: 0, gid: 0 },
+    }),
     mrow('d/lc', { parent: 'd', category: 'leftChanged', rowState: 'auto' }),
-    mrow('lo', { category: 'leftOnly', rowState: 'orphan', left: { size: 3, mtimeMs: 3, attribute: null, unixMode: 0, uid: 0, gid: 0 } }),
+    mrow('lo', {
+      category: 'leftOnly',
+      rowState: 'orphan',
+      left: { size: 3, mtimeMs: 3, attribute: null, unixMode: 0, uid: 0, gid: 0 },
+    }),
     mrow('rc', { category: 'rightChanged', rowState: 'auto' }),
     mrow('same', { category: 'same', rowState: 'same' }),
   ];
@@ -89,7 +115,11 @@ describe('folder-merge/mergeRows 决策状态机（继承/展开/聚合）', () 
   });
 
   it('最近祖先优先于更远祖先', () => {
-    const rows = [...mixedRows(), mrow('d/sub', { kind: 'dir', parent: 'd', category: 'same', rowState: 'same' }), mrow('d/sub/x', { parent: 'd/sub' })];
+    const rows = [
+      ...mixedRows(),
+      mrow('d/sub', { kind: 'dir', parent: 'd', category: 'same', rowState: 'same' }),
+      mrow('d/sub/x', { parent: 'd/sub' }),
+    ];
     const decisions: DecisionMap = { d: 'takeLeft', 'd/sub': 'takeRight' };
     expect(effectiveDecision('d/sub/x', decisions)).toBe('takeRight');
     void rows;
@@ -147,7 +177,11 @@ describe('folder-merge/mergeRows 计划预览（以引擎 ops 为权威）', () 
     const preview = mergePreviewFromPlan(rows, {}, plan);
     expect(preview.map((p) => p.path)).toEqual(['d/lc', 'lo', 'rc']);
     expect(preview.map((p) => p.op)).toEqual(['takeLeft', 'takeLeft', 'deleteTarget']);
-    expect(preview.map((p) => p.reason)).toEqual(['仅左改 → 取左', '左孤立并入目标', '跟随右侧删除']);
+    expect(preview.map((p) => p.reason)).toEqual([
+      '仅左改 → 取左',
+      '左孤立并入目标',
+      '跟随右侧删除',
+    ]);
     expect(preview[2].warning).toBe(true);
     expect(preview.every((p) => p.actionable)).toBe(true);
   });
@@ -163,7 +197,11 @@ describe('folder-merge/mergeRows 计划预览（以引擎 ops 为权威）', () 
 
   it('join 行元数据与有效决策（含祖先继承）', () => {
     const rows = mixedRows();
-    const preview = mergePreviewFromPlan(rows, { d: 'takeLeft' }, ops(['takeLeft', 'd/cf', '决策:取左']));
+    const preview = mergePreviewFromPlan(
+      rows,
+      { d: 'takeLeft' },
+      ops(['takeLeft', 'd/cf', '决策:取左']),
+    );
     const cf = preview[0];
     expect(cf.name).toBe('cf');
     expect(cf.kind).toBe('file');
@@ -172,7 +210,11 @@ describe('folder-merge/mergeRows 计划预览（以引擎 ops 为权威）', () 
   });
 
   it('引擎显式 keep 项：占位不可执行、无删除告警', () => {
-    const preview = mergePreviewFromPlan(mixedRows(), { lo: 'skip' }, ops(['keep', 'lo', '决策:跳过']));
+    const preview = mergePreviewFromPlan(
+      mixedRows(),
+      { lo: 'skip' },
+      ops(['keep', 'lo', '决策:跳过']),
+    );
     expect(preview[0].op).toBe('keep');
     expect(preview[0].actionable).toBe(false);
     expect(preview[0].warning).toBe(false);
@@ -183,7 +225,12 @@ describe('folder-merge/mergeRows 计划预览（以引擎 ops 为权威）', () 
     const preview = mergePreviewFromPlan(
       mixedRows(),
       {},
-      ops(['takeLeft', 'd/lc', 'a'], ['takeLeft', 'lo', 'b'], ['deleteTarget', 'rc', 'c'], ['keep', 'same', 'd']),
+      ops(
+        ['takeLeft', 'd/lc', 'a'],
+        ['takeLeft', 'lo', 'b'],
+        ['deleteTarget', 'rc', 'c'],
+        ['keep', 'same', 'd'],
+      ),
     );
     const stats = summarizeMergePlan(preview);
     expect(stats).toMatchObject({ takeLeft: 2, takeRight: 0, deleteTarget: 1, keep: 1, total: 4 });
@@ -195,11 +242,18 @@ describe('folder-merge/mergeRows 计划预览（以引擎 ops 为权威）', () 
 });
 
 describe('folder-merge/mergeRows 执行映射与报告导出', () => {
-
   it('导出文本报告', () => {
     const text = exportMergeReportText(
       { target: 'right', base: '/B', left: '/L', right: '/R' },
-      { total: 3, copied: 2, deleted: 1, skipped: 0, failed: 0, cancelled: false, details: [{ kind: 'takeLeft', path: 'a', reason: '仅左改 → 取左', status: 'copied' }] },
+      {
+        total: 3,
+        copied: 2,
+        deleted: 1,
+        skipped: 0,
+        failed: 0,
+        cancelled: false,
+        details: [{ kind: 'takeLeft', path: 'a', reason: '仅左改 → 取左', status: 'copied' }],
+      },
     );
     expect(text).toContain('文件夹合并报告');
     expect(text).toContain('合并目标：右侧');

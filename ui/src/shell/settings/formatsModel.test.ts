@@ -69,7 +69,7 @@ describe('settings/formatsModel（P10 文件格式页纯逻辑）', () => {
     const b = { ...newCustomFormat('fmt-b'), masks: ['*.log'] };
     const st1 = upsertCustom(upsertCustom(base, a), b);
     const all1 = effectiveFormats(st1);
-    expect(firstMatchingFormat(all1, 'x.log')?.id).toBe('fmt-a') /* '先注册者生效' */;
+    expect(firstMatchingFormat(all1, 'x.log')?.id).toBe('fmt-a'); /* '先注册者生效' */
 
     // 禁用 fmt-a 后 fmt-b 接管
     const st2 = setBuiltinOverride(st1, 'fmt-a', { enabled: false });
@@ -77,7 +77,9 @@ describe('settings/formatsModel（P10 文件格式页纯逻辑）', () => {
     const st2b = upsertCustom(st1, { ...a, enabled: false });
     const all2 = effectiveFormats(st2b);
     expect(firstMatchingFormat(all2, 'x.log')?.id).toBe('fmt-b');
-    expect(firstMatchingFormat(effectiveFormats(st2), 'x.log')?.id).toBe('fmt-a') /* 'overrides 仅作用于内置 id' */;
+    expect(firstMatchingFormat(effectiveFormats(st2), 'x.log')?.id).toBe(
+      'fmt-a',
+    ); /* 'overrides 仅作用于内置 id' */
     void st2;
 
     // 空掩码格式不匹配
@@ -92,7 +94,7 @@ describe('settings/formatsModel（P10 文件格式页纯逻辑）', () => {
     const specific = { ...newCustomFormat('fmt-spec'), masks: ['*.log'] };
     let st = upsertCustom(upsertCustom(base, catchAll), specific);
     let shadowed = shadowedFormatIds(effectiveFormats(st));
-    expect(shadowed.has('fmt-spec')).toBe(true) /* '被 * 全匹配遮蔽' */;
+    expect(shadowed.has('fmt-spec')).toBe(true); /* '被 * 全匹配遮蔽' */
     expect(shadowed.has('fmt-all')).toBe(false);
 
     // 相同掩码互相遮蔽（先者生效）
@@ -105,10 +107,13 @@ describe('settings/formatsModel（P10 文件格式页纯逻辑）', () => {
     expect(shadowed.has('m1')).toBe(false);
 
     // 禁用项不遮蔽他人
-    st = upsertCustom(upsertCustom(base, { ...newCustomFormat('off'), masks: ['*.log'], enabled: false }), {
-      ...newCustomFormat('on'),
-      masks: ['*.log'],
-    });
+    st = upsertCustom(
+      upsertCustom(base, { ...newCustomFormat('off'), masks: ['*.log'], enabled: false }),
+      {
+        ...newCustomFormat('on'),
+        masks: ['*.log'],
+      },
+    );
     shadowed = shadowedFormatIds(effectiveFormats(st));
     expect(shadowed.has('on')).toBe(false);
   });
@@ -132,7 +137,11 @@ describe('settings/formatsModel（P10 文件格式页纯逻辑）', () => {
 
   it('格式集导出->导入 roundtrip；版本守卫与坏 JSON 拒绝', () => {
     let st = defaultFileFormatsState();
-    st = upsertCustom(st, { ...newCustomFormat('team-x'), masks: ['*.x'], description: '团队格式' });
+    st = upsertCustom(st, {
+      ...newCustomFormat('team-x'),
+      masks: ['*.x'],
+      description: '团队格式',
+    });
     st = setBuiltinOverride(st, 'builtin-json', { enabled: false });
 
     const json = exportFormatPack(st);
@@ -144,7 +153,7 @@ describe('settings/formatsModel（P10 文件格式页纯逻辑）', () => {
     const back = importFormatPack(defaultFileFormatsState(), json);
     expect(back.ok).toBe(true);
     if (back.ok) {
-      expect(back.loaded).toBe(parsed.formats.length) /* '全量导入' */;
+      expect(back.loaded).toBe(parsed.formats.length); /* '全量导入' */
       const x = back.state.custom.find((f) => f.id === 'team-x');
       expect(x?.masks).toEqual(['*.x']);
       // 内置导入落 overrides
@@ -167,9 +176,15 @@ describe('settings/formatsModel（P10 文件格式页纯逻辑）', () => {
 
     const fresh = newCustomFormat('fmt-new');
     expect(validateFormatSpec({ ...fresh, masks: ['*.new'] })).toEqual([]);
-    expect(fresh.grammar[0].items[0]).toMatchObject({ kind: 'delimited', start: '//', toEol: true });
-    expect(validateFormatSpec(fresh)).toHaveLength(1) /* '空掩码报错' */;
-    expect(validateFormatSpec({ ...fresh, masks: ['*.x'], id: 'builtin-fake' })).toHaveLength(1) /* '内置前缀保留' */;
+    expect(fresh.grammar[0].items[0]).toMatchObject({
+      kind: 'delimited',
+      start: '//',
+      toEol: true,
+    });
+    expect(validateFormatSpec(fresh)).toHaveLength(1); /* '空掩码报错' */
+    expect(validateFormatSpec({ ...fresh, masks: ['*.x'], id: 'builtin-fake' })).toHaveLength(
+      1,
+    ); /* '内置前缀保留' */
   });
 
   // ---- R3-17d：非文本内置格式 + 双击选型（FR-FMT-004 / FR-SEL-001） ----
@@ -205,7 +220,9 @@ describe('settings/formatsModel（P10 文件格式页纯逻辑）', () => {
   });
 
   it('选型尊重设置层：禁用内置图片格式后 png 回落 hex；自定义格式可改判视图', () => {
-    const disabled = setBuiltinOverride(defaultFileFormatsState(), 'builtin-picture', { enabled: false });
+    const disabled = setBuiltinOverride(defaultFileFormatsState(), 'builtin-picture', {
+      enabled: false,
+    });
     expect(resolveViewKind(effectiveFormats(disabled), 'shot.png')).toBe('hex');
 
     const custom = upsertCustom(defaultFileFormatsState(), {

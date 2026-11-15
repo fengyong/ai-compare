@@ -1,0 +1,4 @@
+# ts-rs 生成的协议绑定：由 `cargo test -p ai-protocol --features ts -- --ignored
+# regenerate_ui_bindings` 再生成，drift 测试 generated_bindings_match_ui 对其做
+# 逐字节比对。prettier 改写会破坏字节一致性，故排除（R3-26）。
+src/protocol/generated/

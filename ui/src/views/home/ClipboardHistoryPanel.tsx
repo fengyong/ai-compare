@@ -1,6 +1,10 @@
 import { useEffect, useState } from 'react';
 import { clipLabel, clipboardStore, latestTwo } from '../../lib/clipboardStore';
-import { compareClipboardEntry, compareLatestClipboard, openClipboardAsText } from '../../shell/clipboardActions';
+import {
+  compareClipboardEntry,
+  compareLatestClipboard,
+  openClipboardAsText,
+} from '../../shell/clipboardActions';
 import { useShell } from '../../shell/store';
 import { S } from '../../strings';
 
@@ -40,7 +44,9 @@ export function ClipboardHistoryPanel() {
       <div className="aic-clip-panel" onClick={(e) => e.stopPropagation()}>
         <div className="aic-clip-head">
           <span>{S.clip.title}</span>
-          <span className="aic-clip-count">{entries.length} {S.clip.count}</span>
+          <span className="aic-clip-count">
+            {entries.length} {S.clip.count}
+          </span>
           <button onClick={() => toggle(false)}>{S.clip.close}</button>
         </div>
         <div className="aic-clip-toolbar">
@@ -48,7 +54,13 @@ export function ClipboardHistoryPanel() {
           <button disabled={!pair} onClick={() => void compareLatestClipboard(notice)}>
             {S.clip.compare}
           </button>
-          <button disabled={entries.length === 0} onClick={() => { clipboardStore.clear(); notice(S.clip.cleared); }}>
+          <button
+            disabled={entries.length === 0}
+            onClick={() => {
+              clipboardStore.clear();
+              notice(S.clip.cleared);
+            }}
+          >
             {S.clip.clear}
           </button>
           <span className="aic-clip-hint">{S.clip.byteHint}</span>
@@ -58,10 +70,16 @@ export function ClipboardHistoryPanel() {
           {entries.map((entry) => (
             <div className="aic-clip-row" key={entry.id}>
               <span className="aic-clip-id">#{entry.id}</span>
-              <span className="aic-clip-label" title={entry.text.slice(0, 200)}>{clipLabel(entry)}</span>
+              <span className="aic-clip-label" title={entry.text.slice(0, 200)}>
+                {clipLabel(entry)}
+              </span>
               <span className="aic-clip-time">{new Date(entry.ts).toLocaleString()}</span>
-              <button onClick={() => void compareClipboardEntry(entry.id, notice)}>{S.clip.compareEntry}</button>
-              <button onClick={() => void openClipboardAsText(entry.id, notice)}>{S.clip.openText}</button>
+              <button onClick={() => void compareClipboardEntry(entry.id, notice)}>
+                {S.clip.compareEntry}
+              </button>
+              <button onClick={() => void openClipboardAsText(entry.id, notice)}>
+                {S.clip.openText}
+              </button>
               <button onClick={() => clipboardStore.saveAs(entry.id)}>{S.clip.saveAs}</button>
               <button onClick={() => clipboardStore.remove(entry.id)}>{S.clip.delete}</button>
             </div>

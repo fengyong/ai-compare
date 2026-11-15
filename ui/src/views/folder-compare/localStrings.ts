@@ -39,7 +39,8 @@ export const F = {
   batchRenameExecCount: (n: number) => `将重命名 ${n} 项`,
   batchRenameNoSelection: '请先选择要重命名的行',
   batchRenameRegexBad: '正则不可用',
-  batchRenameHintDos: '示例：IMG####.jpg（计数器）· *.bak（保留原名换扩展名）· abc?.bak（逐位保留原字符）',
+  batchRenameHintDos:
+    '示例：IMG####.jpg（计数器）· *.bak（保留原名换扩展名）· abc?.bak（逐位保留原字符）',
   batchRenameHintRegex: '示例：查找 `.*(\\d\\.txt)` 替换 `xyz$1`；未命中的行保留原名',
 
   // ---- 快速比较（FR-DIR-013） ----
@@ -51,9 +52,11 @@ export const F = {
   quickCompareDiffSize: '大小不同',
   quickCompareSameTime: '时间相同',
   quickCompareDiffTime: '时间不同',
-  quickCompareQuickVerdict: '本次结果为「快速判定」：仅比较大小/时间戳等快速项，未读取文件内容（FR-DIR-010）。',
+  quickCompareQuickVerdict:
+    '本次结果为「快速判定」：仅比较大小/时间戳等快速项，未读取文件内容（FR-DIR-010）。',
   quickCompareContentVerdict: '本次结果基于内容比较（已读取文件），非快速判定。',
-  quickComparePairVerdict: '选中两项互相比较（FR-DIR-013：选中两个文件无论是否相对均成对比较；选中一个则与对面比较）。',
+  quickComparePairVerdict:
+    '选中两项互相比较（FR-DIR-013：选中两个文件无论是否相对均成对比较；选中一个则与对面比较）。',
   quickCompareSingleVerdict: '单行两侧互相比较（与对面项目成对比较）。',
   quickCompareMissing: '（该侧不存在）',
 
@@ -101,6 +104,7 @@ export const F = {
   // ---- BC 双窗格（FR-DIR-001/003：两侧独立选择/横向滚动，中间 gutter） ----
   sortHint: '点击排序：升序 → 降序 → 默认（两侧共用行序以保持对齐）',
   paneSelChip: (side: string, n: number) => `${side}侧已选 ${n} 项`,
-  paneActive: (side: string) => `活动窗格：${side}侧（全选/反选/清空/空格标记/右键操作均作用于此侧）`,
+  paneActive: (side: string) =>
+    `活动窗格：${side}侧（全选/反选/清空/空格标记/右键操作均作用于此侧）`,
   paneInactive: (side: string) => `${side}侧选择集（点击该窗格任意行即切换为活动窗格）`,
 } as const;

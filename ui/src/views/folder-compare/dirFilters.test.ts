@@ -14,8 +14,14 @@ import {
 function row(partial: Partial<DirRow> & { id: string }): DirRow {
   const size = 10;
   const mtime = 1000;
-  const left = partial.left !== undefined ? partial.left : { size, mtimeMs: mtime, attribute: null, unixMode: 0, uid: 0, gid: 0 };
-  const right = partial.right !== undefined ? partial.right : { size, mtimeMs: mtime, attribute: null, unixMode: 0, uid: 0, gid: 0 };
+  const left =
+    partial.left !== undefined
+      ? partial.left
+      : { size, mtimeMs: mtime, attribute: null, unixMode: 0, uid: 0, gid: 0 };
+  const right =
+    partial.right !== undefined
+      ? partial.right
+      : { size, mtimeMs: mtime, attribute: null, unixMode: 0, uid: 0, gid: 0 };
   return {
     id: partial.id,
     name: partial.name ?? partial.id,
@@ -66,7 +72,12 @@ describe('dirFilters：名称过滤器输入解析（FR-DIR-031）', () => {
 
   it('空输入 = 无过滤', () => {
     const spec = parseMaskInput('  ');
-    expect(spec.includeFiles.length + spec.excludeFiles.length + spec.includeDirs.length + spec.excludeDirs.length).toBe(0);
+    expect(
+      spec.includeFiles.length +
+        spec.excludeFiles.length +
+        spec.includeDirs.length +
+        spec.excludeDirs.length,
+    ).toBe(0);
   });
 
   it('输入↔回显往返', () => {
@@ -102,12 +113,22 @@ describe('dirFilters：文件求值', () => {
 describe('dirFilters：显示过滤器（FR-DIR-033，与引擎同口径）', () => {
   it('same/dirSame 由 showSame 控制', () => {
     expect(displayVisible(row({ id: 'x', status: 'same' }), SHOW_ALL_DISPLAY_FILTER)).toBe(true);
-    expect(displayVisible(row({ id: 'x', status: 'same' }), displayFilterPreset('diffOnly'))).toBe(false);
+    expect(displayVisible(row({ id: 'x', status: 'same' }), displayFilterPreset('diffOnly'))).toBe(
+      false,
+    );
   });
 
   it('QuickDiff 按 mtime 分左右较新', () => {
-    const lNewer = row({ id: 'x', status: 'quickDiff', right: { size: 1, mtimeMs: 0, attribute: null, unixMode: 0, uid: 0, gid: 0 } });
-    const rNewer = row({ id: 'x', status: 'quickDiff', left: { size: 1, mtimeMs: 0, attribute: null, unixMode: 0, uid: 0, gid: 0 } });
+    const lNewer = row({
+      id: 'x',
+      status: 'quickDiff',
+      right: { size: 1, mtimeMs: 0, attribute: null, unixMode: 0, uid: 0, gid: 0 },
+    });
+    const rNewer = row({
+      id: 'x',
+      status: 'quickDiff',
+      left: { size: 1, mtimeMs: 0, attribute: null, unixMode: 0, uid: 0, gid: 0 },
+    });
     expect(displayVisible(lNewer, displayFilterPreset('leftNewer'))).toBe(true);
     expect(displayVisible(lNewer, displayFilterPreset('rightNewer'))).toBe(false);
     expect(displayVisible(rNewer, displayFilterPreset('rightNewer'))).toBe(true);

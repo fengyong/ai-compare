@@ -47,7 +47,7 @@ export function actualZoom(): ZoomState {
  */
 export function autoScaleGeometry(
   left: { w: number; h: number },
-  right: { w: number; h: number }
+  right: { w: number; h: number },
 ): { left: number; right: number } {
   if (left.w <= 0 || left.h <= 0 || right.w <= 0 || right.h <= 0) return { left: 1, right: 1 };
   // 以两侧最大宽度作为统一目标画布：两图缩放后宽度一致，高度按各自
@@ -87,15 +87,23 @@ export function blendPercent(tick: number, steps = 10): number {
 export function offsetStep(key: string, ctrl: boolean): { dx: number; dy: number } | null {
   const step = ctrl ? 10 : 1;
   switch (key) {
-    case 'ArrowLeft': return { dx: -step, dy: 0 };
-    case 'ArrowRight': return { dx: step, dy: 0 };
-    case 'ArrowUp': return { dx: 0, dy: -step };
-    case 'ArrowDown': return { dx: 0, dy: step };
-    default: return null;
+    case 'ArrowLeft':
+      return { dx: -step, dy: 0 };
+    case 'ArrowRight':
+      return { dx: step, dy: 0 };
+    case 'ArrowUp':
+      return { dx: 0, dy: -step };
+    case 'ArrowDown':
+      return { dx: 0, dy: step };
+    default:
+      return null;
   }
 }
 
 /** 两窗格共用的变换串（缩放同步：同一 ZoomState 驱动所有 pane） */
-export function panTransform(zoom: ZoomState, offset: { dx: number; dy: number } = { dx: 0, dy: 0 }): string {
+export function panTransform(
+  zoom: ZoomState,
+  offset: { dx: number; dy: number } = { dx: 0, dy: 0 },
+): string {
   return `translate(${zoom.panX + offset.dx}px, ${zoom.panY + offset.dy}px) scale(${zoom.scale})`;
 }

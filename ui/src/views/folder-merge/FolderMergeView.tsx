@@ -1,6 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { formatSize, formatTime } from '../../lib/env';
-import type { DirMergeRow, DirMergeDecision, DirMergeTarget, DirMergePlannedOp } from '../../protocol/types';
+import type {
+  DirMergeRow,
+  DirMergeDecision,
+  DirMergeTarget,
+  DirMergePlannedOp,
+} from '../../protocol/types';
 import { mergeExecute, mergePlan, mergeScan, trackSession } from '../../ipc/engineProcess';
 import type { DirMergeExecuteResult } from '../../protocol/types';
 import type { Tab } from '../../shell/store';
@@ -75,14 +80,26 @@ export function FolderMergeView({ tab }: { tab: Tab }) {
   const doScan = async (): Promise<void> => {
     setError(null);
     try {
-      const result = await mergeScan({ sessionId, base: merge.base, left: merge.left, right: merge.right });
+      const result = await mergeScan({
+        sessionId,
+        base: merge.base,
+        left: merge.left,
+        right: merge.right,
+      });
       trackSession(sessionId, 'merge', { base: merge.base, left: merge.left, right: merge.right });
       setRows(result.rows);
       setExpanded(new Set(result.rows.filter((r) => r.kind === 'dir').map((r) => r.relPath)));
       setPhase('tree');
     } catch (err: unknown) {
-      const isMethodNotFound = err instanceof Error && 'code' in err && (err as { code?: number }).code === -32601;
-      setError(isMethodNotFound ? S.mergeView.engineUnsupported : err instanceof Error ? err.message : String(err));
+      const isMethodNotFound =
+        err instanceof Error && 'code' in err && (err as { code?: number }).code === -32601;
+      setError(
+        isMethodNotFound
+          ? S.mergeView.engineUnsupported
+          : err instanceof Error
+            ? err.message
+            : String(err),
+      );
     }
   };
   const scan = (force = false): Promise<void> => {
@@ -96,8 +113,14 @@ export function FolderMergeView({ tab }: { tab: Tab }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId, merge.base, merge.left, merge.right]);
 
-  const visibleRows = useMemo(() => (rows ? orderedMergeRows(rows, expanded) : []), [rows, expanded]);
-  const decisionStats = useMemo(() => (rows ? mergeDecisionStats(rows, decisions) : null), [rows, decisions]);
+  const visibleRows = useMemo(
+    () => (rows ? orderedMergeRows(rows, expanded) : []),
+    [rows, expanded],
+  );
+  const decisionStats = useMemo(
+    () => (rows ? mergeDecisionStats(rows, decisions) : null),
+    [rows, decisions],
+  );
 
   const toggleDir = (row: DirMergeRow): void => {
     setExpanded((prev) => {
@@ -182,13 +205,28 @@ export function FolderMergeView({ tab }: { tab: Tab }) {
         report.log.push(...result.log.slice(1));
       } catch (err: unknown) {
         report.failed += batch.length;
-        for (const op of batch) report.details.push({ kind: op.kind, path: op.path, reason: op.reason, status: 'failed', detail: err instanceof Error ? err.message : String(err) });
+        for (const op of batch)
+          report.details.push({
+            kind: op.kind,
+            path: op.path,
+            reason: op.reason,
+            status: 'failed',
+            detail: err instanceof Error ? err.message : String(err),
+          });
       }
-      setProgress({ done: Math.min(i + EXEC_BATCH_SIZE, pendingOps.length), total: pendingOps.length });
+      setProgress({
+        done: Math.min(i + EXEC_BATCH_SIZE, pendingOps.length),
+        total: pendingOps.length,
+      });
     }
     // 执行后重扫刷新着色（演示模型已就地更新）
     try {
-      const fresh = await mergeScan({ sessionId, base: merge.base, left: merge.left, right: merge.right });
+      const fresh = await mergeScan({
+        sessionId,
+        base: merge.base,
+        left: merge.left,
+        right: merge.right,
+      });
       setRows(fresh.rows);
     } catch {
       // 保持旧行（真实引擎重扫失败不阻塞报告展示）
@@ -199,7 +237,10 @@ export function FolderMergeView({ tab }: { tab: Tab }) {
 
   const exportReport = async (): Promise<void> => {
     if (!report) return;
-    const text = exportMergeReportText({ target, base: merge.base, left: merge.left, right: merge.right }, report);
+    const text = exportMergeReportText(
+      { target, base: merge.base, left: merge.left, right: merge.right },
+      report,
+    );
     try {
       await navigator.clipboard.writeText(text);
     } catch {
@@ -243,8 +284,15 @@ export function FolderMergeView({ tab }: { tab: Tab }) {
         </span>
         {decisionStats && (
           <span className="dim">
-            {S.mergeView.statsTotal(rows.length)} · {S.mergeView.statsAuto(decisionStats.conflicts >= 0 ? rows.filter((r) => r.rowState === 'auto').length : 0)} ·{' '}
-            <b className="merge-conflict-text">{S.mergeView.statsConflict(decisionStats.conflicts)}</b> · {S.mergeView.statsOrphan(decisionStats.orphans)}
+            {S.mergeView.statsTotal(rows.length)} ·{' '}
+            {S.mergeView.statsAuto(
+              decisionStats.conflicts >= 0 ? rows.filter((r) => r.rowState === 'auto').length : 0,
+            )}{' '}
+            ·{' '}
+            <b className="merge-conflict-text">
+              {S.mergeView.statsConflict(decisionStats.conflicts)}
+            </b>{' '}
+            · {S.mergeView.statsOrphan(decisionStats.orphans)}
           </span>
         )}
         <span className="sep" />
@@ -274,17 +322,36 @@ export function FolderMergeView({ tab }: { tab: Tab }) {
           />
         )}
         <span className="sep" />
-        <button className="mini" disabled={phase === 'running'} onClick={() => setExpanded(new Set(rows.filter((r) => r.kind === 'dir').map((r) => r.relPath)))}>
+        <button
+          className="mini"
+          disabled={phase === 'running'}
+          onClick={() =>
+            setExpanded(new Set(rows.filter((r) => r.kind === 'dir').map((r) => r.relPath)))
+          }
+        >
           {S.mergeView.expandAll}
         </button>
-        <button className="mini" disabled={phase === 'running'} onClick={() => setExpanded(new Set())}>
+        <button
+          className="mini"
+          disabled={phase === 'running'}
+          onClick={() => setExpanded(new Set())}
+        >
           {S.mergeView.collapseAll}
         </button>
-        <button className="mini" disabled={phase === 'running' || Object.keys(decisions).length === 0} onClick={() => setDecisions({})}>
+        <button
+          className="mini"
+          disabled={phase === 'running' || Object.keys(decisions).length === 0}
+          onClick={() => setDecisions({})}
+        >
           {S.mergeView.clearDecisions}
         </button>
         {decisionStats && decisionStats.conflicts > 0 && (
-          <span className="sel-chip">{S.mergeView.conflictsResolved(decisionStats.conflictsResolved, decisionStats.conflicts)}</span>
+          <span className="sel-chip">
+            {S.mergeView.conflictsResolved(
+              decisionStats.conflictsResolved,
+              decisionStats.conflicts,
+            )}
+          </span>
         )}
         <span className="sep" />
         {phase === 'tree' && (
@@ -302,10 +369,24 @@ export function FolderMergeView({ tab }: { tab: Tab }) {
             <span className="dim">{S.mergeView.planDesc}</span>
           </div>
           <div className="aic-sync-stats">
-            {planStats.takeLeft > 0 && <span className="chip l2r">{S.mergeView.opTakeLeft}× {planStats.takeLeft}</span>}
-            {planStats.takeRight > 0 && <span className="chip r2l">{S.mergeView.opTakeRight}× {planStats.takeRight}</span>}
-            {planStats.deleteTarget > 0 && <span className="chip warn">{S.mergeView.opDelete}× {planStats.deleteTarget}</span>}
-            <span className="chip">{S.mergeView.opKeep}× {planStats.keep}</span>
+            {planStats.takeLeft > 0 && (
+              <span className="chip l2r">
+                {S.mergeView.opTakeLeft}× {planStats.takeLeft}
+              </span>
+            )}
+            {planStats.takeRight > 0 && (
+              <span className="chip r2l">
+                {S.mergeView.opTakeRight}× {planStats.takeRight}
+              </span>
+            )}
+            {planStats.deleteTarget > 0 && (
+              <span className="chip warn">
+                {S.mergeView.opDelete}× {planStats.deleteTarget}
+              </span>
+            )}
+            <span className="chip">
+              {S.mergeView.opKeep}× {planStats.keep}
+            </span>
           </div>
           {pendingOps.length === 0 ? (
             <div className="aic-sync-empty">{S.mergeView.planEmpty}</div>
@@ -318,10 +399,19 @@ export function FolderMergeView({ tab }: { tab: Tab }) {
               </div>
               <div className="aic-sync-body">
                 {preview.map((p) => (
-                  <div key={p.path} className={`aic-sync-tr${p.warning ? ' warn' : ''}${p.actionable ? '' : ' skipped'}`}>
-                    <span className={p.op === 'takeLeft' ? 'dir-l2r' : p.op === 'takeRight' ? 'dir-r2l' : ''}>
+                  <div
+                    key={p.path}
+                    className={`aic-sync-tr${p.warning ? ' warn' : ''}${p.actionable ? '' : ' skipped'}`}
+                  >
+                    <span
+                      className={
+                        p.op === 'takeLeft' ? 'dir-l2r' : p.op === 'takeRight' ? 'dir-r2l' : ''
+                      }
+                    >
                       {OP_LABELS[p.op]}
-                      {p.decision !== 'auto' && <i className="ov-badge">{DECISION_LABELS[p.decision]}</i>}
+                      {p.decision !== 'auto' && (
+                        <i className="ov-badge">{DECISION_LABELS[p.decision]}</i>
+                      )}
                     </span>
                     <span className="mono" title={p.path}>
                       {p.kind === 'dir' ? '📁 ' : ''}
@@ -337,7 +427,11 @@ export function FolderMergeView({ tab }: { tab: Tab }) {
             <button className="mini" onClick={() => setPhase('tree')}>
               {S.mergeView.reportBack}
             </button>
-            <button className="mini primary" disabled={pendingOps.length === 0} onClick={() => void runMerge()}>
+            <button
+              className="mini primary"
+              disabled={pendingOps.length === 0}
+              onClick={() => void runMerge()}
+            >
               {S.mergeView.planExecute}（{pendingOps.length}）
             </button>
           </div>
@@ -349,7 +443,11 @@ export function FolderMergeView({ tab }: { tab: Tab }) {
         <div className="aic-sync-running">
           <span className="aic-progress">
             <span className="bar">
-              <i style={{ width: `${progress.total === 0 ? 100 : Math.round((progress.done / progress.total) * 100)}%` }} />
+              <i
+                style={{
+                  width: `${progress.total === 0 ? 100 : Math.round((progress.done / progress.total) * 100)}%`,
+                }}
+              />
             </span>
             {S.mergeView.running(progress.done, progress.total)}
           </span>
@@ -439,7 +537,9 @@ export function FolderMergeView({ tab }: { tab: Tab }) {
       {textMergeRow && (
         <div className="aic-modal-mask" onClick={() => setTextMergeRow(null)}>
           <div className="aic-modal" onClick={(e) => e.stopPropagation()}>
-            <div className="aic-modal-title">{S.mergeView.textMergeTitle} — {textMergeRow.relPath}</div>
+            <div className="aic-modal-title">
+              {S.mergeView.textMergeTitle} — {textMergeRow.relPath}
+            </div>
             <div className="aic-modal-body">{S.mergeView.textMergePlaceholder}</div>
             <div className="aic-modal-actions">
               <button className="mini" onClick={() => setTextMergeRow(null)}>
@@ -484,10 +584,17 @@ function MergeRowLine({
   const stateClass = mergeStateClass(row.rowState);
   // 目录行 = 聚合状态文案；叶行 = 叶级分类文案
   const catLabel = isDir ? MERGE_STATE_LABELS[row.rowState] : MERGE_CATEGORY_LABELS[row.category];
-  const decButtons: DirMergeDecision[] = decision === 'auto' ? ['takeLeft', 'takeRight', 'both', 'skip'] : ['takeLeft', 'takeRight', 'both', 'skip', 'auto'];
+  const decButtons: DirMergeDecision[] =
+    decision === 'auto'
+      ? ['takeLeft', 'takeRight', 'both', 'skip']
+      : ['takeLeft', 'takeRight', 'both', 'skip', 'auto'];
   return (
     <div className={`aic-merge-tr ${stateClass}`} onDoubleClick={() => !isDir && onOpenConflict()}>
-      <span className="name" style={{ paddingLeft: 8 + (row.depth - 1) * 16 }} title={`${row.relPath} · ${catLabel}${row.conflictLeaf ? ' · 双击打开文本合并占位' : ''}`}>
+      <span
+        className="name"
+        style={{ paddingLeft: 8 + (row.depth - 1) * 16 }}
+        title={`${row.relPath} · ${catLabel}${row.conflictLeaf ? ' · 双击打开文本合并占位' : ''}`}
+      >
         <span
           className={`aic-dir-caret${isDir ? '' : ' empty'}`}
           onClick={(e) => {
@@ -501,12 +608,23 @@ function MergeRowLine({
         <i className="cat-badge">{catLabel}</i>
         {decision !== 'auto' && <i className="dec-badge">{DECISION_LABELS[decision]}</i>}
       </span>
-      <span className="side c mono">{row.base ? `${formatSize(row.base.size)} · ${formatTime(row.base.mtimeMs)}` : '—'}</span>
-      <span className="side c mono">{row.left ? `${formatSize(row.left.size)} · ${formatTime(row.left.mtimeMs)}` : '—'}</span>
-      <span className="side c mono">{row.right ? `${formatSize(row.right.size)} · ${formatTime(row.right.mtimeMs)}` : '—'}</span>
+      <span className="side c mono">
+        {row.base ? `${formatSize(row.base.size)} · ${formatTime(row.base.mtimeMs)}` : '—'}
+      </span>
+      <span className="side c mono">
+        {row.left ? `${formatSize(row.left.size)} · ${formatTime(row.left.mtimeMs)}` : '—'}
+      </span>
+      <span className="side c mono">
+        {row.right ? `${formatSize(row.right.size)} · ${formatTime(row.right.mtimeMs)}` : '—'}
+      </span>
       <span className="c decisions">
         {decButtons.map((d) => (
-          <button key={d} className={`dec-btn${decision === d ? ' on' : ''}`} onClick={() => onDecision(d)} title={DECISION_LABELS[d]}>
+          <button
+            key={d}
+            className={`dec-btn${decision === d ? ' on' : ''}`}
+            onClick={() => onDecision(d)}
+            title={DECISION_LABELS[d]}
+          >
             {DECISION_LABELS[d]}
           </button>
         ))}
