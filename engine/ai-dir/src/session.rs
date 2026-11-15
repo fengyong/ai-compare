@@ -1168,7 +1168,11 @@ impl DirModel {
                         hidden: false,
                         suppressed: false,
                         left_path: node.left.as_ref().map(|_| node.rel_path.clone()),
-                        right_path: node.right.as_ref().map(|_| absorbed.rel_path.clone()),
+                        // 右侧地址用配对行的唯一口径（right_rel 缺省 = rel_path）
+                        right_path: node
+                            .right
+                            .as_ref()
+                            .map(|_| node.right_rel_path().to_string()),
                     },
                 ));
                 continue;
@@ -1329,8 +1333,14 @@ impl DirModel {
             .filter(|id| !new_ids.contains(*id))
             .cloned()
             .collect();
-        st.removals.extend(stale);
+        st.removals.extend(stale.iter().cloned());
         st.flat_ids = new_ids;
+        // 消失的行必须从平铺缓存里剔除：否则「消失后又原样回来」的行
+        // （解除手动对齐后恢复的孤立项、重新出现的外部文件）会因与陈旧缓存
+        // 相等而被判为「未变化」，UI 端永久缺行。
+        for id in &stale {
+            st.flat_cache.remove(id);
+        }
         st.stats = new_stats;
         rows
     }
@@ -1742,45 +1752,57 @@ impl DirModel {
     }
 
     /// 解除对齐：涉及 path 的全部配对（恢复两个孤立项）
+    ///
+    /// `path` 可以是配对行的左侧真实路径（存活节点），也可以是右侧真实路径
+    /// （被吸收节点）——两个入口必须完全对称（D0：此前右侧入口把角色认反，
+    /// 结果被吸收行永久隐形且丢失右侧元数据）。
     pub async fn unalign(&self, path: &str) -> Result<u32, DirScanError> {
         let id = {
             let st = self.state.lock().expect("模型锁");
             st.index.get(path).copied()
         };
         let Some(id) = id else { return Ok(0) };
-        // 找到配对双方（path 可能是存活节点，也可能是被吸收节点）
-        let (survivor, absorbed) = {
+        // 找到配对双方：角色由 pair_roles 唯一确定（优先 absorbed_by）
+        let roles = {
             let st = self.state.lock().expect("模型锁");
-            let node = &st.arena[id as usize];
-            match (node.aligned_with, node.absorbed_by) {
-                (Some(other), _) => (id, other),
-                (_, Some(other)) => (other, id),
-                _ => (id, id),
-            }
+            pair_roles(&st, id)
         };
-        if survivor == absorbed {
+        let Some((survivor, absorbed)) = roles else {
             // 未参与配对：按孤立项重判（保持旧语义）
             let changed = self.rejudge_solo(id).await as u32;
             let _ = self.rev.fetch_add(1, Ordering::SeqCst);
             self.notify.notify_waiters();
             return Ok(changed);
-        }
+        };
         {
             let mut st = self.state.lock().expect("模型锁");
             let survivor_rel = st.arena[survivor as usize].rel_path.clone();
-            st.manual_pairs
-                .retain(|(l, r)| l != &survivor_rel && r != &survivor_rel);
-            // 存活节点恢复为左侧孤立项
-            st.arena[survivor as usize].right = None;
-            st.arena[survivor as usize].right_rel = None;
-            st.arena[survivor as usize].aligned_with = None;
-            // 被吸收节点恢复为独立行
-            st.arena[absorbed as usize].absorbed_by = None;
-            st.arena[absorbed as usize].aligned_with = None;
-            // 统计：被吸收节点重新计入
-            let absorbed_status = st.arena[absorbed as usize].status;
+            let absorbed_rel = st.arena[absorbed as usize].rel_path.clone();
+            // 配对记录：两侧 rel 任一出现在左右位即移除（记录形式为
+            // (左真实 rel, 右真实 rel)，但历史/预置载荷不保证顺序）
+            st.manual_pairs.retain(|(l, r)| {
+                l != &survivor_rel && r != &survivor_rel && l != &absorbed_rel && r != &absorbed_rel
+            });
+            // 存活节点恢复为左侧孤立项：保留左侧元数据，清除右侧引用
+            let s = &mut st.arena[survivor as usize];
+            s.right = None;
+            s.right_rel = None;
+            s.aligned_with = None;
+            debug_assert!(s.absorbed_by.is_none(), "存活节点不应被吸收");
+            // 被吸收节点恢复为右侧孤立项：保留右侧元数据，清除配对标记
+            let a = &mut st.arena[absorbed as usize];
+            let absorbed_status = a.status;
+            a.absorbed_by = None;
+            a.aligned_with = None;
+            a.right_rel = None;
+            // 统计：被吸收节点重新计入（merge_pair 时移出过）
             stats_add(&mut st.stats, absorbed_status);
             st.stats.total += 1;
+            // 被吸收行此前在待发 removals 中（merge_pair 推送）：恢复后必须撤销，
+            // 否则同一批 delta 既 upsert 又 remove，UI 会删掉刚恢复的行。
+            st.removals
+                .retain(|r| r != &absorbed_rel && r != &survivor_rel);
+            // 两行都必须重发：存活行状态变了，被吸收行重新出现
             st.dirty.insert(survivor);
             st.dirty.insert(absorbed);
             st.flat_dirty = true;
@@ -1977,6 +1999,35 @@ impl DirModel {
 
     fn target_depth(&self) -> Option<u32> {
         self.opts.lock().expect("选项锁").target_depth
+    }
+}
+
+/// 配对角色（FR-DIR-022 手动对齐的**唯一角色事实源**）。
+///
+/// 不变式：[`DirNode::aligned_with`] 是对称标记（两侧互相指向），
+/// 只有 [`DirNode::absorbed_by`] 能区分「谁吸收了谁」：
+/// - 被吸收节点：`absorbed_by = Some(存活节点)`；
+/// - 存活节点：`absorbed_by = None`，`aligned_with = Some(被吸收节点)`。
+///
+/// 因此**必须先判 `absorbed_by`**：若先判 `aligned_with`，从被吸收节点
+/// （异名配对时的右侧真实路径）进入会把存活/被吸收认反，进而清错元数据、
+/// 让被吸收行永久隐形（D0 缺陷根因）。
+///
+/// 返回 `None` = 该节点未参与配对（或配对关系不完整，按未配对处理，
+/// 避免用半配对状态做破坏性修改）。
+fn pair_roles(st: &ModelState, id: NodeId) -> Option<(NodeId, NodeId)> {
+    let node = st.arena.get(id as usize)?;
+    if let Some(survivor) = node.absorbed_by {
+        // 本节点是被吸收节点：角色由 absorbed_by 唯一确定
+        return Some((survivor, id));
+    }
+    let absorbed = node.aligned_with?;
+    let absorber = st.arena.get(absorbed as usize)?;
+    // 防御：对方必须反向记为 absorbed_by（否则是半配对，不做解合并）
+    if absorber.absorbed_by == Some(id) {
+        Some((id, absorbed))
+    } else {
+        None
     }
 }
 

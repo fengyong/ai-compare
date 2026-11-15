@@ -521,6 +521,349 @@ async fn manual_align_survives_rescan_and_unalign_clears_it() {
     drop(rd);
 }
 
+/// D0：解除对齐必须**左右对称**——从右侧（被吸收节点）路径解除时，
+/// 存活/被吸收角色不得反转。
+///
+/// 原缺陷（右侧入口）：
+/// - `a.txt` 行残留右侧元数据 → `contentDiff`；`b.txt` 行两侧都被清空 → `Unknown`；
+/// - 统计变成 `same/contentDiff`，镜像计划为空（两行都不再是孤立项）。
+#[tokio::test]
+async fn unalign_from_right_side_restores_two_isolated_rows() {
+    let (ld, left) = make_tree(&[("a.txt", b"AAA")]).await;
+    let (rd, right) = make_tree(&[("b.txt", b"BBB")]).await;
+    let vfs = Arc::new(LocalFs::new());
+    let mut o = opts();
+    o.criteria.content_compare = ContentCompareMode::Always;
+    o.target_depth = Some(1);
+    let (model, _first) = DirModel::open(vfs, &left, &right, o, crate::CancelFlag::new())
+        .await
+        .unwrap();
+    model.align("a.txt", "b.txt").await.unwrap();
+    assert_eq!(model.rows_snapshot().await.len(), 1, "配对后只有一行");
+
+    // 从**右侧**真实路径（被吸收节点）解除
+    model.unalign("b.txt").await.unwrap();
+    assert_fully_unaligned(&model, "a.txt", "b.txt").await;
+
+    drop(ld);
+    drop(rd);
+}
+
+#[tokio::test]
+async fn unalign_from_left_side_restores_two_isolated_rows() {
+    let (ld, left) = make_tree(&[("a.txt", b"AAA")]).await;
+    let (rd, right) = make_tree(&[("b.txt", b"BBB")]).await;
+    let vfs = Arc::new(LocalFs::new());
+    let mut o = opts();
+    o.criteria.content_compare = ContentCompareMode::Always;
+    o.target_depth = Some(1);
+    let (model, _first) = DirModel::open(vfs, &left, &right, o, crate::CancelFlag::new())
+        .await
+        .unwrap();
+    model.align("a.txt", "b.txt").await.unwrap();
+    model.unalign("a.txt").await.unwrap();
+    assert_fully_unaligned(&model, "a.txt", "b.txt").await;
+    drop(ld);
+    drop(rd);
+}
+
+/// 同一对解除后再对齐，必须能恢复为一行的异名配对（左右两个入口各一次）。
+#[tokio::test]
+async fn unalign_from_right_then_realign_pairs_again() {
+    let (ld, left) = make_tree(&[("a.txt", b"AAA")]).await;
+    let (rd, right) = make_tree(&[("b.txt", b"BBB")]).await;
+    let vfs = Arc::new(LocalFs::new());
+    let mut o = opts();
+    o.criteria.content_compare = ContentCompareMode::Always;
+    o.target_depth = Some(1);
+    let (model, _first) = DirModel::open(vfs, &left, &right, o, crate::CancelFlag::new())
+        .await
+        .unwrap();
+    model.align("a.txt", "b.txt").await.unwrap();
+    model.unalign("b.txt").await.unwrap();
+    let changed = model.align("a.txt", "b.txt").await.unwrap();
+    assert_eq!(changed, 2, "重新对齐：配对行重发 + 被吸收行移除");
+    let rows = model.rows_snapshot().await;
+    assert_eq!(rows.len(), 1, "重新对齐后仍是一行: {rows:?}");
+    assert_eq!(rows[0].id, "a.txt");
+    assert_eq!(rows[0].left_path.as_deref(), Some("a.txt"));
+    assert_eq!(rows[0].right_path.as_deref(), Some("b.txt"));
+    assert_eq!(rows[0].status, DirEntryStatus::ContentDiff);
+    let stats = model.stats_snapshot();
+    assert_eq!(
+        (
+            stats.total,
+            stats.left_only,
+            stats.right_only,
+            stats.content_diff
+        ),
+        (1, 0, 0, 1),
+        "{stats:?}"
+    );
+    drop(ld);
+    drop(rd);
+}
+
+/// 重复解除（幂等）：第二次 `unalign` 不得改变行数/统计/状态。
+#[tokio::test]
+async fn unalign_twice_is_idempotent_from_either_side() {
+    for path in ["a.txt", "b.txt"] {
+        let (ld, left) = make_tree(&[("a.txt", b"AAA")]).await;
+        let (rd, right) = make_tree(&[("b.txt", b"BBB")]).await;
+        let vfs = Arc::new(LocalFs::new());
+        let mut o = opts();
+        o.criteria.content_compare = ContentCompareMode::Always;
+        o.target_depth = Some(1);
+        let (model, _first) = DirModel::open(vfs, &left, &right, o, crate::CancelFlag::new())
+            .await
+            .unwrap();
+        model.align("a.txt", "b.txt").await.unwrap();
+        model.unalign(path).await.unwrap();
+        let rows_1 = model.rows_snapshot().await;
+        let stats_1 = model.stats_snapshot();
+        model.unalign(path).await.unwrap();
+        // 再按对侧路径解除也不得产生额外变化
+        model
+            .unalign(if path == "a.txt" { "b.txt" } else { "a.txt" })
+            .await
+            .unwrap();
+        let rows_2 = model.rows_snapshot().await;
+        let stats_2 = model.stats_snapshot();
+        assert_eq!(rows_1.len(), rows_2.len(), "入口={path}: {rows_2:?}");
+        assert_eq!(rows_1, rows_2, "入口={path}");
+        assert_eq!(stats_1, stats_2, "入口={path}");
+        assert_eq!(stats_2.total, 2, "入口={path}: {stats_2:?}");
+        drop(ld);
+        drop(rd);
+    }
+}
+
+/// 子目录内的配对：解除后父目录聚合必须回到「左孤立 + 右孤立」。
+#[tokio::test]
+async fn unalign_from_right_side_in_subdir_updates_parent_aggregation() {
+    let (ld, left) = make_tree(&[("sub/a.txt", b"AAA")]).await;
+    let (rd, right) = make_tree(&[("sub/b.txt", b"BBB")]).await;
+    let vfs = Arc::new(LocalFs::new());
+    let mut o = opts();
+    o.criteria.content_compare = ContentCompareMode::Always;
+    o.target_depth = None;
+    o.visible_depth = 1;
+    let (model, _first) = DirModel::open(vfs, &left, &right, o, crate::CancelFlag::new())
+        .await
+        .unwrap();
+    let handles = model.start_background();
+    let _ = model.wait_until_done(Duration::from_secs(10)).await;
+    for h in handles {
+        let _ = h.await;
+    }
+    model.align("sub/a.txt", "sub/b.txt").await.unwrap();
+    // 从右侧深层路径解除
+    model.unalign("sub/b.txt").await.unwrap();
+    let rows = model.rows_snapshot().await;
+    let a = rows
+        .iter()
+        .find(|r| r.id == "sub/a.txt")
+        .expect("左侧孤立项");
+    let b = rows
+        .iter()
+        .find(|r| r.id == "sub/b.txt")
+        .expect("右侧孤立项");
+    assert_eq!(a.status, DirEntryStatus::LeftOnly, "{a:?}");
+    assert_eq!(b.status, DirEntryStatus::RightOnly, "{b:?}");
+    assert_eq!(a.right_path, None, "{a:?}");
+    assert_eq!(b.left_path, None, "{b:?}");
+    assert_eq!(b.right_path.as_deref(), Some("sub/b.txt"), "{b:?}");
+    let sub = rows.iter().find(|r| r.id == "sub").expect("父目录行");
+    assert_eq!(
+        sub.status,
+        DirEntryStatus::DirDiff,
+        "两侧各有孤立项 -> 父目录仍为 DirDiff: {sub:?}"
+    );
+    let stats = model.stats_snapshot();
+    assert_eq!(stats.left_only, 1, "{stats:?}");
+    assert_eq!(stats.right_only, 1, "{stats:?}");
+    drop(ld);
+    drop(rd);
+}
+
+/// 平铺模式：从右侧路径解除后两行各自恢复为真实孤立项（不是 Unknown）。
+#[tokio::test]
+async fn unalign_from_right_side_in_flat_mode_restores_two_rows() {
+    let (ld, left) = make_tree(&[("a.txt", b"AAA")]).await;
+    let (rd, right) = make_tree(&[("b.txt", b"BBB")]).await;
+    let vfs = Arc::new(LocalFs::new());
+    let mut o = opts();
+    o.criteria.content_compare = ContentCompareMode::Always;
+    o.target_depth = Some(1);
+    o.flat = true;
+    let (model, _first) = DirModel::open(vfs, &left, &right, o, crate::CancelFlag::new())
+        .await
+        .unwrap();
+    model.align("a.txt", "b.txt").await.unwrap();
+    model.unalign("b.txt").await.unwrap();
+    let rows = model.rows_snapshot().await;
+    assert_eq!(rows.len(), 2, "平铺解除后应有两行: {rows:?}");
+    let a = rows.iter().find(|r| r.id == "a.txt").expect("左侧行");
+    let b = rows.iter().find(|r| r.id == "b.txt").expect("右侧行");
+    assert_eq!(a.status, DirEntryStatus::LeftOnly, "{a:?}");
+    assert_eq!(b.status, DirEntryStatus::RightOnly, "{b:?}");
+    assert_eq!(a.left_path.as_deref(), Some("a.txt"));
+    assert_eq!(a.right_path, None);
+    assert_eq!(b.left_path, None);
+    assert_eq!(b.right_path.as_deref(), Some("b.txt"));
+    drop(ld);
+    drop(rd);
+}
+
+/// 平铺 delta：解除对齐后两行都必须作为 upsert 下发——「消失后又原样回来」
+/// 的行不能因与陈旧平铺缓存相等而被吞掉（否则 UI 端永久缺行）。
+#[tokio::test]
+async fn unalign_from_right_side_flat_delta_reemits_both_rows() {
+    let (ld, left) = make_tree(&[("a.txt", b"AAA")]).await;
+    let (rd, right) = make_tree(&[("b.txt", b"BBB")]).await;
+    let vfs = Arc::new(LocalFs::new());
+    let mut o = opts();
+    o.criteria.content_compare = ContentCompareMode::Always;
+    o.target_depth = Some(1);
+    o.flat = true;
+    let (model, _first) = DirModel::open(vfs, &left, &right, o, crate::CancelFlag::new())
+        .await
+        .unwrap();
+    model.align("a.txt", "b.txt").await.unwrap();
+    // 消费掉配对产生的平铺 delta（b.txt 此时作为移除项）
+    let paired = model.take_delta().await.expect("配对 delta");
+    assert!(
+        paired.removals.iter().any(|r| r == "b.txt"),
+        "{:?}",
+        paired.removals
+    );
+    model.unalign("b.txt").await.unwrap();
+    let delta = model.take_delta().await.expect("解除 delta");
+    let ids: Vec<&str> = delta.upserts.iter().map(|r| r.id.as_str()).collect();
+    assert!(ids.contains(&"a.txt"), "左侧行必须重发: {ids:?}");
+    assert!(
+        ids.contains(&"b.txt"),
+        "重新出现的右侧行必须重发（不得被陈旧缓存吞掉）: {ids:?}"
+    );
+    assert!(
+        !delta.removals.iter().any(|r| r == "a.txt" || r == "b.txt"),
+        "{:?}",
+        delta.removals
+    );
+    drop(ld);
+    drop(rd);
+}
+
+/// 从右侧解除后重扫：配对不得被 `manual_pairs` 重新施加。
+#[tokio::test]
+async fn unalign_from_right_side_survives_rescan() {
+    let (ld, left) = make_tree(&[("a.txt", b"AAA")]).await;
+    let (rd, right) = make_tree(&[("b.txt", b"BBB")]).await;
+    let vfs = Arc::new(LocalFs::new());
+    let mut o = opts();
+    o.criteria.content_compare = ContentCompareMode::Always;
+    o.target_depth = Some(1);
+    let (model, _first) = DirModel::open(vfs, &left, &right, o, crate::CancelFlag::new())
+        .await
+        .unwrap();
+    model.align("a.txt", "b.txt").await.unwrap();
+    model.unalign("b.txt").await.unwrap();
+    model.refresh().await.unwrap();
+    let rows = model.rows_snapshot().await;
+    assert_eq!(rows.len(), 2, "重扫后仍是两个孤立项: {rows:?}");
+    let a = rows.iter().find(|r| r.id == "a.txt").unwrap();
+    let b = rows.iter().find(|r| r.id == "b.txt").unwrap();
+    assert_eq!(a.status, DirEntryStatus::LeftOnly);
+    assert_eq!(b.status, DirEntryStatus::RightOnly);
+    assert_eq!(model.stats_snapshot().total, 2);
+    drop(ld);
+    drop(rd);
+}
+
+/// 解除对齐的**协议/delta 视图**：被吸收行必须重新出现（不能只 upsert 存活行），
+/// 且不得同时出现在 removals 里（否则 UI 会删掉刚恢复的行）。
+#[tokio::test]
+async fn unalign_from_right_side_emits_upsert_for_both_rows() {
+    let (ld, left) = make_tree(&[("a.txt", b"AAA")]).await;
+    let (rd, right) = make_tree(&[("b.txt", b"BBB")]).await;
+    let vfs = Arc::new(LocalFs::new());
+    let mut o = opts();
+    o.criteria.content_compare = ContentCompareMode::Always;
+    o.target_depth = Some(1);
+    let (model, _first) = DirModel::open(vfs, &left, &right, o, crate::CancelFlag::new())
+        .await
+        .unwrap();
+    model.align("a.txt", "b.txt").await.unwrap();
+    // 消费掉配对产生的 delta（避免与解除的 delta 混在一起）
+    while model.take_delta().await.is_some() {}
+    model.unalign("b.txt").await.unwrap();
+    let delta = model.take_delta().await.expect("解除对齐应产生 delta");
+    let ids: Vec<&str> = delta.upserts.iter().map(|r| r.id.as_str()).collect();
+    assert!(ids.contains(&"a.txt"), "存活行必须重发: {ids:?}");
+    assert!(ids.contains(&"b.txt"), "被吸收行必须重新出现: {ids:?}");
+    assert!(
+        !delta.removals.iter().any(|r| r == "a.txt" || r == "b.txt"),
+        "解除后不得把这些行作为移除项下发: {:?}",
+        delta.removals
+    );
+    let b = delta.upserts.iter().find(|r| r.id == "b.txt").unwrap();
+    assert_eq!(b.status, DirEntryStatus::RightOnly, "{b:?}");
+    assert_eq!(b.right_path.as_deref(), Some("b.txt"), "{b:?}");
+    assert_eq!(b.left_path, None, "{b:?}");
+    assert_eq!(delta.stats.total, 2, "{:?}", delta.stats);
+    drop(ld);
+    drop(rd);
+}
+
+/// 解除对齐的共同断言：两行各自恢复为真实孤立项 + 镜像计划回到「复制 + 删除」。
+async fn assert_fully_unaligned(model: &DirModel, lrel: &str, rrel: &str) {
+    let rows = model.rows_snapshot().await;
+    assert_eq!(
+        rows.len(),
+        2,
+        "解除后应恢复两行: {:?}",
+        rows.iter().map(|r| &r.id).collect::<Vec<_>>()
+    );
+    let l = rows.iter().find(|r| r.id == lrel).expect("左侧行");
+    let r = rows.iter().find(|r| r.id == rrel).expect("右侧行");
+    assert_eq!(l.status, DirEntryStatus::LeftOnly, "{l:?}");
+    assert_eq!(r.status, DirEntryStatus::RightOnly, "{r:?}");
+    assert_eq!(l.left_path.as_deref(), Some(lrel), "{l:?}");
+    assert_eq!(l.right_path, None, "存活行不得残留右侧地址: {l:?}");
+    assert_eq!(r.left_path, None, "被吸收行不得残留左侧元数据: {r:?}");
+    assert_eq!(r.right_path.as_deref(), Some(rrel), "{r:?}");
+    assert!(l.right.is_none(), "存活行不得残留右侧元数据: {l:?}");
+    assert!(r.left.is_none(), "{r:?}");
+    assert!(r.right.is_some(), "被吸收行必须保留右侧元数据: {r:?}");
+
+    let stats = model.stats_snapshot();
+    assert_eq!(stats.total, 2, "{stats:?}");
+    assert_eq!(stats.left_only, 1, "{stats:?}");
+    assert_eq!(stats.right_only, 1, "{stats:?}");
+    assert_eq!(stats.content_diff, 0, "{stats:?}");
+    assert_eq!(stats.same, 0, "{stats:?}");
+
+    // 镜像计划：左孤立项复制到右侧 + 右孤立项从右侧删除
+    let plan = crate::sync::plan_operations(
+        &rows,
+        Some(ai_protocol::SyncPreset::MirrorLeftToRight),
+        None,
+        None,
+    );
+    assert_eq!(plan.len(), 2, "镜像计划应为复制 + 删除: {plan:?}");
+    let copy = plan
+        .iter()
+        .find(|p| p.op == ai_protocol::PlannedOpKind::CopyLeftToRight)
+        .expect("应有复制左->右");
+    assert_eq!(copy.source_path.as_deref(), Some(lrel), "{copy:?}");
+    assert_eq!(copy.target_path.as_deref(), Some(lrel), "{copy:?}");
+    let del = plan
+        .iter()
+        .find(|p| p.op == ai_protocol::PlannedOpKind::DeleteRight)
+        .expect("应有删除右侧孤立项");
+    assert_eq!(del.operation_path.as_deref(), Some(rrel), "{del:?}");
+}
+
 /// 配对行的父目录聚合：不得把两侧孤立项重复计入，也不得遗漏。
 #[tokio::test]
 async fn manual_align_parent_aggregation_has_no_duplicate_or_missing() {

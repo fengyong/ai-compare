@@ -126,6 +126,9 @@ pub struct DirNode {
     /// 已执行过 list_dir 展开（区别于空目录叶子）
     pub expanded: bool,
     /// 非同名配对（手动对齐/覆盖对齐，FR-DIR-022/023）：指向配对的另一节点
+    ///
+    /// 注意这是**对称标记**（两侧互相指向），无法区分存活/被吸收；
+    /// 判定角色必须看 [`DirNode::absorbed_by`]（见 `session::pair_roles`）。
     pub aligned_with: Option<NodeId>,
     /// 本节点已被配对吸收（不再独立成行）；指向存活的配对节点
     pub absorbed_by: Option<NodeId>,

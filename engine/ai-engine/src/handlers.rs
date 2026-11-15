@@ -3593,6 +3593,216 @@ mod p2_tests {
     }
 
     // ------------------------------------------------------------------
+    // D0：解除对齐的左右对称性（FR-DIR-022）
+    // ------------------------------------------------------------------
+
+    /// D0（RPC 级 · 树形）：从**右侧**真实路径解除对齐后，两行恢复为孤立项，
+    /// 镜像计划回到「复制左孤立项 + 删除右孤立项」，执行后真实磁盘正确。
+    ///
+    /// 修复前同一场景：`b.txt` 行被永久吸收（不重发）且右侧元数据被清空，
+    /// 统计变成 `same=1 + contentDiff=1`，镜像计划为空。
+    #[tokio::test]
+    async fn d0_unalign_from_right_side_rpc_tree() {
+        d0_unalign_scenario(false).await;
+    }
+
+    /// D0（RPC 级 · 平铺）：同一对称性在平铺投影下也必须成立。
+    #[tokio::test]
+    async fn d0_unalign_from_right_side_rpc_flat() {
+        d0_unalign_scenario(true).await;
+    }
+
+    async fn d0_unalign_scenario(flat: bool) {
+        let dir = tempfile::tempdir().unwrap();
+        let l = dir.path().join("L");
+        let r = dir.path().join("R");
+        std::fs::create_dir_all(&l).unwrap();
+        std::fs::create_dir_all(&r).unwrap();
+        std::fs::write(l.join("a.txt"), b"AAA").unwrap();
+        std::fs::write(r.join("b.txt"), b"BBB").unwrap();
+        let c = ctx();
+        let sid = if flat { "d0flat" } else { "d0tree" };
+
+        // 1. 打开（树形 / 平铺同参，只差 flat）
+        let (tx, mut rx0) = chan();
+        dispatch(
+            "dir/open",
+            Some(json!({
+                "sessionId": sid, "left": l.to_string_lossy(), "right": r.to_string_lossy(),
+                "depth": 1, "lazyScan": true, "flat": flat,
+                "criteria": {"mtimeToleranceSec": 0, "contentCompare": "always"}
+            })),
+            &c,
+            &ai_dir::CancelFlag::new(),
+            tx,
+        )
+        .await
+        .unwrap();
+        while rx0.try_recv().is_ok() {}
+
+        // 2. 手动对齐（异名配对 → 一行）
+        let (tx, mut rx1) = chan();
+        let v = match dispatch(
+            "dir/align",
+            Some(json!({"sessionId": sid, "left": "a.txt", "right": "b.txt"})),
+            &c,
+            &ai_dir::CancelFlag::new(),
+            tx,
+        )
+        .await
+        .unwrap()
+        {
+            Handled::Value(v) => v,
+            _ => panic!("形态"),
+        };
+        assert_eq!(v["updatedRows"], 2, "{v}");
+        while rx1.try_recv().is_ok() {}
+
+        // 3. 从**右侧**（被吸收节点）路径解除
+        let (tx, mut rx2) = chan();
+        let v = match dispatch(
+            "dir/align",
+            Some(json!({"sessionId": sid, "unalign": "b.txt"})),
+            &c,
+            &ai_dir::CancelFlag::new(),
+            tx,
+        )
+        .await
+        .unwrap()
+        {
+            Handled::Value(v) => v,
+            _ => panic!("形态"),
+        };
+        assert_eq!(v["updatedRows"], 2, "两行都应重发: {v}");
+        assert_eq!(v["stats"]["total"], 2, "flat={flat}: {v}");
+        assert_eq!(v["stats"]["leftOnly"], 1, "flat={flat}: {v}");
+        assert_eq!(v["stats"]["rightOnly"], 1, "flat={flat}: {v}");
+        assert_eq!(v["stats"]["contentDiff"], 0, "flat={flat}: {v}");
+        assert_eq!(v["stats"]["same"], 0, "flat={flat}: {v}");
+
+        let mut upserts = Vec::new();
+        let mut removals = Vec::new();
+        while let Ok(msg) = rx2.try_recv() {
+            if let Outbound::Notification(n) = msg {
+                if let Some(ups) = n.params["upserts"].as_array() {
+                    upserts.extend(ups.iter().cloned());
+                }
+                if let Some(rem) = n.params["removals"].as_array() {
+                    removals.extend(rem.iter().map(|x| x.as_str().unwrap_or("").to_string()));
+                }
+            }
+        }
+        let a = upserts
+            .iter()
+            .find(|row| row["id"] == "a.txt")
+            .unwrap_or_else(|| panic!("flat={flat}: 左侧行必须重发: {upserts:?}"));
+        assert_eq!(a["status"], "leftOnly", "flat={flat}: {a}");
+        assert_eq!(a["leftPath"], "a.txt", "flat={flat}: {a}");
+        assert_eq!(
+            a["rightPath"],
+            serde_json::Value::Null,
+            "flat={flat}: 存活行不得残留右侧地址: {a}"
+        );
+        assert!(
+            a.get("right").is_none() || a["right"].is_null(),
+            "flat={flat}: 存活行不得残留右侧元数据: {a}"
+        );
+        let b = upserts
+            .iter()
+            .find(|row| row["id"] == "b.txt")
+            .unwrap_or_else(|| panic!("flat={flat}: 被吸收行必须重新出现: {upserts:?}"));
+        assert_eq!(b["status"], "rightOnly", "flat={flat}: {b}");
+        assert!(
+            b.get("leftPath").is_none() || b["leftPath"].is_null(),
+            "flat={flat}: 恢复行不得残留左侧地址: {b}"
+        );
+        assert_eq!(b["rightPath"], "b.txt", "flat={flat}: {b}");
+        assert!(
+            !removals.iter().any(|id| id == "a.txt" || id == "b.txt"),
+            "flat={flat}: 恢复行不得作为移除项下发: {removals:?}"
+        );
+
+        // 4. 镜像计划：复制左孤立项到右侧 + 删除右孤立项
+        let (tx, _rx) = chan();
+        let got = dispatch(
+            "dir/operate",
+            Some(json!({"sessionId": sid, "preset": "mirrorLeftToRight"})),
+            &c,
+            &ai_dir::CancelFlag::new(),
+            tx,
+        )
+        .await
+        .unwrap();
+        let pv = match got {
+            Handled::Value(v) => v,
+            _ => panic!("形态"),
+        };
+        let plan = pv["plan"].as_array().unwrap();
+        assert_eq!(plan.len(), 2, "flat={flat}: 解除后应为复制 + 删除: {pv}");
+        let copy = plan
+            .iter()
+            .find(|p| p["op"] == "copyLeftToRight")
+            .unwrap_or_else(|| panic!("flat={flat}: 缺复制操作: {pv}"));
+        assert_eq!(copy["sourcePath"], "a.txt", "flat={flat}: {copy}");
+        assert_eq!(copy["targetPath"], "a.txt", "flat={flat}: {copy}");
+        let del = plan
+            .iter()
+            .find(|p| p["op"] == "deleteRight")
+            .unwrap_or_else(|| panic!("flat={flat}: 缺删除操作: {pv}"));
+        assert_eq!(del["operationPath"], "b.txt", "flat={flat}: {del}");
+
+        // 5. 执行：真实磁盘终态
+        let (tx, _rx) = chan();
+        let got = dispatch(
+            "dir/execute",
+            Some(json!({
+                "sessionId": sid,
+                "ops": [
+                    {"kind": "copy", "path": "a.txt", "side": "left", "targetSide": "right"},
+                    {"kind": "delete", "path": "b.txt", "side": "right"}
+                ]
+            })),
+            &c,
+            &ai_dir::CancelFlag::new(),
+            tx,
+        )
+        .await
+        .unwrap();
+        let ev = match got {
+            Handled::Value(v) => v,
+            Handled::WithNotifications { response, .. } => response,
+        };
+        assert_eq!(
+            ev["failed"].as_array().unwrap().len(),
+            0,
+            "flat={flat}: {ev}"
+        );
+        assert_eq!(
+            ev["succeeded"].as_array().unwrap().len(),
+            2,
+            "flat={flat}: {ev}"
+        );
+        assert_eq!(
+            std::fs::read(r.join("a.txt")).unwrap(),
+            b"AAA",
+            "flat={flat}: 左孤立项应复制到右侧同名项"
+        );
+        assert!(
+            !r.join("b.txt").exists(),
+            "flat={flat}: 右孤立项应被镜像删除"
+        );
+        assert_eq!(
+            std::fs::read(l.join("a.txt")).unwrap(),
+            b"AAA",
+            "flat={flat}: 源侧不应被改写"
+        );
+        assert!(
+            !l.join("b.txt").exists(),
+            "flat={flat}: 左侧不得凭空出现 b.txt"
+        );
+    }
+
+    // ------------------------------------------------------------------
     // R3-16：dir/compareContent（FR-DIR-012 三方式 + 五态结果）
     // ------------------------------------------------------------------
 

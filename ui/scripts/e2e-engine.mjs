@@ -1111,6 +1111,67 @@ try {
     await client.request('session/close', { sessionId: 'e2e-align-1' });
   }
 
+  // 7b. D0：从**右侧**路径解除手动对齐（左右入口必须对称）→ 真实落盘
+  {
+    const UL = join(dir, 'UL');
+    const UR = join(dir, 'UR');
+    mkdirSync(UL);
+    mkdirSync(UR);
+    writeFileSync(join(UL, 'a.txt'), 'AAA\n');
+    writeFileSync(join(UR, 'b.txt'), 'BBB\n');
+
+    await client.request('dir/open', {
+      sessionId: 'e2e-unalign-1',
+      left: UL,
+      right: UR,
+      depth: 1,
+      // 对齐/解除对齐需要 P2 会话模型
+      lazyScan: true,
+      criteria: { mtimeToleranceSec: 0, contentCompare: 'always' },
+    });
+    const aligned = await client.request('dir/align', {
+      sessionId: 'e2e-unalign-1',
+      left: 'a.txt',
+      right: 'b.txt',
+    });
+    ok(aligned?.updatedRows === 2, '异名对齐：两行受影响', JSON.stringify(aligned?.updatedRows));
+
+    const un = await client.request('dir/align', { sessionId: 'e2e-unalign-1', unalign: 'b.txt' });
+    ok(
+      un?.stats?.total === 2 && un.stats.leftOnly === 1 && un.stats.rightOnly === 1,
+      '右侧入口解除后恢复为两个孤立项（leftOnly=1 + rightOnly=1）',
+      JSON.stringify(un?.stats),
+    );
+
+    const unPlan = await client.request('dir/operate', {
+      sessionId: 'e2e-unalign-1',
+      preset: 'mirrorLeftToRight',
+    });
+    const unOps = unPlan?.plan ?? [];
+    ok(unOps.length === 2, '解除后镜像计划恢复为「复制 + 删除」', JSON.stringify(unOps));
+    const copyOp = unOps.find((o) => o.op === 'copyLeftToRight');
+    const delOp = unOps.find((o) => o.op === 'deleteRight');
+    ok(
+      copyOp?.sourcePath === 'a.txt' && copyOp?.targetPath === 'a.txt',
+      '左孤立项按源名复制到对侧',
+      JSON.stringify(copyOp),
+    );
+    ok(delOp?.operationPath === 'b.txt', '右孤立项删除取右侧真实路径', JSON.stringify(delOp));
+
+    const unExec = await client.request('dir/execute', {
+      sessionId: 'e2e-unalign-1',
+      ops: [
+        { kind: 'copy', path: 'a.txt', side: 'left', targetSide: 'right' },
+        { kind: 'delete', path: 'b.txt', side: 'right' },
+      ],
+    });
+    ok((unExec?.failed?.length ?? 0) === 0, '解除后执行无失败', JSON.stringify(unExec?.failed));
+    ok(readFileSync(join(UR, 'a.txt'), 'utf8') === 'AAA\n', '左孤立项已复制到右侧同名项');
+    ok(!existsSync(join(UR, 'b.txt')), '右孤立项已被镜像删除');
+    ok(readFileSync(join(UL, 'a.txt'), 'utf8') === 'AAA\n', '源侧未被改写');
+    await client.request('session/close', { sessionId: 'e2e-unalign-1' });
+  }
+
   // 8. 会话清理 + shutdown
   ok((await client.request('session/close', { sessionId: 'e2e-dir-1' })) === null, 'session/close dir 会话');
   ok((await client.request('session/close', { sessionId: 'e2e-text-1' })) === null, 'session/close text 会话');
