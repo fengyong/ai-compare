@@ -27,13 +27,9 @@ function row(
     name: id.split('/').pop() ?? id,
     kind,
     left:
-      status === 'rightOnly'
-        ? null
-        : { size: 1, mtimeMs: lm, attribute: null, unixMode: 0, uid: 0, gid: 0 },
+      status === 'rightOnly' ? undefined : { size: 1, mtimeMs: lm, unixMode: 0, uid: 0, gid: 0 },
     right:
-      status === 'leftOnly'
-        ? null
-        : { size: 1, mtimeMs: rm, attribute: null, unixMode: 0, uid: 0, gid: 0 },
+      status === 'leftOnly' ? undefined : { size: 1, mtimeMs: rm, unixMode: 0, uid: 0, gid: 0 },
     status,
     hasChildren: kind === 'dir',
     hidden: false,
@@ -481,5 +477,167 @@ describe('R3-03：预览显示真实路径，执行载荷不依赖行 id', () =>
       mtimeMs: 0,
       targetPath: 'other/b.txt',
     });
+  });
+
+  // ------------------------------------------------------------------
+  // R3-03（1B）：逐项改写换向必须重新派生真实侧地址
+  // ------------------------------------------------------------------
+
+  /** 异名手动对齐行（左右 rel 不同） */
+  const pairedRow = (): DirRow => ({
+    ...row('a.txt', 'contentDiff', 200, 100),
+    leftPath: 'a.txt',
+    rightPath: 'b.txt',
+  });
+
+  it('异名配对行改写为右→左：源/目标必须换到右侧/左侧真实路径', () => {
+    const plan: PlannedOperation[] = [
+      {
+        op: 'copyLeftToRight',
+        path: 'a.txt',
+        reason: 'test',
+        sourcePath: 'a.txt',
+        targetPath: 'b.txt',
+        displayPath: 'b.txt',
+      },
+    ];
+    const planRows = buildSyncPlanRows(plan, [], [pairedRow()], {
+      'a.txt': 'copyRightToLeft',
+    });
+    expect(planRows[0].effectiveOp).toBe('copyRightToLeft');
+    expect(planRows[0].sourcePath).toBe('b.txt');
+    expect(planRows[0].targetPath).toBe('a.txt');
+    const ops = planRowsToExecuteOps(planRows);
+    expect(ops[0].side).toBe('right');
+    expect(ops[0].path).toBe('b.txt');
+    expect(ops[0].targetPath).toBe('a.txt');
+  });
+
+  it('异名配对行改写为删除：operationPath 必须是该侧真实路径', () => {
+    const plan: PlannedOperation[] = [
+      {
+        op: 'copyLeftToRight',
+        path: 'a.txt',
+        reason: 'test',
+        sourcePath: 'a.txt',
+        targetPath: 'b.txt',
+        displayPath: 'b.txt',
+      },
+    ];
+    const planRows = buildSyncPlanRows(plan, [], [pairedRow()], {
+      'a.txt': 'deleteLeft',
+    });
+    expect(planRows[0].operationPath).toBe('a.txt');
+    expect(planRows[0].targetPath).toBeUndefined();
+    expect(planRows[0].sourcePath).toBeUndefined();
+    const ops = planRowsToExecuteOps(planRows);
+    expect(ops[0]).toEqual({ kind: 'delete', path: 'a.txt', side: 'left' });
+
+    const planRows2 = buildSyncPlanRows(plan, [], [pairedRow()], {
+      'a.txt': 'deleteRight',
+    });
+    expect(planRows2[0].operationPath).toBe('b.txt');
+    const ops2 = planRowsToExecuteOps(planRows2);
+    expect(ops2[0]).toEqual({ kind: 'delete', path: 'b.txt', side: 'right' });
+  });
+
+  it('touch 基线计划改写为复制：源/目标按当前行真实路径重新派生', () => {
+    // 基线是 touchLeft（source=右侧、operation=左侧），用户改写为右→左复制：
+    // 地址必须来自当前行的左右真实路径，不能沿用 touch 的旧载荷。
+    const plan: PlannedOperation[] = [
+      {
+        op: 'touchLeft',
+        path: 'a.txt',
+        reason: 'test',
+        sourcePath: 'b.txt',
+        operationPath: 'a.txt',
+        displayPath: 'a.txt',
+      },
+    ];
+    const planRows = buildSyncPlanRows(plan, [], [pairedRow()], {
+      'a.txt': 'copyRightToLeft',
+    });
+    expect(planRows[0].sourcePath).toBe('b.txt');
+    expect(planRows[0].targetPath).toBe('a.txt');
+    expect(planRows[0].operationPath).toBeUndefined();
+    const ops = planRowsToExecuteOps(planRows);
+    expect(ops[0].kind).toBe('copy');
+    expect(ops[0].side).toBe('right');
+    expect(ops[0].path).toBe('b.txt');
+    expect(ops[0].targetPath).toBe('a.txt');
+  });
+
+  it('auto 保持引擎计划地址（不重新派生）', () => {
+    const plan: PlannedOperation[] = [
+      {
+        op: 'touchLeft',
+        path: 'a.txt',
+        reason: 'test',
+        sourcePath: 'b.txt',
+        operationPath: 'a.txt',
+        displayPath: 'a.txt',
+      },
+    ];
+    const planRows = buildSyncPlanRows(plan, [], [pairedRow()], {});
+    expect(planRows[0].sourcePath).toBe('b.txt');
+    expect(planRows[0].operationPath).toBe('a.txt');
+    expect(planRows[0].effectiveOp).toBe('touchLeft');
+  });
+
+  it('预览显示路径与最终执行地址一致（改写后）', () => {
+    const plan: PlannedOperation[] = [
+      {
+        op: 'copyLeftToRight',
+        path: 'a.txt',
+        reason: 'test',
+        sourcePath: 'a.txt',
+        targetPath: 'b.txt',
+        displayPath: 'b.txt',
+      },
+    ];
+    const planRows = buildSyncPlanRows(plan, [], [pairedRow()], {
+      'a.txt': 'copyRightToLeft',
+    });
+    const ops = planRowsToExecuteOps(planRows);
+    expect(planRows[0].displayPath).toBe(ops[0].targetPath);
+  });
+
+  it('用户 keep 后无执行载荷', () => {
+    const plan: PlannedOperation[] = [
+      {
+        op: 'copyLeftToRight',
+        path: 'a.txt',
+        reason: 'test',
+        sourcePath: 'a.txt',
+        targetPath: 'b.txt',
+        displayPath: 'b.txt',
+      },
+    ];
+    const planRows = buildSyncPlanRows(plan, [], [pairedRow()], { 'a.txt': 'keep' });
+    expect(planRows[0].effectiveOp).toBe('keep');
+    expect(planRows[0].sourcePath).toBeUndefined();
+    expect(planRows[0].targetPath).toBeUndefined();
+    expect(planRows[0].operationPath).toBeUndefined();
+    expect(planRowsToExecuteOps(planRows)).toHaveLength(0);
+  });
+
+  it('平铺行（name#i）改写后执行地址仍是真实 rel，不含 #', () => {
+    const plan: PlannedOperation[] = [
+      {
+        op: 'copyLeftToRight',
+        path: 'x.txt#0',
+        reason: 'test',
+        sourcePath: 'sub/x.txt',
+        targetPath: 'sub/x.txt',
+        displayPath: 'sub/x.txt',
+      },
+    ];
+    const planRows = buildSyncPlanRows(plan, [], [flatRow()], {
+      'x.txt#0': 'deleteRight',
+    });
+    expect(planRows[0].operationPath).toBe('sub/x.txt');
+    const ops = planRowsToExecuteOps(planRows);
+    expect(ops[0].path).toBe('sub/x.txt');
+    expect(ops[0].path).not.toContain('#');
   });
 });

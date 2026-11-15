@@ -112,6 +112,12 @@ pub struct DirNode {
     /// 各侧元数据（侧缺失为 None）
     pub left: Option<SideInfo>,
     pub right: Option<SideInfo>,
+    /// 右侧真实相对路径（FR-DIR-022 异名手动配对时与 `rel_path` 不同；
+    /// None = 右侧就位于 `rel_path`）。
+    ///
+    /// 配对行语义：`rel_path` 始终是**左侧**真实路径（显示 id / 选择键），
+    /// 右侧真实路径由本字段承载；两侧同名时本字段为 None。
+    pub right_rel: Option<String>,
     pub status: DirEntryStatus,
     /// 父节点（根为 None；聚合上推用）
     pub parent: Option<NodeId>,
@@ -119,8 +125,10 @@ pub struct DirNode {
     pub children: Vec<NodeId>,
     /// 已执行过 list_dir 展开（区别于空目录叶子）
     pub expanded: bool,
-    /// 非同名配对（手动对齐/覆盖对齐，FR-DIR-022/023）
+    /// 非同名配对（手动对齐/覆盖对齐，FR-DIR-022/023）：指向配对的另一节点
     pub aligned_with: Option<NodeId>,
+    /// 本节点已被配对吸收（不再独立成行）；指向存活的配对节点
+    pub absorbed_by: Option<NodeId>,
     /// list_dir 失败（权限/IO）。该目录内容未知，不得聚合成 DirSame。
     pub scan_failed: bool,
 }
@@ -129,6 +137,16 @@ impl DirNode {
     /// 是否两侧都存在的目录（可展开/可聚合）
     pub fn is_paired_dir(&self) -> bool {
         self.kind == EntryKind::Dir && self.left.is_some() && self.right.is_some()
+    }
+
+    /// 右侧真实相对路径（异名配对时为配对侧的路径，否则为 `rel_path`）。
+    pub fn right_rel_path(&self) -> &str {
+        self.right_rel.as_deref().unwrap_or(&self.rel_path)
+    }
+
+    /// 本节点是否已被配对吸收（吸收后不再独立成行）
+    pub fn is_absorbed(&self) -> bool {
+        self.absorbed_by.is_some()
     }
 }
 
@@ -193,11 +211,13 @@ pub async fn scan(
         kind: EntryKind::Dir,
         left: Some(side_info_gated(&left_stat, &options.criteria)),
         right: Some(side_info_gated(&right_stat, &options.criteria)),
+        right_rel: None,
         status: DirEntryStatus::DirSame,
         parent: None,
         children: Vec::new(),
         expanded: true,
         aligned_with: None,
+        absorbed_by: None,
         scan_failed: false,
     }];
 
@@ -271,11 +291,13 @@ pub async fn scan(
                 kind,
                 left: linfo,
                 right: rinfo,
+                right_rel: None,
                 status,
                 parent: Some(dir_id),
                 children: Vec::new(),
                 expanded: false,
                 aligned_with: None,
+                absorbed_by: None,
                 scan_failed: false,
             });
             arena[dir_id as usize].children.push(id);
@@ -334,6 +356,11 @@ pub fn aggregate_children(dir: &DirNode, arena: &[DirNode]) -> DirEntryStatus {
     let mut diff = false;
     for &c in &dir.children {
         let child = &arena[c as usize];
+        // 被配对吸收的节点不再独立成行：它的状态已并入配对行，
+        // 继续参与聚合会重复计入孤立项（父目录被误报 DirDiff）。
+        if child.is_absorbed() {
+            continue;
+        }
         if child.scan_failed || child.status == DirEntryStatus::Unknown {
             unknown = true;
         }
@@ -359,10 +386,14 @@ pub fn aggregate_children(dir: &DirNode, arena: &[DirNode]) -> DirEntryStatus {
 }
 
 /// arena -> 协议 DirRow 序列（BFS 序，跳过根；id = rel_path）
+///
+/// 被配对吸收的节点（FR-DIR-022 异名手动对齐）不再独立成行：其右侧元数据
+/// 与真实路径已并入存活节点的配对行。
 pub fn rows_from_arena(arena: &[DirNode]) -> Vec<DirRow> {
     arena
         .iter()
         .skip(1)
+        .filter(|n| !n.is_absorbed())
         .map(|n| DirRow {
             id: n.rel_path.clone(),
             name: n.name.clone(),
@@ -374,7 +405,7 @@ pub fn rows_from_arena(arena: &[DirNode]) -> Vec<DirRow> {
             hidden: false,
             suppressed: false,
             left_path: n.left.as_ref().map(|_| n.rel_path.clone()),
-            right_path: n.right.as_ref().map(|_| n.rel_path.clone()),
+            right_path: n.right.as_ref().map(|_| n.right_rel_path().to_string()),
         })
         .collect()
 }
@@ -382,6 +413,9 @@ pub fn rows_from_arena(arena: &[DirNode]) -> Vec<DirRow> {
 pub fn compute_stats(arena: &[DirNode]) -> DirStats {
     let mut s = DirStats::default();
     for n in &arena[1..] {
+        if n.is_absorbed() {
+            continue;
+        }
         s.total += 1;
         match n.status {
             DirEntryStatus::Same => s.same += 1,

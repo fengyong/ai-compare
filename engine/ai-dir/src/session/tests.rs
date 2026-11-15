@@ -299,20 +299,262 @@ async fn manual_align_pairs_and_unalign_restores() {
         .await
         .unwrap();
     let changed = model.align("old_name.txt", "new_name.txt").await.unwrap();
-    assert_eq!(changed, 2);
+    assert_eq!(changed, 2, "配对行重发 + 被吸收行移除");
+    // R3-03（1A）：异名配对必须落为**一行**（左 rel + 右 rel 各自真实路径），
+    // 不得拆成两个半配对行，也不得只剩左侧元数据却按右侧名字寻址。
     let rows = model.rows_snapshot().await;
-    let old_row = rows.iter().find(|r| r.id == "old_name.txt").unwrap();
-    let new_row = rows.iter().find(|r| r.id == "new_name.txt").unwrap();
-    assert_eq!(old_row.status, DirEntryStatus::Same, "手动对齐后内容判同");
-    assert_eq!(new_row.status, DirEntryStatus::Same);
-    // 解除对齐 -> 恢复孤儿
+    assert_eq!(
+        rows.len(),
+        1,
+        "配对后只应有一行: {:?}",
+        rows.iter().map(|r| &r.id).collect::<Vec<_>>()
+    );
+    let pair = &rows[0];
+    assert_eq!(pair.id, "old_name.txt");
+    assert_eq!(pair.status, DirEntryStatus::Same, "手动对齐后内容判同");
+    assert_eq!(pair.left_path.as_deref(), Some("old_name.txt"));
+    assert_eq!(
+        pair.right_path.as_deref(),
+        Some("new_name.txt"),
+        "右侧必须是右侧真实路径"
+    );
+    assert!(pair.left.is_some() && pair.right.is_some());
+    // 统计不重复不遗漏：配对后只有一行
+    let stats = model.stats_snapshot();
+    assert_eq!(stats.total, 1, "{stats:?}");
+    assert_eq!(stats.same, 1, "{stats:?}");
+    assert_eq!(stats.left_only, 0, "{stats:?}");
+    assert_eq!(stats.right_only, 0, "{stats:?}");
+    // 解除对齐 -> 恢复两个孤立项
     model.unalign("old_name.txt").await.unwrap();
     let rows = model.rows_snapshot().await;
     let old_row = rows.iter().find(|r| r.id == "old_name.txt").unwrap();
+    let new_row = rows.iter().find(|r| r.id == "new_name.txt").unwrap();
     assert_eq!(old_row.status, DirEntryStatus::LeftOnly);
+    assert_eq!(new_row.status, DirEntryStatus::RightOnly);
+    assert_eq!(old_row.right_path, None);
+    assert_eq!(new_row.left_path, None);
+    let stats = model.stats_snapshot();
+    assert_eq!(stats.total, 2, "{stats:?}");
+    assert_eq!(stats.left_only, 1, "{stats:?}");
+    assert_eq!(stats.right_only, 1, "{stats:?}");
     // 父不同 -> 报错（FR-DIR-022 父须并排）
     let err = model.align("nope_left", "new_name.txt").await;
     assert!(err.is_err());
+    drop(ld);
+    drop(rd);
+}
+
+/// R3-03（1A）：异名手动对齐必须落为**一行**，左右各带真实路径。
+///
+/// 复现的原缺陷：预置 manualAlign 后模型仍产出两行（左侧元数据 + 右侧元数据
+/// 各自成行），计划里出现 `a.txt → a.txt`（意外在右侧建同名文件）与
+/// `b.txt → b.txt`（左侧无源，失败）。
+#[tokio::test]
+async fn manual_align_pair_is_one_row_with_real_side_paths() {
+    let (ld, left) = make_tree(&[("a.txt", b"AAA")]).await;
+    let (rd, right) = make_tree(&[("b.txt", b"BBB")]).await;
+    let vfs = Arc::new(LocalFs::new());
+    let mut o = opts();
+    o.criteria.content_compare = ContentCompareMode::Always;
+    o.target_depth = Some(1);
+    let (model, _first) = DirModel::open(vfs, &left, &right, o, crate::CancelFlag::new())
+        .await
+        .unwrap();
+    let changed = model.align("a.txt", "b.txt").await.unwrap();
+    assert_eq!(changed, 2, "配对行重发 + 被吸收行移除");
+
+    let rows = model.rows_snapshot().await;
+    assert_eq!(
+        rows.len(),
+        1,
+        "异名配对只能有一行: {:?}",
+        rows.iter().map(|r| &r.id).collect::<Vec<_>>()
+    );
+    let pair = &rows[0];
+    assert_eq!(pair.id, "a.txt", "行 id 取左侧真实路径");
+    assert_eq!(pair.left_path.as_deref(), Some("a.txt"));
+    assert_eq!(pair.right_path.as_deref(), Some("b.txt"));
+    assert!(pair.left.is_some(), "配对行必须同时携带左侧元数据");
+    assert!(pair.right.is_some(), "配对行必须同时携带右侧元数据");
+    assert_eq!(
+        pair.status,
+        DirEntryStatus::ContentDiff,
+        "按两侧真实内容判定"
+    );
+
+    // 计划：只有一个复制操作，源/目标分别来自左右真实路径
+    let plan = crate::sync::plan_operations(
+        &rows,
+        Some(ai_protocol::SyncPreset::MirrorLeftToRight),
+        None,
+        None,
+    );
+    assert_eq!(plan.len(), 1, "配对后不得产生两个操作: {plan:?}");
+    assert_eq!(plan[0].op, ai_protocol::PlannedOpKind::CopyLeftToRight);
+    assert_eq!(plan[0].source_path.as_deref(), Some("a.txt"));
+    assert_eq!(plan[0].target_path.as_deref(), Some("b.txt"));
+
+    // 统计不重复不遗漏：配对后只有一行
+    let stats = model.stats_snapshot();
+    assert_eq!(stats.total, 1, "{stats:?}");
+    assert_eq!(stats.content_diff, 1, "{stats:?}");
+    assert_eq!(stats.left_only, 0, "{stats:?}");
+    assert_eq!(stats.right_only, 0, "{stats:?}");
+
+    drop(ld);
+    drop(rd);
+}
+
+/// 重复对齐幂等：第二次对齐不产生新行、不改统计。
+#[tokio::test]
+async fn manual_align_is_idempotent() {
+    let (ld, left) = make_tree(&[("a.txt", b"AAA")]).await;
+    let (rd, right) = make_tree(&[("b.txt", b"BBB")]).await;
+    let vfs = Arc::new(LocalFs::new());
+    let mut o = opts();
+    o.criteria.content_compare = ContentCompareMode::Always;
+    o.target_depth = Some(1);
+    let (model, _first) = DirModel::open(vfs, &left, &right, o, crate::CancelFlag::new())
+        .await
+        .unwrap();
+    model.align("a.txt", "b.txt").await.unwrap();
+    let before = model.rows_snapshot().await;
+    let stats_before = model.stats_snapshot();
+    let changed = model.align("a.txt", "b.txt").await.unwrap();
+    assert_eq!(changed, 0, "重复对齐应幂等");
+    let after = model.rows_snapshot().await;
+    assert_eq!(before.len(), after.len());
+    assert_eq!(after.len(), 1);
+    assert_eq!(model.stats_snapshot().total, stats_before.total);
+    drop(ld);
+    drop(rd);
+}
+
+/// 预置 manualAlign（dir/open 的 manualAlign 参数）走同一条合并路径。
+#[tokio::test]
+async fn preset_manual_align_applies_at_open() {
+    let (ld, left) = make_tree(&[("a.txt", b"AAA")]).await;
+    let (rd, right) = make_tree(&[("b.txt", b"BBB")]).await;
+    let vfs = Arc::new(LocalFs::new());
+    let mut o = opts();
+    o.criteria.content_compare = ContentCompareMode::Always;
+    o.target_depth = Some(1);
+    o.manual_pairs = vec![("a.txt".to_string(), "b.txt".to_string())];
+    let (model, _first) = DirModel::open(vfs, &left, &right, o, crate::CancelFlag::new())
+        .await
+        .unwrap();
+    let rows = model.rows_snapshot().await;
+    assert_eq!(rows.len(), 1, "预置对齐后只有一行: {rows:?}");
+    assert_eq!(rows[0].left_path.as_deref(), Some("a.txt"));
+    assert_eq!(rows[0].right_path.as_deref(), Some("b.txt"));
+    assert_eq!(model.stats_snapshot().total, 1);
+    drop(ld);
+    drop(rd);
+}
+
+/// 预置 manualAlign 指向**尚未扫描到**的深层项时，扫描推进后自动配对。
+#[tokio::test]
+async fn preset_manual_align_applies_when_deep_nodes_scanned() {
+    let (ld, left) = make_tree(&[("sub/a.txt", b"AAA")]).await;
+    let (rd, right) = make_tree(&[("sub/b.txt", b"BBB")]).await;
+    let vfs = Arc::new(LocalFs::new());
+    let mut o = opts();
+    o.criteria.content_compare = ContentCompareMode::Always;
+    o.target_depth = None;
+    o.visible_depth = 1;
+    o.manual_pairs = vec![("sub/a.txt".to_string(), "sub/b.txt".to_string())];
+    let (model, _first) = DirModel::open(vfs, &left, &right, o, crate::CancelFlag::new())
+        .await
+        .unwrap();
+    let handles = model.start_background();
+    let _ = model.wait_until_done(Duration::from_secs(10)).await;
+    for h in handles {
+        let _ = h.await;
+    }
+    let rows = model.rows_snapshot().await;
+    let pair = rows.iter().find(|r| r.id == "sub/a.txt");
+    assert!(pair.is_some(), "深层配对行应存在: {rows:?}");
+    let pair = pair.unwrap();
+    assert_eq!(pair.right_path.as_deref(), Some("sub/b.txt"));
+    assert!(
+        !rows.iter().any(|r| r.id == "sub/b.txt"),
+        "被配对项不得独立成行: {rows:?}"
+    );
+    drop(ld);
+    drop(rd);
+}
+
+/// align → rescan：配对关系随重扫重建；unalign → rescan：不再重建。
+#[tokio::test]
+async fn manual_align_survives_rescan_and_unalign_clears_it() {
+    let (ld, left) = make_tree(&[("a.txt", b"AAA")]).await;
+    let (rd, right) = make_tree(&[("b.txt", b"BBB")]).await;
+    let vfs = Arc::new(LocalFs::new());
+    let mut o = opts();
+    o.criteria.content_compare = ContentCompareMode::Always;
+    o.target_depth = Some(1);
+    let (model, _first) = DirModel::open(vfs, &left, &right, o, crate::CancelFlag::new())
+        .await
+        .unwrap();
+    model.align("a.txt", "b.txt").await.unwrap();
+
+    // 重扫后配对仍在（manual_pairs 是会话级事实）
+    model.refresh().await.unwrap();
+    let rows = model.rows_snapshot().await;
+    assert_eq!(rows.len(), 1, "重扫后仍是一行: {rows:?}");
+    assert_eq!(rows[0].right_path.as_deref(), Some("b.txt"));
+
+    // 解除对齐 -> 重扫后不再配对（回到两个孤立项）
+    model.unalign("a.txt").await.unwrap();
+    model.refresh().await.unwrap();
+    let rows = model.rows_snapshot().await;
+    assert_eq!(rows.len(), 2, "解除后应恢复两行: {rows:?}");
+    let a = rows.iter().find(|r| r.id == "a.txt").unwrap();
+    let b = rows.iter().find(|r| r.id == "b.txt").unwrap();
+    assert_eq!(a.status, DirEntryStatus::LeftOnly);
+    assert_eq!(b.status, DirEntryStatus::RightOnly);
+    assert_eq!(a.right_path, None);
+    assert_eq!(b.left_path, None);
+    assert_eq!(model.stats_snapshot().total, 2);
+    drop(ld);
+    drop(rd);
+}
+
+/// 配对行的父目录聚合：不得把两侧孤立项重复计入，也不得遗漏。
+#[tokio::test]
+async fn manual_align_parent_aggregation_has_no_duplicate_or_missing() {
+    let (ld, left) = make_tree(&[("sub/a.txt", b"AAA"), ("sub/keep.txt", b"K")]).await;
+    let (rd, right) = make_tree(&[("sub/b.txt", b"BBB"), ("sub/keep.txt", b"K")]).await;
+    let vfs = Arc::new(LocalFs::new());
+    let mut o = opts();
+    o.criteria.content_compare = ContentCompareMode::Always;
+    o.target_depth = None;
+    o.visible_depth = 1;
+    let (model, _first) = DirModel::open(vfs, &left, &right, o, crate::CancelFlag::new())
+        .await
+        .unwrap();
+    let handles = model.start_background();
+    let _ = model.wait_until_done(Duration::from_secs(10)).await;
+    for h in handles {
+        let _ = h.await;
+    }
+    // 扫描完成后配对
+    model.align("sub/a.txt", "sub/b.txt").await.unwrap();
+    let rows = model.rows_snapshot().await;
+    let sub = rows.iter().find(|r| r.id == "sub").unwrap();
+    assert_eq!(
+        sub.status,
+        DirEntryStatus::DirDiff,
+        "配对内容不同 -> 父目录 DirDiff: {sub:?}"
+    );
+    let stats = model.stats_snapshot();
+    // sub 下有 3 个条目：keep(Same) + 配对行(ContentDiff) => 共 2 行
+    assert_eq!(stats.total, 3, "根行 + sub 行 + 2 个文件行: {stats:?}");
+    assert_eq!(stats.content_diff, 1, "{stats:?}");
+    assert_eq!(stats.same, 1, "{stats:?}");
+    assert_eq!(stats.left_only, 0, "{stats:?}");
+    assert_eq!(stats.right_only, 0, "{stats:?}");
     drop(ld);
     drop(rd);
 }

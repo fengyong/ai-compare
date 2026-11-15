@@ -143,7 +143,9 @@ export function applyStrategyToPlan(
   return { ops, skipped };
 }
 
-/** 计划预览行（状态机：预设动作 + 用户改写 + 策略跳过 的合成视图） */
+/**
+ * 计划预览行（状态机：预设动作 + 用户改写 + 策略跳过 的合成视图）
+ */
 export interface SyncPlanRow {
   /** 行 id（关联/改写键，**非文件地址**） */
   path: string;
@@ -164,6 +166,100 @@ export interface SyncPlanRow {
   /** 方向着色：l2r / r2l / none（预览表方向列） */
   direction: 'l2r' | 'r2l' | 'none';
   reason: string;
+}
+
+/** 操作地址三元组（source/target/operation） */
+type OpAddresses = Pick<
+  PlannedOperation,
+  'sourcePath' | 'targetPath' | 'operationPath' | 'displayPath'
+>;
+
+/**
+ * 由预设计划反推其左右侧真实地址（供改写时兜底）。
+ *
+ * 引擎 `ai-dir::sync::push()` 的口径：copy 的 source/target 分居两侧，
+ * delete 的 operation 落在被删侧，touch 的 operation 落在被操作侧、
+ * source 取对侧（时间戳来源）。
+ */
+function baseSideAddresses(op: PlannedOperation): { left?: string; right?: string } {
+  switch (op.op) {
+    case 'copyLeftToRight':
+      return { left: op.sourcePath, right: op.targetPath };
+    case 'copyRightToLeft':
+      return { left: op.targetPath, right: op.sourcePath };
+    case 'deleteLeft':
+      return { left: op.operationPath };
+    case 'deleteRight':
+      return { right: op.operationPath };
+    case 'touchLeft':
+      return { left: op.operationPath, right: op.sourcePath };
+    case 'touchRight':
+      return { left: op.sourcePath, right: op.operationPath };
+  }
+}
+
+/**
+ * 按目标操作**重新派生**真实侧地址（R3-03 §1B）。
+ *
+ * 逐项改写换向时不能只改 op 枚举：源/目标必须换到另一侧的真实路径，
+ * 否则预览显示的地址与最终落盘地址不一致（会把左内容写回左）。
+ * 口径与引擎 `push()` 对齐：某侧不存在时按另一侧 rel 在该侧创建。
+ */
+export function deriveOpAddresses(
+  row: DirRow | undefined,
+  op: PlannedOpKind,
+  base: PlannedOperation,
+): OpAddresses {
+  const fallback = baseSideAddresses(base);
+  const lp = row?.leftPath ?? fallback.left ?? base.path;
+  const rp = row?.rightPath ?? fallback.right ?? base.path;
+  // 对侧没有该文件时，按源侧 rel 在对侧创建同名项（引擎同口径）
+  const leftTarget = row?.leftPath ? lp : rp;
+  const rightTarget = row?.rightPath ? rp : lp;
+  switch (op) {
+    case 'copyLeftToRight':
+      return {
+        sourcePath: lp,
+        targetPath: rightTarget,
+        operationPath: undefined,
+        displayPath: rightTarget,
+      };
+    case 'copyRightToLeft':
+      return {
+        sourcePath: rp,
+        targetPath: leftTarget,
+        operationPath: undefined,
+        displayPath: leftTarget,
+      };
+    case 'deleteLeft':
+      return {
+        sourcePath: undefined,
+        targetPath: undefined,
+        operationPath: lp,
+        displayPath: lp,
+      };
+    case 'deleteRight':
+      return {
+        sourcePath: undefined,
+        targetPath: undefined,
+        operationPath: rp,
+        displayPath: rp,
+      };
+    case 'touchLeft':
+      return {
+        sourcePath: rp,
+        targetPath: undefined,
+        operationPath: lp,
+        displayPath: lp,
+      };
+    case 'touchRight':
+      return {
+        sourcePath: lp,
+        targetPath: undefined,
+        operationPath: rp,
+        displayPath: rp,
+      };
+  }
 }
 
 /** 逐项改写应用到预设计划（返回每行最终动作与来源标记） */
@@ -219,14 +315,41 @@ export function buildSyncPlanRows(
     reason: string,
   ): SyncPlanRow {
     const path = op.path;
+    const name = row?.name ?? path.split('/').pop() ?? path;
+    const kind = row?.kind ?? 'file';
+    // 用户改写：按当前行与目标操作重新派生地址（不能沿用旧方向的地址）
+    const isOverride = source === 'override';
+    const addr: OpAddresses = isOverride
+      ? deriveOpAddresses(row, effectiveOp as PlannedOpKind, op)
+      : {
+          sourcePath: op.sourcePath,
+          targetPath: op.targetPath,
+          operationPath: op.operationPath,
+        };
+    // keep 行不进入执行：不得残留执行载荷（用户 keep 时连预览地址一并清空）
+    const payload: OpAddresses =
+      effectiveOp === 'keep'
+        ? { sourcePath: undefined, targetPath: undefined, operationPath: undefined }
+        : addr;
+    const displayPath =
+      effectiveOp === 'keep'
+        ? source === 'userKeep'
+          ? undefined
+          : (op.displayPath ?? op.targetPath ?? op.operationPath ?? op.sourcePath ?? op.path)
+        : (addr.displayPath ??
+          addr.targetPath ??
+          addr.operationPath ??
+          addr.sourcePath ??
+          op.displayPath ??
+          op.path);
     return {
       path,
-      displayPath: op.displayPath ?? op.targetPath ?? op.operationPath ?? op.sourcePath ?? op.path,
-      sourcePath: op.sourcePath,
-      targetPath: op.targetPath,
-      operationPath: op.operationPath,
-      name: row?.name ?? path.split('/').pop() ?? path,
-      kind: row?.kind ?? 'file',
+      displayPath,
+      sourcePath: payload.sourcePath,
+      targetPath: payload.targetPath,
+      operationPath: payload.operationPath,
+      name,
+      kind,
       effectiveOp,
       source,
       warning: effectiveOp === 'deleteLeft' || effectiveOp === 'deleteRight',

@@ -3364,6 +3364,235 @@ mod p2_tests {
     }
 
     // ------------------------------------------------------------------
+    // R3-03（1A）：异名手动对齐的真实 RPC 场景
+    // ------------------------------------------------------------------
+
+    /// 打开一个「左 a.txt / 右 b.txt」的目录会话（模型路径）。
+    async fn open_align_case(c: &HandlerCtx, id: &str, l: &std::path::Path, r: &std::path::Path) {
+        let (tx, _rx) = chan();
+        dispatch(
+            "dir/open",
+            Some(json!({
+                "sessionId": id, "left": l.to_string_lossy(), "right": r.to_string_lossy(),
+                "depth": 1, "lazyScan": true,
+                "criteria": {"mtimeToleranceSec": 0, "contentCompare": "always"},
+                "manualAlign": [{"left": "a.txt", "right": "b.txt"}]
+            })),
+            c,
+            &ai_dir::CancelFlag::new(),
+            tx,
+        )
+        .await
+        .unwrap();
+    }
+
+    /// R3-03（1A）验收：预置 manualAlign 后只产生一个复制操作 `a.txt → b.txt`，
+    /// 落盘到 R/b.txt，不创建 R/a.txt，failed=0。
+    #[tokio::test]
+    async fn r3_03_manual_align_different_names_syncs_to_real_target() {
+        let dir = tempfile::tempdir().unwrap();
+        let l = dir.path().join("L");
+        let r = dir.path().join("R");
+        std::fs::create_dir_all(&l).unwrap();
+        std::fs::create_dir_all(&r).unwrap();
+        std::fs::write(l.join("a.txt"), b"AAA").unwrap();
+        std::fs::write(r.join("b.txt"), b"BBB").unwrap();
+        let c = ctx();
+        open_align_case(&c, "r303a", &l, &r).await;
+
+        // 计划：只有一个操作，源/目标分别来自左右真实路径
+        let (tx, _rx) = chan();
+        let got = dispatch(
+            "dir/operate",
+            Some(json!({"sessionId": "r303a", "preset": "mirrorLeftToRight"})),
+            &c,
+            &ai_dir::CancelFlag::new(),
+            tx,
+        )
+        .await
+        .unwrap();
+        let v = match got {
+            Handled::Value(v) => v,
+            _ => panic!("形态"),
+        };
+        let plan = v["plan"].as_array().unwrap();
+        assert_eq!(plan.len(), 1, "异名配对只应产生一个操作: {v}");
+        assert_eq!(plan[0]["op"], "copyLeftToRight");
+        assert_eq!(plan[0]["sourcePath"], "a.txt");
+        assert_eq!(plan[0]["targetPath"], "b.txt");
+
+        // 执行（按计划载荷落盘）
+        let (tx, _rx) = chan();
+        let got = dispatch(
+            "dir/execute",
+            Some(json!({
+                "sessionId": "r303a",
+                "ops": [{
+                    "kind": "copy", "path": "a.txt", "side": "left",
+                    "targetSide": "right", "targetPath": "b.txt"
+                }]
+            })),
+            &c,
+            &ai_dir::CancelFlag::new(),
+            tx,
+        )
+        .await
+        .unwrap();
+        let v = match got {
+            Handled::Value(v) => v,
+            Handled::WithNotifications { response, .. } => response,
+        };
+        assert_eq!(v["failed"].as_array().unwrap().len(), 0, "{v}");
+        assert_eq!(v["succeeded"].as_array().unwrap().len(), 1, "{v}");
+
+        // 最终磁盘状态
+        assert_eq!(
+            std::fs::read(r.join("b.txt")).unwrap(),
+            b"AAA",
+            "左侧内容应写入右侧真实文件"
+        );
+        assert!(!r.join("a.txt").exists(), "不得按源名在右侧另建一份");
+        assert_eq!(
+            std::fs::read(l.join("a.txt")).unwrap(),
+            b"AAA",
+            "源不应被改写"
+        );
+    }
+
+    /// R3-03（1A）验收：右→左对称场景（改用 mirrorRightToLeft 预设）。
+    #[tokio::test]
+    async fn r3_03_manual_align_different_names_right_to_left() {
+        let dir = tempfile::tempdir().unwrap();
+        let l = dir.path().join("L");
+        let r = dir.path().join("R");
+        std::fs::create_dir_all(&l).unwrap();
+        std::fs::create_dir_all(&r).unwrap();
+        std::fs::write(l.join("a.txt"), b"AAA").unwrap();
+        std::fs::write(r.join("b.txt"), b"BBB").unwrap();
+        let c = ctx();
+        open_align_case(&c, "r303b", &l, &r).await;
+
+        let (tx, _rx) = chan();
+        let got = dispatch(
+            "dir/operate",
+            Some(json!({"sessionId": "r303b", "preset": "mirrorRightToLeft"})),
+            &c,
+            &ai_dir::CancelFlag::new(),
+            tx,
+        )
+        .await
+        .unwrap();
+        let v = match got {
+            Handled::Value(v) => v,
+            _ => panic!("形态"),
+        };
+        let plan = v["plan"].as_array().unwrap();
+        assert_eq!(plan.len(), 1, "{v}");
+        assert_eq!(plan[0]["op"], "copyRightToLeft");
+        assert_eq!(plan[0]["sourcePath"], "b.txt");
+        assert_eq!(plan[0]["targetPath"], "a.txt");
+
+        let (tx, _rx) = chan();
+        let got = dispatch(
+            "dir/execute",
+            Some(json!({
+                "sessionId": "r303b",
+                "ops": [{
+                    "kind": "copy", "path": "b.txt", "side": "right",
+                    "targetSide": "left", "targetPath": "a.txt"
+                }]
+            })),
+            &c,
+            &ai_dir::CancelFlag::new(),
+            tx,
+        )
+        .await
+        .unwrap();
+        let v = match got {
+            Handled::Value(v) => v,
+            Handled::WithNotifications { response, .. } => response,
+        };
+        assert_eq!(v["failed"].as_array().unwrap().len(), 0, "{v}");
+        assert_eq!(std::fs::read(l.join("a.txt")).unwrap(), b"BBB");
+        assert!(!l.join("b.txt").exists(), "不得按源名在左侧另建一份");
+        assert_eq!(
+            std::fs::read(r.join("b.txt")).unwrap(),
+            b"BBB",
+            "源不应被改写"
+        );
+    }
+
+    /// R3-03（1A）验收：运行期 dir/align 与预置 manualAlign 走同一条合并路径。
+    #[tokio::test]
+    async fn r3_03_dir_align_rpc_produces_single_pair_row() {
+        let dir = tempfile::tempdir().unwrap();
+        let l = dir.path().join("L");
+        let r = dir.path().join("R");
+        std::fs::create_dir_all(&l).unwrap();
+        std::fs::create_dir_all(&r).unwrap();
+        std::fs::write(l.join("a.txt"), b"AAA").unwrap();
+        std::fs::write(r.join("b.txt"), b"BBB").unwrap();
+        let c = ctx();
+        let (tx, _rx) = chan();
+        dispatch(
+            "dir/open",
+            Some(json!({
+                "sessionId": "r303c", "left": l.to_string_lossy(), "right": r.to_string_lossy(),
+                "depth": 1, "lazyScan": true,
+                "criteria": {"mtimeToleranceSec": 0, "contentCompare": "always"}
+            })),
+            &c,
+            &ai_dir::CancelFlag::new(),
+            tx.clone(),
+        )
+        .await
+        .unwrap();
+        let (tx, mut rx) = chan();
+        let got = dispatch(
+            "dir/align",
+            Some(json!({"sessionId": "r303c", "left": "a.txt", "right": "b.txt"})),
+            &c,
+            &ai_dir::CancelFlag::new(),
+            tx,
+        )
+        .await
+        .unwrap();
+        let v = match got {
+            Handled::Value(v) => v,
+            _ => panic!("形态"),
+        };
+        assert_eq!(v["updatedRows"], 2, "{v}");
+        // delta：a.txt 重发（携带两侧真实路径），b.txt 移除
+        let mut upserts = Vec::new();
+        let mut removals = Vec::new();
+        while let Ok(msg) = rx.try_recv() {
+            if let Outbound::Notification(n) = msg {
+                if let Some(ups) = n.params["upserts"].as_array() {
+                    for row in ups {
+                        upserts.push(row.clone());
+                    }
+                }
+                if let Some(rem) = n.params["removals"].as_array() {
+                    for id in rem {
+                        removals.push(id.as_str().unwrap_or("").to_string());
+                    }
+                }
+            }
+        }
+        let pair = upserts
+            .iter()
+            .find(|r| r["id"] == "a.txt")
+            .expect("配对行应重发");
+        assert_eq!(pair["leftPath"], "a.txt");
+        assert_eq!(pair["rightPath"], "b.txt");
+        assert!(
+            !upserts.iter().any(|r| r["id"] == "b.txt"),
+            "被吸收行不得再作为独立行下发: {upserts:?}"
+        );
+        assert!(removals.iter().any(|id| id == "b.txt"), "{removals:?}");
+    }
+
+    // ------------------------------------------------------------------
     // R3-16：dir/compareContent（FR-DIR-012 三方式 + 五态结果）
     // ------------------------------------------------------------------
 

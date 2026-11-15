@@ -116,6 +116,17 @@ enum Prio {
     Background,
 }
 
+/// 两个节点的配对状态（手动对齐的幂等/校验）
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PairState {
+    /// 未配对
+    Unpaired,
+    /// 已互相配对（重复对齐 = 幂等无操作）
+    AlreadyPaired,
+    /// 已与其他节点配对（不能重复配对）
+    PairedWithOther,
+}
+
 #[derive(Debug, Clone)]
 struct WorkItem {
     dir_id: NodeId,
@@ -218,11 +229,13 @@ impl DirModel {
             kind: EntryKind::Dir,
             left: Some(proto_side(&ls, &opts.criteria)),
             right: Some(proto_side(&rs, &opts.criteria)),
+            right_rel: None,
             status: DirEntryStatus::DirSame,
             parent: None,
             children: Vec::new(),
             expanded: false,
             aligned_with: None,
+            absorbed_by: None,
             scan_failed: false,
         }];
         // 根节点不计入可见行统计（旧 compute_stats 跳过 arena[0] 的语义）
@@ -263,11 +276,8 @@ impl DirModel {
         if model.cancel.is_cancelled() {
             model.phase.store(PHASE_CANCELLED, Ordering::SeqCst);
         }
-        // 应用预置手动对齐
-        let pairs = model.manual_pairs();
-        for (l, r) in &pairs {
-            let _ = model.align(l, r).await;
-        }
+        // 应用预置手动对齐（节点就绪的立即配对，未就绪的等待后台扫描推进）
+        model.apply_pending_pairs().await;
         let done_now = opts
             .target_depth
             .is_some_and(|d| d <= opts.visible_depth.max(1));
@@ -517,6 +527,9 @@ impl DirModel {
             self.mark_expanded(&mut st, item.dir_id);
             self.recompute_est(&mut st);
         }
+        // 新节点就绪后补施加待处理的手动对齐（FR-DIR-022：配对只在两侧
+        // 节点都存在时生效）
+        self.apply_pending_pairs().await;
         self.scanned.fetch_add(fanout, Ordering::Relaxed);
     }
 
@@ -693,11 +706,13 @@ impl DirModel {
                 kind,
                 left: d.left,
                 right: d.right,
+                right_rel: None,
                 status: d.status,
                 parent: Some(dir_id),
                 children: Vec::new(),
                 expanded: false,
                 aligned_with: None,
+                absorbed_by: None,
                 scan_failed: false,
             });
             st.index.insert(rel.clone(), id);
@@ -1010,6 +1025,11 @@ impl DirModel {
                 if node.kind != EntryKind::File {
                     continue;
                 }
+                // 被吸收节点与配对存活节点不参与按名跨路径配对：
+                // 前者已并入配对行，后者左右路径由配对关系确定。
+                if node.is_absorbed() || node.aligned_with.is_some() {
+                    continue;
+                }
                 let segments: Vec<&str> =
                     node.rel_path.split('/').filter(|s| !s.is_empty()).collect();
                 if !name_filter.file_allowed(&segments) {
@@ -1066,35 +1086,11 @@ impl DirModel {
                 continue;
             }
             let node = &st.arena[id as usize];
-            let segments: Vec<&str> = node.rel_path.split('/').filter(|s| !s.is_empty()).collect();
-            let mut display_hidden = !display_visible(
-                node.status,
-                node.left.clone(),
-                node.right.clone(),
-                &opts.display_filter,
-            );
-            if node.kind == EntryKind::Dir && name_filter.has_includes() {
-                // FR-DIR-034 默认语义：仅当目录包含可见文件（自身命中 include 或
-                // 后代存在被包含项）时出现
-                let visible = name_filter.dir_visible(&segments)
-                    || dir_has_included_descendant(&st.arena, id, &name_filter);
-                if !visible {
-                    display_hidden = true;
-                }
+            // 被配对吸收的节点不再独立成行（其内容已并入配对行）
+            if node.is_absorbed() {
+                continue;
             }
-            rows.push(DirRow {
-                id: node.rel_path.clone(),
-                name: node.name.clone(),
-                kind: node.kind,
-                left: node.left.clone(),
-                right: node.right.clone(),
-                status: node.status,
-                has_children: node.kind == EntryKind::Dir,
-                hidden: display_hidden && !opts.suppress,
-                suppressed: display_hidden && opts.suppress,
-                left_path: node.left.as_ref().map(|_| node.rel_path.clone()),
-                right_path: node.right.as_ref().map(|_| node.rel_path.clone()),
-            });
+            rows.push(project_tree_row(node, id, &st.arena, opts, &name_filter));
         }
         rows
     }
@@ -1120,27 +1116,64 @@ impl DirModel {
             left: Option<SideInfo>,
             right: Option<SideInfo>,
         }
+        let key_of = |name: &str| -> String {
+            if opts.criteria.compare_case {
+                name.to_string()
+            } else {
+                crate::align::align_key(
+                    name,
+                    crate::align::AlignKeyOptions {
+                        case_insensitive: true,
+                        ..Default::default()
+                    },
+                )
+            }
+        };
         let mut groups: std::collections::BTreeMap<String, (Vec<Occ>, Vec<Occ>)> =
             Default::default();
+        // 手动配对行（FR-DIR-022 异名对齐）：单独成行，不参与按名分组
+        // （两侧名字不同，按名分组会把配对拆回两个孤立项）。
+        let mut paired: Vec<(String, DirRow)> = Vec::new();
         for node in st.arena.iter().skip(1) {
             if node.kind != EntryKind::File {
+                continue;
+            }
+            // 被吸收节点不独立成行（内容已并入配对行）
+            if node.is_absorbed() {
                 continue;
             }
             let segments: Vec<&str> = node.rel_path.split('/').filter(|s| !s.is_empty()).collect();
             if !name_filter.file_allowed(&segments) {
                 continue;
             }
-            let key = if opts.criteria.compare_case {
-                node.name.clone()
-            } else {
-                crate::align::align_key(
-                    &node.name,
-                    crate::align::AlignKeyOptions {
-                        case_insensitive: true,
-                        ..Default::default()
+            // 配对存活节点：左右真实路径不同，单独成行
+            if let Some(absorbed_id) = node.aligned_with {
+                let absorbed = &st.arena[absorbed_id as usize];
+                let display = node
+                    .rel_path
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or(&node.rel_path)
+                    .to_string();
+                paired.push((
+                    key_of(&display),
+                    DirRow {
+                        id: String::new(),
+                        name: display,
+                        kind: EntryKind::File,
+                        left: node.left.clone(),
+                        right: absorbed.right.clone(),
+                        status: node.status,
+                        has_children: false,
+                        hidden: false,
+                        suppressed: false,
+                        left_path: node.left.as_ref().map(|_| node.rel_path.clone()),
+                        right_path: node.right.as_ref().map(|_| absorbed.rel_path.clone()),
                     },
-                )
-            };
+                ));
+                continue;
+            }
+            let key = key_of(&node.name);
             let g = groups.entry(key).or_default();
             if node.left.is_some() {
                 g.0.push(Occ {
@@ -1185,10 +1218,11 @@ impl DirModel {
             cross_status.insert((lrel.clone(), rrel.clone()), status);
         }
 
-        let mut new_rows: Vec<DirRow> = Vec::new();
+        // (显示键, 行)：id 在收集完成后统一分配（配对行与按名行共用同一
+        // 消歧空间，避免 id 撞车）
+        let mut pending: Vec<(String, DirRow)> = Vec::new();
         for (key, (ls, rs)) in &groups {
             let n = ls.len().max(rs.len());
-            let single = n == 1;
             for i in 0..n {
                 let name = ls
                     .get(i)
@@ -1198,11 +1232,6 @@ impl DirModel {
                             .map(|o| o.rel.rsplit('/').next().unwrap_or(key).to_string())
                     })
                     .unwrap_or_else(|| key.clone());
-                let id = if single {
-                    key.clone()
-                } else {
-                    format!("{key}#{i}")
-                };
                 let (lside, rside) = (ls.get(i), rs.get(i));
                 let status = match (lside, rside) {
                     (Some(l), Some(r)) => {
@@ -1223,22 +1252,48 @@ impl DirModel {
                     (None, Some(_)) => DirEntryStatus::RightOnly,
                     (None, None) => unreachable!(),
                 };
-                new_rows.push(DirRow {
-                    id,
-                    name,
-                    kind: EntryKind::File,
-                    left: lside.and_then(|o| o.left.clone()),
-                    right: rside.and_then(|o| o.right.clone()),
-                    status,
-                    has_children: false,
-                    hidden: false,
-                    suppressed: false,
-                    // 平铺 id 是 `name` / `name#i`（显示消歧用），不是文件地址；
-                    // 手动对齐时左右 rel 还可能不同名。必须各自携带真实 rel。
-                    left_path: lside.map(|o| o.rel.clone()),
-                    right_path: rside.map(|o| o.rel.clone()),
-                });
+                pending.push((
+                    key.clone(),
+                    DirRow {
+                        id: String::new(),
+                        name,
+                        kind: EntryKind::File,
+                        left: lside.and_then(|o| o.left.clone()),
+                        right: rside.and_then(|o| o.right.clone()),
+                        status,
+                        has_children: false,
+                        hidden: false,
+                        suppressed: false,
+                        // 平铺 id 是 `name` / `name#i`（显示消歧用），不是文件地址；
+                        // 手动对齐时左右 rel 还可能不同名。必须各自携带真实 rel。
+                        left_path: lside.map(|o| o.rel.clone()),
+                        right_path: rside.map(|o| o.rel.clone()),
+                    },
+                ));
             }
+        }
+        pending.extend(paired);
+        // id 分配：同一显示键多行时用 `key#i` 消歧（与既有口径一致）
+        let mut counts: std::collections::BTreeMap<String, usize> = Default::default();
+        for (k, _) in &pending {
+            *counts.entry(k.clone()).or_insert(0) += 1;
+        }
+        let mut seen: std::collections::BTreeMap<String, usize> = Default::default();
+        let mut new_rows: Vec<DirRow> = Vec::with_capacity(pending.len());
+        for (k, mut row) in pending {
+            let total = counts.get(&k).copied().unwrap_or(1);
+            let idx = {
+                let e = seen.entry(k.clone()).or_insert(0);
+                let v = *e;
+                *e += 1;
+                v
+            };
+            row.id = if total == 1 {
+                k.clone()
+            } else {
+                format!("{k}#{idx}")
+            };
+            new_rows.push(row);
         }
         // 显示过滤器（平铺行同样遵守；FR-DIR-033）
         for row in &mut new_rows {
@@ -1421,11 +1476,13 @@ impl DirModel {
                 kind: EntryKind::Dir,
                 left: Some(proto_side(&ls, &opts_new.criteria)),
                 right: Some(proto_side(&rs, &opts_new.criteria)),
+                right_rel: None,
                 status: DirEntryStatus::DirSame,
                 parent: None,
                 children: Vec::new(),
                 expanded: false,
                 aligned_with: None,
+                absorbed_by: None,
                 scan_failed: false,
             }];
             st.index = HashMap::from([(String::new(), 0)]);
@@ -1447,10 +1504,8 @@ impl DirModel {
         }
         // 可视层同步重扫（代际已变，旧 worker 的结果会被丢弃）
         self.expand_sync_raw(0, 0, visible_depth).await;
-        let pairs = self.manual_pairs();
-        for (l, r) in &pairs {
-            let _ = self.align(l, r).await;
-        }
+        // 重新施加手动对齐（配对关系随重扫重建）
+        self.apply_pending_pairs().await;
         let done_now = opts_new
             .target_depth
             .is_some_and(|d| d <= visible_depth.max(1));
@@ -1483,59 +1538,255 @@ impl DirModel {
                 }));
             }
         };
+        // 幂等：同一对重复对齐不产生第二次改动
+        if self.pair_state(lid, rid) == PairState::AlreadyPaired {
+            return Ok(0);
+        }
+        // 合并（持锁：纯数据变更；IO 重判在锁外）
+        let Some((survivor, absorbed)) = self.merge_pair(lid, rid)? else {
+            return Ok(0);
+        };
+        // 记录配对（规范形式：左 rel -> 右 rel；重扫后据此复现）
         {
             let mut st = self.state.lock().expect("模型锁");
-            // 父文件夹必须并排（FR-DIR-022）：同父且非根
-            let lp = st.arena[lid as usize].parent;
-            let rp = st.arena[rid as usize].parent;
-            if lp.is_none() || lp != rp {
-                return Err(DirScanError::Vfs(ai_vfs::VfsError::InvalidPath(
-                    "手动对齐要求父文件夹并排（同父）".into(),
-                )));
-            }
-            if st.arena[lid as usize].kind != EntryKind::File
-                || st.arena[rid as usize].kind != EntryKind::File
-            {
-                return Err(DirScanError::Vfs(ai_vfs::VfsError::InvalidPath(
-                    "P2 手动对齐仅支持文件项（目录保持树形对齐）".into(),
-                )));
-            }
-            // 记录配对（幂等）
-            let pair = (left.to_string(), right.to_string());
+            let pair = (
+                st.arena[survivor as usize].rel_path.clone(),
+                st.arena[absorbed as usize].rel_path.clone(),
+            );
             if !st.manual_pairs.contains(&pair) {
                 st.manual_pairs.push(pair);
             }
-            st.arena[lid as usize].aligned_with = Some(rid);
-            st.arena[rid as usize].aligned_with = Some(lid);
         }
-        let changed = self.rejudge_pair(lid, rid, true).await;
+        let changed = self.rejudge_merged(survivor).await;
         let _ = self.rev.fetch_add(1, Ordering::SeqCst);
         self.notify.notify_waiters();
         Ok(changed)
     }
 
-    /// 解除对齐：涉及 path 的全部配对（恢复孤儿/同名配对状态）
+    /// 配对状态（幂等/校验用）
+    fn pair_state(&self, a: NodeId, b: NodeId) -> PairState {
+        let st = self.state.lock().expect("模型锁");
+        let na = &st.arena[a as usize];
+        let nb = &st.arena[b as usize];
+        if na.absorbed_by == Some(b) || nb.absorbed_by == Some(a) {
+            PairState::AlreadyPaired
+        } else if na.aligned_with.is_some() || nb.aligned_with.is_some() {
+            PairState::PairedWithOther
+        } else {
+            PairState::Unpaired
+        }
+    }
+
+    /// 合并一对节点为**一行**（FR-DIR-022 异名手动对齐）。
+    ///
+    /// 返回 Ok(Some((存活节点, 被吸收节点)))：存活节点承载左侧真实路径
+    /// （`rel_path`）与右侧真实路径（`right_rel`），被吸收节点不再独立成行。
+    /// Ok(None) = 已配对（幂等，调用方应无操作）。
+    ///
+    /// 两侧必须同父、都是文件、且各自是孤立项（只有一侧存在）——
+    /// 否则会造出「半配对行」（丢一侧却按另一侧名字寻址）。
+    fn merge_pair(
+        &self,
+        lid: NodeId,
+        rid: NodeId,
+    ) -> Result<Option<(NodeId, NodeId)>, DirScanError> {
+        let mut st = self.state.lock().expect("模型锁");
+        // 幂等/并发保护（持锁原子判定）：同一对只能合并一次
+        if st.arena[lid as usize].absorbed_by == Some(rid)
+            || st.arena[rid as usize].absorbed_by == Some(lid)
+        {
+            return Ok(None);
+        }
+        if st.arena[lid as usize].aligned_with.is_some()
+            || st.arena[rid as usize].aligned_with.is_some()
+        {
+            return Err(DirScanError::Vfs(ai_vfs::VfsError::InvalidPath(
+                "该项已参与其他对齐".into(),
+            )));
+        }
+        // 父文件夹必须并排（FR-DIR-022）：同父且非根
+        let lp = st.arena[lid as usize].parent;
+        let rp = st.arena[rid as usize].parent;
+        if lp.is_none() || lp != rp {
+            return Err(DirScanError::Vfs(ai_vfs::VfsError::InvalidPath(
+                "手动对齐要求父文件夹并排（同父）".into(),
+            )));
+        }
+        if st.arena[lid as usize].kind != EntryKind::File
+            || st.arena[rid as usize].kind != EntryKind::File
+        {
+            return Err(DirScanError::Vfs(ai_vfs::VfsError::InvalidPath(
+                "P2 手动对齐仅支持文件项（目录保持树形对齐）".into(),
+            )));
+        }
+        // 存活节点 = 提供左侧的那个；被吸收节点 = 提供右侧的那个
+        let (survivor, absorbed) = if st.arena[lid as usize].left.is_some()
+            && st.arena[rid as usize].right.is_some()
+        {
+            (lid, rid)
+        } else if st.arena[rid as usize].left.is_some() && st.arena[lid as usize].right.is_some() {
+            (rid, lid)
+        } else {
+            return Err(DirScanError::Vfs(ai_vfs::VfsError::InvalidPath(
+                "手动对齐要求两侧分别为左/右孤立项".into(),
+            )));
+        };
+        if survivor == absorbed {
+            return Err(DirScanError::Vfs(ai_vfs::VfsError::InvalidPath(
+                "手动对齐不能自配对".into(),
+            )));
+        }
+        // 两侧必须是孤立项：否则会丢掉一侧元数据（半配对行）
+        if st.arena[survivor as usize].right.is_some() || st.arena[absorbed as usize].left.is_some()
+        {
+            return Err(DirScanError::Vfs(ai_vfs::VfsError::InvalidPath(
+                "手动对齐仅支持两侧孤立项（未配对项）".into(),
+            )));
+        }
+        // 合并：存活节点吸收右侧元数据与右侧真实路径
+        let absorbed_rel = st.arena[absorbed as usize].rel_path.clone();
+        let absorbed_status = st.arena[absorbed as usize].status;
+        st.arena[survivor as usize].right = st.arena[absorbed as usize].right.clone();
+        st.arena[survivor as usize].right_rel = Some(absorbed_rel.clone());
+        st.arena[survivor as usize].aligned_with = Some(absorbed);
+        st.arena[absorbed as usize].aligned_with = Some(survivor);
+        st.arena[absorbed as usize].absorbed_by = Some(survivor);
+        // 统计：被吸收节点不再独立计数（避免孤立项重复计入）
+        stats_remove(&mut st.stats, absorbed_status);
+        st.stats.total = st.stats.total.saturating_sub(1);
+        // 行变更：存活行重发，被吸收行移除
+        st.dirty.insert(survivor);
+        st.dirty.insert(absorbed);
+        st.removals.push(absorbed_rel);
+        st.flat_dirty = true;
+        Ok(Some((survivor, absorbed)))
+    }
+
+    /// 施加待处理的手动配对（FR-DIR-022）：两侧节点都扫描到后自动配对。
+    ///
+    /// `dir/open` 的预置 manualAlign 与运行期 `dir/align` 共用此路径：
+    /// 节点尚未就绪的配对保留在 `manual_pairs` 中，等待后续扫描推进。
+    async fn apply_pending_pairs(&self) -> u32 {
+        let pairs = {
+            let st = self.state.lock().expect("模型锁");
+            st.manual_pairs.clone()
+        };
+        let mut changed = 0u32;
+        for (l, r) in pairs {
+            let (lid, rid) = {
+                let st = self.state.lock().expect("模型锁");
+                (st.index.get(&l).copied(), st.index.get(&r).copied())
+            };
+            let (Some(lid), Some(rid)) = (lid, rid) else {
+                continue;
+            };
+            if let Ok(Some((survivor, _absorbed))) = self.merge_pair(lid, rid) {
+                changed += self.rejudge_merged(survivor).await;
+            }
+        }
+        if changed > 0 {
+            let _ = self.rev.fetch_add(1, Ordering::SeqCst);
+            self.notify.notify_waiters();
+        }
+        changed
+    }
+
+    /// 配对行的状态重判（IO 在锁外）：按左右**真实路径**比较两侧内容。
+    async fn rejudge_merged(&self, survivor: NodeId) -> u32 {
+        let opts = self.opts.lock().expect("选项锁").clone();
+        let (lrel, rrel, ls, rs, lname, rname) = {
+            let st = self.state.lock().expect("模型锁");
+            let s = &st.arena[survivor as usize];
+            let Some(absorbed_id) = s.aligned_with else {
+                return 0;
+            };
+            let a = &st.arena[absorbed_id as usize];
+            (
+                s.rel_path.clone(),
+                a.rel_path.clone(),
+                s.left.clone(),
+                a.right.clone(),
+                s.name.clone(),
+                a.name.clone(),
+            )
+        };
+        let status = match (ls, rs) {
+            (Some(l), Some(r)) => {
+                let lstat = VfsStat::minimal(l.size, l.mtime_ms, VfsEntryKind::File);
+                let rstat = VfsStat::minimal(r.size, r.mtime_ms, VfsEntryKind::File);
+                self.file_status(
+                    &opts,
+                    &SidePaths {
+                        left: self.roots.0.join(&lrel),
+                        right: self.roots.1.join(&rrel),
+                    },
+                    &lstat,
+                    &rstat,
+                    &SideNames {
+                        left: lname,
+                        right: rname,
+                    },
+                )
+                .await
+            }
+            (Some(_), None) => DirEntryStatus::LeftOnly,
+            (None, Some(_)) => DirEntryStatus::RightOnly,
+            (None, None) => DirEntryStatus::Unknown,
+        };
+        {
+            let mut st = self.state.lock().expect("模型锁");
+            self.set_status(&mut st, survivor, status);
+        }
+        self.aggregate_after(survivor);
+        2
+    }
+
+    /// 解除对齐：涉及 path 的全部配对（恢复两个孤立项）
     pub async fn unalign(&self, path: &str) -> Result<u32, DirScanError> {
         let id = {
             let st = self.state.lock().expect("模型锁");
             st.index.get(path).copied()
         };
         let Some(id) = id else { return Ok(0) };
-        let other = {
-            let mut st = self.state.lock().expect("模型锁");
-            st.manual_pairs.retain(|(l, r)| l != path && r != path);
-            st.arena[id as usize].aligned_with.take()
-        };
-        let mut changed = 0u32;
-        if let Some(other) = other {
-            {
-                let mut st = self.state.lock().expect("模型锁");
-                st.arena[other as usize].aligned_with = None;
+        // 找到配对双方（path 可能是存活节点，也可能是被吸收节点）
+        let (survivor, absorbed) = {
+            let st = self.state.lock().expect("模型锁");
+            let node = &st.arena[id as usize];
+            match (node.aligned_with, node.absorbed_by) {
+                (Some(other), _) => (id, other),
+                (_, Some(other)) => (other, id),
+                _ => (id, id),
             }
-            changed += self.rejudge_pair(id, other, false).await;
-        } else {
-            changed += self.rejudge_solo(id).await as u32;
+        };
+        if survivor == absorbed {
+            // 未参与配对：按孤立项重判（保持旧语义）
+            let changed = self.rejudge_solo(id).await as u32;
+            let _ = self.rev.fetch_add(1, Ordering::SeqCst);
+            self.notify.notify_waiters();
+            return Ok(changed);
         }
+        {
+            let mut st = self.state.lock().expect("模型锁");
+            let survivor_rel = st.arena[survivor as usize].rel_path.clone();
+            st.manual_pairs
+                .retain(|(l, r)| l != &survivor_rel && r != &survivor_rel);
+            // 存活节点恢复为左侧孤立项
+            st.arena[survivor as usize].right = None;
+            st.arena[survivor as usize].right_rel = None;
+            st.arena[survivor as usize].aligned_with = None;
+            // 被吸收节点恢复为独立行
+            st.arena[absorbed as usize].absorbed_by = None;
+            st.arena[absorbed as usize].aligned_with = None;
+            // 统计：被吸收节点重新计入
+            let absorbed_status = st.arena[absorbed as usize].status;
+            stats_add(&mut st.stats, absorbed_status);
+            st.stats.total += 1;
+            st.dirty.insert(survivor);
+            st.dirty.insert(absorbed);
+            st.flat_dirty = true;
+        }
+        let mut changed = self.rejudge_solo(survivor).await as u32;
+        changed += self.rejudge_solo(absorbed).await as u32;
         let _ = self.rev.fetch_add(1, Ordering::SeqCst);
         self.notify.notify_waiters();
         Ok(changed)
@@ -1568,7 +1819,7 @@ impl DirModel {
         };
         let mut out = Vec::with_capacity(targets.len());
         for id in targets {
-            let (rel, ls, rs) = {
+            let (rel, rrel, ls, rs) = {
                 let st = self.state.lock().expect("模型锁");
                 let n = &st.arena[id as usize];
                 if n.kind != EntryKind::File || n.left.is_none() || n.right.is_none() {
@@ -1576,12 +1827,13 @@ impl DirModel {
                 }
                 (
                     n.rel_path.clone(),
+                    n.right_rel_path().to_string(),
                     n.left.clone().unwrap(),
                     n.right.clone().unwrap(),
                 )
             };
             let lp = self.roots.0.join(&rel);
-            let rp = self.roots.1.join(&rel);
+            let rp = self.roots.1.join(&rrel);
             let result = crate::verdict::content_compare_result(
                 self.vfs.as_ref(),
                 &lp,
@@ -1605,100 +1857,6 @@ impl DirModel {
         let _ = self.rev.fetch_add(1, Ordering::SeqCst);
         self.notify.notify_waiters();
         Ok(out)
-    }
-
-    /// 重判一对：aligned=true（对齐生效）合并两侧元数据判定；
-    /// false（解除对齐）各侧独立按孤儿/同名恢复判定
-    async fn rejudge_pair(&self, a: NodeId, b: NodeId, aligned: bool) -> u32 {
-        let opts = self.opts.lock().expect("选项锁").clone();
-        let (arel, brel, aleft, aright, bleft, bright, aname, bname) = {
-            let st = self.state.lock().expect("模型锁");
-            (
-                st.arena[a as usize].rel_path.clone(),
-                st.arena[b as usize].rel_path.clone(),
-                st.arena[a as usize].left.clone(),
-                st.arena[a as usize].right.clone(),
-                st.arena[b as usize].left.clone(),
-                st.arena[b as usize].right.clone(),
-                st.arena[a as usize].name.clone(),
-                st.arena[b as usize].name.clone(),
-            )
-        };
-        let status = if aligned {
-            // 合并两侧元数据（以 a 的 left 有值优先确定左右）
-            let (lrel, rrel, ls, rs, lname, rname) = if aleft.is_some() {
-                (
-                    arel.clone(),
-                    brel.clone(),
-                    aleft,
-                    bright,
-                    aname.clone(),
-                    bname.clone(),
-                )
-            } else {
-                (
-                    brel.clone(),
-                    arel.clone(),
-                    bleft,
-                    aright,
-                    bname.clone(),
-                    aname.clone(),
-                )
-            };
-            match (ls, rs) {
-                (Some(l), Some(r)) => {
-                    let lstat = VfsStat::minimal(l.size, l.mtime_ms, VfsEntryKind::File);
-                    let rstat = VfsStat::minimal(r.size, r.mtime_ms, VfsEntryKind::File);
-                    self.file_status(
-                        &opts,
-                        &SidePaths {
-                            left: self.roots.0.join(&lrel),
-                            right: self.roots.1.join(&rrel),
-                        },
-                        &lstat,
-                        &rstat,
-                        &SideNames {
-                            left: lname,
-                            right: rname,
-                        },
-                    )
-                    .await
-                }
-                (Some(_), None) => DirEntryStatus::LeftOnly,
-                (None, Some(_)) => DirEntryStatus::RightOnly,
-                (None, None) => DirEntryStatus::Unknown,
-            }
-        } else {
-            // 解除对齐：各自按持有侧判定（同名恢复配对由按名对齐的原始状态承担）
-            let a_status = match (aleft, aright) {
-                (Some(_), Some(_)) => DirEntryStatus::Same,
-                (Some(_), None) => DirEntryStatus::LeftOnly,
-                (None, Some(_)) => DirEntryStatus::RightOnly,
-                (None, None) => DirEntryStatus::Unknown,
-            };
-            let b_status = match (bleft, bright) {
-                (Some(_), Some(_)) => DirEntryStatus::Same,
-                (Some(_), None) => DirEntryStatus::LeftOnly,
-                (None, Some(_)) => DirEntryStatus::RightOnly,
-                (None, None) => DirEntryStatus::Unknown,
-            };
-            {
-                let mut st = self.state.lock().expect("模型锁");
-                self.set_status(&mut st, a, a_status);
-                self.set_status(&mut st, b, b_status);
-            }
-            self.aggregate_after(a);
-            self.aggregate_after(b);
-            return 2;
-        };
-        {
-            let mut st = self.state.lock().expect("模型锁");
-            self.set_status(&mut st, a, status);
-            self.set_status(&mut st, b, status);
-        }
-        self.aggregate_after(a);
-        self.aggregate_after(b);
-        2
     }
 
     /// 单节点重判（解除对齐后另一侧已重判时）
@@ -1761,34 +1919,11 @@ impl DirModel {
             let mut rows = Vec::with_capacity(st.arena.len());
             for (idx, node) in st.arena.iter().enumerate().skip(1) {
                 let id = idx as NodeId;
-                let segments: Vec<&str> =
-                    node.rel_path.split('/').filter(|s| !s.is_empty()).collect();
-                let mut display_hidden = !display_visible(
-                    node.status,
-                    node.left.clone(),
-                    node.right.clone(),
-                    &opts.display_filter,
-                );
-                if node.kind == EntryKind::Dir && name_filter.has_includes() {
-                    let visible = name_filter.dir_visible(&segments)
-                        || dir_has_included_descendant(&st.arena, id, &name_filter);
-                    if !visible {
-                        display_hidden = true;
-                    }
+                // 被配对吸收的节点不再独立成行（内容已并入配对行）
+                if node.is_absorbed() {
+                    continue;
                 }
-                rows.push(DirRow {
-                    id: node.rel_path.clone(),
-                    name: node.name.clone(),
-                    kind: node.kind,
-                    left: node.left.clone(),
-                    right: node.right.clone(),
-                    status: node.status,
-                    has_children: node.kind == EntryKind::Dir,
-                    hidden: display_hidden && !opts.suppress,
-                    suppressed: display_hidden && opts.suppress,
-                    left_path: node.left.as_ref().map(|_| node.rel_path.clone()),
-                    right_path: node.right.as_ref().map(|_| node.rel_path.clone()),
-                });
+                rows.push(project_tree_row(node, id, &st.arena, &opts, &name_filter));
             }
             return rows;
         }
@@ -1842,6 +1977,51 @@ impl DirModel {
 
     fn target_depth(&self) -> Option<u32> {
         self.opts.lock().expect("选项锁").target_depth
+    }
+}
+
+/// 树形行投影（arena 节点 -> 协议 DirRow）。
+///
+/// 唯一行表示：配对存活节点承载左右两侧元数据与**各自真实路径**
+/// （FR-DIR-022 异名配对时 `left_path != right_path`）；被吸收节点不成行。
+fn project_tree_row(
+    node: &DirNode,
+    node_id: NodeId,
+    arena: &[DirNode],
+    opts: &DirSessionOptions,
+    name_filter: &NameFilter,
+) -> DirRow {
+    let segments: Vec<&str> = node.rel_path.split('/').filter(|s| !s.is_empty()).collect();
+    let mut display_hidden = !display_visible(
+        node.status,
+        node.left.clone(),
+        node.right.clone(),
+        &opts.display_filter,
+    );
+    if node.kind == EntryKind::Dir && name_filter.has_includes() {
+        // FR-DIR-034 默认语义：仅当目录包含可见文件（自身命中 include 或
+        // 后代存在被包含项）时出现
+        let visible = name_filter.dir_visible(&segments)
+            || dir_has_included_descendant(arena, node_id, name_filter);
+        if !visible {
+            display_hidden = true;
+        }
+    }
+    DirRow {
+        id: node.rel_path.clone(),
+        name: node.name.clone(),
+        kind: node.kind,
+        left: node.left.clone(),
+        right: node.right.clone(),
+        status: node.status,
+        has_children: node.kind == EntryKind::Dir,
+        hidden: display_hidden && !opts.suppress,
+        suppressed: display_hidden && opts.suppress,
+        left_path: node.left.as_ref().map(|_| node.rel_path.clone()),
+        right_path: node
+            .right
+            .as_ref()
+            .map(|_| node.right_rel_path().to_string()),
     }
 }
 
