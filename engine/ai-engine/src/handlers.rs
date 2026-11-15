@@ -780,6 +780,40 @@ async fn text_open(
     if params.session_id.is_empty() {
         return Err(bad_params("sessionId 不能为空"));
     }
+    // A2：同一句柄重复 open 的契约（见 TextSessionData::open_fingerprint）
+    let fingerprint = text_open_fingerprint(&params);
+    {
+        let sessions = ctx.sessions.lock().await;
+        if let Some(existing) = sessions.get(&params.session_id) {
+            return match existing {
+                Session::Text(t) if t.open_fingerprint == fingerprint => {
+                    // 幂等：按会话**当前**状态应答（含未保存编辑），不重读磁盘。
+                    // rev/modified/config 一律不动——否则重挂载会把编辑进度清零。
+                    let result = ai_protocol::TextOpenResult {
+                        session_id: params.session_id.clone(),
+                        left_line_count: u32::try_from(t.left.len()).unwrap_or(u32::MAX),
+                        right_line_count: u32::try_from(t.right.len()).unwrap_or(u32::MAX),
+                        section_count: u32::try_from(t.sections.len()).unwrap_or(u32::MAX),
+                        summary: mapping::summary_to_dto(&t.summary),
+                        left_encoding: t.encodings.0.label.clone(),
+                        right_encoding: t.encodings.1.label.clone(),
+                    };
+                    Ok(Handled::Value(
+                        serde_json::to_value(&result).expect("text/open 结果可序列化"),
+                    ))
+                }
+                _ => Err(RpcErrorObject {
+                    code: codes::SESSION_EXISTS,
+                    message: format!(
+                        "会话已存在且打开参数不同: {}（请先 session/close 再重开）",
+                        params.session_id
+                    ),
+                    data: Some(json!({ "sessionId": params.session_id })),
+                }),
+            };
+        }
+    }
+
     let left_path = VfsPath::parse(&params.left).map_err(|e| mapping::vfs_error_to_rpc(&e))?;
     // D2：right 省略 = 单文件编辑会话。只读左文件、不建右表、不跑 diff——
     // 编辑器不需要「另一侧」，也不该为它付一次读盘 + 一次对齐的代价。
@@ -892,6 +926,7 @@ async fn text_open(
                     },
                 ),
                 modified: (false, false),
+                open_fingerprint: fingerprint,
             }),
         );
     }
@@ -911,6 +946,19 @@ async fn text_open(
     Ok(Handled::Value(
         serde_json::to_value(&result).expect("text/open 结果可序列化"),
     ))
+}
+
+/// `text/open` 的参数指纹：去掉 sessionId 的原样 JSON（A2 幂等判定用）。
+///
+/// 用"完整参数"而不是"路径"做指纹：`rules`/`options`/`importance`/`manual`
+/// 会影响 diff 结果，参数变了却复用旧 sections 等于给出错误答案；`encoding`
+/// 变了更是解码口径变化。因此只有**完全一致**才允许幂等。
+fn text_open_fingerprint(params: &ai_protocol::TextOpenParams) -> serde_json::Value {
+    let mut v = serde_json::to_value(params).unwrap_or(serde_json::Value::Null);
+    if let Some(obj) = v.as_object_mut() {
+        obj.remove("sessionId");
+    }
+    v
 }
 
 /// text/edit：编辑增量落行表 -> 按会话配置重 diff -> 应答权威 sections（R3-18）。
@@ -6282,6 +6330,152 @@ mod p10_tests {
         .await;
         assert_eq!(reopen["leftLineCount"], 5, "重开：a/空/空/b/c");
         assert_eq!(reopen["rightLineCount"], 4, "重开：空/a/b/c");
+        drop(dir);
+    }
+
+    /// A2：同参数重复 `text/open` 是幂等的（不重读磁盘、不复位 rev、不丢编辑）
+    #[tokio::test]
+    async fn text_open_same_params_is_idempotent_and_keeps_rev_and_edits() {
+        let c = ctx();
+        let dir = tempfile::tempdir().unwrap();
+        let f = dir.path().join("a.txt");
+        std::fs::write(&f, "a\nb\n").unwrap();
+        let path = f.to_string_lossy().to_string();
+        let open = json!({ "sessionId": "rep", "left": path, "right": path });
+
+        let opened = value_of(text_open(Some(open.clone()), &c).await).await;
+        assert_eq!(opened["leftLineCount"], 2);
+
+        let e1 = value_of(
+            text_edit(
+                Some(json!({"sessionId":"rep","edits":[{"side":"left","start":0,"end":1,"text":"X"}]})),
+                &c,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(e1["rev"], 1);
+
+        // 重复 open（StrictMode 双挂载 / 视图重挂载）：幂等应答
+        let again = value_of(text_open(Some(open.clone()), &c).await).await;
+        assert_eq!(again["leftLineCount"], 2);
+        assert_eq!(
+            again["leftEncoding"], opened["leftEncoding"],
+            "编码标签应与会话当前一致"
+        );
+
+        // rev 未复位（复位会让后续 edit 应答从 1 重新数，客户端会误判版本回退）
+        let e2 = value_of(
+            text_edit(
+                Some(json!({"sessionId":"rep","edits":[{"side":"left","start":1,"end":2,"text":"Y"}]})),
+                &c,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(e2["rev"], 2, "重复 open 不得复位 rev");
+
+        // 未保存编辑仍在（幂等不是"重新从磁盘读"）
+        let lines = value_of(
+            text_lines(
+                Some(json!({"sessionId":"rep","side":"left","start":0,"count":10})),
+                &c,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(lines["lines"][0], "X");
+        drop(dir);
+    }
+
+    /// A2：同句柄不同参数 → 411，且**不覆盖**会话内容
+    #[tokio::test]
+    async fn text_open_different_params_conflicts_and_keeps_session() {
+        let c = ctx();
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("a.txt");
+        let b = dir.path().join("b.txt");
+        std::fs::write(&a, "a\nb\n").unwrap();
+        std::fs::write(&b, "1\n2\n3\n").unwrap();
+        let (pa, pb) = (
+            a.to_string_lossy().to_string(),
+            b.to_string_lossy().to_string(),
+        );
+
+        let _ =
+            value_of(text_open(Some(json!({"sessionId":"conf","left":pa,"right":pa})), &c).await)
+                .await;
+        let _ = value_of(
+            text_edit(
+                Some(json!({"sessionId":"conf","edits":[{"side":"left","start":0,"end":1,"text":"EDIT"}]})),
+                &c,
+            )
+            .await,
+        )
+        .await;
+
+        // 1) 换一个文件（同句柄）→ 411
+        let err = text_open(Some(json!({"sessionId":"conf","left":pb,"right":pb})), &c)
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, 411, "同句柄不同路径必须 411");
+        assert!(err.message.contains("参数不同"), "{}", err.message);
+
+        // 2) 换编码（同路径）→ 411
+        let err = text_open(
+            Some(json!({"sessionId":"conf","left":pa,"right":pa,"encoding":"gb18030"})),
+            &c,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.code, 411, "同句柄不同编码必须 411");
+
+        // 3) 单文件 → 补上 right → 411（single_side 变化也是参数变化）
+        let _ = value_of(text_open(Some(json!({"sessionId":"one","left":pa})), &c).await).await;
+        let err = text_open(Some(json!({"sessionId":"one","left":pa,"right":pa})), &c)
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, 411, "单文件会话补 right 必须 411");
+
+        // 4) 冲突后会话原样保留（编辑没被覆盖、行数没变成 b.txt 的 3 行）
+        let lines = value_of(
+            text_lines(
+                Some(json!({"sessionId":"conf","side":"left","start":0,"count":10})),
+                &c,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(lines["lines"][0], "EDIT", "冲突不得清空未保存编辑");
+        assert_eq!(
+            lines["lines"].as_array().map(|v| v.len()),
+            Some(2),
+            "冲突不得用新文件的 3 行覆盖会话"
+        );
+        drop(dir);
+    }
+
+    /// A2：同 id 但另一种会话类型 → 411（不静默替换成文本会话）
+    #[tokio::test]
+    async fn text_open_conflicts_with_other_session_kind() {
+        let c = ctx();
+        let dir = tempfile::tempdir().unwrap();
+        let f = dir.path().join("x.txt");
+        std::fs::write(&f, "x\n").unwrap();
+        let px = f.to_string_lossy().to_string();
+        // 先用同一 id 建三向合并会话（不同 kind），再 text/open 撞 id
+        let _ = value_of(
+            merge3_open(
+                Some(json!({"sessionId":"same-id","base":px,"left":px,"right":px})),
+                &c,
+            )
+            .await,
+        )
+        .await;
+        let err = text_open(Some(json!({"sessionId":"same-id","left":px})), &c)
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, 411, "别的会话类型占用同 id 时必须 411");
         drop(dir);
     }
 

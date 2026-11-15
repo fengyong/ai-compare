@@ -563,7 +563,10 @@ export function TextCompareView({ tab }: { tab: Tab }) {
           if (!disposed) setReady(true);
           return;
         }
-        // openText 411（会话已存在：StrictMode 重挂载/重复打开）→ 直接复用引擎侧会话
+        // A2 契约：同参数重复 open 是幂等的（引擎按会话当前状态应答，不重读磁盘、
+        // 不复位 rev、不丢未保存编辑）。411 只会在"同 id 不同参数"时出现——本标签
+        // 独占自己的 sessionId，因此那一定是本标签的历史参数（最典型：切换编码后
+        // 重开过会话，模型缓存被淘汰后重挂载时不带 encoding），复用是安全的。
         const rules = effectiveRulesFor(text.left.path, text.right.path);
         const loaded = await openText({
           sessionId: text.sessionId,

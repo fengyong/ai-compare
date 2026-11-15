@@ -147,6 +147,10 @@ interface MockTextSession {
   rightPath: string;
   /** 未落盘编辑标记（text/edit 置位，text/save 清除） */
   modified: { left: boolean; right: boolean };
+  /** A2：打开参数指纹（同参数重复 open 幂等，不同参数 411） */
+  openParams: string;
+  /** 打开时解析出的编码标签（幂等应答需要原样回传） */
+  encoding: string;
 }
 
 /** P8：mock 三路合并会话（扫描行快照 + 计划/执行的落盘对象） */
@@ -1027,6 +1031,36 @@ export class MockEngine {
     if (!p || typeof p.sessionId !== 'string' || p.sessionId === '') {
       throw new InvalidParams('sessionId 不能为空');
     }
+    // A2：同句柄重复 open 的契约与真实引擎同形——
+    // 参数完全一致 → 幂等（按会话当前状态应答，不重读、不复位 rev、不丢编辑）；
+    // 参数不同 → 411（绝不静默覆盖可能有未保存编辑的会话）。
+    const openParams = JSON.stringify({
+      left: p.left ?? null,
+      right: p.right ?? null,
+      encoding: p.encoding ?? null,
+      rules: p.rules ?? null,
+      options: p.options ?? null,
+      importance: p.importance ?? null,
+      manual: p.manual ?? null,
+    });
+    const live = this.textSessions.get(p.sessionId);
+    if (live) {
+      if (live.openParams === openParams) {
+        return {
+          sessionId: live.id,
+          leftLineCount: live.leftLines.length,
+          rightLineCount: live.rightLines.length,
+          sectionCount: live.sections.length,
+          summary: live.summary,
+          leftEncoding: live.encoding,
+          rightEncoding: live.rightPath === '' ? '' : live.encoding,
+        };
+      }
+      throw new RpcErr(
+        CODE.SESSION_EXISTS,
+        `会话已存在且打开参数不同: ${p.sessionId}（请先 session/close 再重开）`,
+      );
+    }
     if (this.hasAnySession(p.sessionId)) {
       throw new RpcErr(CODE.SESSION_EXISTS, `会话已存在: ${p.sessionId}`);
     }
@@ -1059,6 +1093,8 @@ export class MockEngine {
       leftPath: p.left ?? '',
       rightPath: p.right ?? '',
       modified: { left: false, right: false },
+      openParams,
+      encoding,
     });
     if (p.left) this.files.set(p.left, mockTextOf(effective.leftLines));
     if (p.right) this.files.set(p.right, mockTextOf(effective.rightLines));

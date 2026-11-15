@@ -1021,6 +1021,101 @@ try {
   await client.request('session/close', { sessionId: 'e2e-blank-2' });
   await client.request('session/close', { sessionId: 'e2e-blank-1' });
 
+  // 3f. A2：同句柄重复 text/open 的契约（幂等 / 411，且绝不覆盖未保存编辑）
+  const A2 = join(dir, 'reopen');
+  mkdirSync(A2, { recursive: true });
+  const a2File = join(A2, 'a.txt');
+  const a2Other = join(A2, 'b.txt');
+  writeFileSync(a2File, 'a\r\nb');
+  writeFileSync(a2Other, '1\n2\n3');
+  const a2Params = { sessionId: 'e2e-rep-1', left: a2File, right: a2File };
+  const a2First = await client.request('text/open', a2Params);
+  const a2Edit1 = await client.request('text/edit', {
+    sessionId: 'e2e-rep-1',
+    edits: [{ side: 'left', start: 0, end: 1, text: 'X' }],
+  });
+  ok(
+    a2First?.leftLineCount === 2 && a2Edit1?.rev === 1,
+    'A2 前置：打开 2 行并编辑一次（rev=1）',
+    `${a2First?.leftLineCount}/${a2Edit1?.rev}`,
+  );
+  const a2Again = await client.request('text/open', a2Params);
+  ok(
+    a2Again?.leftLineCount === 2 && a2Again?.leftEncoding === a2First?.leftEncoding,
+    'A2 同参数重复 open → 幂等（按会话当前状态应答，不重读磁盘）',
+    `${a2Again?.leftLineCount}/${a2Again?.leftEncoding}`,
+  );
+  const a2Edit2 = await client.request('text/edit', {
+    sessionId: 'e2e-rep-1',
+    edits: [{ side: 'left', start: 1, end: 2, text: 'Y' }],
+  });
+  ok(
+    a2Edit2?.rev === 2,
+    'A2 幂等重开不得复位 rev（否则客户端会误判版本回退）',
+    String(a2Edit2?.rev),
+  );
+  const a2Lines = await client.request('text/lines', {
+    sessionId: 'e2e-rep-1',
+    side: 'left',
+    start: 0,
+    count: 10,
+  });
+  ok(
+    JSON.stringify(a2Lines?.lines) === JSON.stringify(['X', 'Y']),
+    'A2 幂等重开保留未保存编辑（不是重新从磁盘读）',
+    JSON.stringify(a2Lines?.lines),
+  );
+
+  let a2Conflict = null;
+  try {
+    await client.request('text/open', { sessionId: 'e2e-rep-1', left: a2Other, right: a2Other });
+  } catch (err) {
+    a2Conflict = String(err?.message ?? err);
+  }
+  ok(
+    a2Conflict !== null && a2Conflict.includes('411'),
+    'A2 同句柄换文件 → 411 SESSION_EXISTS（不静默覆盖）',
+    String(a2Conflict),
+  );
+  let a2EncConflict = null;
+  try {
+    await client.request('text/open', { ...a2Params, encoding: 'gb18030' });
+  } catch (err) {
+    a2EncConflict = String(err?.message ?? err);
+  }
+  ok(
+    a2EncConflict !== null && a2EncConflict.includes('411'),
+    'A2 同句柄换编码 → 411（解码口径变化不得静默复用）',
+    String(a2EncConflict),
+  );
+  const a2AfterConflict = await client.request('text/lines', {
+    sessionId: 'e2e-rep-1',
+    side: 'left',
+    start: 0,
+    count: 10,
+  });
+  ok(
+    JSON.stringify(a2AfterConflict?.lines) === JSON.stringify(['X', 'Y']),
+    'A2 冲突后会话原样保留（编辑与行数都没被覆盖）',
+    JSON.stringify(a2AfterConflict?.lines),
+  );
+
+  // 单文件会话：补上 right 也算"参数不同"
+  await client.request('text/open', { sessionId: 'e2e-rep-2', left: a2File });
+  let a2SingleConflict = null;
+  try {
+    await client.request('text/open', { sessionId: 'e2e-rep-2', left: a2File, right: a2File });
+  } catch (err) {
+    a2SingleConflict = String(err?.message ?? err);
+  }
+  ok(
+    a2SingleConflict !== null && a2SingleConflict.includes('411'),
+    'A2 单文件会话补 right → 411（single_side 也是参数）',
+    String(a2SingleConflict),
+  );
+  await client.request('session/close', { sessionId: 'e2e-rep-1' });
+  await client.request('session/close', { sessionId: 'e2e-rep-2' });
+
   // 4. P7：三向文本合并四方法（text/merge3/open|sections|decide|output）
   const m3 = await client.request('text/merge3/open', {
     sessionId: 'e2e-merge3-1',

@@ -54,6 +54,61 @@ async function sideLines(
 const edit = (client: RpcClient, sessionId: string, edits: unknown[]) =>
   client.request<TextEditResult>('text/edit', { sessionId, edits });
 
+describe('MockEngine text/open 重复打开契约（A2）', () => {
+  it('同参数重复 open 幂等：保留编辑与 rev，不报 411', async () => {
+    const client = await newClient();
+    const path = clipboardStore.registerText('a\nb\n');
+    const params = { sessionId: 'rep-1', left: path, right: path };
+    const first = await client.request<TextOpenResult>('text/open', params);
+    await client.request<TextEditResult>('text/edit', {
+      sessionId: 'rep-1',
+      edits: [{ side: 'left', start: 0, end: 1, text: 'X' }],
+    });
+    const again = await client.request<TextOpenResult>('text/open', params);
+    expect(again.leftLineCount).toBe(first.leftLineCount);
+    expect(again.leftEncoding).toBe(first.leftEncoding);
+    const lines = await client.request<TextLinesResult>('text/lines', {
+      sessionId: 'rep-1',
+      side: 'left',
+      start: 0,
+      count: 10,
+    });
+    expect(lines.lines[0]).toBe('X');
+    // rev 未复位：下一次编辑 rev 继续递增
+    const next = await client.request<TextEditResult>('text/edit', {
+      sessionId: 'rep-1',
+      edits: [{ side: 'left', start: 1, end: 2, text: 'Y' }],
+    });
+    expect(next.rev).toBe(2);
+  });
+
+  it('同 id 不同参数 → 411，且不覆盖原会话', async () => {
+    const client = await newClient();
+    const a = clipboardStore.registerText('a\n');
+    const b = clipboardStore.registerText('1\n2\n3\n');
+    await client.request<TextOpenResult>('text/open', { sessionId: 'rep-2', left: a, right: a });
+    await expect(
+      client.request<TextOpenResult>('text/open', { sessionId: 'rep-2', left: b, right: b }),
+    ).rejects.toThrow(/打开参数不同/);
+    // 编码变化同样算参数不同
+    await expect(
+      client.request<TextOpenResult>('text/open', {
+        sessionId: 'rep-2',
+        left: a,
+        right: a,
+        encoding: 'gb18030',
+      }),
+    ).rejects.toThrow(/打开参数不同/);
+    const lines = await client.request<TextLinesResult>('text/lines', {
+      sessionId: 'rep-2',
+      side: 'left',
+      start: 0,
+      count: 10,
+    });
+    expect(lines.lines).toEqual(['a']);
+  });
+});
+
 describe('MockEngine text/open 单文件会话（D2）', () => {
   it('省略 right：只建左表、不跑 diff、rightEncoding 为空', async () => {
     const client = await newClient();

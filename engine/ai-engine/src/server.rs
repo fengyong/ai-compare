@@ -71,6 +71,14 @@ pub struct TextSessionData {
     pub encodings: (SideEncoding, SideEncoding),
     /// R3-04：两侧是否有未落盘编辑（text/edit 置位，text/save 落盘后清除）
     pub modified: (bool, bool),
+    /// A2：打开参数指纹（`text/open` 去掉 sessionId 后的原样 JSON）。
+    ///
+    /// 同一句柄重复 open 时以此判定契约：
+    /// - 指纹相同 → **幂等**：直接按会话当前状态应答（不重读磁盘、不复位 rev、
+    ///   不动未保存编辑）——UI 重挂载/StrictMode 双挂载都走这条；
+    /// - 指纹不同 → 411 SESSION_EXISTS，会话原样保留，由调用方先 close 再 reopen。
+    ///   绝不静默用新参数覆盖一个可能有未保存编辑的会话。
+    pub open_fingerprint: serde_json::Value,
     /// D2：单文件编辑会话（`text/open` 省略 `right`）。此时不跑 diff——
     /// `sections`/`summary` 恒空，`text/edit` 跳过重 diff（编辑器不消费
     /// sections，避免每次落笔都对空表做一遍对齐）。
