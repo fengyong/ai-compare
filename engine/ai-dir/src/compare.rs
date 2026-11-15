@@ -167,7 +167,9 @@ mod tests {
     #[tokio::test]
     async fn crc_mode_matches_and_differs() {
         let dir = tempfile::tempdir().unwrap();
-        let big: Vec<u8> = (0..200_000u32).map(|i| (i.wrapping_mul(31) % 256) as u8).collect();
+        let big: Vec<u8> = (0..200_000u32)
+            .map(|i| (i.wrapping_mul(31) % 256) as u8)
+            .collect();
         std::fs::write(dir.path().join("a.bin"), &big).unwrap();
         std::fs::write(dir.path().join("a2.bin"), &big).unwrap();
         let mut diff = big.clone();
@@ -179,10 +181,18 @@ mod tests {
         let pa = VfsPath::parse(dir.path().join("a.bin").to_str().unwrap()).unwrap();
         let pa2 = VfsPath::parse(dir.path().join("a2.bin").to_str().unwrap()).unwrap();
         let pb = VfsPath::parse(dir.path().join("b.bin").to_str().unwrap()).unwrap();
-        assert!(content_same(&vfs, &pa, &pa2, ContentHashMode::Crc).await.unwrap());
-        assert!(!content_same(&vfs, &pa, &pb, ContentHashMode::Crc).await.unwrap());
-        assert!(content_same(&vfs, &pa, &pa2, ContentHashMode::Binary).await.unwrap());
-        assert!(!content_same(&vfs, &pa, &pb, ContentHashMode::Binary).await.unwrap());
+        assert!(content_same(&vfs, &pa, &pa2, ContentHashMode::Crc)
+            .await
+            .unwrap());
+        assert!(!content_same(&vfs, &pa, &pb, ContentHashMode::Crc)
+            .await
+            .unwrap());
+        assert!(content_same(&vfs, &pa, &pa2, ContentHashMode::Binary)
+            .await
+            .unwrap());
+        assert!(!content_same(&vfs, &pa, &pb, ContentHashMode::Binary)
+            .await
+            .unwrap());
         assert_eq!(file_crc32(&vfs, &pa).await.unwrap(), ai_vfs::crc32(&big));
     }
 
@@ -198,11 +208,15 @@ mod tests {
         let py = VfsPath::parse(dir.path().join("y.bin").to_str().unwrap()).unwrap();
 
         // 真实计算并缓存
-        let crc = file_crc32_cached(&vfs, &px, 14, 1, Some(&cache)).await.unwrap();
+        let crc = file_crc32_cached(&vfs, &px, 14, 1, Some(&cache))
+            .await
+            .unwrap();
         assert_eq!(crc, ai_vfs::crc32(b"actual-content"));
         // 篡改缓存：第二次读取必须走缓存（结果被伪造值覆盖）
         cache.put(py.as_str(), 14, 1, 0xCAFE);
-        let again = file_crc32_cached(&vfs, &py, 14, 1, Some(&cache)).await.unwrap();
+        let again = file_crc32_cached(&vfs, &py, 14, 1, Some(&cache))
+            .await
+            .unwrap();
         assert_eq!(again, 0xCAFE, "缓存命中不应再读文件");
     }
 
@@ -213,7 +227,13 @@ mod tests {
         let vfs = ai_vfs::ZipFs::from_bytes(&data).unwrap();
         let p = VfsPath::parse("/hello.txt").unwrap();
         let st = vfs.stat(&p).await.unwrap();
-        let crc = file_crc32_cached(&vfs, &p, st.size, st.mtime_ms, None).await.unwrap();
-        assert_eq!(crc, ai_vfs::crc32(b"hello world"), "应使用中心目录预计算 CRC");
+        let crc = file_crc32_cached(&vfs, &p, st.size, st.mtime_ms, None)
+            .await
+            .unwrap();
+        assert_eq!(
+            crc,
+            ai_vfs::crc32(b"hello world"),
+            "应使用中心目录预计算 CRC"
+        );
     }
 }

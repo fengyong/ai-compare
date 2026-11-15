@@ -31,7 +31,11 @@ pub fn wildcard_match(pattern: &str, name: &str, case_sensitive: bool) -> bool {
         return true;
     }
     let no_dot = pattern.ends_with('.');
-    let pattern = if no_dot { &pattern[..pattern.len() - 1] } else { pattern };
+    let pattern = if no_dot {
+        &pattern[..pattern.len() - 1]
+    } else {
+        pattern
+    };
     if no_dot && name.contains('.') {
         return false;
     }
@@ -198,7 +202,12 @@ impl MaskRule {
             MaskScope::Name => name_part,
             _ => String::new(),
         };
-        MaskRule { exclude, target, scope, pattern }
+        MaskRule {
+            exclude,
+            target,
+            scope,
+            pattern,
+        }
     }
 
     /// 按目标与路径段匹配（segments 为基文件夹下的相对段序列）
@@ -211,7 +220,10 @@ impl MaskRule {
             MaskScope::Name => wildcard_match(&self.pattern, basename, case_sensitive),
             MaskScope::Anchored(segs) => {
                 segs.len() == segments.len()
-                    && segs.iter().zip(segments.iter()).all(|(p, s)| wildcard_match(p, s, case_sensitive))
+                    && segs
+                        .iter()
+                        .zip(segments.iter())
+                        .all(|(p, s)| wildcard_match(p, s, case_sensitive))
             }
             MaskScope::AnyDepth(segs) => {
                 segments.len() >= segs.len()
@@ -225,7 +237,10 @@ impl MaskRule {
 }
 
 fn split_segments(s: &str) -> Vec<String> {
-    s.split('/').filter(|seg| !seg.is_empty()).map(|seg| seg.to_string()).collect()
+    s.split('/')
+        .filter(|seg| !seg.is_empty())
+        .map(|seg| seg.to_string())
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -243,27 +258,31 @@ impl NameFilter {
     pub fn from_spec(spec: &NameFilterSpec) -> Self {
         let case_sensitive = spec.case_sensitive.unwrap_or(false);
         let mut rules = Vec::new();
-        let push_list = |list: &[String], exclude: bool, target: MaskTarget, rules: &mut Vec<MaskRule>| {
-            for item in list {
-                // 每项可为分号分隔的多模式（FR-DIR-031 工具栏语法）
-                for seg in item.split(';') {
-                    let seg = seg.trim();
-                    if seg.is_empty() {
-                        continue;
+        let push_list =
+            |list: &[String], exclude: bool, target: MaskTarget, rules: &mut Vec<MaskRule>| {
+                for item in list {
+                    // 每项可为分号分隔的多模式（FR-DIR-031 工具栏语法）
+                    for seg in item.split(';') {
+                        let seg = seg.trim();
+                        if seg.is_empty() {
+                            continue;
+                        }
+                        let mut rule = MaskRule::parse(seg);
+                        // 列表类型强制 target（会话四列表语义）
+                        rule.target = target;
+                        rule.exclude = exclude || rule.exclude;
+                        rules.push(rule);
                     }
-                    let mut rule = MaskRule::parse(seg);
-                    // 列表类型强制 target（会话四列表语义）
-                    rule.target = target;
-                    rule.exclude = exclude || rule.exclude;
-                    rules.push(rule);
                 }
-            }
-        };
+            };
         push_list(&spec.include_files, false, MaskTarget::File, &mut rules);
         push_list(&spec.include_dirs, false, MaskTarget::Dir, &mut rules);
         push_list(&spec.exclude_files, true, MaskTarget::File, &mut rules);
         push_list(&spec.exclude_dirs, true, MaskTarget::Dir, &mut rules);
-        NameFilter { rules, case_sensitive }
+        NameFilter {
+            rules,
+            case_sensitive,
+        }
     }
 
     /// 从工具栏快捷语法构造（如 `*.c;*.h;-*.md;-p\`）：前导 `-` 为排除
@@ -276,11 +295,16 @@ impl NameFilter {
             }
             rules.push(MaskRule::parse(seg));
         }
-        NameFilter { rules, case_sensitive }
+        NameFilter {
+            rules,
+            case_sensitive,
+        }
     }
 
     fn rules_for(&self, exclude: bool, target: MaskTarget) -> impl Iterator<Item = &MaskRule> {
-        self.rules.iter().filter(move |r| r.exclude == exclude && r.target == target)
+        self.rules
+            .iter()
+            .filter(move |r| r.exclude == exclude && r.target == target)
     }
 
     /// 文件是否纳入比较范围（FR-FLT-002：排除优先；包含文件的父目录链自动包含）
@@ -288,12 +312,18 @@ impl NameFilter {
         // 1. 处于被排除的目录子树内
         for depth in 1..=segments.len() {
             let prefix = &segments[..depth];
-            if self.rules_for(true, MaskTarget::Dir).any(|r| r.matches(MaskTarget::Dir, prefix, self.case_sensitive)) {
+            if self
+                .rules_for(true, MaskTarget::Dir)
+                .any(|r| r.matches(MaskTarget::Dir, prefix, self.case_sensitive))
+            {
                 return false;
             }
         }
         // 2. 文件自身被排除（Name 按basename；Anchored/AnyDepth 按全路径）
-        if self.rules_for(true, MaskTarget::File).any(|r| r.matches(MaskTarget::File, segments, self.case_sensitive)) {
+        if self
+            .rules_for(true, MaskTarget::File)
+            .any(|r| r.matches(MaskTarget::File, segments, self.case_sensitive))
+        {
             return false;
         }
         // 3. 包含判定
@@ -303,7 +333,8 @@ impl NameFilter {
             return true;
         }
         // 自身命中文件 include，或任一祖先命中目录 include
-        self.rules_for(false, MaskTarget::File).any(|r| r.matches(MaskTarget::File, segments, self.case_sensitive))
+        self.rules_for(false, MaskTarget::File)
+            .any(|r| r.matches(MaskTarget::File, segments, self.case_sensitive))
             || (1..segments.len()).any(|depth| {
                 let prefix = &segments[..depth];
                 self.rules_for(false, MaskTarget::Dir)
@@ -315,7 +346,10 @@ impl NameFilter {
     pub fn dir_pruned(&self, segments: &[&str]) -> bool {
         for depth in 1..=segments.len() {
             let prefix = &segments[..depth];
-            if self.rules_for(true, MaskTarget::Dir).any(|r| r.matches(MaskTarget::Dir, prefix, self.case_sensitive)) {
+            if self
+                .rules_for(true, MaskTarget::Dir)
+                .any(|r| r.matches(MaskTarget::Dir, prefix, self.case_sensitive))
+            {
                 return true;
             }
         }
@@ -335,7 +369,8 @@ impl NameFilter {
         if include_files == 0 && include_dirs == 0 {
             return true;
         }
-        self.rules_for(false, MaskTarget::Dir).any(|r| r.matches(MaskTarget::Dir, segments, self.case_sensitive))
+        self.rules_for(false, MaskTarget::Dir)
+            .any(|r| r.matches(MaskTarget::Dir, segments, self.case_sensitive))
             || (1..segments.len()).any(|depth| {
                 let prefix = &segments[..depth];
                 self.rules_for(false, MaskTarget::Dir)
@@ -390,7 +425,8 @@ impl OtherFilter {
         let s = &self.spec;
         // 受保护 OS 文件（默认 true）：Windows 页面文件等 + Unix 近似（root 专属无读权）
         if s.exclude_protected_os_files.unwrap_or(true) {
-            if matches!(path.file_name(), Some(n) if matches!(n.to_ascii_lowercase().as_str(), "pagefile.sys" | "hiberfil.sys" | "swapfile.sys")) {
+            if matches!(path.file_name(), Some(n) if matches!(n.to_ascii_lowercase().as_str(), "pagefile.sys" | "hiberfil.sys" | "swapfile.sys"))
+            {
                 return false;
             }
             if stat.uid == Some(0) {
@@ -540,7 +576,10 @@ mod tests {
     #[test]
     fn star_dot_star_matches_everything() {
         let cs = true;
-        assert!(wildcard_match("*.*", "readme", cs), "历史特例：*.* 匹配无扩展名");
+        assert!(
+            wildcard_match("*.*", "readme", cs),
+            "历史特例：*.* 匹配无扩展名"
+        );
         assert!(wildcard_match("*.*", "a.b", cs));
         assert!(wildcard_match("*.*", ".gitignore", cs));
     }
@@ -561,12 +600,23 @@ mod tests {
     // ---- 相对掩码与名称过滤（FR-FLT-002 / FR-DIR-031） ----
 
     fn parse_list(s: &str) -> Vec<MaskRule> {
-        s.split(';').filter(|x| !x.trim().is_empty()).map(MaskRule::parse).collect()
+        s.split(';')
+            .filter(|x| !x.trim().is_empty())
+            .map(MaskRule::parse)
+            .collect()
     }
 
     fn rule_matches(rule: &MaskRule, is_dir: bool, path: &str, cs: bool) -> bool {
         let segs: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
-        rule.matches(if is_dir { MaskTarget::Dir } else { MaskTarget::File }, &segs, cs)
+        rule.matches(
+            if is_dir {
+                MaskTarget::Dir
+            } else {
+                MaskTarget::File
+            },
+            &segs,
+            cs,
+        )
     }
 
     #[test]
@@ -589,7 +639,10 @@ mod tests {
         let rules = parse_list("p\\f;.\\f;...\\f;...\\src\\*.c");
         // p\f：f 在（基下）p 内 —— 锚定 2 段
         assert!(rule_matches(&rules[0], false, "p/f", true));
-        assert!(!rule_matches(&rules[0], false, "a/p/f", true), "p\\f 锚定基文件夹");
+        assert!(
+            !rule_matches(&rules[0], false, "a/p/f", true),
+            "p\\f 锚定基文件夹"
+        );
         assert!(!rule_matches(&rules[0], false, "f", true));
         // .\f：基文件夹内一层
         assert!(rule_matches(&rules[1], false, "f", true));
@@ -603,7 +656,12 @@ mod tests {
         assert!(!rule_matches(&rules[3], false, "src/x.h", true));
     }
 
-    fn spec(files_include: &[&str], files_exclude: &[&str], dirs_include: &[&str], dirs_exclude: &[&str]) -> NameFilter {
+    fn spec(
+        files_include: &[&str],
+        files_exclude: &[&str],
+        dirs_include: &[&str],
+        dirs_exclude: &[&str],
+    ) -> NameFilter {
         NameFilter::from_spec(&NameFilterSpec {
             include_files: files_include.iter().map(|s| s.to_string()).collect(),
             exclude_files: files_exclude.iter().map(|s| s.to_string()).collect(),
@@ -624,7 +682,10 @@ mod tests {
         assert!(f.file_allowed(&segs("a.c")));
         assert!(!f.file_allowed(&segs("README.md")));
         assert!(!f.file_allowed(&segs("src/notes.md")));
-        assert!(!f.file_allowed(&segs("x/README.md")), "-*.md 单段列出即整体排除语义（列表按行）");
+        assert!(
+            !f.file_allowed(&segs("x/README.md")),
+            "-*.md 单段列出即整体排除语义（列表按行）"
+        );
     }
 
     #[test]
@@ -636,15 +697,24 @@ mod tests {
         // 目录可见性：仅 include 文件掩码时目录行不由名称过滤器直接可见
         // —— 会话层结合"后代存在被包含文件"判定（FR-DIR-034，见 session::dir_has_included_descendant）
         assert!(!f.dir_visible(&segs("src")));
-        assert!(!f.dir_pruned(&segs("src")), "不被剪枝：子内容可能命中 include");
+        assert!(
+            !f.dir_pruned(&segs("src")),
+            "不被剪枝：子内容可能命中 include"
+        );
     }
 
     #[test]
     fn name_filter_include_dir_pulls_whole_subtree() {
         let f = spec(&[], &[], &["src\\"], &[]);
         assert!(f.dir_visible(&segs("src")));
-        assert!(f.dir_visible(&segs("src/inner")), "包含文件夹 => 其内子目录可见（内容全包含）");
-        assert!(f.file_allowed(&segs("src/a.txt")), "包含的文件夹内文件自动包含");
+        assert!(
+            f.dir_visible(&segs("src/inner")),
+            "包含文件夹 => 其内子目录可见（内容全包含）"
+        );
+        assert!(
+            f.file_allowed(&segs("src/a.txt")),
+            "包含的文件夹内文件自动包含"
+        );
         assert!(f.file_allowed(&segs("src/inner/a.txt")));
         assert!(!f.dir_visible(&segs("docs")));
         assert!(!f.file_allowed(&segs("docs/a.txt")));
@@ -683,8 +753,8 @@ mod tests {
 
     #[tokio::test]
     async fn other_filter_conditions() {
-        use ai_vfs::{LocalFs, VfsPath, StatInfo, EntryKind};
         use ai_vfs::VfsProvider as _;
+        use ai_vfs::{EntryKind, LocalFs, StatInfo, VfsPath};
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("a.txt"), b"hello needle world").unwrap();
         let fs = LocalFs::new();
@@ -693,28 +763,56 @@ mod tests {
         let st = fs.stat(&p).await.unwrap();
 
         // 大小条件
-        let of = OtherFilter::from_spec(OtherFilterSpec { min_size: Some(1), max_size: Some(1000), ..Default::default() });
+        let of = OtherFilter::from_spec(OtherFilterSpec {
+            min_size: Some(1),
+            max_size: Some(1000),
+            ..Default::default()
+        });
         assert!(of.allows(&fs, &p, &st).await);
-        let of = OtherFilter::from_spec(OtherFilterSpec { max_size: Some(5), ..Default::default() });
+        let of = OtherFilter::from_spec(OtherFilterSpec {
+            max_size: Some(5),
+            ..Default::default()
+        });
         assert!(!of.allows(&fs, &p, &st).await);
 
         // 内容条件
-        let of = OtherFilter::from_spec(OtherFilterSpec { contains: Some("needle".into()), ..Default::default() });
+        let of = OtherFilter::from_spec(OtherFilterSpec {
+            contains: Some("needle".into()),
+            ..Default::default()
+        });
         assert!(of.allows(&fs, &p, &st).await);
-        let of = OtherFilter::from_spec(OtherFilterSpec { not_contains: Some("needle".into()), ..Default::default() });
+        let of = OtherFilter::from_spec(OtherFilterSpec {
+            not_contains: Some("needle".into()),
+            ..Default::default()
+        });
         assert!(!of.allows(&fs, &p, &st).await);
 
         // Unix 类型
-        let of = OtherFilter::from_spec(OtherFilterSpec { unix_types_include: Some("r".into()), ..Default::default() });
+        let of = OtherFilter::from_spec(OtherFilterSpec {
+            unix_types_include: Some("r".into()),
+            ..Default::default()
+        });
         assert!(of.allows(&fs, &p, &st).await);
-        let of = OtherFilter::from_spec(OtherFilterSpec { unix_types_exclude: Some("r".into()), ..Default::default() });
+        let of = OtherFilter::from_spec(OtherFilterSpec {
+            unix_types_exclude: Some("r".into()),
+            ..Default::default()
+        });
         assert!(!of.allows(&fs, &p, &st).await);
 
         // DOS 属性（readonly 位）
-        let ro = StatInfo { dos_attrs: dos_attr::READONLY, ..st };
-        let of = OtherFilter::from_spec(OtherFilterSpec { attrs_include: Some("r".into()), ..Default::default() });
+        let ro = StatInfo {
+            dos_attrs: dos_attr::READONLY,
+            ..st
+        };
+        let of = OtherFilter::from_spec(OtherFilterSpec {
+            attrs_include: Some("r".into()),
+            ..Default::default()
+        });
         assert!(of.allows(&fs, &p, &ro).await);
-        let of = OtherFilter::from_spec(OtherFilterSpec { attrs_exclude: Some("r".into()), ..Default::default() });
+        let of = OtherFilter::from_spec(OtherFilterSpec {
+            attrs_exclude: Some("r".into()),
+            ..Default::default()
+        });
         assert!(!of.allows(&fs, &p, &ro).await);
         assert_eq!(EntryKind::File, EntryKind::File);
     }

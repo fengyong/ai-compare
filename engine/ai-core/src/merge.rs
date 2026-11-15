@@ -219,7 +219,10 @@ pub struct MergeModel {
 impl MergeModel {
     /// 冲突块总数（含已自动采用的）
     pub fn conflict_count(&self) -> u32 {
-        self.chunks.iter().filter(|c| c.origin == ChunkOrigin::Conflict).count() as u32
+        self.chunks
+            .iter()
+            .filter(|c| c.origin == ChunkOrigin::Conflict)
+            .count() as u32
     }
 
     /// 未决冲突块 id（无决策且无自动采用的冲突块）
@@ -236,7 +239,9 @@ impl MergeModel {
         self.chunks
             .iter()
             .filter(|c| {
-                c.origin == ChunkOrigin::Conflict && !decisions.contains_key(&c.id) && c.auto_decision.is_none()
+                c.origin == ChunkOrigin::Conflict
+                    && !decisions.contains_key(&c.id)
+                    && c.auto_decision.is_none()
             })
             .map(|c| c.id)
             .collect()
@@ -246,7 +251,11 @@ impl MergeModel {
     pub fn is_well_formed(&self) -> bool {
         let mut expect = [(0u32, 0u32); 3];
         for c in &self.chunks {
-            let ranges = [(c.base, self.base_len), (c.left, self.left_len), (c.right, self.right_len)];
+            let ranges = [
+                (c.base, self.base_len),
+                (c.left, self.left_len),
+                (c.right, self.right_len),
+            ];
             for (i, (r, len)) in ranges.into_iter().enumerate() {
                 if r.start != expect[i].0 || r.end > len {
                     return false;
@@ -254,7 +263,9 @@ impl MergeModel {
                 expect[i] = (r.end, len);
             }
         }
-        expect[0].0 == self.base_len && expect[1].0 == self.left_len && expect[2].0 == self.right_len
+        expect[0].0 == self.base_len
+            && expect[1].0 == self.left_len
+            && expect[2].0 == self.right_len
     }
 }
 
@@ -263,7 +274,12 @@ impl MergeModel {
 // ---------------------------------------------------------------------------
 
 /// 三向合并主入口（经典 diff3；见模块文档）。
-pub fn merge3(base: &LineTable, left: &LineTable, right: &LineTable, opts: &MergeOptions) -> MergeModel {
+pub fn merge3(
+    base: &LineTable,
+    left: &LineTable,
+    right: &LineTable,
+    opts: &MergeOptions,
+) -> MergeModel {
     let dl = hunks_from_diff(base, left, &opts.diff);
     let dr = hunks_from_diff(base, right, &opts.diff);
 
@@ -318,8 +334,14 @@ pub fn merge3(base: &LineTable, left: &LineTable, right: &LineTable, opts: &Merg
             }
         }
         // 三方切片：base [start, end)；left/right 按 hunk 膨胀量换算
-        let l_expand: i64 = dl[i0..i].iter().map(|h| h.side_len() as i64 - h.base_len() as i64).sum();
-        let r_expand: i64 = dr[j0..j].iter().map(|h| h.side_len() as i64 - h.base_len() as i64).sum();
+        let l_expand: i64 = dl[i0..i]
+            .iter()
+            .map(|h| h.side_len() as i64 - h.base_len() as i64)
+            .sum();
+        let r_expand: i64 = dr[j0..j]
+            .iter()
+            .map(|h| h.side_len() as i64 - h.base_len() as i64)
+            .sum();
         let l_len = (end - start) as i64 + l_expand;
         let r_len = (end - start) as i64 + r_expand;
         let (l_len, r_len) = (l_len.max(0) as u32, r_len.max(0) as u32);
@@ -329,10 +351,10 @@ pub fn merge3(base: &LineTable, left: &LineTable, right: &LineTable, opts: &Merg
         o = end;
 
         // 分类（键序列比较；L == O → RightOnly 等）
-        let left_is_base = l_len == end - start
-            && keys_equal(base, start, end, left, ls, le, &opts.diff);
-        let right_is_base = r_len == end - start
-            && keys_equal(base, start, end, right, rs, re, &opts.diff);
+        let left_is_base =
+            l_len == end - start && keys_equal(base, start, end, left, ls, le, &opts.diff);
+        let right_is_base =
+            r_len == end - start && keys_equal(base, start, end, right, rs, re, &opts.diff);
         let origin = if left_is_base && right_is_base {
             ChunkOrigin::Stable
         } else if left_is_base {
@@ -401,8 +423,23 @@ fn renumber(chunks: &mut [MergeChunk]) {
 }
 
 /// 块构造（三方区间 + 冲突详情；auto_decision 由 apply_auto_resolve 统一填充）
-fn chunk(id: u32, origin: ChunkOrigin, base: LineRange, left: LineRange, right: LineRange, conflict: Option<ConflictDetail>) -> MergeChunk {
-    MergeChunk { id, origin, base, left, right, conflict, auto_decision: None }
+fn chunk(
+    id: u32,
+    origin: ChunkOrigin,
+    base: LineRange,
+    left: LineRange,
+    right: LineRange,
+    conflict: Option<ConflictDetail>,
+) -> MergeChunk {
+    MergeChunk {
+        id,
+        origin,
+        base,
+        left,
+        right,
+        conflict,
+        auto_decision: None,
+    }
 }
 
 /// 单路 diff 的 hunk（base 坐标 + 对侧坐标；半开区间）
@@ -440,18 +477,33 @@ fn hunks_from_diff(base: &LineTable, side: &LineTable, opts: &TextDiffOptions) -
                 let (Some(l), Some(r)) = (sec.left, sec.right) else {
                     unreachable!("Change 必有两侧区间");
                 };
-                hunks.push(Hunk { base_start: l.start, base_end: l.end, side_start: r.start, side_end: r.end });
+                hunks.push(Hunk {
+                    base_start: l.start,
+                    base_end: l.end,
+                    side_start: r.start,
+                    side_end: r.end,
+                });
                 o = l.end;
                 s = r.end;
             }
             SectionKind::Delete => {
                 let l = sec.left.expect("Delete 必有左区间");
-                hunks.push(Hunk { base_start: l.start, base_end: l.end, side_start: s, side_end: s });
+                hunks.push(Hunk {
+                    base_start: l.start,
+                    base_end: l.end,
+                    side_start: s,
+                    side_end: s,
+                });
                 o = l.end;
             }
             SectionKind::Insert => {
                 let r = sec.right.expect("Insert 必有右区间");
-                hunks.push(Hunk { base_start: o, base_end: o, side_start: r.start, side_end: r.end });
+                hunks.push(Hunk {
+                    base_start: o,
+                    base_end: o,
+                    side_start: r.start,
+                    side_end: r.end,
+                });
                 s = r.end;
             }
         }
@@ -474,7 +526,9 @@ fn keys_equal(
     }
     let n = a_end - a_start;
     for k in 0..n {
-        if a.compare_key((a_start + k) as usize, opts) != b.compare_key((b_start + k) as usize, opts) {
+        if a.compare_key((a_start + k) as usize, opts)
+            != b.compare_key((b_start + k) as usize, opts)
+        {
             return false;
         }
     }
@@ -502,8 +556,12 @@ fn build_conflict_detail(
     };
 
     // 子对齐：L↔R 在 raw 键上 diff（Myers），逐行配对并标注 importance
-    let l_keys: Vec<Cow<'_, str>> = (ls..le).map(|i| left.compare_key(i as usize, &opts.diff)).collect();
-    let r_keys: Vec<Cow<'_, str>> = (rs..re).map(|i| right.compare_key(i as usize, &opts.diff)).collect();
+    let l_keys: Vec<Cow<'_, str>> = (ls..le)
+        .map(|i| left.compare_key(i as usize, &opts.diff))
+        .collect();
+    let r_keys: Vec<Cow<'_, str>> = (rs..re)
+        .map(|i| right.compare_key(i as usize, &opts.diff))
+        .collect();
     let ops = myers::diff_seq(&l_keys, &r_keys);
     let mut rows = Vec::new();
     let (mut li, mut ri) = (0usize, 0usize);
@@ -530,16 +588,37 @@ fn build_conflict_detail(
                     _ => 0,
                 };
                 for p in 0..d.max(ins) as usize {
-                    let l_pos = if p < d as usize { Some(ls + li as u32 + p as u32) } else { None };
-                    let r_pos = if p < ins as usize { Some(rs + ri as u32 + p as u32) } else { None };
+                    let l_pos = if p < d as usize {
+                        Some(ls + li as u32 + p as u32)
+                    } else {
+                        None
+                    };
+                    let r_pos = if p < ins as usize {
+                        Some(rs + ri as u32 + p as u32)
+                    } else {
+                        None
+                    };
                     let unimportant = match (l_pos, r_pos) {
                         (Some(a), Some(b)) => {
-                            importance_key(left.line(a as usize), &opts.diff, &opts.importance, Some(a as usize))
-                                == importance_key(right.line(b as usize), &opts.diff, &opts.importance, Some(b as usize))
+                            importance_key(
+                                left.line(a as usize),
+                                &opts.diff,
+                                &opts.importance,
+                                Some(a as usize),
+                            ) == importance_key(
+                                right.line(b as usize),
+                                &opts.diff,
+                                &opts.importance,
+                                Some(b as usize),
+                            )
                         }
                         _ => false,
                     };
-                    rows.push(ConflictRow { left: l_pos, right: r_pos, unimportant });
+                    rows.push(ConflictRow {
+                        left: l_pos,
+                        right: r_pos,
+                        unimportant,
+                    });
                 }
                 li += d as usize;
                 ri += ins as usize;
@@ -548,7 +627,11 @@ fn build_conflict_detail(
             RawOp::Insert(n) => {
                 // 独立插入（前无删除）：孤儿行
                 for p in 0..n {
-                    rows.push(ConflictRow { left: None, right: Some(rs + ri as u32 + p), unimportant: false });
+                    rows.push(ConflictRow {
+                        left: None,
+                        right: Some(rs + ri as u32 + p),
+                        unimportant: false,
+                    });
                 }
                 ri += n as usize;
                 k += 1;
@@ -559,11 +642,24 @@ fn build_conflict_detail(
     // 不重要冲突：左右切片 importance 键序列整体相等
     let unimportant = le - ls == re - rs
         && (ls..le).zip(rs..re).all(|(a, b)| {
-            importance_key(left.line(a as usize), &opts.diff, &opts.importance, Some(a as usize))
-                == importance_key(right.line(b as usize), &opts.diff, &opts.importance, Some(b as usize))
+            importance_key(
+                left.line(a as usize),
+                &opts.diff,
+                &opts.importance,
+                Some(a as usize),
+            ) == importance_key(
+                right.line(b as usize),
+                &opts.diff,
+                &opts.importance,
+                Some(b as usize),
+            )
         });
 
-    ConflictDetail { kind, rows, unimportant }
+    ConflictDetail {
+        kind,
+        rows,
+        unimportant,
+    }
 }
 
 /// 冲突窗口（FR-TMRG-003）：间隔 ≤ n 稳定行的 LeftOnly/RightOnly 块合并为冲突块。
@@ -599,7 +695,10 @@ fn apply_conflict_window(
             if next_change >= chunks.len()
                 || chunks[last + 1].origin != ChunkOrigin::Stable
                 || chunks[last + 1].base.len() > window
-                || !matches!(chunks[next_change].origin, ChunkOrigin::LeftOnly | ChunkOrigin::RightOnly)
+                || !matches!(
+                    chunks[next_change].origin,
+                    ChunkOrigin::LeftOnly | ChunkOrigin::RightOnly
+                )
             {
                 break;
             }
@@ -710,7 +809,14 @@ pub struct SynthesizeOptions {
 
 impl Default for SynthesizeOptions {
     fn default() -> Self {
-        SynthesizeOptions { unresolved: UnresolvedPolicy::Markers(MarkerOptions::from_names("", "", "", MarkerStyle::Merge)) }
+        SynthesizeOptions {
+            unresolved: UnresolvedPolicy::Markers(MarkerOptions::from_names(
+                "",
+                "",
+                "",
+                MarkerStyle::Merge,
+            )),
+        }
     }
 }
 
@@ -740,9 +846,15 @@ pub fn synthesize(
                 ChunkOrigin::Conflict => {
                     unresolved.push(c.id);
                     match &opts.unresolved {
-                        UnresolvedPolicy::TakeLeft => push_lines(&mut parts, left, c.left.start, c.left.end),
-                        UnresolvedPolicy::TakeRight => push_lines(&mut parts, right, c.right.start, c.right.end),
-                        UnresolvedPolicy::TakeBase => push_lines(&mut parts, base, c.base.start, c.base.end),
+                        UnresolvedPolicy::TakeLeft => {
+                            push_lines(&mut parts, left, c.left.start, c.left.end)
+                        }
+                        UnresolvedPolicy::TakeRight => {
+                            push_lines(&mut parts, right, c.right.start, c.right.end)
+                        }
+                        UnresolvedPolicy::TakeBase => {
+                            push_lines(&mut parts, base, c.base.start, c.base.end)
+                        }
                         UnresolvedPolicy::TakeLeftThenRight => {
                             push_lines(&mut parts, left, c.left.start, c.left.end);
                             push_lines(&mut parts, right, c.right.start, c.right.end);
@@ -761,7 +873,11 @@ pub fn synthesize(
     }
 
     let text = join_parts(&parts);
-    MergeOutput { text, unresolved, lines: parts.len() as u32 }
+    MergeOutput {
+        text,
+        unresolved,
+        lines: parts.len() as u32,
+    }
 }
 
 /// 便捷入口：无决策自动合成（auto_merge）
@@ -862,7 +978,12 @@ fn push_markers(
 }
 
 /// marker 行尾风格 = 冲突块三方内容行的多数行尾（None 不计；平票取 LF）
-fn marker_ending(base: &LineTable, left: &LineTable, right: &LineTable, c: &MergeChunk) -> LineEnding {
+fn marker_ending(
+    base: &LineTable,
+    left: &LineTable,
+    right: &LineTable,
+    c: &MergeChunk,
+) -> LineEnding {
     let mut crlf = 0u32;
     let mut lf = 0u32;
     let mut cr = 0u32;
@@ -905,7 +1026,8 @@ fn push_lines_forced(
 }
 
 fn join_parts(parts: &[(String, LineEnding)]) -> String {
-    let mut out = String::with_capacity(parts.iter().map(|(t, e)| t.len() + e.as_str().len()).sum());
+    let mut out =
+        String::with_capacity(parts.iter().map(|(t, e)| t.len() + e.as_str().len()).sum());
     for (t, e) in parts {
         out.push_str(t);
         out.push_str(e.as_str());
@@ -953,7 +1075,14 @@ mod tests {
         let right = t("a\nb\nc\nd\nE\n");
         let m = merge3(&base, &left, &right, &opts());
         let kinds: Vec<ChunkOrigin> = m.chunks.iter().map(|c| c.origin).collect();
-        assert_eq!(kinds, vec![ChunkOrigin::LeftOnly, ChunkOrigin::Stable, ChunkOrigin::RightOnly]);
+        assert_eq!(
+            kinds,
+            vec![
+                ChunkOrigin::LeftOnly,
+                ChunkOrigin::Stable,
+                ChunkOrigin::RightOnly
+            ]
+        );
         let out = auto_merge_text(&m, &base, &left, &right, &marker_policy(MarkerStyle::Diff3));
         assert_eq!(out.text, "A\nb\nc\nd\nE\n");
         assert!(out.unresolved.is_empty());
@@ -998,7 +1127,10 @@ mod tests {
         assert_eq!(out.unresolved, vec![1]);
         // git merge 风格（无 base 段）
         let out2 = auto_merge_text(&m, &base, &left, &right, &marker_policy(MarkerStyle::Merge));
-        assert_eq!(out2.text, "a\n<<<<<<< L\nLEFT\n=======\nRIGHT\n>>>>>>> R\nc\n");
+        assert_eq!(
+            out2.text,
+            "a\n<<<<<<< L\nLEFT\n=======\nRIGHT\n>>>>>>> R\nc\n"
+        );
     }
 
     #[test]
@@ -1008,7 +1140,11 @@ mod tests {
         let left = t("a\nL1\nL2\nb\n");
         let right = t("a\nR1\nb\n");
         let m = merge3(&base, &left, &right, &opts());
-        let cf = m.chunks.iter().find(|c| c.origin == ChunkOrigin::Conflict).unwrap();
+        let cf = m
+            .chunks
+            .iter()
+            .find(|c| c.origin == ChunkOrigin::Conflict)
+            .unwrap();
         assert_eq!(cf.conflict.as_ref().unwrap().kind, ConflictKind::AddAdd);
 
         // 左删右改 → DeleteModify
@@ -1016,8 +1152,15 @@ mod tests {
         let left = t("a\nc\n");
         let right = t("a\nB!\nc\n");
         let m = merge3(&base, &left, &right, &opts());
-        let cf = m.chunks.iter().find(|c| c.origin == ChunkOrigin::Conflict).unwrap();
-        assert_eq!(cf.conflict.as_ref().unwrap().kind, ConflictKind::DeleteModify);
+        let cf = m
+            .chunks
+            .iter()
+            .find(|c| c.origin == ChunkOrigin::Conflict)
+            .unwrap();
+        assert_eq!(
+            cf.conflict.as_ref().unwrap().kind,
+            ConflictKind::DeleteModify
+        );
     }
 
     #[test]
@@ -1050,9 +1193,16 @@ mod tests {
         let left = t("a\nL1\nL2\nb\n");
         let right = t("a\nR1\nR2\nb\n");
         let m = merge3(&base, &left, &right, &opts());
-        let conflicts: Vec<&MergeChunk> = m.chunks.iter().filter(|c| c.origin == ChunkOrigin::Conflict).collect();
+        let conflicts: Vec<&MergeChunk> = m
+            .chunks
+            .iter()
+            .filter(|c| c.origin == ChunkOrigin::Conflict)
+            .collect();
         assert_eq!(conflicts.len(), 1, "相邻插入合并为一个冲突块: {m:?}");
-        assert_eq!(conflicts[0].conflict.as_ref().unwrap().kind, ConflictKind::AddAdd);
+        assert_eq!(
+            conflicts[0].conflict.as_ref().unwrap().kind,
+            ConflictKind::AddAdd
+        );
     }
 
     // ------------------------------------------------------------------
@@ -1066,7 +1216,10 @@ mod tests {
         let right = t("x\n");
         let m = merge3(&base, &left, &right, &opts());
         assert_eq!(m.chunks[0].origin, ChunkOrigin::BothChanged);
-        assert_eq!(auto_merge_text(&m, &base, &left, &right, &marker_policy(MarkerStyle::Diff3)).text, "x\n");
+        assert_eq!(
+            auto_merge_text(&m, &base, &left, &right, &marker_policy(MarkerStyle::Diff3)).text,
+            "x\n"
+        );
     }
 
     #[test]
@@ -1076,7 +1229,10 @@ mod tests {
         let right = t("R\n");
         let m = merge3(&base, &left, &right, &opts());
         assert_eq!(m.chunks[0].origin, ChunkOrigin::Conflict);
-        assert_eq!(m.chunks[0].conflict.as_ref().unwrap().kind, ConflictKind::AddAdd);
+        assert_eq!(
+            m.chunks[0].conflict.as_ref().unwrap().kind,
+            ConflictKind::AddAdd
+        );
     }
 
     #[test]
@@ -1086,7 +1242,10 @@ mod tests {
         let right = t("a\nextra\n");
         let m = merge3(&base, &left, &right, &opts());
         assert_eq!(m.chunks[0].origin, ChunkOrigin::Conflict);
-        assert_eq!(m.chunks[0].conflict.as_ref().unwrap().kind, ConflictKind::DeleteModify);
+        assert_eq!(
+            m.chunks[0].conflict.as_ref().unwrap().kind,
+            ConflictKind::DeleteModify
+        );
     }
 
     #[test]
@@ -1096,7 +1255,10 @@ mod tests {
         let right = t("a\nc\n");
         let m = merge3(&base, &left, &right, &opts());
         assert_eq!(m.conflict_count(), 0);
-        assert_eq!(auto_merge_text(&m, &base, &left, &right, &marker_policy(MarkerStyle::Diff3)).text, "a\nc\n");
+        assert_eq!(
+            auto_merge_text(&m, &base, &left, &right, &marker_policy(MarkerStyle::Diff3)).text,
+            "a\nc\n"
+        );
     }
 
     #[test]
@@ -1123,16 +1285,37 @@ mod tests {
 
         let mut d = HashMap::new();
         d.insert(1u32, MergeDecision::TakeRight);
-        let out = synthesize(&m, &base, &left, &right, &d, &marker_policy(MarkerStyle::Diff3));
+        let out = synthesize(
+            &m,
+            &base,
+            &left,
+            &right,
+            &d,
+            &marker_policy(MarkerStyle::Diff3),
+        );
         assert_eq!(out.text, "a\nRIGHT\nc\n");
         assert!(out.unresolved.is_empty(), "决策后冲突已决");
 
         d.insert(1, MergeDecision::TakeBase);
-        let out = synthesize(&m, &base, &left, &right, &d, &marker_policy(MarkerStyle::Diff3));
+        let out = synthesize(
+            &m,
+            &base,
+            &left,
+            &right,
+            &d,
+            &marker_policy(MarkerStyle::Diff3),
+        );
         assert_eq!(out.text, "a\nb\nc\n");
 
         d.insert(1, MergeDecision::TakeLeftThenRight);
-        let out = synthesize(&m, &base, &left, &right, &d, &marker_policy(MarkerStyle::Diff3));
+        let out = synthesize(
+            &m,
+            &base,
+            &left,
+            &right,
+            &d,
+            &marker_policy(MarkerStyle::Diff3),
+        );
         assert_eq!(out.text, "a\nLEFT\nRIGHT\nc\n");
     }
 
@@ -1143,8 +1326,18 @@ mod tests {
         let right = t("a\nRIGHT\nc\n");
         let m = merge3(&base, &left, &right, &opts());
         let mut d = HashMap::new();
-        d.insert(1u32, MergeDecision::Manual(vec!["手动一".into(), "手动二".into()]));
-        let out = synthesize(&m, &base, &left, &right, &d, &marker_policy(MarkerStyle::Diff3));
+        d.insert(
+            1u32,
+            MergeDecision::Manual(vec!["手动一".into(), "手动二".into()]),
+        );
+        let out = synthesize(
+            &m,
+            &base,
+            &left,
+            &right,
+            &d,
+            &marker_policy(MarkerStyle::Diff3),
+        );
         assert_eq!(out.text, "a\n手动一\n手动二\nc\n");
     }
 
@@ -1158,7 +1351,14 @@ mod tests {
         assert_eq!(m.chunks[1].origin, ChunkOrigin::LeftOnly);
         let mut d = HashMap::new();
         d.insert(1u32, MergeDecision::TakeBase);
-        let out = synthesize(&m, &base, &left, &right, &d, &marker_policy(MarkerStyle::Diff3));
+        let out = synthesize(
+            &m,
+            &base,
+            &left,
+            &right,
+            &d,
+            &marker_policy(MarkerStyle::Diff3),
+        );
         assert_eq!(out.text, "a\nb\nc\n");
     }
 
@@ -1172,9 +1372,30 @@ mod tests {
         let mut d = HashMap::new();
         d.insert(1u32, MergeDecision::TakeLeft);
         d.insert(3u32, MergeDecision::TakeRight);
-        let o1 = synthesize(&m, &base, &left, &right, &d, &marker_policy(MarkerStyle::Diff3));
-        let o2 = synthesize(&m, &base, &left, &right, &d, &marker_policy(MarkerStyle::Diff3));
-        let o3 = synthesize(&m, &base, &left, &right, &d, &marker_policy(MarkerStyle::Diff3));
+        let o1 = synthesize(
+            &m,
+            &base,
+            &left,
+            &right,
+            &d,
+            &marker_policy(MarkerStyle::Diff3),
+        );
+        let o2 = synthesize(
+            &m,
+            &base,
+            &left,
+            &right,
+            &d,
+            &marker_policy(MarkerStyle::Diff3),
+        );
+        let o3 = synthesize(
+            &m,
+            &base,
+            &left,
+            &right,
+            &d,
+            &marker_policy(MarkerStyle::Diff3),
+        );
         assert_eq!(o1, o2);
         assert_eq!(o2, o3, "重复决策不漂移");
         assert_eq!(o1.text, "h\nL1\nb\nR2\nt\n");
@@ -1199,18 +1420,28 @@ mod tests {
             &base,
             &left,
             &right,
-            &MergeOptions { conflict_window: Some(1), ..opts() },
+            &MergeOptions {
+                conflict_window: Some(1),
+                ..opts()
+            },
         );
         assert_eq!(m1.conflict_count(), 1, "{m1:?}");
         assert!(m1.chunks.iter().any(|c| c.origin == ChunkOrigin::Conflict));
-        let cf = m1.chunks.iter().find(|c| c.origin == ChunkOrigin::Conflict).unwrap();
+        let cf = m1
+            .chunks
+            .iter()
+            .find(|c| c.origin == ChunkOrigin::Conflict)
+            .unwrap();
         assert_eq!(cf.base, LineRange::new(0, 3), "冲突块跨稳定间隔");
         // 窗口 N=0 不够近（间隔 1 行 > 0）→ 不合并
         let m2 = merge3(
             &base,
             &left,
             &right,
-            &MergeOptions { conflict_window: Some(0), ..opts() },
+            &MergeOptions {
+                conflict_window: Some(0),
+                ..opts()
+            },
         );
         assert_eq!(m2.conflict_count(), 0);
     }
@@ -1225,7 +1456,10 @@ mod tests {
             &base,
             &left,
             &right,
-            &MergeOptions { conflict_window: Some(5), ..opts() },
+            &MergeOptions {
+                conflict_window: Some(5),
+                ..opts()
+            },
         );
         assert_eq!(m.conflict_count(), 0);
         let kinds: Vec<ChunkOrigin> = m.chunks.iter().map(|c| c.origin).collect();
@@ -1266,7 +1500,10 @@ mod tests {
         let right = t("a\nB\nc\n");
         let o = MergeOptions {
             ignore_unimportant: true,
-            importance: ImportanceOptions { trailing_ws_unimportant: true, ..ImportanceOptions::default() },
+            importance: ImportanceOptions {
+                trailing_ws_unimportant: true,
+                ..ImportanceOptions::default()
+            },
             ..opts()
         };
         let m = merge3(&base, &left, &right, &o);
@@ -1281,7 +1518,10 @@ mod tests {
         let left = t("a\nB  \nc\n");
         let right = t("a\nB\nc\n");
         let o = MergeOptions {
-            diff: TextDiffOptions { whitespace: WhitespaceMode::IgnoreAll, ..TextDiffOptions::default() },
+            diff: TextDiffOptions {
+                whitespace: WhitespaceMode::IgnoreAll,
+                ..TextDiffOptions::default()
+            },
             ..opts()
         };
         let m = merge3(&base, &left, &right, &o);
@@ -1295,7 +1535,10 @@ mod tests {
         let base = t("a\nb\nc\n");
         let left = t("a\nLEFT\nc\n");
         let right = t("a\nRIGHT\nc\n");
-        let o = MergeOptions { favor: Some(FavorSide::Left), ..opts() };
+        let o = MergeOptions {
+            favor: Some(FavorSide::Left),
+            ..opts()
+        };
         let m = merge3(&base, &left, &right, &o);
         assert_eq!(m.unresolved(), vec![1], "重要冲突不自动采用");
     }
@@ -1309,7 +1552,11 @@ mod tests {
         let mut o = opts();
         o.importance.trailing_ws_unimportant = true;
         let m = merge3(&base, &left, &right, &o);
-        let cf = m.chunks.iter().find(|c| c.origin == ChunkOrigin::Conflict).unwrap();
+        let cf = m
+            .chunks
+            .iter()
+            .find(|c| c.origin == ChunkOrigin::Conflict)
+            .unwrap();
         let d = cf.conflict.as_ref().unwrap();
         assert!(!d.unimportant, "整体重要（L vs R 行重要差异）");
         assert_eq!(d.rows.len(), 3, "L=[L,b  ,c] R=[R,b,c!] 位置配对 3 行");
@@ -1441,7 +1688,16 @@ mod tests {
         let m = merge3(&base, &left, &right, &opts());
         assert_eq!(m.conflict_count(), 1);
         let out = auto_merge_text(&m, &base, &left, &right, &marker_policy(MarkerStyle::Merge));
-        assert_eq!(out.unresolved, vec![m.chunks.iter().find(|c| c.origin == ChunkOrigin::Conflict).unwrap().id]);
+        assert_eq!(
+            out.unresolved,
+            vec![
+                m.chunks
+                    .iter()
+                    .find(|c| c.origin == ChunkOrigin::Conflict)
+                    .unwrap()
+                    .id
+            ]
+        );
         assert!(out.text.contains("<<<<<<<") && out.text.contains(">>>>>>>"));
     }
 

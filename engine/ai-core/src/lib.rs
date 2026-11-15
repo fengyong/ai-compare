@@ -27,8 +27,8 @@
 use std::borrow::Cow;
 
 pub mod formats;
-pub mod histogram;
 pub mod hex;
+pub mod histogram;
 pub mod incremental;
 pub mod inline;
 pub mod keys;
@@ -38,8 +38,8 @@ pub mod merge;
 pub mod myers;
 pub mod options;
 pub mod patch;
-pub mod picture;
 pub mod patience;
+pub mod picture;
 pub mod pipeline;
 pub mod progressive;
 pub mod report;
@@ -57,38 +57,38 @@ pub use rules::{
     RuleSet, RuleTarget, RulesDocument, RulesOptions,
 };
 
+pub use incremental::{DiffEngine, TextEdit};
 pub use inline::{
     inline_diff_line, inline_diff_section, CharSpan, InlineLineDiff, InlineLineResult, InlineSpan,
     InlineSpanKind,
 };
-pub use incremental::{DiffEngine, TextEdit};
 pub use keys::{
     aggregate_unimportant, apply_classification, classify_sections, importance_key, raw_key,
     KeyedDiffOutput, LineKeyPair, LineKeys, SectionKeyInfo,
 };
 pub use lines::{LineEnding, LineEntry, LineTable};
 pub use merge::{
-    auto_merge_text, merge3, synthesize, ChunkOrigin, ConflictDefault, ConflictDetail, ConflictKind,
-    ConflictRow, FavorSide, MarkerOptions, MarkerStyle, MergeChunk, MergeDecision, MergeModel,
-    MergeOptions, MergeOutput, SynthesizeOptions, UnresolvedPolicy,
+    auto_merge_text, merge3, synthesize, ChunkOrigin, ConflictDefault, ConflictDetail,
+    ConflictKind, ConflictRow, FavorSide, MarkerOptions, MarkerStyle, MergeChunk, MergeDecision,
+    MergeModel, MergeOptions, MergeOutput, SynthesizeOptions, UnresolvedPolicy,
 };
 pub use myers::{coalesce_ops, diff_seq_deadline, RawOp};
 pub use options::{
-    DiffConfig, DiffSide, ImportanceOptions, InlineLevel, InlineOptions, LineAlignAlgo,
-    ManualAlignOptions, SemanticCleanup, TextDiffOptions, WhitespaceMode,
-    AlignAnchor, DEFAULT_INLINE_MAX_LINE_CHARS, DEFAULT_INLINE_TIMEOUT_MS, DEFAULT_SKEW_TOLERANCE,
+    AlignAnchor, DiffConfig, DiffSide, ImportanceOptions, InlineLevel, InlineOptions,
+    LineAlignAlgo, ManualAlignOptions, SemanticCleanup, TextDiffOptions, WhitespaceMode,
+    DEFAULT_INLINE_MAX_LINE_CHARS, DEFAULT_INLINE_TIMEOUT_MS, DEFAULT_SKEW_TOLERANCE,
     DMP_SEMANTIC_EDIT_COST,
 };
 pub use progressive::ProgressiveDiffer;
 pub use report::{
     civil_from_epoch_ms, default_report_name, expand_template, html_escape, layout_extension,
-    render_report, renderer_for_layout, status_is_diff, status_is_orphan, status_mark, CsvRenderer,
-    DirColumns, DirDisplayFilter, DirReportRow, DirReportStats, DirSnapshot, DisplayFilter,
-    HexSnapshot, HtmlRenderer, InterleavedRenderer, ListRenderer, MergeSnapshot, PatchRenderer,
-    PatchStyle, ReportEntryKind, ReportEntryStatus, ReportError, ReportLayout, ReportNaming,
-    ReportOptions, ReportRenderer, ReportSideInfo, ReportSnapshot, SideBySideRenderer,
-    StatsRenderer, SummaryRenderer, TableSnapshot, TextSnapshot, TreeRenderer, XmlRenderer,
-    ColorMode, WrapMode, DEFAULT_REPORT_CONTEXT,
+    render_report, renderer_for_layout, status_is_diff, status_is_orphan, status_mark, ColorMode,
+    CsvRenderer, DirColumns, DirDisplayFilter, DirReportRow, DirReportStats, DirSnapshot,
+    DisplayFilter, HexSnapshot, HtmlRenderer, InterleavedRenderer, ListRenderer, MergeSnapshot,
+    PatchRenderer, PatchStyle, ReportEntryKind, ReportEntryStatus, ReportError, ReportLayout,
+    ReportNaming, ReportOptions, ReportRenderer, ReportSideInfo, ReportSnapshot,
+    SideBySideRenderer, StatsRenderer, SummaryRenderer, TableSnapshot, TextSnapshot, TreeRenderer,
+    WrapMode, XmlRenderer, DEFAULT_REPORT_CONTEXT,
 };
 pub use sections::{
     build_sections, DiffError, DiffOutput, DiffSummary, Importance, Section, SectionEvent,
@@ -108,7 +108,10 @@ pub fn diff_text(
     right: &LineTable,
     opts: &TextDiffOptions,
 ) -> Result<DiffOutput, DiffError> {
-    let cfg = DiffConfig { base: opts.clone(), ..DiffConfig::default() };
+    let cfg = DiffConfig {
+        base: opts.clone(),
+        ..DiffConfig::default()
+    };
     let keyed = diff_config(left, right, &cfg)?;
     Ok(keyed.output)
 }
@@ -132,7 +135,10 @@ pub fn diff_stream(
     opts: &TextDiffOptions,
     sink: &mut dyn FnMut(SectionEvent),
 ) -> Result<DiffSummary, DiffError> {
-    let cfg = DiffConfig { base: opts.clone(), ..DiffConfig::default() };
+    let cfg = DiffConfig {
+        base: opts.clone(),
+        ..DiffConfig::default()
+    };
     let keyed = diff_config(left, right, &cfg)?;
     for s in &keyed.output.sections {
         sink(SectionEvent::Append(*s));

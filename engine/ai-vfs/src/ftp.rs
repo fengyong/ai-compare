@@ -20,8 +20,8 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use suppaftp::list::File as ListFile;
-use suppaftp::types::FileType as FtpTransferType;
 use suppaftp::tokio::AsyncFtpStream;
+use suppaftp::types::FileType as FtpTransferType;
 use tokio::io::AsyncReadExt;
 
 use crate::{EntryKind, StatInfo, VfsCaps, VfsDirEntry, VfsError, VfsPath, VfsProvider};
@@ -67,7 +67,15 @@ pub fn split_ftp_uri(s: &str) -> Result<(FtpConfig, String), VfsError> {
     if host.is_empty() {
         return Err(VfsError::InvalidPath(format!("缺主机名: {s}")));
     }
-    Ok((FtpConfig { host, port, user, password }, path))
+    Ok((
+        FtpConfig {
+            host,
+            port,
+            user,
+            password,
+        },
+        path,
+    ))
 }
 
 /// FTP Provider：单流复用 + 失败重连一次。
@@ -114,7 +122,9 @@ impl FtpFs {
         T: Send,
         F: for<'a> FnOnce(
             &'a mut AsyncFtpStream,
-        ) -> Pin<Box<dyn std::future::Future<Output = Result<T, suppaftp::FtpError>> + Send + 'a>>,
+        ) -> Pin<
+            Box<dyn std::future::Future<Output = Result<T, suppaftp::FtpError>> + Send + 'a>,
+        >,
     {
         let mut guard = self.stream.lock().await;
         if guard.is_none() {
@@ -148,7 +158,9 @@ fn ftp_err(e: suppaftp::FtpError) -> VfsError {
 }
 
 fn not_found(path: &VfsPath) -> VfsError {
-    VfsError::NotFound { path: path.as_str().to_string() }
+    VfsError::NotFound {
+        path: path.as_str().to_string(),
+    }
 }
 
 #[async_trait]
@@ -258,7 +270,10 @@ impl VfsProvider for FtpFs {
     }
 
     async fn read_file_bytes(&self, path: &VfsPath) -> Result<Vec<u8>, VfsError> {
-        let sp: Arc<str> = Arc::from(self.server_path(path.as_str().trim_start_matches('/')).as_str());
+        let sp: Arc<str> = Arc::from(
+            self.server_path(path.as_str().trim_start_matches('/'))
+                .as_str(),
+        );
         self.with_stream(move |s| {
             let sp = sp.clone();
             Box::pin(async move {
@@ -280,7 +295,10 @@ impl VfsProvider for FtpFs {
     }
 
     async fn write_file_bytes(&self, path: &VfsPath, data: &[u8]) -> Result<(), VfsError> {
-        let sp: Arc<str> = Arc::from(self.server_path(path.as_str().trim_start_matches('/')).as_str());
+        let sp: Arc<str> = Arc::from(
+            self.server_path(path.as_str().trim_start_matches('/'))
+                .as_str(),
+        );
         let data = data.to_vec();
         self.with_stream(move |s| {
             let sp = sp.clone();
@@ -293,7 +311,10 @@ impl VfsProvider for FtpFs {
     }
 
     async fn mkdir(&self, path: &VfsPath) -> Result<(), VfsError> {
-        let sp: Arc<str> = Arc::from(self.server_path(path.as_str().trim_start_matches('/')).as_str());
+        let sp: Arc<str> = Arc::from(
+            self.server_path(path.as_str().trim_start_matches('/'))
+                .as_str(),
+        );
         self.with_stream(move |s| {
             let sp = sp.clone();
             Box::pin(async move { s.mkdir(&sp).await })
@@ -302,8 +323,14 @@ impl VfsProvider for FtpFs {
     }
 
     async fn rename(&self, from: &VfsPath, to: &VfsPath) -> Result<(), VfsError> {
-        let sp_from: Arc<str> = Arc::from(self.server_path(from.as_str().trim_start_matches('/')).as_str());
-        let sp_to: Arc<str> = Arc::from(self.server_path(to.as_str().trim_start_matches('/')).as_str());
+        let sp_from: Arc<str> = Arc::from(
+            self.server_path(from.as_str().trim_start_matches('/'))
+                .as_str(),
+        );
+        let sp_to: Arc<str> = Arc::from(
+            self.server_path(to.as_str().trim_start_matches('/'))
+                .as_str(),
+        );
         self.with_stream(move |s| {
             let sp_from = sp_from.clone();
             let sp_to = sp_to.clone();

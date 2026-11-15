@@ -27,14 +27,12 @@ impl Level {
 
 fn max_level() -> Level {
     static LEVEL: OnceLock<Level> = OnceLock::new();
-    *LEVEL.get_or_init(|| {
-        match std::env::var("AI_ENGINE_LOG").as_deref() {
-            Ok("error") => Level::Error,
-            Ok("warn") => Level::Warn,
-            Ok("debug") | Ok("trace") => Level::Debug,
-            Ok("off") | Ok("none") => Level::Error,
-            _ => Level::Info,
-        }
+    *LEVEL.get_or_init(|| match std::env::var("AI_ENGINE_LOG").as_deref() {
+        Ok("error") => Level::Error,
+        Ok("warn") => Level::Warn,
+        Ok("debug") | Ok("trace") => Level::Debug,
+        Ok("off") | Ok("none") => Level::Error,
+        _ => Level::Info,
     })
 }
 

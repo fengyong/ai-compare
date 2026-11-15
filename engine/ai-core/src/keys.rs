@@ -43,9 +43,12 @@ pub fn importance_key<'a>(
     line_index: Option<usize>,
 ) -> Cow<'a, str> {
     let text = line.text.as_str();
-    let needs_ws = imp.leading_ws_unimportant || imp.embedded_ws_unimportant || imp.trailing_ws_unimportant;
+    let needs_ws =
+        imp.leading_ws_unimportant || imp.embedded_ws_unimportant || imp.trailing_ws_unimportant;
     let needs_case = imp.case_unimportant;
-    let needs_eol = !opts.ignore_eol_style && !imp.eol_style_unimportant && line.ending != crate::lines::LineEnding::Lf;
+    let needs_eol = !opts.ignore_eol_style
+        && !imp.eol_style_unimportant
+        && line.ending != crate::lines::LineEnding::Lf;
     let needs_grammar = opts.rules.has_folding();
     if !needs_ws && !needs_case && !needs_eol && !needs_grammar {
         return Cow::Borrowed(text);
@@ -123,7 +126,11 @@ pub fn compute_keys(
     opts: &TextDiffOptions,
     imp: &ImportanceOptions,
 ) -> (Vec<LineKeys>, Vec<LineKeys>) {
-    fn table_keys(table: &LineTable, opts: &TextDiffOptions, imp: &ImportanceOptions) -> Vec<LineKeys> {
+    fn table_keys(
+        table: &LineTable,
+        opts: &TextDiffOptions,
+        imp: &ImportanceOptions,
+    ) -> Vec<LineKeys> {
         (0..table.len())
             .map(|i| {
                 let entry = table.line(i);
@@ -186,14 +193,15 @@ pub fn classify_sections(
             SectionKind::Insert | SectionKind::Delete => Importance::Important,
         };
         // 手动忽略（最高优先级）
-        let overlaps_any = |ranges: &[(crate::options::DiffSide, crate::sections::LineRange)], probe: Option<crate::sections::LineRange>| {
+        let overlaps_any = |ranges: &[(crate::options::DiffSide, crate::sections::LineRange)],
+                            probe: Option<crate::sections::LineRange>| {
             let Some(probe) = probe else { return false };
-            ranges.iter().any(|(_, r)| {
-                match r.start < probe.end && probe.start < r.end {
+            ranges
+                .iter()
+                .any(|(_, r)| match r.start < probe.end && probe.start < r.end {
                     true => true,
                     false => false,
-                }
-            })
+                })
         };
         if overlaps_any(&manual.ignore, sec.left) || overlaps_any(&manual.ignore, sec.right) {
             classification = Importance::Ignored;
@@ -205,7 +213,10 @@ pub fn classify_sections(
 
 /// 把重判结果写回 sections（返回发生变化的 section id 列表，供
 /// `SectionEvent::ImportanceUpdate` 使用）。
-pub fn apply_classification(sections: &mut [Section], classification: &[Importance]) -> Vec<crate::sections::SectionId> {
+pub fn apply_classification(
+    sections: &mut [Section],
+    classification: &[Importance],
+) -> Vec<crate::sections::SectionId> {
     let mut changed = Vec::new();
     for (sec, imp) in sections.iter_mut().zip(classification.iter()) {
         if sec.important != *imp {
@@ -223,12 +234,18 @@ pub fn apply_classification(sections: &mut [Section], classification: &[Importan
 pub fn aggregate_unimportant(sections: &[Section]) -> Vec<Section> {
     let mut out: Vec<Section> = Vec::new();
     for sec in sections {
-        let foldable = matches!(sec.important, Importance::Unimportant) && sec.kind == SectionKind::Change;
+        let foldable =
+            matches!(sec.important, Importance::Unimportant) && sec.kind == SectionKind::Change;
         if foldable {
             // 折叠为 Equal（左右行数相等是 Unimportant 的前提）
             let left = sec.left.expect("Unimportant Change 必有左侧区间");
             let right = sec.right.expect("Unimportant Change 必有右侧区间");
-            let as_equal = Section { kind: SectionKind::Equal, left: Some(left), right: Some(right), ..*sec };
+            let as_equal = Section {
+                kind: SectionKind::Equal,
+                left: Some(left),
+                right: Some(right),
+                ..*sec
+            };
             merge_or_push(&mut out, as_equal);
         } else {
             out.push(*sec);
@@ -329,8 +346,13 @@ pub(crate) fn build_keyed_output(
                     } else {
                         None
                     };
-                    let unimportant = matches!((&lk, &rk), (Some(a), Some(b)) if a.importance == b.importance);
-                    lines.push(LineKeyPair { left: lk, right: rk, unimportant });
+                    let unimportant =
+                        matches!((&lk, &rk), (Some(a), Some(b)) if a.importance == b.importance);
+                    lines.push(LineKeyPair {
+                        left: lk,
+                        right: rk,
+                        unimportant,
+                    });
                 }
             }
             (Some(l), None) => {
@@ -353,17 +375,29 @@ pub(crate) fn build_keyed_output(
             }
             (None, None) => {}
         }
-        section_keys.push(SectionKeyInfo { id: sec.id, importance: sec.important, lines });
+        section_keys.push(SectionKeyInfo {
+            id: sec.id,
+            importance: sec.important,
+            lines,
+        });
     }
 
     KeyedDiffOutput {
-        output: DiffOutput { sections, summary: output.summary },
+        output: DiffOutput {
+            sections,
+            summary: output.summary,
+        },
         section_keys,
         unimportant_sections,
     }
 }
 
-fn line_keys(table: &LineTable, i: usize, opts: &TextDiffOptions, imp: &ImportanceOptions) -> LineKeys {
+fn line_keys(
+    table: &LineTable,
+    i: usize,
+    opts: &TextDiffOptions,
+    imp: &ImportanceOptions,
+) -> LineKeys {
     let entry = table.line(i);
     LineKeys {
         raw: raw_key(entry, opts).into_owned(),
@@ -378,7 +412,10 @@ mod tests {
     use crate::sections::LineRange;
 
     fn entry(text: &str) -> LineEntry {
-        LineEntry { text: text.into(), ending: crate::lines::LineEnding::Lf }
+        LineEntry {
+            text: text.into(),
+            ending: crate::lines::LineEnding::Lf,
+        }
     }
 
     #[test]
@@ -388,20 +425,37 @@ mod tests {
         let a = entry("  alpha  beta  ");
         let b = entry("alpha beta");
         // 默认：全部重要 → 键即原文，不同
-        assert_ne!(importance_key(&a, &opts, &imp, None), importance_key(&b, &opts, &imp, None));
+        assert_ne!(
+            importance_key(&a, &opts, &imp, None),
+            importance_key(&b, &opts, &imp, None)
+        );
 
         imp.trailing_ws_unimportant = true;
-        assert_ne!(importance_key(&a, &opts, &imp, None), importance_key(&b, &opts, &imp, None), "行首空白仍重要");
+        assert_ne!(
+            importance_key(&a, &opts, &imp, None),
+            importance_key(&b, &opts, &imp, None),
+            "行首空白仍重要"
+        );
 
         imp.leading_ws_unimportant = true;
-        assert_ne!(importance_key(&a, &opts, &imp, None), importance_key(&b, &opts, &imp, None), "嵌入空白仍重要");
+        assert_ne!(
+            importance_key(&a, &opts, &imp, None),
+            importance_key(&b, &opts, &imp, None),
+            "嵌入空白仍重要"
+        );
 
         imp.embedded_ws_unimportant = true;
-        assert_eq!(importance_key(&a, &opts, &imp, None), importance_key(&b, &opts, &imp, None));
+        assert_eq!(
+            importance_key(&a, &opts, &imp, None),
+            importance_key(&b, &opts, &imp, None)
+        );
 
         // 嵌入折叠语义：连续空白 -> 单空格
         let c = entry("alpha   beta");
-        assert_eq!(importance_key(&c, &opts, &imp, None), importance_key(&b, &opts, &imp, None));
+        assert_eq!(
+            importance_key(&c, &opts, &imp, None),
+            importance_key(&b, &opts, &imp, None)
+        );
     }
 
     #[test]
@@ -410,9 +464,15 @@ mod tests {
         let mut imp = ImportanceOptions::default();
         let a = entry("Hello");
         let b = entry("hello");
-        assert_ne!(importance_key(&a, &opts, &imp, None), importance_key(&b, &opts, &imp, None));
+        assert_ne!(
+            importance_key(&a, &opts, &imp, None),
+            importance_key(&b, &opts, &imp, None)
+        );
         imp.case_unimportant = true;
-        assert_eq!(importance_key(&a, &opts, &imp, None), importance_key(&b, &opts, &imp, None));
+        assert_eq!(
+            importance_key(&a, &opts, &imp, None),
+            importance_key(&b, &opts, &imp, None)
+        );
     }
 
     #[test]
@@ -423,14 +483,23 @@ mod tests {
         crlf.ending = crate::lines::LineEnding::CrLf;
         let lf = entry("x");
         // 默认：骨架忽略行尾 + 行尾不重要 → 无标记
-        assert_eq!(importance_key(&crlf, &opts, &imp, None), importance_key(&lf, &opts, &imp, None));
+        assert_eq!(
+            importance_key(&crlf, &opts, &imp, None),
+            importance_key(&lf, &opts, &imp, None)
+        );
         // 骨架比较行尾（raw 键带标记），但行尾仍不重要 → importance 键无标记
         opts.ignore_eol_style = false;
         assert_ne!(raw_key(&crlf, &opts), raw_key(&lf, &opts));
-        assert_eq!(importance_key(&crlf, &opts, &imp, None), importance_key(&lf, &opts, &imp, None));
+        assert_eq!(
+            importance_key(&crlf, &opts, &imp, None),
+            importance_key(&lf, &opts, &imp, None)
+        );
         // 行尾重要 → importance 键带标记
         imp.eol_style_unimportant = false;
-        assert_ne!(importance_key(&crlf, &opts, &imp, None), importance_key(&lf, &opts, &imp, None));
+        assert_ne!(
+            importance_key(&crlf, &opts, &imp, None),
+            importance_key(&lf, &opts, &imp, None)
+        );
     }
 
     #[test]
@@ -443,12 +512,26 @@ mod tests {
         let out = crate::diff_text(&left, &right, &opts).unwrap();
         assert_eq!(out.sections.len(), 1, "骨架：单 Change");
         // 未开启折叠 → Important
-        let cls = classify_sections(&out.sections, &left, &right, &opts, &imp, &ManualAlignOptions::default());
+        let cls = classify_sections(
+            &out.sections,
+            &left,
+            &right,
+            &opts,
+            &imp,
+            &ManualAlignOptions::default(),
+        );
         assert_eq!(cls[0], Importance::Important);
         // 开启大小写+行尾空白折叠 → Unimportant
         imp.case_unimportant = true;
         imp.trailing_ws_unimportant = true;
-        let cls = classify_sections(&out.sections, &left, &right, &opts, &imp, &ManualAlignOptions::default());
+        let cls = classify_sections(
+            &out.sections,
+            &left,
+            &right,
+            &opts,
+            &imp,
+            &ManualAlignOptions::default(),
+        );
         assert_eq!(cls[0], Importance::Unimportant);
         opts.whitespace = crate::options::WhitespaceMode::IgnoreAll;
         let _ = opts; // 保留骨架选项不变（骨架不受 importance 影响）
@@ -464,7 +547,14 @@ mod tests {
         let imp = ImportanceOptions::default();
         let out = crate::diff_text(&left, &right, &opts).unwrap();
         assert_eq!(out.sections.len(), 2, "空行骨架差异：Equal + Insert");
-        let cls = classify_sections(&out.sections, &left, &right, &opts, &imp, &ManualAlignOptions::default());
+        let cls = classify_sections(
+            &out.sections,
+            &left,
+            &right,
+            &opts,
+            &imp,
+            &ManualAlignOptions::default(),
+        );
         assert_eq!(cls[1], Importance::Important, "孤儿行始终重要");
     }
 
@@ -488,12 +578,19 @@ mod tests {
         let left = LineTable::from_text("h\none\ntail\nx\ntail2\n");
         let right = LineTable::from_text("h\nOne\ntail\nx\ntail2\n");
         let opts = TextDiffOptions::default();
-        let imp = ImportanceOptions { case_unimportant: true, ..ImportanceOptions::default() };
-        let keyed = crate::diff_config(&left, &right, &crate::options::DiffConfig {
-            base: opts.clone(),
-            importance: imp,
-            manual: ManualAlignOptions::default(),
-        })
+        let imp = ImportanceOptions {
+            case_unimportant: true,
+            ..ImportanceOptions::default()
+        };
+        let keyed = crate::diff_config(
+            &left,
+            &right,
+            &crate::options::DiffConfig {
+                base: opts.clone(),
+                importance: imp,
+                manual: ManualAlignOptions::default(),
+            },
+        )
         .unwrap();
         assert!(keyed.unimportant_sections >= 1, "大小写差异应为不重要");
 
@@ -501,7 +598,10 @@ mod tests {
         let after = aggregate_unimportant(before);
         // 骨架不变：左侧行覆盖集（归一化为不相交区间并集）一致
         let norm = |secs: &[Section]| -> Vec<(u32, u32)> {
-            let mut pts: Vec<(u32, u32)> = secs.iter().filter_map(|s| s.left.map(|r| (r.start, r.end))).collect();
+            let mut pts: Vec<(u32, u32)> = secs
+                .iter()
+                .filter_map(|s| s.left.map(|r| (r.start, r.end)))
+                .collect();
             pts.sort_unstable();
             let mut out: Vec<(u32, u32)> = Vec::new();
             for (a, b) in pts {
@@ -515,7 +615,9 @@ mod tests {
         assert_eq!(norm(before), norm(&after), "聚合不得改变行覆盖骨架");
         assert_eq!(norm(before), vec![(0, 5)], "语料应全量覆盖 5 行");
         // 折叠后无 Unimportant Change 残留
-        assert!(after.iter().all(|s| !(s.kind == SectionKind::Change && s.important == Importance::Unimportant)));
+        assert!(after
+            .iter()
+            .all(|s| !(s.kind == SectionKind::Change && s.important == Importance::Unimportant)));
     }
 
     #[test]
@@ -527,11 +629,15 @@ mod tests {
             case_unimportant: true,
             ..ImportanceOptions::default()
         };
-        let keyed = crate::diff_config(&left, &right, &crate::options::DiffConfig {
-            base: TextDiffOptions::default(),
-            importance: imp,
-            manual: ManualAlignOptions::default(),
-        })
+        let keyed = crate::diff_config(
+            &left,
+            &right,
+            &crate::options::DiffConfig {
+                base: TextDiffOptions::default(),
+                importance: imp,
+                manual: ManualAlignOptions::default(),
+            },
+        )
         .unwrap();
         assert_eq!(keyed.output.sections.len(), 2, "骨架：Change + Equal");
         assert_eq!(keyed.unimportant_sections, 1);
@@ -540,8 +646,16 @@ mod tests {
         assert_eq!(info.importance, Importance::Unimportant);
         assert_eq!(info.lines.len(), 1);
         let pair = &info.lines[0];
-        assert_ne!(pair.left.as_ref().unwrap().raw, pair.right.as_ref().unwrap().raw, "raw 键不同");
-        assert_eq!(pair.left.as_ref().unwrap().importance, pair.right.as_ref().unwrap().importance, "importance 键相同");
+        assert_ne!(
+            pair.left.as_ref().unwrap().raw,
+            pair.right.as_ref().unwrap().raw,
+            "raw 键不同"
+        );
+        assert_eq!(
+            pair.left.as_ref().unwrap().importance,
+            pair.right.as_ref().unwrap().importance,
+            "importance 键相同"
+        );
         assert!(pair.unimportant);
     }
 }

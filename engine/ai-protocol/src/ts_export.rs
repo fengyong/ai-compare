@@ -13,8 +13,7 @@ use ts_rs::TS;
 
 /// 仓库根 ui/src/protocol/generated/
 fn ui_generated_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../ui/src/protocol/generated")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../ui/src/protocol/generated")
 }
 
 /// 逐类型导出到 ts-rs 的 `bindings/` scratch 目录（gitignored，不碰生产树）。
@@ -319,7 +318,10 @@ mod tests {
         }
         let ui_count = std::fs::read_dir(&ui_dir)
             .expect("UI generated 目录")
-            .filter(|e| e.as_ref().is_ok_and(|e| e.file_name().to_string_lossy().ends_with(".ts")))
+            .filter(|e| {
+                e.as_ref()
+                    .is_ok_and(|e| e.file_name().to_string_lossy().ends_with(".ts"))
+            })
             .count();
         assert_eq!(n, ui_count, "导出类型数应与 UI generated 文件数一致");
     }

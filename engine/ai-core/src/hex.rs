@@ -36,7 +36,10 @@ pub struct HexOptions {
 
 impl Default for HexOptions {
     fn default() -> Self {
-        HexOptions { chunk_size: DEFAULT_CHUNK_SIZE, align_mode: HexAlignMode::Full }
+        HexOptions {
+            chunk_size: DEFAULT_CHUNK_SIZE,
+            align_mode: HexAlignMode::Full,
+        }
     }
 }
 
@@ -135,12 +138,23 @@ struct BlockBuilder {
 
 impl BlockBuilder {
     fn new() -> Self {
-        BlockBuilder { blocks: Vec::new(), lo: 0, ro: 0, summary: HexDiffSummary::default() }
+        BlockBuilder {
+            blocks: Vec::new(),
+            lo: 0,
+            ro: 0,
+            summary: HexDiffSummary::default(),
+        }
     }
 
     fn push(&mut self, kind: HexBlockKind, llen: u64, rlen: u64) {
-        let left = (llen > 0).then_some(ByteRange { offset: self.lo, len: llen });
-        let right = (rlen > 0).then_some(ByteRange { offset: self.ro, len: rlen });
+        let left = (llen > 0).then_some(ByteRange {
+            offset: self.lo,
+            len: llen,
+        });
+        let right = (rlen > 0).then_some(ByteRange {
+            offset: self.ro,
+            len: rlen,
+        });
         // 相邻同类别且区间连续 -> 合并
         if let Some(last) = self.blocks.last_mut() {
             let mergeable = last.kind == kind
@@ -211,7 +225,15 @@ fn diff_bytewise(left: &[u8], right: &[u8], b: &mut BlockBuilder) {
             i += 1;
         }
         let len = (i - run_start) as u64;
-        b.push(if same { HexBlockKind::Same } else { HexBlockKind::Changed }, len, len);
+        b.push(
+            if same {
+                HexBlockKind::Same
+            } else {
+                HexBlockKind::Changed
+            },
+            len,
+            len,
+        );
     }
     if left.len() > n {
         b.push(HexBlockKind::Deleted, (left.len() - n) as u64, 0);
@@ -234,7 +256,10 @@ fn diff_chunked(left: &[u8], right: &[u8], chunk: usize, full_refine: bool, b: &
     let mut k = 0usize;
     while k < ops.len() {
         if matches!(ops[k], RawOp::Equal(_)) {
-            let n = match ops[k] { RawOp::Equal(n) => n as usize, _ => unreachable!() };
+            let n = match ops[k] {
+                RawOp::Equal(n) => n as usize,
+                _ => unreachable!(),
+            };
             // 哈希相等 -> 字节复核（防哈希碰撞假同）；连续 Same 块由 builder 合并
             for _ in 0..n {
                 let lb = chunk_slice(left, &lh[li]);
@@ -287,7 +312,11 @@ struct ChunkHash {
 fn chunk_hashes(data: &[u8], chunk: usize) -> Vec<ChunkHash> {
     data.chunks(chunk.max(1))
         .enumerate()
-        .map(|(i, c)| ChunkHash { hash: fnv1a(c), offset: i * chunk, len: c.len() })
+        .map(|(i, c)| ChunkHash {
+            hash: fnv1a(c),
+            offset: i * chunk,
+            len: c.len(),
+        })
         .collect()
 }
 
@@ -317,7 +346,15 @@ fn refine_pair(lb: &[u8], rb: &[u8], _full: bool, b: &mut BlockBuilder) {
             i += 1;
         }
         let len = (i - run_start) as u64;
-        b.push(if same { HexBlockKind::Same } else { HexBlockKind::Changed }, len, len);
+        b.push(
+            if same {
+                HexBlockKind::Same
+            } else {
+                HexBlockKind::Changed
+            },
+            len,
+            len,
+        );
     }
     if lb.len() > n {
         b.push(HexBlockKind::Deleted, (lb.len() - n) as u64, 0);
@@ -481,9 +518,17 @@ pub fn render_hex_lines(data: &[u8], start_row: u64, rows: usize) -> Vec<HexLine
                 hex.push(' ');
             }
             hex.push_str(&format!("{byte:02x}"));
-            ascii.push(if (0x20..=0x7e).contains(&byte) { byte as char } else { '.' });
+            ascii.push(if (0x20..=0x7e).contains(&byte) {
+                byte as char
+            } else {
+                '.'
+            });
         }
-        out.push(HexLine { addr: off as u64, hex, ascii });
+        out.push(HexLine {
+            addr: off as u64,
+            hex,
+            ascii,
+        });
     }
     out
 }
@@ -514,30 +559,62 @@ mod tests {
         assert_eq!(blocks_of(&m).len(), 1);
         assert_eq!(m.blocks[0].kind, HexBlockKind::Same);
         assert_eq!(m.summary.same_bytes, 100);
-        assert_eq!((m.summary.changed_bytes, m.summary.inserted_bytes, m.summary.deleted_bytes), (0, 0, 0));
+        assert_eq!(
+            (
+                m.summary.changed_bytes,
+                m.summary.inserted_bytes,
+                m.summary.deleted_bytes
+            ),
+            (0, 0, 0)
+        );
     }
 
     #[test]
     fn bytewise_mode_marks_changed_runs() {
         let l = b"AAAABBBBCCCC".to_vec();
         let r = b"AAAAXXBBCCCC".to_vec(); // 下标 4..6 变化
-        let opts = HexOptions { align_mode: HexAlignMode::None, chunk_size: DEFAULT_CHUNK_SIZE };
+        let opts = HexOptions {
+            align_mode: HexAlignMode::None,
+            chunk_size: DEFAULT_CHUNK_SIZE,
+        };
         let m = diff_bytes(&l, &r, &opts);
         assert_eq!(
             blocks_of(&m),
-            vec![(HexBlockKind::Same, 0, 4, 0, 4), (HexBlockKind::Changed, 4, 2, 4, 2), (HexBlockKind::Same, 6, 6, 6, 6)]
+            vec![
+                (HexBlockKind::Same, 0, 4, 0, 4),
+                (HexBlockKind::Changed, 4, 2, 4, 2),
+                (HexBlockKind::Same, 6, 6, 6, 6)
+            ]
         );
     }
 
     #[test]
     fn bytewise_tail_is_insert_or_delete() {
-        let opts = HexOptions { align_mode: HexAlignMode::None, chunk_size: DEFAULT_CHUNK_SIZE };
+        let opts = HexOptions {
+            align_mode: HexAlignMode::None,
+            chunk_size: DEFAULT_CHUNK_SIZE,
+        };
         let m = diff_bytes(b"abc", b"abcdef", &opts);
-        assert_eq!(blocks_of(&m), vec![(HexBlockKind::Same, 0, 3, 0, 3), (HexBlockKind::Inserted, u64::MAX, u64::MAX, 3, 3)]);
+        assert_eq!(
+            blocks_of(&m),
+            vec![
+                (HexBlockKind::Same, 0, 3, 0, 3),
+                (HexBlockKind::Inserted, u64::MAX, u64::MAX, 3, 3)
+            ]
+        );
         let m = diff_bytes(b"abcdef", b"abc", &opts);
-        assert_eq!(blocks_of(&m), vec![(HexBlockKind::Same, 0, 3, 0, 3), (HexBlockKind::Deleted, 3, 3, u64::MAX, u64::MAX)]);
+        assert_eq!(
+            blocks_of(&m),
+            vec![
+                (HexBlockKind::Same, 0, 3, 0, 3),
+                (HexBlockKind::Deleted, 3, 3, u64::MAX, u64::MAX)
+            ]
+        );
         let m = diff_bytes(b"", b"xyz", &opts);
-        assert_eq!(blocks_of(&m), vec![(HexBlockKind::Inserted, u64::MAX, u64::MAX, 0, 3)]);
+        assert_eq!(
+            blocks_of(&m),
+            vec![(HexBlockKind::Inserted, u64::MAX, u64::MAX, 0, 3)]
+        );
         let m = diff_bytes(b"", b"", &opts);
         assert!(m.blocks.is_empty());
     }
@@ -547,22 +624,43 @@ mod tests {
         // 中段插入：Full 应感知为 Same + Inserted + Same（插入/删除感知）
         let l = b"hello world".to_vec();
         let r = b"hello brave world".to_vec();
-        let m = diff_bytes(&l, &r, &HexOptions { chunk_size: 4, align_mode: HexAlignMode::Full });
-        let inserted = m.blocks.iter().filter(|b| b.kind == HexBlockKind::Inserted).count();
+        let m = diff_bytes(
+            &l,
+            &r,
+            &HexOptions {
+                chunk_size: 4,
+                align_mode: HexAlignMode::Full,
+            },
+        );
+        let inserted = m
+            .blocks
+            .iter()
+            .filter(|b| b.kind == HexBlockKind::Inserted)
+            .count();
         assert_eq!(inserted, 1, "Full 模式应定位单插入区: {m:?}");
         assert_eq!(m.summary.inserted_bytes, 6, "brave=6 字节: {m:?}");
         assert_eq!(m.summary.changed_bytes, 0);
         // 每字节状态：左全同；右 6 字节 inserted
         let (ls, rs) = status_maps(&m);
         assert!(ls.iter().all(|&s| s == HexByteStatus::Same));
-        assert_eq!(rs.iter().filter(|&&s| s == HexByteStatus::Inserted).count(), 6);
+        assert_eq!(
+            rs.iter().filter(|&&s| s == HexByteStatus::Inserted).count(),
+            6
+        );
     }
 
     #[test]
     fn full_mode_aligns_deleted_middle_run() {
         let l = b"hello brave world".to_vec();
         let r = b"hello world".to_vec();
-        let m = diff_bytes(&l, &r, &HexOptions { chunk_size: 4, align_mode: HexAlignMode::Full });
+        let m = diff_bytes(
+            &l,
+            &r,
+            &HexOptions {
+                chunk_size: 4,
+                align_mode: HexAlignMode::Full,
+            },
+        );
         assert_eq!(m.summary.deleted_bytes, 6, "{m:?}");
         assert_eq!(m.summary.inserted_bytes, 0);
         assert_eq!(m.summary.changed_bytes, 0);
@@ -572,15 +670,31 @@ mod tests {
     fn fast_mode_changed_pair_and_byte_refine() {
         let l = b"AAAABBBB".to_vec();
         let r = b"AAAAXXYY".to_vec(); // 后块部分变化
-        let m = diff_bytes(&l, &r, &HexOptions { chunk_size: 4, align_mode: HexAlignMode::Fast });
+        let m = diff_bytes(
+            &l,
+            &r,
+            &HexOptions {
+                chunk_size: 4,
+                align_mode: HexAlignMode::Fast,
+            },
+        );
         // 块哈希不同 -> Changed；块内逐字节精分：BB→XX（changed 2）+ BB→YY（changed 2）
         assert_eq!(m.summary.changed_bytes, 4, "Fast 等位精对齐: {m:?}");
-        assert_eq!(blocks_of(&m), vec![(HexBlockKind::Same, 0, 4, 0, 4), (HexBlockKind::Changed, 4, 4, 4, 4)]);
+        assert_eq!(
+            blocks_of(&m),
+            vec![
+                (HexBlockKind::Same, 0, 4, 0, 4),
+                (HexBlockKind::Changed, 4, 4, 4, 4)
+            ]
+        );
     }
 
     #[test]
     fn chunked_tail_insert_and_delete() {
-        let opts = HexOptions { chunk_size: 4, align_mode: HexAlignMode::Full };
+        let opts = HexOptions {
+            chunk_size: 4,
+            align_mode: HexAlignMode::Full,
+        };
         let m = diff_bytes(b"aaaa", b"aaaaZZZZ", &opts);
         assert_eq!(m.summary.inserted_bytes, 4, "{m:?}");
         let m = diff_bytes(b"aaaaZZZZ", b"aaaa", &opts);
@@ -593,12 +707,23 @@ mod tests {
     fn blocks_carry_monotonic_ranges() {
         let l = b"0123456789ABCDEF".to_vec();
         let r = b"0123XXXX89ABCDEF".to_vec();
-        let m = diff_bytes(&l, &r, &HexOptions { chunk_size: 8, align_mode: HexAlignMode::Full });
+        let m = diff_bytes(
+            &l,
+            &r,
+            &HexOptions {
+                chunk_size: 8,
+                align_mode: HexAlignMode::Full,
+            },
+        );
         let (ls, rs) = status_maps(&m);
         assert_eq!(ls.len(), 16);
         assert_eq!(rs.len(), 16);
         for i in 0..16 {
-            let expect = if (4..8).contains(&i) { HexByteStatus::Changed } else { HexByteStatus::Same };
+            let expect = if (4..8).contains(&i) {
+                HexByteStatus::Changed
+            } else {
+                HexByteStatus::Same
+            };
             assert_eq!(ls[i], expect, "左字节 {i}");
             assert_eq!(rs[i], expect);
         }
@@ -631,7 +756,11 @@ mod tests {
         assert!(lines[0].ascii.starts_with("..."), "控制字符 -> '.'");
         // 第 4 行（0x40..0x4f）含可打印 ASCII
         let rows = render_hex_lines(&data, 4, 1);
-        assert!(rows[0].ascii.contains('A'), "可打印 ASCII 原样: {}", rows[0].ascii);
+        assert!(
+            rows[0].ascii.contains('A'),
+            "可打印 ASCII 原样: {}",
+            rows[0].ascii
+        );
         // 末行截短：10 字节文件
         let lines = render_hex_lines(&[0u8; 10], 0, 4);
         assert_eq!(lines.len(), 1);
@@ -641,7 +770,11 @@ mod tests {
         // 非可打印/高字节
         let lines = render_hex_lines(&[0x00, 0x1f, 0x20, 0x7e, 0x7f, 0x80, 0xff], 0, 1);
         assert_eq!(lines[0].hex, "00 1f 20 7e 7f 80 ff");
-        assert_eq!(lines[0].ascii, ".. ~...", "ascii 侧栏非可打印字节以 '.' 呈现: {}", lines[0].ascii);
+        assert_eq!(
+            lines[0].ascii, ".. ~...",
+            "ascii 侧栏非可打印字节以 '.' 呈现: {}",
+            lines[0].ascii
+        );
     }
 
     #[test]
@@ -650,9 +783,19 @@ mod tests {
         // same + changed + inserted + deleted 混合
         let l = b"ABCDEF".to_vec();
         let r = b"ABXYEFgh".to_vec(); // CD→XY changed，g h inserted
-        let m = diff_bytes(&l, &r, &HexOptions { align_mode: HexAlignMode::Full, chunk_size: 3 });
+        let m = diff_bytes(
+            &l,
+            &r,
+            &HexOptions {
+                align_mode: HexAlignMode::Full,
+                chunk_size: 3,
+            },
+        );
         let (ls, rs) = status_maps(&m);
         assert_eq!(ls, vec![Same, Same, Changed, Changed, Same, Same]);
-        assert_eq!(rs, vec![Same, Same, Changed, Changed, Same, Same, Inserted, Inserted]);
+        assert_eq!(
+            rs,
+            vec![Same, Same, Changed, Changed, Same, Same, Inserted, Inserted]
+        );
     }
 }

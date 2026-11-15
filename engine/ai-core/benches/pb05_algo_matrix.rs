@@ -24,13 +24,17 @@ fn build_pair() -> (String, String) {
             // 每 1000 行跳过 1 行（右侧相对左侧删除）
             continue;
         }
-        left.push_str(&format!("line {i:06} payload alpha beta gamma delta epsilon\n"));
+        left.push_str(&format!(
+            "line {i:06} payload alpha beta gamma delta epsilon\n"
+        ));
         if i % 1000 == 500 {
             right.push_str(&format!("line {i:06} payload INSERTED extra tail\n"));
         } else if i % 500 == 250 {
             right.push_str(&format!("line {i:06} payload MODIFIED zeta eta theta\n"));
         } else {
-            right.push_str(&format!("line {i:06} payload alpha beta gamma delta epsilon\n"));
+            right.push_str(&format!(
+                "line {i:06} payload alpha beta gamma delta epsilon\n"
+            ));
         }
         if i % 1000 == 499 {
             right.push_str(&format!("line {i:06} payload ADDED tail iota kappa\n"));
@@ -81,7 +85,10 @@ fn main() {
         ("histogram", LineAlignAlgo::Histogram),
     ] {
         let cfg = DiffConfig {
-            base: TextDiffOptions { algo, ..TextDiffOptions::default() },
+            base: TextDiffOptions {
+                algo,
+                ..TextDiffOptions::default()
+            },
             manual: ManualAlignOptions::default(),
             ..DiffConfig::default()
         };

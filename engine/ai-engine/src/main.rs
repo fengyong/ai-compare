@@ -66,7 +66,10 @@ fn parse_args() -> Result<Option<ServerOptions>, ExitCode> {
 }
 
 fn run(opts: ServerOptions) -> ExitCode {
-    let runtime = match tokio::runtime::Builder::new_multi_thread().enable_all().build() {
+    let runtime = match tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+    {
         Ok(rt) => rt,
         Err(e) => {
             eprintln!("错误: tokio 运行时创建失败: {e}");

@@ -37,7 +37,9 @@ pub fn scheme_of(s: &str) -> Option<&'static str> {
 /// 拆 zip URI：`zip://<本地归档路径>![内部路径]` -> (归档路径, 内部路径或空)。
 /// 归档路径不含 `!`（zip 条目名允许 `!`，分隔取**第一个** `!`）。
 fn split_zip_uri(s: &str) -> Option<(String, String)> {
-    let rest = s.strip_prefix("zip://").or_else(|| s.strip_prefix("ZIP://"))?;
+    let rest = s
+        .strip_prefix("zip://")
+        .or_else(|| s.strip_prefix("ZIP://"))?;
     match rest.split_once('!') {
         Some((archive, inner)) => Some((archive.to_string(), inner.to_string())),
         None => Some((rest.to_string(), String::new())),
@@ -102,7 +104,9 @@ impl VfsProvider for ZipPrefixProvider {
     }
 
     async fn rename(&self, from: &VfsPath, to: &VfsPath) -> Result<(), VfsError> {
-        self.inner.rename(&self.strip(from)?, &self.strip(to)?).await
+        self.inner
+            .rename(&self.strip(from)?, &self.strip(to)?)
+            .await
     }
 
     async fn remove(&self, path: &VfsPath, recursive: bool) -> Result<(), VfsError> {
@@ -110,7 +114,9 @@ impl VfsProvider for ZipPrefixProvider {
     }
 
     async fn copy_file(&self, from: &VfsPath, to: &VfsPath) -> Result<(), VfsError> {
-        self.inner.copy_file(&self.strip(from)?, &self.strip(to)?).await
+        self.inner
+            .copy_file(&self.strip(from)?, &self.strip(to)?)
+            .await
     }
 
     async fn set_mtime(&self, path: &VfsPath, mtime_ms: u64) -> Result<(), VfsError> {
@@ -248,7 +254,9 @@ impl VfsProvider for RouteFs {
         match (scheme_of(from.as_str()), scheme_of(to.as_str())) {
             (None, None) => self.local.rename(from, to).await,
             (Some(a), Some(b)) if a == b => self.route(from)?.rename(from, to).await,
-            _ => Err(VfsError::Unsupported("跨来源 rename 不支持（用 copy+delete）".into())),
+            _ => Err(VfsError::Unsupported(
+                "跨来源 rename 不支持（用 copy+delete）".into(),
+            )),
         }
     }
 
@@ -351,7 +359,10 @@ mod tests {
         let p = VfsPath::parse(&uri).unwrap();
         // 读
         assert_eq!(rf.read_file_bytes(&p).await.unwrap(), b"alpha");
-        assert_eq!(rf.stored_crc32(&p).await.unwrap(), Some(crate::crc32::crc32(b"alpha")));
+        assert_eq!(
+            rf.stored_crc32(&p).await.unwrap(),
+            Some(crate::crc32::crc32(b"alpha"))
+        );
         // 写（write-through：落盘）
         rf.write_file_bytes(&p, b"ALPHA-2").await.unwrap();
         // 同实例读回
@@ -367,7 +378,10 @@ mod tests {
         );
         // 目录列举
         let dir_uri = format!("zip://{}!/src", zip_path.display());
-        let entries = rf.list_dir(&VfsPath::parse(&dir_uri).unwrap()).await.unwrap();
+        let entries = rf
+            .list_dir(&VfsPath::parse(&dir_uri).unwrap())
+            .await
+            .unwrap();
         let mut names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
         names.sort();
         assert_eq!(names, vec!["a.txt", "b.log"]);
@@ -418,7 +432,12 @@ mod tests {
     async fn ftp_scheme_routes_to_real_provider() {
         // P12-c：ftp:// 路由到 FtpFs（真实 provider）；ftps:// 仍为暂缓占位
         let rf = RouteFs::new();
-        assert_eq!(rf.route(&VfsPath::parse("ftp://host/pub").unwrap()).unwrap().scheme(), "ftp");
+        assert_eq!(
+            rf.route(&VfsPath::parse("ftp://host/pub").unwrap())
+                .unwrap()
+                .scheme(),
+            "ftp"
+        );
         let err = rf
             .stat(&VfsPath::parse("ftps://host/pub/f.txt").unwrap())
             .await

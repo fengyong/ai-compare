@@ -18,7 +18,8 @@
 
 use ai_compare_tests as harness;
 use ai_core::merge::{
-    auto_merge_text, merge3, MarkerOptions, MarkerStyle, MergeOptions, SynthesizeOptions, UnresolvedPolicy,
+    auto_merge_text, merge3, MarkerOptions, MarkerStyle, MergeOptions, SynthesizeOptions,
+    UnresolvedPolicy,
 };
 use ai_core::LineTable;
 use std::path::PathBuf;
@@ -43,32 +44,90 @@ struct Corpus {
 }
 
 impl Corpus {
-    fn plain(name: &'static str, base: &'static str, left: &'static str, right: &'static str) -> Self {
-        Corpus { name, base, left, right, eof_no_newline: false, ambiguous: false, window: None }
+    fn plain(
+        name: &'static str,
+        base: &'static str,
+        left: &'static str,
+        right: &'static str,
+    ) -> Self {
+        Corpus {
+            name,
+            base,
+            left,
+            right,
+            eof_no_newline: false,
+            ambiguous: false,
+            window: None,
+        }
     }
 }
 
 fn corpora() -> Vec<Corpus> {
     vec![
         // ---- 无冲突 ----
-        Corpus::plain("clean_disjoint", "a\nb\nc\nd\ne\n", "A\nb\nc\nd\ne\n", "a\nb\nc\nd\nE\n"),
-        Corpus::plain("clean_interleaved", "1\n2\n3\n4\n5\n6\n7\n", "1\nL2\n3\n4\n5\n6\n7\n", "1\n2\n3\nR4\n5\n6\n7\n"),
+        Corpus::plain(
+            "clean_disjoint",
+            "a\nb\nc\nd\ne\n",
+            "A\nb\nc\nd\ne\n",
+            "a\nb\nc\nd\nE\n",
+        ),
+        Corpus::plain(
+            "clean_interleaved",
+            "1\n2\n3\n4\n5\n6\n7\n",
+            "1\nL2\n3\n4\n5\n6\n7\n",
+            "1\n2\n3\nR4\n5\n6\n7\n",
+        ),
         Corpus::plain("left_only_change", "a\nb\nc\n", "a\nB!\nc\n", "a\nb\nc\n"),
-        Corpus::plain("right_only_append", "a\nb\nc\n", "a\nb\nc\n", "a\nb\nc\nd\n"),
+        Corpus::plain(
+            "right_only_append",
+            "a\nb\nc\n",
+            "a\nb\nc\n",
+            "a\nb\nc\nd\n",
+        ),
         // ---- 两侧同改（不算冲突）----
         Corpus::plain("both_same_change", "a\nb\nc\n", "a\nX\nc\n", "a\nX\nc\n"),
         Corpus::plain("both_append_same", "a\nb\n", "a\nb\nNEW\n", "a\nb\nNEW\n"),
         Corpus::plain("both_delete_same", "a\nb\nc\nd\n", "a\nc\nd\n", "a\nc\nd\n"),
         // ---- 冲突：modify-modify / 邻接 ----
-        Corpus::plain("conflict_modify_modify", "a\nb\nc\n", "a\nLEFT\nc\n", "a\nRIGHT\nc\n"),
-        Corpus::plain("conflict_adjacent_no_stable", "a\nb\nc\n", "a\nB2\nc\n", "a\nb\nC3\n"),
-        Corpus::plain("conflict_overlap_multiline", "k1\na\nb\nc\nk2\n", "k1\nL1\nL2\nc\nk2\n", "k1\nR1\nb\nR3\nk2\n"),
-        Corpus::plain("conflict_delete_modify", "a\nb\nc\n", "a\nc\n", "a\nB!\nc\n"),
+        Corpus::plain(
+            "conflict_modify_modify",
+            "a\nb\nc\n",
+            "a\nLEFT\nc\n",
+            "a\nRIGHT\nc\n",
+        ),
+        Corpus::plain(
+            "conflict_adjacent_no_stable",
+            "a\nb\nc\n",
+            "a\nB2\nc\n",
+            "a\nb\nC3\n",
+        ),
+        Corpus::plain(
+            "conflict_overlap_multiline",
+            "k1\na\nb\nc\nk2\n",
+            "k1\nL1\nL2\nc\nk2\n",
+            "k1\nR1\nb\nR3\nk2\n",
+        ),
+        Corpus::plain(
+            "conflict_delete_modify",
+            "a\nb\nc\n",
+            "a\nc\n",
+            "a\nB!\nc\n",
+        ),
         Corpus::plain("conflict_add_add", "a\nb\n", "a\nL1\nL2\nb\n", "a\nR1\nb\n"),
         Corpus::plain("conflict_add_add_eof", "a\nb\n", "a\nb\nL\n", "a\nb\nR\n"),
         // ---- 交错改 ----
-        Corpus::plain("interleaved_lr", "1\n2\n3\n4\n5\n", "L1\n2\n3\n4\nL5\n", "1\n2\nR3\n4\n5\n"),
-        Corpus::plain("interleaved_near", "a\nx1\nx2\nx3\nb\nc\n", "A\nx1\nx2\nx3\nb\nc\n", "a\nx1\nx2\nx3\nB\nc\n"),
+        Corpus::plain(
+            "interleaved_lr",
+            "1\n2\n3\n4\n5\n",
+            "L1\n2\n3\n4\nL5\n",
+            "1\n2\nR3\n4\n5\n",
+        ),
+        Corpus::plain(
+            "interleaved_near",
+            "a\nx1\nx2\nx3\nb\nc\n",
+            "A\nx1\nx2\nx3\nb\nc\n",
+            "a\nx1\nx2\nx3\nB\nc\n",
+        ),
         // ---- 空文件 / 空 base ----
         Corpus::plain("all_empty", "", "", ""),
         Corpus::plain("empty_base_same_add", "", "x\ny\n", "x\ny\n"),
@@ -76,10 +135,30 @@ fn corpora() -> Vec<Corpus> {
         Corpus::plain("empty_base_one_side_add", "", "", "R\n"),
         Corpus::plain("become_empty_both", "a\nb\n", "", ""),
         // ---- CRLF / Unicode / 行尾 ----
-        Corpus::plain("crlf_clean", "a\r\nb\r\nc\r\n", "A\r\nb\r\nc\r\n", "a\r\nb\r\nC\r\n"),
-        Corpus::plain("crlf_conflict", "a\r\nb\r\nc\r\n", "a\r\nL\r\nc\r\n", "a\r\nR\r\nc\r\n"),
-        Corpus::plain("unicode_clean", "中文\n间隔\n日本語\n", "中文！\n间隔\n日本語\n", "中文\n间隔\n日本語。\n"),
-        Corpus::plain("unicode_conflict", "函数一\n函数二\n函数三\n", "函数一\n左函数\n函数三\n", "函数一\n右函数\n函数三\n"),
+        Corpus::plain(
+            "crlf_clean",
+            "a\r\nb\r\nc\r\n",
+            "A\r\nb\r\nc\r\n",
+            "a\r\nb\r\nC\r\n",
+        ),
+        Corpus::plain(
+            "crlf_conflict",
+            "a\r\nb\r\nc\r\n",
+            "a\r\nL\r\nc\r\n",
+            "a\r\nR\r\nc\r\n",
+        ),
+        Corpus::plain(
+            "unicode_clean",
+            "中文\n间隔\n日本語\n",
+            "中文！\n间隔\n日本語\n",
+            "中文\n间隔\n日本語。\n",
+        ),
+        Corpus::plain(
+            "unicode_conflict",
+            "函数一\n函数二\n函数三\n",
+            "函数一\n左函数\n函数三\n",
+            "函数一\n右函数\n函数三\n",
+        ),
         // ---- EOF 无尾换行 ----
         Corpus {
             name: "eof_clean_merge",
@@ -160,12 +239,20 @@ fn write_corpus(c: &Corpus) -> Files {
     std::fs::write(&base, c.base).unwrap();
     std::fs::write(&left, c.left).unwrap();
     std::fs::write(&right, c.right).unwrap();
-    Files { _dir: dir, base, left, right }
+    Files {
+        _dir: dir,
+        base,
+        left,
+        right,
+    }
 }
 
 fn run_tool(bin: &str, args: &[&str]) -> Option<(String, i32)> {
     let out = Command::new(bin).args(args).output().ok()?;
-    Some((String::from_utf8_lossy(&out.stdout).into_owned(), out.status.code().unwrap_or(-1)))
+    Some((
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        out.status.code().unwrap_or(-1),
+    ))
 }
 
 /// 本实现的 marker 输出（标签 = 语料路径原串，与 diff3 -m / git merge-file 的 argv 标签同形；
@@ -202,11 +289,21 @@ fn our_auto(c: &Corpus, policy: UnresolvedPolicy) -> String {
     let right = LineTable::from_text(c.right);
     let opts = window_opts(c);
     let model = merge3(&base, &left, &right, &opts);
-    auto_merge_text(&model, &base, &left, &right, &SynthesizeOptions { unresolved: policy }).text
+    auto_merge_text(
+        &model,
+        &base,
+        &left,
+        &right,
+        &SynthesizeOptions { unresolved: policy },
+    )
+    .text
 }
 
 fn window_opts(c: &Corpus) -> MergeOptions {
-    MergeOptions { conflict_window: c.window, ..MergeOptions::default() }
+    MergeOptions {
+        conflict_window: c.window,
+        ..MergeOptions::default()
+    }
 }
 
 /// 规范化 GNU diff3 的 marker 粘连（EOF 无尾换行时内容行与下个 marker 同行）：
@@ -270,12 +367,18 @@ fn golden_merge_outputs() {
             "autoTakeLeft": our_auto(&c, UnresolvedPolicy::TakeLeft),
             "autoTakeRight": our_auto(&c, UnresolvedPolicy::TakeRight),
         });
-        assert!(entry["wellFormed"] == serde_json::json!(true), "语料 {} 块序列不自洽", c.name);
+        assert!(
+            entry["wellFormed"] == serde_json::json!(true),
+            "语料 {} 块序列不自洽",
+            c.name
+        );
         snapshot["corpora"][c.name] = entry;
         drop(f);
     }
     let pretty = serde_json::to_string_pretty(&snapshot).unwrap();
-    let path = harness::test_data_dir().join("merge3_matrix").join("merge3_outputs.golden.json");
+    let path = harness::test_data_dir()
+        .join("merge3_matrix")
+        .join("merge3_outputs.golden.json");
     harness::assert_matches_snapshot("merge3_outputs", &path, &pretty).expect("merge golden 一致");
 }
 
@@ -311,7 +414,12 @@ struct CrossRow {
 fn gnu_verdict(c: &Corpus, f: &Files, ours: &str) -> &'static str {
     let Some((gnu_out, _)) = run_tool(
         "diff3",
-        &["-m", f.left.to_str().unwrap(), f.base.to_str().unwrap(), f.right.to_str().unwrap()],
+        &[
+            "-m",
+            f.left.to_str().unwrap(),
+            f.base.to_str().unwrap(),
+            f.right.to_str().unwrap(),
+        ],
     ) else {
         return "skipped";
     };
@@ -327,7 +435,14 @@ fn gnu_verdict(c: &Corpus, f: &Files, ours: &str) -> &'static str {
     // GNU -A 行为差异归类：本实现须与 git merge-file --diff3 一致
     if let Some((git_out, _)) = run_tool(
         "git",
-        &["merge-file", "-p", "--diff3", f.left.to_str().unwrap(), f.base.to_str().unwrap(), f.right.to_str().unwrap()],
+        &[
+            "merge-file",
+            "-p",
+            "--diff3",
+            f.left.to_str().unwrap(),
+            f.base.to_str().unwrap(),
+            f.right.to_str().unwrap(),
+        ],
     ) {
         if ours == git_out {
             return "gnu-A-bracketed";
@@ -441,22 +556,32 @@ fn golden_crosscheck_report() {
             )
         };
 
-        snapshot["rows"].as_array_mut().unwrap().push(serde_json::json!({
-            "corpus": c.name,
-            "conflictCount": conflict_count,
-            "gnuDiff3": gnu_v,
-            "gitDiff3": git_diff3_v,
-            "gitMerge": git_merge_v,
-        }));
+        snapshot["rows"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({
+                "corpus": c.name,
+                "conflictCount": conflict_count,
+                "gnuDiff3": gnu_v,
+                "gitDiff3": git_diff3_v,
+                "gitMerge": git_merge_v,
+            }));
     }
     let pretty = serde_json::to_string_pretty(&snapshot).unwrap();
-    let path = harness::test_data_dir().join("merge3_matrix").join("crosscheck_report.golden.json");
-    harness::assert_matches_snapshot("crosscheck_report", &path, &pretty).expect("对拍报告快照一致");
+    let path = harness::test_data_dir()
+        .join("merge3_matrix")
+        .join("crosscheck_report.golden.json");
+    harness::assert_matches_snapshot("crosscheck_report", &path, &pretty)
+        .expect("对拍报告快照一致");
 
     // 行为断言：报告内不得存在未归类的 diff（歧义/EOF 语料已单独归类）
     for row in snapshot["rows"].as_array().unwrap() {
         for key in ["gnuDiff3", "gitDiff3", "gitMerge"] {
-            assert_ne!(row[key], "diff", "语料 {} 的 {key} 对拍出现未归类差异: {}", row["corpus"], row);
+            assert_ne!(
+                row[key], "diff",
+                "语料 {} 的 {key} 对拍出现未归类差异: {}",
+                row["corpus"], row
+            );
         }
     }
 }
@@ -490,7 +615,12 @@ fn decide_output_is_stable_and_idempotent() {
 
     // 未决策 marker 输出
     let syn = SynthesizeOptions {
-        unresolved: UnresolvedPolicy::Markers(MarkerOptions::from_names("B", "L", "R", MarkerStyle::Diff3)),
+        unresolved: UnresolvedPolicy::Markers(MarkerOptions::from_names(
+            "B",
+            "L",
+            "R",
+            MarkerStyle::Diff3,
+        )),
     };
     let o0 = ai_core::synthesize(&model, &base, &left, &right, &Default::default(), &syn);
     assert_eq!(o0.unresolved, vec![1, 3]);
@@ -503,7 +633,11 @@ fn decide_output_is_stable_and_idempotent() {
     let o2 = ai_core::synthesize(&model, &base, &left, &right, &d, &syn);
     assert_eq!(o1, o2, "重复决策不漂移");
     assert_eq!(o1.unresolved, vec![3], "仅剩未决策冲突");
-    assert_eq!(o1.text.matches("<<<<<<<").count(), 1, "块 1 已决（仅剩块 3 的 marker）");
+    assert_eq!(
+        o1.text.matches("<<<<<<<").count(),
+        1,
+        "块 1 已决（仅剩块 3 的 marker）"
+    );
     assert!(o1.text.contains("L1\n"));
 
     // takeBase 还原 + 先左后右
@@ -515,7 +649,10 @@ fn decide_output_is_stable_and_idempotent() {
     assert!(o4.text.contains("L1\nR1\n"), "先左后右: {}", o4.text);
 
     // 手动编辑
-    d.insert(1u32, ai_core::MergeDecision::Manual(vec!["手".into(), "工".into()]));
+    d.insert(
+        1u32,
+        ai_core::MergeDecision::Manual(vec!["手".into(), "工".into()]),
+    );
     let o5 = ai_core::synthesize(&model, &base, &left, &right, &d, &syn);
     assert!(o5.text.contains("\n手\n工\n"), "手动编辑: {}", o5.text);
     assert_eq!(o5.unresolved, vec![3]);
@@ -534,18 +671,28 @@ fn importance_switches_shrink_conflicts() {
 
     // 尾随空白不重要 + favorRight：冲突不升级（自动从受惠侧采用）
     let o = MergeOptions {
-        importance: ai_core::ImportanceOptions { trailing_ws_unimportant: true, ..Default::default() },
+        importance: ai_core::ImportanceOptions {
+            trailing_ws_unimportant: true,
+            ..Default::default()
+        },
         favor: Some(ai_core::FavorSide::Right),
         ..MergeOptions::default()
     };
     let m1 = merge3(&base, &left, &right, &o);
-    assert!(m1.unresolved().is_empty(), "不重要冲突不升级: {:?}", m1.chunks);
+    assert!(
+        m1.unresolved().is_empty(),
+        "不重要冲突不升级: {:?}",
+        m1.chunks
+    );
     let out = auto_merge_text(&m1, &base, &left, &right, &SynthesizeOptions::default());
     assert_eq!(out.text, "a\nB\nc\n");
 
     // 仅 ignoreUnimportant（无 favor）：自动取左
     let o = MergeOptions {
-        importance: ai_core::ImportanceOptions { trailing_ws_unimportant: true, ..Default::default() },
+        importance: ai_core::ImportanceOptions {
+            trailing_ws_unimportant: true,
+            ..Default::default()
+        },
         ignore_unimportant: true,
         ..MergeOptions::default()
     };
@@ -558,7 +705,10 @@ fn importance_switches_shrink_conflicts() {
     let base = LineTable::from_text("a\nb\nc\n");
     let left = LineTable::from_text("a\nLEFT\nc\n");
     let right = LineTable::from_text("a\nRIGHT\nc\n");
-    let o = MergeOptions { favor: Some(ai_core::FavorSide::Left), ..MergeOptions::default() };
+    let o = MergeOptions {
+        favor: Some(ai_core::FavorSide::Left),
+        ..MergeOptions::default()
+    };
     let m3 = merge3(&base, &left, &right, &o);
     assert_eq!(m3.unresolved(), vec![1], "重要冲突仍待决");
 }
@@ -570,7 +720,10 @@ fn skeleton_whitespace_option_dissolves_conflict() {
     let left = LineTable::from_text("a\nB  \nc\n");
     let right = LineTable::from_text("a\nB\nc\n");
     let o = MergeOptions {
-        diff: ai_core::TextDiffOptions { whitespace: ai_core::WhitespaceMode::IgnoreAll, ..Default::default() },
+        diff: ai_core::TextDiffOptions {
+            whitespace: ai_core::WhitespaceMode::IgnoreAll,
+            ..Default::default()
+        },
         ..MergeOptions::default()
     };
     let m = merge3(&base, &left, &right, &o);
@@ -589,7 +742,10 @@ fn window_option_conflict_semantics() {
         &base,
         &left,
         &right,
-        &MergeOptions { conflict_window: Some(1), ..MergeOptions::default() },
+        &MergeOptions {
+            conflict_window: Some(1),
+            ..MergeOptions::default()
+        },
     );
     assert_eq!(m.conflict_count(), 1);
     assert_eq!(m.chunks.len(), 1, "冲突块跨稳定间隔，覆盖全文件");
@@ -598,7 +754,10 @@ fn window_option_conflict_semantics() {
         &base,
         &left,
         &right,
-        &MergeOptions { conflict_window: Some(0), ..MergeOptions::default() },
+        &MergeOptions {
+            conflict_window: Some(0),
+            ..MergeOptions::default()
+        },
     );
     assert_eq!(m.conflict_count(), 0);
     // 单侧连续变化：窗口再大也不产生冲突
@@ -608,7 +767,10 @@ fn window_option_conflict_semantics() {
         &base,
         &left,
         &right,
-        &MergeOptions { conflict_window: Some(5), ..MergeOptions::default() },
+        &MergeOptions {
+            conflict_window: Some(5),
+            ..MergeOptions::default()
+        },
     );
     assert_eq!(m.conflict_count(), 0);
 }
@@ -621,7 +783,12 @@ fn all_side_ranges_partition_files() {
         let left = LineTable::from_text(c.left);
         let right = LineTable::from_text(c.right);
         let model = merge3(&base, &left, &right, &window_opts(&c));
-        assert!(model.is_well_formed(), "语料 {} 块序列不自洽: {:?}", c.name, model.chunks);
+        assert!(
+            model.is_well_formed(),
+            "语料 {} 块序列不自洽: {:?}",
+            c.name,
+            model.chunks
+        );
         assert_eq!(model.left_len, left.len() as u32);
         assert_eq!(model.right_len, right.len() as u32);
     }
@@ -646,7 +813,14 @@ fn ambiguous_corpora_produce_valid_merges() {
         for id in model.unresolved() {
             d.insert(id, ai_core::MergeDecision::TakeLeft);
         }
-        let resolved = ai_core::synthesize(&model, &base, &left, &right, &d, &SynthesizeOptions::default());
+        let resolved = ai_core::synthesize(
+            &model,
+            &base,
+            &left,
+            &right,
+            &d,
+            &SynthesizeOptions::default(),
+        );
         assert!(resolved.unresolved.is_empty());
     }
 }

@@ -89,7 +89,11 @@ async fn drain(
                 &b,
                 d.stats,
                 Some(d.progress),
-                if i == 0 { d.removals.clone() } else { Vec::new() },
+                if i == 0 {
+                    d.removals.clone()
+                } else {
+                    Vec::new()
+                },
             );
             if i == 0 {
                 delta.scan_errors = batch::scan_issues(&d.scan_errors);

@@ -29,27 +29,29 @@ pub mod session;
 pub mod sync;
 pub mod verdict;
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
-use ai_protocol::{CompareCriteria, ContentCompareMode, DirEntryStatus, DirRow, DirStats, EntryKind, SideInfo};
+use ai_protocol::{
+    CompareCriteria, ContentCompareMode, DirEntryStatus, DirRow, DirStats, EntryKind, SideInfo,
+};
 use ai_vfs::{EntryKind as VfsEntryKind, VfsDirEntry, VfsError, VfsPath, VfsProvider};
 use thiserror::Error;
 
-pub use align::{ByNameAligner, ManualAlignApplier, NameAligner, AlignedPair, PatternAlignRule};
+pub use align::{AlignedPair, ByNameAligner, ManualAlignApplier, NameAligner, PatternAlignRule};
 pub use cache::HashCache;
 pub use compare::{content_same, fold_chunk, ContentHashMode, CHUNK_SIZE};
 pub use filter::{NameFilter, OtherFilter};
 pub use merge3way::{
-    plan_merge, run_folder_merge, scan_merge, DirMergeRow, MergeCategory, MergeDecision, MergeNode, MergeOpKind,
-    MergePlanParams, MergePlanResult, MergePlannedOp, MergeRoots, MergeRowState, MergeScanResult, MergeScanStats,
-    MergeTarget,
+    plan_merge, run_folder_merge, scan_merge, DirMergeRow, MergeCategory, MergeDecision, MergeNode,
+    MergeOpKind, MergePlanParams, MergePlanResult, MergePlannedOp, MergeRoots, MergeRowState,
+    MergeScanResult, MergeScanStats, MergeTarget,
 };
 pub use quick::QuickTest;
 pub use session::{DirDeltaData, DirModel, DirSessionOptions};
 pub use sync::{
-    apply_strategy, plan_operations, plan_with_strategy, run_sync, BatchRunReport, BatchStats, ConflictPolicy,
-    OpRecord, RecordStatus, SyncPlan, SyncReport, SyncRequest, SyncStrategy,
+    apply_strategy, plan_operations, plan_with_strategy, run_sync, BatchRunReport, BatchStats,
+    ConflictPolicy, OpRecord, RecordStatus, SyncPlan, SyncReport, SyncRequest, SyncStrategy,
 };
 pub use verdict::{
     aggregate_verdicts, content_compare_result, content_verdict_stats, result_to_status,
@@ -171,10 +173,18 @@ pub async fn scan(
     aligner: &dyn NameAligner,
     cancel: &CancelFlag,
 ) -> Result<DirScanResult, DirScanError> {
-    let left_stat = vfs.stat(left).await.map_err(|e| map_root_err("left", left, e))?;
-    let right_stat = vfs.stat(right).await.map_err(|e| map_root_err("right", right, e))?;
+    let left_stat = vfs
+        .stat(left)
+        .await
+        .map_err(|e| map_root_err("left", left, e))?;
+    let right_stat = vfs
+        .stat(right)
+        .await
+        .map_err(|e| map_root_err("right", right, e))?;
     if left_stat.kind != VfsEntryKind::Dir || right_stat.kind != VfsEntryKind::Dir {
-        return Err(DirScanError::Vfs(VfsError::NotADirectory { path: format!("{left} / {right}") }));
+        return Err(DirScanError::Vfs(VfsError::NotADirectory {
+            path: format!("{left} / {right}"),
+        }));
     }
 
     let mut arena: Vec<DirNode> = vec![DirNode {
@@ -214,14 +224,22 @@ pub async fn scan(
             } else {
                 format!("{}/{}", arena[dir_id as usize].rel_path, pair.name)
             };
-            let linfo = pair.left.map(|i| side_info_gated(&le[i as usize].stat, &options.criteria));
-            let rinfo = pair.right.map(|i| side_info_gated(&re[i as usize].stat, &options.criteria));
+            let linfo = pair
+                .left
+                .map(|i| side_info_gated(&le[i as usize].stat, &options.criteria));
+            let rinfo = pair
+                .right
+                .map(|i| side_info_gated(&re[i as usize].stat, &options.criteria));
             let lkind = pair.left.map(|i| le[i as usize].stat.kind);
             let rkind = pair.right.map(|i| re[i as usize].stat.kind);
 
             // 目录判定：任一侧为目录即按目录行展示（BC 语义）
             let is_dir = lkind == Some(VfsEntryKind::Dir) || rkind == Some(VfsEntryKind::Dir);
-            let kind = if is_dir { EntryKind::Dir } else { EntryKind::File };
+            let kind = if is_dir {
+                EntryKind::Dir
+            } else {
+                EntryKind::File
+            };
 
             let status = match (pair.left, pair.right) {
                 (Some(li), Some(ri)) => {
@@ -282,7 +300,10 @@ pub async fn scan(
 
 pub(crate) fn map_root_err(side: &'static str, path: &VfsPath, e: VfsError) -> DirScanError {
     match e {
-        VfsError::NotFound { .. } => DirScanError::RootNotFound { side, path: path.as_str().into() },
+        VfsError::NotFound { .. } => DirScanError::RootNotFound {
+            side,
+            path: path.as_str().into(),
+        },
         other => DirScanError::Vfs(other),
     }
 }

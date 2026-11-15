@@ -46,12 +46,18 @@ fn main() {
         let out = diff_text(&lt, &rt, &opts).expect("diff 失败");
         let ms = t0.elapsed().as_secs_f64() * 1000.0;
         if run == 1 {
-            println!("  run 1: {ms:.1} ms（sections = {}）", out.summary.section_count);
+            println!(
+                "  run 1: {ms:.1} ms（sections = {}）",
+                out.summary.section_count
+            );
         } else {
             best = best.min(ms);
         }
     }
-    println!("  best of 3: {best:.1} ms  ->  {iops:.0} 行/s", iops = lines as f64 / best * 1000.0);
+    println!(
+        "  best of 3: {best:.1} ms  ->  {iops:.0} 行/s",
+        iops = lines as f64 / best * 1000.0
+    );
 
     // 行内 diff 冒烟（取典型修改行）
     let t0 = Instant::now();
@@ -71,7 +77,10 @@ fn main() {
     let out = diff_text(&lt, &rt, &opts).expect("diff 失败");
     assert!(out.summary.change_sections > 0, "语料应产生 Change section");
     assert_eq!(
-        out.sections.iter().filter(|s| s.kind == SectionKind::Equal).count(),
+        out.sections
+            .iter()
+            .filter(|s| s.kind == SectionKind::Equal)
+            .count(),
         out.summary.equal_sections as usize
     );
     println!("PB-04 smoke 完成（仅打印基线，无达标线）");

@@ -170,7 +170,14 @@ pub struct SideInfo {
 impl SideInfo {
     /// 基础元数据（size + mtime；扩展字段置空）
     pub fn base(size: u64, mtime_ms: u64) -> Self {
-        SideInfo { size, mtime_ms, attribute: None, unix_mode: None, uid: None, gid: None }
+        SideInfo {
+            size,
+            mtime_ms,
+            attribute: None,
+            unix_mode: None,
+            uid: None,
+            gid: None,
+        }
     }
 }
 
@@ -569,7 +576,6 @@ pub struct DirOpenParams {
     /// （"text" | "binary"）注解；缺省/false = 不注入（载荷与 P9 完全一致）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts", ts(optional))]
-
     pub format_aware: Option<bool>,
     /// R3-16：基于规则内容比较的重要性模型（criteria.contentMethod=rulesBased 时生效）。
     /// 与 text/open params.rules 同形；缺省 = 引擎默认（差异恒重要）。
@@ -2999,11 +3005,17 @@ pub struct CancelParams {
 
 impl CancelParams {
     pub fn for_request(id: RequestId) -> Self {
-        CancelParams { id: Some(id), session_id: None }
+        CancelParams {
+            id: Some(id),
+            session_id: None,
+        }
     }
 
     pub fn for_session(session_id: impl Into<String>) -> Self {
-        CancelParams { id: None, session_id: Some(session_id.into()) }
+        CancelParams {
+            id: None,
+            session_id: Some(session_id.into()),
+        }
     }
 
     /// 至少有一个非空目标；空载荷是无效通知（引擎侧告警并忽略）。
@@ -4004,16 +4016,26 @@ mod tests {
         assert!(json.contains("\"event\":\"importanceUpdate\""));
         assert!(json.contains("\"updatedIds\":[1,2]"));
         assert!(json.contains("\"importance\":\"unimportant\""));
-        assert!(!json.contains("replacedSpan"), "importance 事件不应携带 replace 字段: {json}");
+        assert!(
+            !json.contains("replacedSpan"),
+            "importance 事件不应携带 replace 字段: {json}"
+        );
         let back: TextSectionsNotification = serde_json::from_str(&json).unwrap();
         assert_eq!(back, imp);
     }
 
     #[test]
     fn diff_side_and_lines_payload_roundtrip() {
-        let p: TextLinesParams = serde_json::from_str(r#"{"sessionId":"t1","side":"left","start":3,"count":10}"#).unwrap();
+        let p: TextLinesParams =
+            serde_json::from_str(r#"{"sessionId":"t1","side":"left","start":3,"count":10}"#)
+                .unwrap();
         assert_eq!(p.side, DiffSide::Left);
-        let r = TextLinesResult { side: DiffSide::Right, start: 0, lines: vec!["a".into()], done: true };
+        let r = TextLinesResult {
+            side: DiffSide::Right,
+            start: 0,
+            lines: vec!["a".into()],
+            done: true,
+        };
         let s = serde_json::to_string(&r).unwrap();
         assert_eq!(s, r#"{"side":"right","start":0,"lines":["a"],"done":true}"#);
         let back: TextLinesResult = serde_json::from_str(&s).unwrap();
@@ -4024,7 +4046,10 @@ mod tests {
     fn importance_spec_defaults_match_core_defaults() {
         let v: ImportanceOptionsSpec = serde_json::from_str("{}").unwrap();
         assert!(!v.leading_ws_unimportant && !v.case_unimportant);
-        assert!(v.eol_style_unimportant, "行尾风格缺省不重要（docs/03 §6.1）");
+        assert!(
+            v.eol_style_unimportant,
+            "行尾风格缺省不重要（docs/03 §6.1）"
+        );
         assert!(v.encoding_unimportant);
     }
 
@@ -4032,10 +4057,19 @@ mod tests {
     fn manual_align_spec_zero_skew_omitted() {
         let spec = TextManualAlignSpec::default();
         let s = serde_json::to_string(&spec).unwrap();
-        assert!(!s.contains("skewTolerance") && !s.contains("alignAnchors"), "{s}");
+        assert!(
+            !s.contains("skewTolerance") && !s.contains("alignAnchors"),
+            "{s}"
+        );
         let spec = TextManualAlignSpec {
-            align_anchors: vec![TextAlignAnchor { left: LineRange::new(0, 1), right: LineRange::new(2, 3) }],
-            isolate: vec![SideLineRange { side: DiffSide::Left, range: LineRange::new(4, 5) }],
+            align_anchors: vec![TextAlignAnchor {
+                left: LineRange::new(0, 1),
+                right: LineRange::new(2, 3),
+            }],
+            isolate: vec![SideLineRange {
+                side: DiffSide::Left,
+                range: LineRange::new(4, 5),
+            }],
             skew_tolerance: 2500,
             ..Default::default()
         };
@@ -4072,7 +4106,10 @@ mod tests {
         .unwrap();
         assert_eq!(spec.conflict_window, Some(3));
         assert_eq!(spec.favor, Some(MergeFavorSide::Right));
-        assert_eq!(spec.conflict_default, Some(MergeConflictDefault::LeftThenRight));
+        assert_eq!(
+            spec.conflict_default,
+            Some(MergeConflictDefault::LeftThenRight)
+        );
         let s = serde_json::to_string(&spec).unwrap();
         let back: Merge3OptionsSpec = serde_json::from_str(&s).unwrap();
         assert_eq!(back, spec);
@@ -4099,7 +4136,10 @@ mod tests {
             output_lines: vec!["a".into(), "b".into()],
         };
         let s = serde_json::to_string(&chunk).unwrap();
-        assert!(!s.contains("conflictKind") && !s.contains("baseLines") && !s.contains("rightLines"), "{s}");
+        assert!(
+            !s.contains("conflictKind") && !s.contains("baseLines") && !s.contains("rightLines"),
+            "{s}"
+        );
         assert!(!s.contains("decision"), "None 决策不序列化: {s}");
         let back: MergeChunkDto = serde_json::from_str(&s).unwrap();
         assert_eq!(back, chunk);
@@ -4115,8 +4155,16 @@ mod tests {
             right: LineRange::new(1, 2),
             conflict_kind: Some(MergeConflictKind::ModifyModify),
             conflict_rows: Some(vec![
-                MergeConflictRowDto { left: Some(1), right: Some(1), unimportant: false },
-                MergeConflictRowDto { left: Some(2), right: None, unimportant: false },
+                MergeConflictRowDto {
+                    left: Some(1),
+                    right: Some(1),
+                    unimportant: false,
+                },
+                MergeConflictRowDto {
+                    left: Some(2),
+                    right: None,
+                    unimportant: false,
+                },
             ]),
             conflict_unimportant: Some(false),
             base_lines: vec!["b".into()],
@@ -4163,7 +4211,9 @@ mod tests {
         .unwrap();
         assert!(r.has_conflicts);
         assert_eq!(r.unresolved_chunks, vec![2]);
-        let params: MergeOutputParams = serde_json::from_str(r#"{"sessionId":"m1","mode":"marker","markerStyle":"diff3"}"#).unwrap();
+        let params: MergeOutputParams =
+            serde_json::from_str(r#"{"sessionId":"m1","mode":"marker","markerStyle":"diff3"}"#)
+                .unwrap();
         assert_eq!(params.mode, Some(MergeOutputMode::Marker));
         assert_eq!(params.marker_style, Some(MergeMarkerStyle::Diff3));
         let minimal: MergeOutputParams = serde_json::from_str(r#"{"sessionId":"m1"}"#).unwrap();
@@ -4212,7 +4262,10 @@ mod tests {
             dir_compare_content: None,
         };
         let s = serde_json::to_string(&c).unwrap();
-        assert!(!s.contains("tableCompare") && !s.contains("hexCompare"), "{s}");
+        assert!(
+            !s.contains("tableCompare") && !s.contains("hexCompare"),
+            "{s}"
+        );
         c.table_compare = Some(true);
         assert!(serde_json::to_string(&c).unwrap().contains("tableCompare"));
     }
@@ -4233,7 +4286,8 @@ mod tests {
         assert_eq!(spec.column_align, Some(TableColumnAlign::ByLeftName));
         assert_eq!(spec.row_align, Some(TableRowAlign::Standard));
         assert_eq!(spec.numeric_tolerance, Some(0.5));
-        let back: TableOptionsSpec = serde_json::from_str(&serde_json::to_string(&spec).unwrap()).unwrap();
+        let back: TableOptionsSpec =
+            serde_json::from_str(&serde_json::to_string(&spec).unwrap()).unwrap();
         assert_eq!(back, spec);
     }
 
@@ -4245,8 +4299,16 @@ mod tests {
             right: Some(4),
             important: false,
             cells: vec![
-                TableCellDto { left: Some("a".into()), right: Some("A".into()), status: TableCellStatus::UnimportantDiff },
-                TableCellDto { left: Some("x".into()), right: None, status: TableCellStatus::LeftOnly },
+                TableCellDto {
+                    left: Some("a".into()),
+                    right: Some("A".into()),
+                    status: TableCellStatus::UnimportantDiff,
+                },
+                TableCellDto {
+                    left: Some("x".into()),
+                    right: None,
+                    status: TableCellStatus::LeftOnly,
+                },
             ],
         };
         let s = serde_json::to_string(&row).unwrap();
@@ -4254,19 +4316,29 @@ mod tests {
         let back: TableRowDto = serde_json::from_str(&s).unwrap();
         assert_eq!(back, row);
         // Added 行省略 left
-        let added = TableRowDto { kind: TableRowKind::Added, left: None, right: Some(1), important: true, cells: Vec::new() };
+        let added = TableRowDto {
+            kind: TableRowKind::Added,
+            left: None,
+            right: Some(1),
+            important: true,
+            cells: Vec::new(),
+        };
         let s = serde_json::to_string(&added).unwrap();
         assert!(!s.contains("\"left\""), "{s}");
     }
 
     #[test]
     fn hex_params_result_roundtrip() {
-        let p: HexOpenParams = serde_json::from_str(r#"{"sessionId":"h1","left":"a.bin","right":"b.bin"}"#).unwrap();
+        let p: HexOpenParams =
+            serde_json::from_str(r#"{"sessionId":"h1","left":"a.bin","right":"b.bin"}"#).unwrap();
         assert!(p.options.is_none());
-        let opts: HexOptionsSpec = serde_json::from_str(r#"{"chunkSize":8192,"alignMode":"fast"}"#).unwrap();
+        let opts: HexOptionsSpec =
+            serde_json::from_str(r#"{"chunkSize":8192,"alignMode":"fast"}"#).unwrap();
         assert_eq!(opts.chunk_size, Some(8192));
         assert_eq!(opts.align_mode, Some(HexAlignMode::Fast));
-        let bp: HexBytesParams = serde_json::from_str(r#"{"sessionId":"h1","side":"left","offset":256,"length":512}"#).unwrap();
+        let bp: HexBytesParams =
+            serde_json::from_str(r#"{"sessionId":"h1","side":"left","offset":256,"length":512}"#)
+                .unwrap();
         assert_eq!(bp.offset, 256);
         let line = HexLineDto {
             addr: 0,
@@ -4282,13 +4354,18 @@ mod tests {
 
     #[test]
     fn patch_apply_params_defaults_and_result_shape() {
-        let minimal: PatchApplyParams = serde_json::from_str(r#"{"patch":"--- a\n+++ b\n","root":"/tmp/x"}"#).unwrap();
-        assert!(minimal.dry_run.is_none() && minimal.fuzz.is_none() && minimal.crlf_tolerant.is_none());
+        let minimal: PatchApplyParams =
+            serde_json::from_str(r#"{"patch":"--- a\n+++ b\n","root":"/tmp/x"}"#).unwrap();
+        assert!(
+            minimal.dry_run.is_none() && minimal.fuzz.is_none() && minimal.crlf_tolerant.is_none()
+        );
         let full: PatchApplyParams = serde_json::from_str(
             r#"{"patch":"x","root":"/tmp","dryRun":true,"fuzz":0,"crlfTolerant":false}"#,
         )
         .unwrap();
-        assert!(full.dry_run == Some(true) && full.fuzz == Some(0) && full.crlf_tolerant == Some(false));
+        assert!(
+            full.dry_run == Some(true) && full.fuzz == Some(0) && full.crlf_tolerant == Some(false)
+        );
         let result: PatchApplyResult = serde_json::from_str(
             r#"{"total":2,"applied":1,"failed":1,"dryRun":false,"allApplied":false,"results":[{"path":"a.txt","status":"applied","fuzzUsed":0,"offsetApplied":2},{"path":"b.bin","status":"skippedBinary","fuzzUsed":0,"offsetApplied":0,"detail":"二进制"}]}"#,
         )
@@ -4311,7 +4388,10 @@ mod tests {
         assert_eq!(p.ops[3].target_side, Some(DiffSide::Right));
         // 可选字段缺省省略
         let s = serde_json::to_string(&p.ops[0]).unwrap();
-        assert!(!s.contains("targetSide") && !s.contains("newName") && !s.contains("mtimeMs"), "{s}");
+        assert!(
+            !s.contains("targetSide") && !s.contains("newName") && !s.contains("mtimeMs"),
+            "{s}"
+        );
         let r: DirExecuteResult = serde_json::from_str(
             r#"{"sessionId":"d1","total":1,"succeeded":[{"op":{"kind":"delete","path":"x.txt","side":"right"},"status":"succeeded","detail":null}],"failed":[],"skipped":[],"dryRun":false,"cancelled":false}"#,
         )
@@ -4481,8 +4561,18 @@ mod tests {
                 name: "注释".into(),
                 case_sensitive: false,
                 items: vec![
-                    GrammarItemSpec { kind: GrammarItemKind::Delimited, start: Some("/*".into()), end: Some("*/".into()), ..Default::default() },
-                    GrammarItemSpec { kind: GrammarItemKind::Text, pattern: Some("//.*".into()), regex: true, ..Default::default() },
+                    GrammarItemSpec {
+                        kind: GrammarItemKind::Delimited,
+                        start: Some("/*".into()),
+                        end: Some("*/".into()),
+                        ..Default::default()
+                    },
+                    GrammarItemSpec {
+                        kind: GrammarItemKind::Text,
+                        pattern: Some("//.*".into()),
+                        regex: true,
+                        ..Default::default()
+                    },
                 ],
             }],
             tab_stops: 4,
@@ -4493,7 +4583,10 @@ mod tests {
         let back: FileFormatSpec = serde_json::from_str(&s).unwrap();
         assert_eq!(back, full);
         assert!(s.contains("\"viewKind\":\"text\""));
-        assert!(s.contains("caseSensitive") || !s.contains("caseSensitive"), "键名 camelCase 稳定");
+        assert!(
+            s.contains("caseSensitive") || !s.contains("caseSensitive"),
+            "键名 camelCase 稳定"
+        );
     }
 
     #[test]
@@ -4501,7 +4594,10 @@ mod tests {
         let pack = FormatPackSpec {
             version: 1,
             kind: "ai-compare-format-pack".into(),
-            formats: vec![FileFormatSpec { id: "fmt-x".into(), ..Default::default() }],
+            formats: vec![FileFormatSpec {
+                id: "fmt-x".into(),
+                ..Default::default()
+            }],
         };
         let s = serde_json::to_string_pretty(&pack).unwrap();
         let back: FormatPackSpec = serde_json::from_str(&s).unwrap();
@@ -4515,7 +4611,8 @@ mod tests {
     #[test]
     fn p10_rules_spec_session_payload_semantics() {
         // text/open rules：None 字段 = 引擎缺省；旧载荷无 rules 字段 = None
-        let old: TextOpenParams = serde_json::from_str(r#"{"sessionId":"t1","left":"a","right":"b"}"#).unwrap();
+        let old: TextOpenParams =
+            serde_json::from_str(r#"{"sessionId":"t1","left":"a","right":"b"}"#).unwrap();
         assert!(old.rules.is_none(), "旧载荷无 rules");
         let with: TextOpenParams = serde_json::from_str(
             r#"{"sessionId":"t1","left":"a","right":"b","rules":{"caseUnimportant":true,"unimportantElements":["注释"]}}"#,
@@ -4533,9 +4630,13 @@ mod tests {
     #[test]
     fn p10_rules_layer_and_scope_serde() {
         // RuleLayer 宽松 + scope 枚举 camelCase
-        let layer: RuleLayerSpec = serde_json::from_str(r#"{"unimportantElements":["字符串"]}"#).unwrap();
+        let layer: RuleLayerSpec =
+            serde_json::from_str(r#"{"unimportantElements":["字符串"]}"#).unwrap();
         assert!(layer.compare.is_none());
-        assert_eq!(layer.unimportant_elements.unwrap(), vec!["字符串".to_string()]);
+        assert_eq!(
+            layer.unimportant_elements.unwrap(),
+            vec!["字符串".to_string()]
+        );
         for (raw, want) in [
             (r#""global""#, RuleScope::Global),
             (r#""kind""#, RuleScope::Kind),
@@ -4549,7 +4650,13 @@ mod tests {
             scope: RuleScope::Kind,
             kind: Some("text-compare".into()),
             session_id: None,
-            layer: RuleLayerSpec { compare: Some(CompareRulesSpec { case_unimportant: Some(true), ..Default::default() }), unimportant_elements: None },
+            layer: RuleLayerSpec {
+                compare: Some(CompareRulesSpec {
+                    case_unimportant: Some(true),
+                    ..Default::default()
+                }),
+                unimportant_elements: None,
+            },
             format_bindings: Vec::new(),
             clear_format_bindings: false,
         };
@@ -4569,14 +4676,21 @@ mod tests {
         assert_eq!(eff.compare.case_unimportant, Some(true));
         assert_eq!(eff.unimportant_elements, vec!["注释".to_string()]);
         let b: RuleFormatBindingSpec =
-            serde_json::from_str(r#"{"formatId":"builtin-cpp","unimportantElements":["注释"]}"#).unwrap();
+            serde_json::from_str(r#"{"formatId":"builtin-cpp","unimportantElements":["注释"]}"#)
+                .unwrap();
         assert_eq!(b.format_id, "builtin-cpp");
     }
 
     #[test]
     fn p10_detected_file_kind_serde() {
-        assert_eq!(serde_json::to_string(&DetectedFileKind::Text).unwrap(), "\"text\"");
-        assert_eq!(serde_json::to_string(&DetectedFileKind::Binary).unwrap(), "\"binary\"");
+        assert_eq!(
+            serde_json::to_string(&DetectedFileKind::Text).unwrap(),
+            "\"text\""
+        );
+        assert_eq!(
+            serde_json::to_string(&DetectedFileKind::Binary).unwrap(),
+            "\"binary\""
+        );
         let v: DetectedFileKind = serde_json::from_str("\"binary\"").unwrap();
         assert_eq!(v, DetectedFileKind::Binary);
     }
@@ -4599,16 +4713,35 @@ mod tests {
     #[test]
     fn p11_report_generate_serde_anchor() {
         // 布局枚举字节锚定
-        assert_eq!(serde_json::to_string(&ReportLayout::Summary).unwrap(), "\"summary\"");
-        assert_eq!(serde_json::to_string(&ReportLayout::SideBySide).unwrap(), "\"sideBySide\"");
-        assert_eq!(serde_json::to_string(&ReportLayout::Interleaved).unwrap(), "\"interleaved\"");
-        assert_eq!(serde_json::to_string(&ReportLayout::Patch).unwrap(), "\"patch\"");
-        assert_eq!(serde_json::to_string(&ReportLayout::Html).unwrap(), "\"html\"");
-        assert_eq!(serde_json::to_string(&ReportLayout::Stats).unwrap(), "\"stats\"");
+        assert_eq!(
+            serde_json::to_string(&ReportLayout::Summary).unwrap(),
+            "\"summary\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ReportLayout::SideBySide).unwrap(),
+            "\"sideBySide\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ReportLayout::Interleaved).unwrap(),
+            "\"interleaved\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ReportLayout::Patch).unwrap(),
+            "\"patch\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ReportLayout::Html).unwrap(),
+            "\"html\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ReportLayout::Stats).unwrap(),
+            "\"stats\""
+        );
         let v: ReportLayout = serde_json::from_str("\"sideBySide\"").unwrap();
         assert_eq!(v, ReportLayout::SideBySide);
         // 最小载荷（旧客户端形态）：只给 sessionId + layout
-        let min: ReportGenerateParams = serde_json::from_str(r#"{"sessionId":"t1","layout":"patch"}"#).unwrap();
+        let min: ReportGenerateParams =
+            serde_json::from_str(r#"{"sessionId":"t1","layout":"patch"}"#).unwrap();
         assert_eq!(min.title, None);
         assert_eq!(min.context_lines, None);
         assert_eq!(min.offset, None);
@@ -4627,7 +4760,11 @@ mod tests {
             color: Some(ReportColorMode::Mono),
             wrap: Some(ReportWrapMode::Word),
             wrap_columns: Some(60),
-            columns: Some(ReportDirColumns { size: true, timestamp: false, ..ReportDirColumns::default() }),
+            columns: Some(ReportDirColumns {
+                size: true,
+                timestamp: false,
+                ..ReportDirColumns::default()
+            }),
             include_file_links: Some(true),
             offset: Some(1024),
             limit: Some(4096),
@@ -4684,8 +4821,7 @@ mod tests {
         assert!(!empty.has_target());
         let blank = CancelParams::for_session("");
         assert!(!blank.has_target(), "空 sessionId 不是有效取消目标");
-        let both: CancelParams =
-            serde_json::from_str(r#"{"id":3,"sessionId":"d1"}"#).unwrap();
+        let both: CancelParams = serde_json::from_str(r#"{"id":3,"sessionId":"d1"}"#).unwrap();
         assert!(both.has_target());
         assert_eq!(both.id, Some(RequestId::Number(3)));
         assert_eq!(both.session_id.as_deref(), Some("d1"));
@@ -4707,7 +4843,10 @@ mod tests {
             method::DIR_EXPAND,
             method::SESSION_CLOSE,
         ] {
-            assert!(!method::is_cancellable(m), "{m} 未接 CancelFlag，不得声明可取消");
+            assert!(
+                !method::is_cancellable(m),
+                "{m} 未接 CancelFlag，不得声明可取消"
+            );
         }
     }
 
@@ -4729,11 +4868,17 @@ mod tests {
 
         let mut c: EngineCapabilities = serde_json::from_str(old).unwrap();
         c.cancel_methods = Some(
-            crate::method::CANCELLABLE_METHODS.iter().map(|m| m.to_string()).collect(),
+            crate::method::CANCELLABLE_METHODS
+                .iter()
+                .map(|m| m.to_string())
+                .collect(),
         );
         c.session_cancel = Some(true);
         let s = serde_json::to_string(&c).unwrap();
         assert!(s.contains("\"cancelMethods\":["), "新能力清单要上线: {s}");
-        assert!(s.contains("\"sessionCancel\":true"), "会话级取消能力要上线: {s}");
+        assert!(
+            s.contains("\"sessionCancel\":true"),
+            "会话级取消能力要上线: {s}"
+        );
     }
 }

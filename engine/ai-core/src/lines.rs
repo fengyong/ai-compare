@@ -65,7 +65,8 @@ impl LineTable {
                     LineEnding::Cr
                 };
                 lines.push(LineEntry {
-                    text: text[start..(i - if ending == LineEnding::CrLf { 1 } else { 0 })].to_string(),
+                    text: text[start..(i - if ending == LineEnding::CrLf { 1 } else { 0 })]
+                        .to_string(),
                     ending,
                 });
                 i += 1;
@@ -108,7 +109,10 @@ impl LineTable {
     /// 严格还原原文（行文本 + 行尾拼接）
     pub fn to_text(&self) -> String {
         let mut out = String::with_capacity(
-            self.lines.iter().map(|l| l.text.len() + l.ending.as_str().len()).sum(),
+            self.lines
+                .iter()
+                .map(|l| l.text.len() + l.ending.as_str().len())
+                .sum(),
         );
         for l in &self.lines {
             out.push_str(&l.text);
@@ -128,13 +132,24 @@ impl LineTable {
     }
 
     /// [`Self::replace_lines`] 的行条目版本（避免重复解析）。
-    pub fn replace_lines_entries(&mut self, start: usize, end: usize, mut new_lines: Vec<LineEntry>) {
-        assert!(start <= end && end <= self.lines.len(), "replace_lines 区间越界");
+    pub fn replace_lines_entries(
+        &mut self,
+        start: usize,
+        end: usize,
+        mut new_lines: Vec<LineEntry>,
+    ) {
+        assert!(
+            start <= end && end <= self.lines.len(),
+            "replace_lines 区间越界"
+        );
         // 行尾修正：中段拼接时末行必须带行尾
         if end < self.lines.len() {
             if let Some(last) = new_lines.last_mut() {
                 if last.ending == LineEnding::None {
-                    last.ending = self.lines.get(start).map_or(LineEnding::Lf, |old| old.ending);
+                    last.ending = self
+                        .lines
+                        .get(start)
+                        .map_or(LineEnding::Lf, |old| old.ending);
                     if last.ending == LineEnding::None {
                         last.ending = LineEnding::Lf;
                     }
@@ -168,7 +183,11 @@ impl LineEntry {
             return Cow::Borrowed(self.text.as_str());
         }
         let ws = apply_whitespace(self.text.as_str(), opts.whitespace);
-        let cased = if opts.ignore_case { ws.to_lowercase() } else { ws };
+        let cased = if opts.ignore_case {
+            ws.to_lowercase()
+        } else {
+            ws
+        };
         if needs_eol {
             Cow::Owned(format!("{cased}\u{0}{}", eol_tag(self.ending)))
         } else {
@@ -276,7 +295,16 @@ mod tests {
 
     #[test]
     fn roundtrip_identity() {
-        for s in ["", "\n", "a", "a\n", "a\r\nb", "\r\n", "a\n\n\nb\r\r\n", "Ünïcödé\r\n中文\n"] {
+        for s in [
+            "",
+            "\n",
+            "a",
+            "a\n",
+            "a\r\nb",
+            "\r\n",
+            "a\n\n\nb\r\r\n",
+            "Ünïcödé\r\n中文\n",
+        ] {
             assert_eq!(t(s).to_text(), s, "roundtrip failed for {s:?}");
         }
     }
@@ -284,28 +312,53 @@ mod tests {
     #[test]
     fn compare_key_whitespace_modes() {
         let mut opts = crate::options::TextDiffOptions::default();
-        let a = LineEntry { text: "a  b".into(), ending: LineEnding::Lf };
-        let b = LineEntry { text: "a b".into(), ending: LineEnding::Lf };
+        let a = LineEntry {
+            text: "a  b".into(),
+            ending: LineEnding::Lf,
+        };
+        let b = LineEntry {
+            text: "a b".into(),
+            ending: LineEnding::Lf,
+        };
         assert_ne!(a.compare_key(&opts), b.compare_key(&opts));
         opts.whitespace = crate::options::WhitespaceMode::IgnoreAmount;
         assert_eq!(a.compare_key(&opts), b.compare_key(&opts));
         opts.whitespace = crate::options::WhitespaceMode::IgnoreAll;
-        let c = LineEntry { text: "ab".into(), ending: LineEnding::Lf };
+        let c = LineEntry {
+            text: "ab".into(),
+            ending: LineEnding::Lf,
+        };
         assert_eq!(a.compare_key(&opts), c.compare_key(&opts));
     }
 
     #[test]
     fn compare_key_case_and_eol() {
         let mut opts = crate::options::TextDiffOptions::default();
-        let lower = LineEntry { text: "hello".into(), ending: LineEnding::Lf };
-        let upper = LineEntry { text: "Hello".into(), ending: LineEnding::Lf };
+        let lower = LineEntry {
+            text: "hello".into(),
+            ending: LineEnding::Lf,
+        };
+        let upper = LineEntry {
+            text: "Hello".into(),
+            ending: LineEnding::Lf,
+        };
         assert_ne!(lower.compare_key(&opts), upper.compare_key(&opts));
         opts.ignore_case = true;
         assert_eq!(lower.compare_key(&opts), upper.compare_key(&opts));
 
-        let crlf = LineEntry { text: "x".into(), ending: LineEnding::CrLf };
-        let lf = LineEntry { text: "x".into(), ending: LineEnding::Lf };
-        assert_eq!(crlf.compare_key(&opts), lf.compare_key(&opts), "默认忽略行尾风格");
+        let crlf = LineEntry {
+            text: "x".into(),
+            ending: LineEnding::CrLf,
+        };
+        let lf = LineEntry {
+            text: "x".into(),
+            ending: LineEnding::Lf,
+        };
+        assert_eq!(
+            crlf.compare_key(&opts),
+            lf.compare_key(&opts),
+            "默认忽略行尾风格"
+        );
         opts.ignore_eol_style = false;
         assert_ne!(crlf.compare_key(&opts), lf.compare_key(&opts));
     }

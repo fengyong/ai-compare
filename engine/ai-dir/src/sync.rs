@@ -7,7 +7,10 @@
 //! 纯函数：输入 [`ai_protocol::DirRow`] 可见行序列（树或平铺视图皆可），
 //! 输出 [`PlannedOperation`] 计划。"较新"按 mtime 毫秒判定（与 BC 同源语义）。
 
-use ai_protocol::{DirEntryStatus, DirRow, PlannedOpKind, PlannedOperation, RuleSide, SideInfo, SyncPreset, SyncRule};
+use ai_protocol::{
+    DirEntryStatus, DirRow, PlannedOpKind, PlannedOperation, RuleSide, SideInfo, SyncPreset,
+    SyncRule,
+};
 use std::collections::BTreeSet;
 
 use crate::execute::{ExecuteOptions, ProgressFn};
@@ -138,7 +141,9 @@ fn apply_preset(row: &DirRow, preset: Option<SyncPreset>, plan: &mut Vec<Planned
             if row.kind == ai_protocol::EntryKind::Dir
                 && matches!(
                     preset,
-                    SyncPreset::UpdateLeftToRight | SyncPreset::UpdateRightToLeft | SyncPreset::UpdateBoth
+                    SyncPreset::UpdateLeftToRight
+                        | SyncPreset::UpdateRightToLeft
+                        | SyncPreset::UpdateBoth
                 )
             {
                 return;
@@ -231,8 +236,16 @@ fn push(plan: &mut Vec<PlannedOperation>, op: PlannedOpKind, row: &DirRow, reaso
     let lp = row.left_path.clone().unwrap_or_else(|| row.id.clone());
     let rp = row.right_path.clone().unwrap_or_else(|| row.id.clone());
     // 孤立项复制到对侧时目标侧尚无 rel：按源侧 rel 在对侧创建同名项。
-    let left_target = row.left_path.as_ref().map(|_| lp.clone()).unwrap_or_else(|| rp.clone());
-    let right_target = row.right_path.as_ref().map(|_| rp.clone()).unwrap_or_else(|| lp.clone());
+    let left_target = row
+        .left_path
+        .as_ref()
+        .map(|_| lp.clone())
+        .unwrap_or_else(|| rp.clone());
+    let right_target = row
+        .right_path
+        .as_ref()
+        .map(|_| rp.clone())
+        .unwrap_or_else(|| lp.clone());
 
     let (source_path, target_path, operation_path) = match op {
         PlannedOpKind::CopyLeftToRight => (Some(lp.clone()), Some(right_target), None),
@@ -350,7 +363,9 @@ pub fn apply_strategy(
     for mut op in plan {
         let row = by_id.get(op.path.as_str()).copied();
         let status = row.map(|r| r.status);
-        let kind_is_dir = row.map(|r| r.kind == ai_protocol::EntryKind::Dir).unwrap_or(false);
+        let kind_is_dir = row
+            .map(|r| r.kind == ai_protocol::EntryKind::Dir)
+            .unwrap_or(false);
 
         // 1. 只读侧跳过（优先级最高：目标侧不可写）
         // 保留全部真实路径字段：不能重新构造一个只有 op/path/reason 的裸计划项。
@@ -367,13 +382,22 @@ pub fn apply_strategy(
         // 内容写回左侧（R3-03 §2.3 要求 5）。按 row 的两侧真实路径重新解析。
         if strategy.conflict_policy == ConflictPolicy::LeftWins
             && op.op == PlannedOpKind::CopyRightToLeft
-            && matches!(status, Some(DirEntryStatus::ContentDiff) | Some(DirEntryStatus::QuickDiff) | Some(DirEntryStatus::DirDiff))
+            && matches!(
+                status,
+                Some(DirEntryStatus::ContentDiff)
+                    | Some(DirEntryStatus::QuickDiff)
+                    | Some(DirEntryStatus::DirDiff)
+            )
         {
             op.op = PlannedOpKind::CopyLeftToRight;
             if let Some(r) = row {
                 let lp = r.left_path.clone().unwrap_or_else(|| r.id.clone());
                 let rp = r.right_path.clone().unwrap_or_else(|| r.id.clone());
-                let right_target = r.right_path.as_ref().map(|_| rp.clone()).unwrap_or_else(|| lp.clone());
+                let right_target = r
+                    .right_path
+                    .as_ref()
+                    .map(|_| rp.clone())
+                    .unwrap_or_else(|| lp.clone());
                 op.source_path = Some(lp);
                 op.target_path = Some(right_target.clone());
                 op.operation_path = None;
@@ -388,8 +412,14 @@ pub fn apply_strategy(
 
         // 3. 删除孤儿开关：镜像对孤立项的删除被关闭
         if !strategy.delete_orphans
-            && matches!(op.op, PlannedOpKind::DeleteLeft | PlannedOpKind::DeleteRight)
-            && matches!(status, Some(DirEntryStatus::LeftOnly) | Some(DirEntryStatus::RightOnly))
+            && matches!(
+                op.op,
+                PlannedOpKind::DeleteLeft | PlannedOpKind::DeleteRight
+            )
+            && matches!(
+                status,
+                Some(DirEntryStatus::LeftOnly) | Some(DirEntryStatus::RightOnly)
+            )
         {
             op.reason.push_str("; strategy:keepOrphans");
             out.skipped.push(op);
@@ -399,9 +429,18 @@ pub fn apply_strategy(
         // 4. 同步空文件夹开关：孤立空目录的复制/删除跳过
         if !strategy.sync_empty_dirs
             && kind_is_dir
-            && matches!(status, Some(DirEntryStatus::LeftOnly) | Some(DirEntryStatus::RightOnly))
+            && matches!(
+                status,
+                Some(DirEntryStatus::LeftOnly) | Some(DirEntryStatus::RightOnly)
+            )
             && is_empty_dir.is_some_and(|f| f(op.address()))
-            && matches!(op.op, PlannedOpKind::CopyLeftToRight | PlannedOpKind::CopyRightToLeft | PlannedOpKind::DeleteLeft | PlannedOpKind::DeleteRight)
+            && matches!(
+                op.op,
+                PlannedOpKind::CopyLeftToRight
+                    | PlannedOpKind::CopyRightToLeft
+                    | PlannedOpKind::DeleteLeft
+                    | PlannedOpKind::DeleteRight
+            )
         {
             op.reason.push_str("; strategy:skipEmptyDir");
             out.skipped.push(op);
@@ -481,7 +520,11 @@ impl BatchRunReport {
             s.touched,
             s.skipped,
             s.failed,
-            if self.cancelled { "（已取消，剩余未执行）" } else { "" },
+            if self.cancelled {
+                "（已取消，剩余未执行）"
+            } else {
+                ""
+            },
         )
     }
 }
@@ -534,7 +577,11 @@ pub async fn run_sync(
             // 集合键与 PlannedOperation::address() 对齐，策略才能命中。
             if row.left_path.is_none() && row.right_path.is_none() {
                 // 旧载荷兼容：两侧都缺路径字段时退回行 id（树形同路径）
-                let path = if row.id.is_empty() { roots.0.clone() } else { roots.0.join(&row.id) };
+                let path = if row.id.is_empty() {
+                    roots.0.clone()
+                } else {
+                    roots.0.join(&row.id)
+                };
                 if let Ok(entries) = vfs.list_dir(&path).await {
                     if entries.is_empty() {
                         set.insert(row.id.clone());
@@ -547,7 +594,11 @@ pub async fn run_sync(
                 (&roots.1, row.right_path.as_deref()),
             ] {
                 let Some(rel) = rel else { continue };
-                let path = if rel.is_empty() { root.clone() } else { root.join(rel) };
+                let path = if rel.is_empty() {
+                    root.clone()
+                } else {
+                    root.join(rel)
+                };
                 if let Ok(entries) = vfs.list_dir(&path).await {
                     if entries.is_empty() {
                         set.insert(rel.to_string());
@@ -562,11 +613,22 @@ pub async fn run_sync(
     let is_empty = |rel: &str| empty_dirs.as_ref().is_some_and(|s| s.contains(rel));
 
     // 2. 计划 + 策略
-    let plan = plan_with_strategy(rows, req.preset, req.rules, req.selection, &req.strategy, Some(&is_empty));
+    let plan = plan_with_strategy(
+        rows,
+        req.preset,
+        req.rules,
+        req.selection,
+        &req.strategy,
+        Some(&is_empty),
+    );
 
     // 3. 执行（复用 execute 层：护栏/部分成功/取消/进度）
-    let opts = ExecuteOptions { dry_run: req.dry_run };
-    let exec = crate::execute::execute_planned_operations(vfs, roots, &plan.ops, &opts, progress, cancel).await;
+    let opts = ExecuteOptions {
+        dry_run: req.dry_run,
+    };
+    let exec =
+        crate::execute::execute_planned_operations(vfs, roots, &plan.ops, &opts, progress, cancel)
+            .await;
 
     // 4. 组报告
     let mut report = SyncReport {
@@ -575,7 +637,10 @@ pub async fn run_sync(
         batch: BatchRunReport {
             dry_run: req.dry_run,
             cancelled: exec.cancelled,
-            stats: BatchStats { total: exec.total, ..Default::default() },
+            stats: BatchStats {
+                total: exec.total,
+                ..Default::default()
+            },
             details: Vec::with_capacity(exec.total),
             log: Vec::new(),
         },
@@ -586,7 +651,10 @@ pub async fn run_sync(
     for op in &plan.skipped {
         report.batch.details.push(OpRecord {
             kind: format!("{:?}", op.op),
-            path: op.display_path.clone().unwrap_or_else(|| op.address().to_string()),
+            path: op
+                .display_path
+                .clone()
+                .unwrap_or_else(|| op.address().to_string()),
             reason: op.reason.clone(),
             status: RecordStatus::Skipped,
             detail: Some("策略跳过".into()),
@@ -598,7 +666,9 @@ pub async fn run_sync(
             RecordStatus::Planned
         } else {
             match r.op {
-                crate::execute::FileOp::Copy { .. } | crate::execute::FileOp::Move { .. } => RecordStatus::Copied,
+                crate::execute::FileOp::Copy { .. } | crate::execute::FileOp::Move { .. } => {
+                    RecordStatus::Copied
+                }
                 crate::execute::FileOp::Delete { .. } => RecordStatus::Deleted,
                 crate::execute::FileOp::Touch { .. } => RecordStatus::Touched,
                 _ => RecordStatus::Copied,
@@ -635,13 +705,27 @@ pub async fn run_sync(
     }
 
     // 5. 日志行（FR-SYNC 视图>日志面板）
-    let verb = if req.dry_run { "同步试运行" } else { "同步完成" };
+    let verb = if req.dry_run {
+        "同步试运行"
+    } else {
+        "同步完成"
+    };
     report.batch.log.push(report.batch.summary_line(verb));
     for d in &report.batch.details {
         if d.status == RecordStatus::Failed {
-            report.batch.log.push(format!("失败 {}: {} — {}", d.path, d.kind, d.detail.clone().unwrap_or_default()));
+            report.batch.log.push(format!(
+                "失败 {}: {} — {}",
+                d.path,
+                d.kind,
+                d.detail.clone().unwrap_or_default()
+            ));
         } else if d.status == RecordStatus::Skipped {
-            report.batch.log.push(format!("跳过 {}: {} — {}", d.path, d.kind, d.detail.clone().unwrap_or_default()));
+            report.batch.log.push(format!(
+                "跳过 {}: {} — {}",
+                d.path,
+                d.kind,
+                d.detail.clone().unwrap_or_default()
+            ));
         }
     }
     report
@@ -658,7 +742,9 @@ fn plan_for<'a>(plan: &'a [PlannedOperation], executed: &str) -> Option<&'a Plan
 }
 
 fn plan_reason(plan: &[PlannedOperation], path: &str) -> String {
-    plan_for(plan, path).map(|p| p.reason.clone()).unwrap_or_default()
+    plan_for(plan, path)
+        .map(|p| p.reason.clone())
+        .unwrap_or_default()
 }
 
 /// 报告显示地址：优先计划里的展示路径（与 UI 计划预览一致），否则用执行地址。
@@ -755,7 +841,10 @@ mod tests {
         let plan = plan_operations(&rows, Some(SyncPreset::UpdateLeftToRight), None, None);
         assert_eq!(
             ops(&plan),
-            vec![(PlannedOpKind::CopyLeftToRight, "lonly"), (PlannedOpKind::CopyLeftToRight, "lnewer")]
+            vec![
+                (PlannedOpKind::CopyLeftToRight, "lonly"),
+                (PlannedOpKind::CopyLeftToRight, "lnewer")
+            ]
         );
     }
 
@@ -769,7 +858,10 @@ mod tests {
         let plan = plan_operations(&rows, Some(SyncPreset::UpdateBoth), None, None);
         assert_eq!(
             ops(&plan),
-            vec![(PlannedOpKind::CopyLeftToRight, "lnewer"), (PlannedOpKind::CopyRightToLeft, "rnewer")]
+            vec![
+                (PlannedOpKind::CopyLeftToRight, "lnewer"),
+                (PlannedOpKind::CopyRightToLeft, "rnewer")
+            ]
         );
     }
 
@@ -783,7 +875,10 @@ mod tests {
         let plan = plan_operations(&rows, Some(SyncPreset::UpdateRightToLeft), None, None);
         assert_eq!(
             ops(&plan),
-            vec![(PlannedOpKind::CopyRightToLeft, "rnewer"), (PlannedOpKind::CopyRightToLeft, "ronly")]
+            vec![
+                (PlannedOpKind::CopyRightToLeft, "rnewer"),
+                (PlannedOpKind::CopyRightToLeft, "ronly")
+            ]
         );
     }
 
@@ -888,7 +983,10 @@ mod tests {
         let plan = plan_operations(&rows, Some(SyncPreset::MirrorLeftToRight), None, None);
         assert_eq!(
             ops(&plan),
-            vec![(PlannedOpKind::DeleteRight, "a.txt"), (PlannedOpKind::CopyLeftToRight, "A.txt")],
+            vec![
+                (PlannedOpKind::DeleteRight, "a.txt"),
+                (PlannedOpKind::CopyLeftToRight, "A.txt")
+            ],
             "大小写碰撞的 delete 必须先于 copy"
         );
         // 非碰撞（不同名）不重排，保持原序
@@ -899,7 +997,10 @@ mod tests {
         let p2 = plan_operations(&rows2, Some(SyncPreset::MirrorLeftToRight), None, None);
         assert_eq!(
             ops(&p2),
-            vec![(PlannedOpKind::CopyLeftToRight, "x.txt"), (PlannedOpKind::DeleteRight, "y.txt")]
+            vec![
+                (PlannedOpKind::CopyLeftToRight, "x.txt"),
+                (PlannedOpKind::DeleteRight, "y.txt")
+            ]
         );
     }
 
@@ -914,9 +1015,25 @@ mod tests {
     #[test]
     fn strategy_keep_orphans_drops_mirror_deletes() {
         let rows = mirror_rows();
-        let plan = plan_with_strategy(&rows, Some(SyncPreset::MirrorRightToLeft), None, None, &SyncStrategy { delete_orphans: false, ..Default::default() }, None);
+        let plan = plan_with_strategy(
+            &rows,
+            Some(SyncPreset::MirrorRightToLeft),
+            None,
+            None,
+            &SyncStrategy {
+                delete_orphans: false,
+                ..Default::default()
+            },
+            None,
+        );
         // 左孤立项不再被删除，但右孤立项仍复制到左
-        assert_eq!(ops(&plan.ops), vec![(PlannedOpKind::CopyRightToLeft, "ronly"), (PlannedOpKind::CopyRightToLeft, "diff")]);
+        assert_eq!(
+            ops(&plan.ops),
+            vec![
+                (PlannedOpKind::CopyRightToLeft, "ronly"),
+                (PlannedOpKind::CopyRightToLeft, "diff")
+            ]
+        );
         assert_eq!(plan.skipped.len(), 1);
         assert_eq!(plan.skipped[0].op, PlannedOpKind::DeleteLeft);
         assert!(plan.skipped[0].reason.contains("keepOrphans"));
@@ -928,19 +1045,49 @@ mod tests {
             row("lnewer", DirEntryStatus::ContentDiff, 200, 100),
             row("rnewer", DirEntryStatus::ContentDiff, 100, 200),
         ];
-        let plan = plan_with_strategy(&rows, Some(SyncPreset::UpdateBoth), None, None, &SyncStrategy { conflict_policy: ConflictPolicy::LeftWins, ..Default::default() }, None);
+        let plan = plan_with_strategy(
+            &rows,
+            Some(SyncPreset::UpdateBoth),
+            None,
+            None,
+            &SyncStrategy {
+                conflict_policy: ConflictPolicy::LeftWins,
+                ..Default::default()
+            },
+            None,
+        );
         // 左侧优先：两行都改从左复制（不看 mtime）
-        assert_eq!(ops(&plan.ops), vec![(PlannedOpKind::CopyLeftToRight, "lnewer"), (PlannedOpKind::CopyLeftToRight, "rnewer")]);
+        assert_eq!(
+            ops(&plan.ops),
+            vec![
+                (PlannedOpKind::CopyLeftToRight, "lnewer"),
+                (PlannedOpKind::CopyLeftToRight, "rnewer")
+            ]
+        );
     }
 
     #[test]
     fn strategy_left_wins_flips_mirror_right_to_left() {
         let rows = mirror_rows();
-        let plan = plan_with_strategy(&rows, Some(SyncPreset::MirrorRightToLeft), None, None, &SyncStrategy { conflict_policy: ConflictPolicy::LeftWins, ..Default::default() }, None);
+        let plan = plan_with_strategy(
+            &rows,
+            Some(SyncPreset::MirrorRightToLeft),
+            None,
+            None,
+            &SyncStrategy {
+                conflict_policy: ConflictPolicy::LeftWins,
+                ..Default::default()
+            },
+            None,
+        );
         // 配对差异行改向；孤立项删除/复制方向不变（非差异行不受策略影响）
         assert_eq!(
             ops(&plan.ops),
-            vec![(PlannedOpKind::DeleteLeft, "lonly"), (PlannedOpKind::CopyRightToLeft, "ronly"), (PlannedOpKind::CopyLeftToRight, "diff")]
+            vec![
+                (PlannedOpKind::DeleteLeft, "lonly"),
+                (PlannedOpKind::CopyRightToLeft, "ronly"),
+                (PlannedOpKind::CopyLeftToRight, "diff")
+            ]
         );
     }
 
@@ -948,12 +1095,35 @@ mod tests {
     fn strategy_readonly_side_skips_writes() {
         let rows = mirror_rows();
         // 镜像左→右的全部操作（复制进右 / 删除右孤立项）都写右：只读右 = 全部跳过
-        let plan = plan_with_strategy(&rows, Some(SyncPreset::MirrorLeftToRight), None, None, &SyncStrategy { readonly: Some(Side::Right), ..Default::default() }, None);
+        let plan = plan_with_strategy(
+            &rows,
+            Some(SyncPreset::MirrorLeftToRight),
+            None,
+            None,
+            &SyncStrategy {
+                readonly: Some(Side::Right),
+                ..Default::default()
+            },
+            None,
+        );
         assert!(plan.ops.is_empty());
         assert_eq!(plan.skipped.len(), 3);
-        assert!(plan.skipped.iter().all(|p| p.reason.contains("readonlySide")));
+        assert!(plan
+            .skipped
+            .iter()
+            .all(|p| p.reason.contains("readonlySide")));
         // 镜像右→左在只读左下同样全部跳过（删除左 / 复制进左）
-        let plan2 = plan_with_strategy(&rows, Some(SyncPreset::MirrorRightToLeft), None, None, &SyncStrategy { readonly: Some(Side::Left), ..Default::default() }, None);
+        let plan2 = plan_with_strategy(
+            &rows,
+            Some(SyncPreset::MirrorRightToLeft),
+            None,
+            None,
+            &SyncStrategy {
+                readonly: Some(Side::Left),
+                ..Default::default()
+            },
+            None,
+        );
         assert!(plan2.ops.is_empty());
         assert_eq!(plan2.skipped.len(), 3);
     }
@@ -964,9 +1134,22 @@ mod tests {
         r.kind = ai_protocol::EntryKind::Dir;
         let rows = vec![r, row("lonly.txt", DirEntryStatus::LeftOnly, 0, 0)];
         let empty = |rel: &str| rel == "emptydir";
-        let plan = plan_with_strategy(&rows, Some(SyncPreset::MirrorLeftToRight), None, None, &SyncStrategy { sync_empty_dirs: false, ..Default::default() }, Some(&empty));
+        let plan = plan_with_strategy(
+            &rows,
+            Some(SyncPreset::MirrorLeftToRight),
+            None,
+            None,
+            &SyncStrategy {
+                sync_empty_dirs: false,
+                ..Default::default()
+            },
+            Some(&empty),
+        );
         // 空目录的复制被跳过；非空孤儿文件照常复制
-        assert_eq!(ops(&plan.ops), vec![(PlannedOpKind::CopyLeftToRight, "lonly.txt")]);
+        assert_eq!(
+            ops(&plan.ops),
+            vec![(PlannedOpKind::CopyLeftToRight, "lonly.txt")]
+        );
         assert_eq!(plan.skipped.len(), 1);
         assert!(plan.skipped[0].reason.contains("skipEmptyDir"));
     }
@@ -977,8 +1160,18 @@ mod tests {
         r.kind = ai_protocol::EntryKind::Dir;
         let rows = vec![r];
         let empty = |_: &str| true;
-        let plan = plan_with_strategy(&rows, Some(SyncPreset::MirrorLeftToRight), None, None, &SyncStrategy::default(), Some(&empty));
-        assert_eq!(ops(&plan.ops), vec![(PlannedOpKind::CopyLeftToRight, "emptydir")]);
+        let plan = plan_with_strategy(
+            &rows,
+            Some(SyncPreset::MirrorLeftToRight),
+            None,
+            None,
+            &SyncStrategy::default(),
+            Some(&empty),
+        );
+        assert_eq!(
+            ops(&plan.ops),
+            vec![(PlannedOpKind::CopyLeftToRight, "emptydir")]
+        );
         assert!(plan.skipped.is_empty());
     }
 
@@ -995,7 +1188,14 @@ mod tests {
     #[test]
     fn strategy_default_keeps_everything() {
         let rows = mirror_rows();
-        let plan = plan_with_strategy(&rows, Some(SyncPreset::MirrorLeftToRight), None, None, &SyncStrategy::default(), None);
+        let plan = plan_with_strategy(
+            &rows,
+            Some(SyncPreset::MirrorLeftToRight),
+            None,
+            None,
+            &SyncStrategy::default(),
+            None,
+        );
         assert_eq!(plan.ops.len(), 3);
         assert!(plan.skipped.is_empty());
     }
@@ -1048,22 +1248,54 @@ mod tests {
         let rows = sync_rows();
         let mut edir_row = sync_rows();
         edir_row[1].kind = ai_protocol::EntryKind::Dir;
-        let req = SyncRequest { preset: Some(SyncPreset::MirrorLeftToRight), strategy: SyncStrategy::default(), dry_run: false, ..Default::default() };
+        let req = SyncRequest {
+            preset: Some(SyncPreset::MirrorLeftToRight),
+            strategy: SyncStrategy::default(),
+            dry_run: false,
+            ..Default::default()
+        };
         let mut progress_seen = Vec::new();
-        let report = run_sync(&vfs, &roots, &edir_row, &req, Some(&mut |d, t, op| progress_seen.push((d, t, op.path().to_string()))), &CancelFlag::new()).await;
+        let report = run_sync(
+            &vfs,
+            &roots,
+            &edir_row,
+            &req,
+            Some(&mut |d, t, op| progress_seen.push((d, t, op.path().to_string()))),
+            &CancelFlag::new(),
+        )
+        .await;
         // 落盘断言：左→右复制（diff/lonly/edir），右孤立项删除，same 不动
-        assert_eq!(vfs.read_file_bytes(&r.join("diff.txt")).await.unwrap(), b"LEFT");
-        assert_eq!(vfs.read_file_bytes(&r.join("lonly.txt")).await.unwrap(), b"L");
-        assert_eq!(vfs.stat(&r.join("edir")).await.unwrap().kind, ai_vfs::EntryKind::Dir);
-        assert!(vfs.stat(&r.join("ronly.txt")).await.is_err(), "镜像应删除右孤立项");
-        assert_eq!(vfs.read_file_bytes(&r.join("same.txt")).await.unwrap(), b"S");
+        assert_eq!(
+            vfs.read_file_bytes(&r.join("diff.txt")).await.unwrap(),
+            b"LEFT"
+        );
+        assert_eq!(
+            vfs.read_file_bytes(&r.join("lonly.txt")).await.unwrap(),
+            b"L"
+        );
+        assert_eq!(
+            vfs.stat(&r.join("edir")).await.unwrap().kind,
+            ai_vfs::EntryKind::Dir
+        );
+        assert!(
+            vfs.stat(&r.join("ronly.txt")).await.is_err(),
+            "镜像应删除右孤立项"
+        );
+        assert_eq!(
+            vfs.read_file_bytes(&r.join("same.txt")).await.unwrap(),
+            b"S"
+        );
         // 报告统计（计划 5 项：diff/lonly 复制、edir 复制、ronly 删除；same 无操作）
         assert_eq!(report.batch.stats.copied, 3, "{:?}", report.batch.details);
         assert_eq!(report.batch.stats.deleted, 1);
         assert_eq!(report.batch.stats.failed, 0);
         assert!(!report.batch.cancelled);
         // 明细可追溯 + 日志面板行
-        assert!(report.batch.details.iter().any(|d| d.status == RecordStatus::Copied && d.path == "diff.txt"));
+        assert!(report
+            .batch
+            .details
+            .iter()
+            .any(|d| d.status == RecordStatus::Copied && d.path == "diff.txt"));
         assert!(report.batch.log.iter().any(|l| l.contains("同步完成")));
         // 进度统一编号 (done,total)
         assert!(progress_seen.iter().all(|(d, t, _)| *d <= *t) && !progress_seen.is_empty());
@@ -1079,15 +1311,32 @@ mod tests {
         let roots = (l.clone(), r.clone());
         let mut rows = sync_rows();
         rows[1].kind = ai_protocol::EntryKind::Dir;
-        let req = SyncRequest { preset: Some(SyncPreset::MirrorLeftToRight), strategy: SyncStrategy::default(), dry_run: true, ..Default::default() };
+        let req = SyncRequest {
+            preset: Some(SyncPreset::MirrorLeftToRight),
+            strategy: SyncStrategy::default(),
+            dry_run: true,
+            ..Default::default()
+        };
         let report = run_sync(&vfs, &roots, &rows, &req, None, &CancelFlag::new()).await;
         assert!(report.batch.dry_run);
         // 试运行不落盘
         assert!(vfs.stat(&r.join("lonly.txt")).await.is_err(), "未复制");
         assert!(vfs.stat(&r.join("ronly.txt")).await.is_ok(), "未删除");
         // 明细为 Planned 状态
-        assert!(report.batch.details.iter().all(|d| d.status == RecordStatus::Planned || d.status == RecordStatus::Skipped));
-        assert_eq!(report.batch.details.iter().filter(|d| d.status == RecordStatus::Planned).count(), 4);
+        assert!(report
+            .batch
+            .details
+            .iter()
+            .all(|d| d.status == RecordStatus::Planned || d.status == RecordStatus::Skipped));
+        assert_eq!(
+            report
+                .batch
+                .details
+                .iter()
+                .filter(|d| d.status == RecordStatus::Planned)
+                .count(),
+            4
+        );
         assert!(report.batch.log.iter().any(|l| l.contains("同步试运行")));
     }
 
@@ -1101,7 +1350,10 @@ mod tests {
         rows[1].kind = ai_protocol::EntryKind::Dir;
         let req = SyncRequest {
             preset: Some(SyncPreset::MirrorLeftToRight),
-            strategy: SyncStrategy { readonly: Some(ExecSide::Right), ..Default::default() },
+            strategy: SyncStrategy {
+                readonly: Some(ExecSide::Right),
+                ..Default::default()
+            },
             dry_run: false,
             ..Default::default()
         };
@@ -1109,7 +1361,11 @@ mod tests {
         // 只读右：全部写右操作被策略拦截，落盘无变化
         assert_eq!(report.batch.stats.copied, 0);
         assert_eq!(report.batch.stats.deleted, 0);
-        assert_eq!(report.batch.stats.skipped, 4, "策略拦下 4 项: {:?}", report.batch.details);
+        assert_eq!(
+            report.batch.stats.skipped, 4,
+            "策略拦下 4 项: {:?}",
+            report.batch.details
+        );
         assert!(vfs.stat(&r.join("ronly.txt")).await.is_ok(), "右孤立项保留");
         assert!(vfs.stat(&r.join("lonly.txt")).await.is_err());
     }
@@ -1124,7 +1380,11 @@ mod tests {
         rows[1].kind = ai_protocol::EntryKind::Dir;
         let req = SyncRequest {
             preset: Some(SyncPreset::MirrorLeftToRight),
-            strategy: SyncStrategy { delete_orphans: false, sync_empty_dirs: false, ..Default::default() },
+            strategy: SyncStrategy {
+                delete_orphans: false,
+                sync_empty_dirs: false,
+                ..Default::default()
+            },
             dry_run: false,
             ..Default::default()
         };
@@ -1132,10 +1392,16 @@ mod tests {
         // 孤立空目录跳过；右孤立项不删除；复制照常
         assert_eq!(report.batch.stats.copied, 2, "{:?}", report.batch.details);
         assert_eq!(report.batch.stats.deleted, 0);
-        assert_eq!(report.batch.stats.skipped, 2, "空目录复制 + 右孤立项删除被跳过");
+        assert_eq!(
+            report.batch.stats.skipped, 2,
+            "空目录复制 + 右孤立项删除被跳过"
+        );
         assert!(vfs.stat(&r.join("edir")).await.is_err(), "空目录未创建");
         assert!(vfs.stat(&r.join("ronly.txt")).await.is_ok(), "右孤立项保留");
-        assert_eq!(vfs.read_file_bytes(&r.join("diff.txt")).await.unwrap(), b"LEFT");
+        assert_eq!(
+            vfs.read_file_bytes(&r.join("diff.txt")).await.unwrap(),
+            b"LEFT"
+        );
     }
 
     #[tokio::test]
@@ -1147,13 +1413,19 @@ mod tests {
         let rows = sync_rows();
         let req = SyncRequest {
             preset: Some(SyncPreset::UpdateBoth),
-            strategy: SyncStrategy { conflict_policy: ConflictPolicy::LeftWins, ..Default::default() },
+            strategy: SyncStrategy {
+                conflict_policy: ConflictPolicy::LeftWins,
+                ..Default::default()
+            },
             dry_run: false,
             ..Default::default()
         };
         let report = run_sync(&vfs, &roots, &rows, &req, None, &CancelFlag::new()).await;
         // 双向更新 + 左侧优先：diff.txt 左新也取左；孤立项保留（更新语义）
-        assert_eq!(vfs.read_file_bytes(&r.join("diff.txt")).await.unwrap(), b"LEFT");
+        assert_eq!(
+            vfs.read_file_bytes(&r.join("diff.txt")).await.unwrap(),
+            b"LEFT"
+        );
         assert_eq!(report.batch.stats.copied, 1, "{:?}", report.batch.details);
         assert_eq!(report.batch.stats.failed, 0);
     }
@@ -1161,7 +1433,14 @@ mod tests {
     // ---- R3-03：平铺/手动对齐的显示 id 不得被当作文件地址 ----
 
     /// 构造一个带真实侧路径的行（平铺 id 与 rel 分离）
-    fn path_row(id: &str, lp: Option<&str>, rp: Option<&str>, status: DirEntryStatus, lm: u64, rm: u64) -> DirRow {
+    fn path_row(
+        id: &str,
+        lp: Option<&str>,
+        rp: Option<&str>,
+        status: DirEntryStatus,
+        lm: u64,
+        rm: u64,
+    ) -> DirRow {
         DirRow {
             id: id.into(),
             name: id.split('#').next().unwrap_or(id).into(),
@@ -1194,17 +1473,39 @@ mod tests {
             VfsPath::parse(r.to_str().unwrap()).unwrap(),
         );
         let vfs = LocalFs::new();
-        let row = path_row("x.txt", Some("sub/x.txt"), Some("sub/x.txt"), DirEntryStatus::ContentDiff, 200, 100);
-        let req = SyncRequest { preset: Some(SyncPreset::MirrorLeftToRight), ..Default::default() };
+        let row = path_row(
+            "x.txt",
+            Some("sub/x.txt"),
+            Some("sub/x.txt"),
+            DirEntryStatus::ContentDiff,
+            200,
+            100,
+        );
+        let req = SyncRequest {
+            preset: Some(SyncPreset::MirrorLeftToRight),
+            ..Default::default()
+        };
         let report = run_sync(&vfs, &roots, &[row], &req, None, &CancelFlag::new()).await;
 
-        assert_eq!(report.batch.stats.failed, 0, "计划不得把显示 id 当文件地址: {:?}", report.batch.details);
         assert_eq!(
-            vfs.read_file_bytes(&roots.1.join("sub/x.txt")).await.unwrap(),
+            report.batch.stats.failed, 0,
+            "计划不得把显示 id 当文件地址: {:?}",
+            report.batch.details
+        );
+        assert_eq!(
+            vfs.read_file_bytes(&roots.1.join("sub/x.txt"))
+                .await
+                .unwrap(),
             b"LEFT",
             "真正的 R/sub/x.txt 必须被同步为左侧内容"
         );
-        assert_eq!(vfs.read_file_bytes(&roots.0.join("sub/x.txt")).await.unwrap(), b"LEFT", "源不应被改写");
+        assert_eq!(
+            vfs.read_file_bytes(&roots.0.join("sub/x.txt"))
+                .await
+                .unwrap(),
+            b"LEFT",
+            "源不应被改写"
+        );
     }
 
     /// 建真实磁盘双根 + LocalFs（R3-03 回归矩阵要求最终磁盘状态断言）
@@ -1237,31 +1538,77 @@ mod tests {
     }
 
     fn req(preset: SyncPreset) -> SyncRequest<'static> {
-        SyncRequest { preset: Some(preset), ..Default::default() }
+        SyncRequest {
+            preset: Some(preset),
+            ..Default::default()
+        }
     }
 
     // 1. 树形普通同路径：兼容且真实地址正确
     #[tokio::test]
     async fn r3_03_tree_same_path_compat() {
         let (_d, roots, vfs) = disk_case(&[("a.txt", b"L")], &[("a.txt", b"R")]);
-        let row = path_row("a.txt", Some("a.txt"), Some("a.txt"), DirEntryStatus::ContentDiff, 200, 100);
-        let plan = plan_operations(std::slice::from_ref(&row), Some(SyncPreset::MirrorLeftToRight), None, None);
+        let row = path_row(
+            "a.txt",
+            Some("a.txt"),
+            Some("a.txt"),
+            DirEntryStatus::ContentDiff,
+            200,
+            100,
+        );
+        let plan = plan_operations(
+            std::slice::from_ref(&row),
+            Some(SyncPreset::MirrorLeftToRight),
+            None,
+            None,
+        );
         assert_eq!(plan[0].path, "a.txt");
         assert_eq!(plan[0].source_path.as_deref(), Some("a.txt"));
         assert_eq!(plan[0].target_path.as_deref(), Some("a.txt"));
-        let report = run_sync(&vfs, &roots, &[row], &req(SyncPreset::MirrorLeftToRight), None, &CancelFlag::new()).await;
+        let report = run_sync(
+            &vfs,
+            &roots,
+            &[row],
+            &req(SyncPreset::MirrorLeftToRight),
+            None,
+            &CancelFlag::new(),
+        )
+        .await;
         assert_eq!(report.batch.stats.failed, 0, "{:?}", report.batch.details);
-        assert_eq!(vfs.read_file_bytes(&roots.1.join("a.txt")).await.unwrap(), b"L");
+        assert_eq!(
+            vfs.read_file_bytes(&roots.1.join("a.txt")).await.unwrap(),
+            b"L"
+        );
     }
 
     // 2. 平铺 update 预设（左较新才复制）走真实子目录地址
     #[tokio::test]
     async fn r3_03_flat_update_preset() {
         let (_d, roots, vfs) = disk_case(&[("sub/x.txt", b"LEFT")], &[("sub/x.txt", b"RIGHT")]);
-        let row = path_row("x.txt", Some("sub/x.txt"), Some("sub/x.txt"), DirEntryStatus::ContentDiff, 200, 100);
-        let report = run_sync(&vfs, &roots, &[row], &req(SyncPreset::UpdateLeftToRight), None, &CancelFlag::new()).await;
+        let row = path_row(
+            "x.txt",
+            Some("sub/x.txt"),
+            Some("sub/x.txt"),
+            DirEntryStatus::ContentDiff,
+            200,
+            100,
+        );
+        let report = run_sync(
+            &vfs,
+            &roots,
+            &[row],
+            &req(SyncPreset::UpdateLeftToRight),
+            None,
+            &CancelFlag::new(),
+        )
+        .await;
         assert_eq!(report.batch.stats.failed, 0, "{:?}", report.batch.details);
-        assert_eq!(vfs.read_file_bytes(&roots.1.join("sub/x.txt")).await.unwrap(), b"LEFT");
+        assert_eq!(
+            vfs.read_file_bytes(&roots.1.join("sub/x.txt"))
+                .await
+                .unwrap(),
+            b"LEFT"
+        );
     }
 
     // 3. 同名 basename 产生 name#i 消歧，不得把 #i 送进执行器
@@ -1272,46 +1619,139 @@ mod tests {
             &[("d1/x.txt", b"R1"), ("d2/x.txt", b"R2")],
         );
         let rows = vec![
-            path_row("x.txt", Some("d1/x.txt"), Some("d1/x.txt"), DirEntryStatus::ContentDiff, 200, 100),
-            path_row("x.txt#1", Some("d2/x.txt"), Some("d2/x.txt"), DirEntryStatus::ContentDiff, 200, 100),
+            path_row(
+                "x.txt",
+                Some("d1/x.txt"),
+                Some("d1/x.txt"),
+                DirEntryStatus::ContentDiff,
+                200,
+                100,
+            ),
+            path_row(
+                "x.txt#1",
+                Some("d2/x.txt"),
+                Some("d2/x.txt"),
+                DirEntryStatus::ContentDiff,
+                200,
+                100,
+            ),
         ];
         let plan = plan_operations(&rows, Some(SyncPreset::MirrorLeftToRight), None, None);
         assert_eq!(plan.len(), 2);
         for p in &plan {
-            assert!(!p.address().contains('#'), "显示消歧后缀不得作为文件地址: {p:?}");
+            assert!(
+                !p.address().contains('#'),
+                "显示消歧后缀不得作为文件地址: {p:?}"
+            );
             assert!(p.address().starts_with('d'), "应使用真实子目录 rel: {p:?}");
         }
-        let report = run_sync(&vfs, &roots, &rows, &req(SyncPreset::MirrorLeftToRight), None, &CancelFlag::new()).await;
+        let report = run_sync(
+            &vfs,
+            &roots,
+            &rows,
+            &req(SyncPreset::MirrorLeftToRight),
+            None,
+            &CancelFlag::new(),
+        )
+        .await;
         assert_eq!(report.batch.stats.failed, 0, "{:?}", report.batch.details);
-        assert_eq!(vfs.read_file_bytes(&roots.1.join("d1/x.txt")).await.unwrap(), b"L1");
-        assert_eq!(vfs.read_file_bytes(&roots.1.join("d2/x.txt")).await.unwrap(), b"L2");
-        assert!(vfs.stat(&roots.1.join("x.txt")).await.is_err(), "不得在根误建 x.txt");
-        assert!(vfs.stat(&roots.1.join("x.txt#1")).await.is_err(), "不得把行 id 当路径建文件");
+        assert_eq!(
+            vfs.read_file_bytes(&roots.1.join("d1/x.txt"))
+                .await
+                .unwrap(),
+            b"L1"
+        );
+        assert_eq!(
+            vfs.read_file_bytes(&roots.1.join("d2/x.txt"))
+                .await
+                .unwrap(),
+            b"L2"
+        );
+        assert!(
+            vfs.stat(&roots.1.join("x.txt")).await.is_err(),
+            "不得在根误建 x.txt"
+        );
+        assert!(
+            vfs.stat(&roots.1.join("x.txt#1")).await.is_err(),
+            "不得把行 id 当路径建文件"
+        );
     }
 
     // 4. 手动对齐左右异名：左→右 / 右→左 都落到目标侧真实名字
     #[tokio::test]
     async fn r3_03_manual_aligned_different_names_both_directions() {
         let (_d, roots, vfs) = disk_case(&[("a.txt", b"AAA")], &[("b.txt", b"BBB")]);
-        let row = path_row("a.txt", Some("a.txt"), Some("b.txt"), DirEntryStatus::ContentDiff, 200, 100);
-        let plan = plan_operations(std::slice::from_ref(&row), Some(SyncPreset::MirrorLeftToRight), None, None);
+        let row = path_row(
+            "a.txt",
+            Some("a.txt"),
+            Some("b.txt"),
+            DirEntryStatus::ContentDiff,
+            200,
+            100,
+        );
+        let plan = plan_operations(
+            std::slice::from_ref(&row),
+            Some(SyncPreset::MirrorLeftToRight),
+            None,
+            None,
+        );
         assert_eq!(plan[0].source_path.as_deref(), Some("a.txt"));
         assert_eq!(plan[0].target_path.as_deref(), Some("b.txt"));
-        let report = run_sync(&vfs, &roots, &[row], &req(SyncPreset::MirrorLeftToRight), None, &CancelFlag::new()).await;
+        let report = run_sync(
+            &vfs,
+            &roots,
+            &[row],
+            &req(SyncPreset::MirrorLeftToRight),
+            None,
+            &CancelFlag::new(),
+        )
+        .await;
         assert_eq!(report.batch.stats.failed, 0, "{:?}", report.batch.details);
-        assert_eq!(vfs.read_file_bytes(&roots.1.join("b.txt")).await.unwrap(), b"AAA");
-        assert!(vfs.stat(&roots.1.join("a.txt")).await.is_err(), "不得按源名在右侧另建一份");
+        assert_eq!(
+            vfs.read_file_bytes(&roots.1.join("b.txt")).await.unwrap(),
+            b"AAA"
+        );
+        assert!(
+            vfs.stat(&roots.1.join("a.txt")).await.is_err(),
+            "不得按源名在右侧另建一份"
+        );
 
         // 右→左：目标写到左 a.txt，右侧 b.txt 保留
         let (_d2, roots2, vfs2) = disk_case(&[("a.txt", b"AAA")], &[("b.txt", b"BBB")]);
-        let row2 = path_row("a.txt", Some("a.txt"), Some("b.txt"), DirEntryStatus::ContentDiff, 100, 200);
-        let plan2 = plan_operations(std::slice::from_ref(&row2), Some(SyncPreset::MirrorRightToLeft), None, None);
+        let row2 = path_row(
+            "a.txt",
+            Some("a.txt"),
+            Some("b.txt"),
+            DirEntryStatus::ContentDiff,
+            100,
+            200,
+        );
+        let plan2 = plan_operations(
+            std::slice::from_ref(&row2),
+            Some(SyncPreset::MirrorRightToLeft),
+            None,
+            None,
+        );
         assert_eq!(plan2[0].source_path.as_deref(), Some("b.txt"));
         assert_eq!(plan2[0].target_path.as_deref(), Some("a.txt"));
-        let report2 = run_sync(&vfs2, &roots2, &[row2], &req(SyncPreset::MirrorRightToLeft), None, &CancelFlag::new()).await;
+        let report2 = run_sync(
+            &vfs2,
+            &roots2,
+            &[row2],
+            &req(SyncPreset::MirrorRightToLeft),
+            None,
+            &CancelFlag::new(),
+        )
+        .await;
         assert_eq!(report2.batch.stats.failed, 0, "{:?}", report2.batch.details);
-        assert_eq!(vfs2.read_file_bytes(&roots2.0.join("a.txt")).await.unwrap(), b"BBB");
-        assert!(vfs2.stat(&roots2.0.join("b.txt")).await.is_err(), "不得按源名在左侧另建一份");
+        assert_eq!(
+            vfs2.read_file_bytes(&roots2.0.join("a.txt")).await.unwrap(),
+            b"BBB"
+        );
+        assert!(
+            vfs2.stat(&roots2.0.join("b.txt")).await.is_err(),
+            "不得按源名在左侧另建一份"
+        );
     }
 
     // 5. 手动对齐的 delete / touch 使用真实侧路径
@@ -1319,17 +1759,47 @@ mod tests {
     async fn r3_03_manual_aligned_delete_and_touch() {
         // delete：leftOnly 孤立项在子目录，镜像右→左应删掉真实的 L/sub/a.txt
         let (_d, roots, vfs) = disk_case(&[("sub/a.txt", b"L")], &[]);
-        let row = path_row("a.txt", Some("sub/a.txt"), None, DirEntryStatus::LeftOnly, 100, 0);
-        let plan = plan_operations(std::slice::from_ref(&row), Some(SyncPreset::MirrorRightToLeft), None, None);
+        let row = path_row(
+            "a.txt",
+            Some("sub/a.txt"),
+            None,
+            DirEntryStatus::LeftOnly,
+            100,
+            0,
+        );
+        let plan = plan_operations(
+            std::slice::from_ref(&row),
+            Some(SyncPreset::MirrorRightToLeft),
+            None,
+            None,
+        );
         assert_eq!(plan[0].op, PlannedOpKind::DeleteLeft);
         assert_eq!(plan[0].operation_path.as_deref(), Some("sub/a.txt"));
-        let report = run_sync(&vfs, &roots, &[row], &req(SyncPreset::MirrorRightToLeft), None, &CancelFlag::new()).await;
+        let report = run_sync(
+            &vfs,
+            &roots,
+            &[row],
+            &req(SyncPreset::MirrorRightToLeft),
+            None,
+            &CancelFlag::new(),
+        )
+        .await;
         assert_eq!(report.batch.stats.failed, 0, "{:?}", report.batch.details);
-        assert!(vfs.stat(&roots.0.join("sub/a.txt")).await.is_err(), "真实侧文件应被删除");
+        assert!(
+            vfs.stat(&roots.0.join("sub/a.txt")).await.is_err(),
+            "真实侧文件应被删除"
+        );
 
         // touch：左右异名，mtime=0 取对侧时间戳；对侧地址必须是 b.txt
         let (_d2, roots2, vfs2) = disk_case(&[("a.txt", b"A")], &[("b.txt", b"B")]);
-        let row2 = path_row("a.txt", Some("a.txt"), Some("b.txt"), DirEntryStatus::ContentDiff, 100, 900);
+        let row2 = path_row(
+            "a.txt",
+            Some("a.txt"),
+            Some("b.txt"),
+            DirEntryStatus::ContentDiff,
+            100,
+            900,
+        );
         let rules = [SyncRule {
             name_mask: None,
             status: None,
@@ -1337,13 +1807,32 @@ mod tests {
             action: RuleAction::TouchLeft,
         }];
         let plan2 = plan_operations(std::slice::from_ref(&row2), None, Some(&rules), None);
-        assert_eq!(plan2[0].operation_path.as_deref(), Some("a.txt"), "本侧地址");
-        assert_eq!(plan2[0].source_path.as_deref(), Some("b.txt"), "对侧时间戳来源");
-        let req2 = SyncRequest { rules: Some(&rules), ..Default::default() };
+        assert_eq!(
+            plan2[0].operation_path.as_deref(),
+            Some("a.txt"),
+            "本侧地址"
+        );
+        assert_eq!(
+            plan2[0].source_path.as_deref(),
+            Some("b.txt"),
+            "对侧时间戳来源"
+        );
+        let req2 = SyncRequest {
+            rules: Some(&rules),
+            ..Default::default()
+        };
         let report2 = run_sync(&vfs2, &roots2, &[row2], &req2, None, &CancelFlag::new()).await;
         assert_eq!(report2.batch.stats.failed, 0, "{:?}", report2.batch.details);
-        assert_eq!(vfs2.read_file_bytes(&roots2.0.join("a.txt")).await.unwrap(), b"A", "对时不应改内容");
-        assert_eq!(vfs2.read_file_bytes(&roots2.1.join("b.txt")).await.unwrap(), b"B", "对侧不应改内容");
+        assert_eq!(
+            vfs2.read_file_bytes(&roots2.0.join("a.txt")).await.unwrap(),
+            b"A",
+            "对时不应改内容"
+        );
+        assert_eq!(
+            vfs2.read_file_bytes(&roots2.1.join("b.txt")).await.unwrap(),
+            b"B",
+            "对侧不应改内容"
+        );
     }
 
     // 6. leftOnly/rightOnly：复制到对侧按源 rel 创建；镜像删除用孤立项存在侧
@@ -1351,37 +1840,109 @@ mod tests {
     async fn r3_03_orphan_copy_and_mirror_delete() {
         let (_d, roots, vfs) = disk_case(&[("sub/only.txt", b"ONLY")], &[("keep.txt", b"KEEP")]);
         let rows = vec![
-            path_row("only.txt", Some("sub/only.txt"), None, DirEntryStatus::LeftOnly, 100, 0),
-            path_row("keep.txt", None, Some("keep.txt"), DirEntryStatus::RightOnly, 0, 100),
+            path_row(
+                "only.txt",
+                Some("sub/only.txt"),
+                None,
+                DirEntryStatus::LeftOnly,
+                100,
+                0,
+            ),
+            path_row(
+                "keep.txt",
+                None,
+                Some("keep.txt"),
+                DirEntryStatus::RightOnly,
+                0,
+                100,
+            ),
         ];
         let plan = plan_operations(&rows, Some(SyncPreset::MirrorLeftToRight), None, None);
-        let copy = plan.iter().find(|p| p.op == PlannedOpKind::CopyLeftToRight).unwrap();
+        let copy = plan
+            .iter()
+            .find(|p| p.op == PlannedOpKind::CopyLeftToRight)
+            .unwrap();
         assert_eq!(copy.source_path.as_deref(), Some("sub/only.txt"));
-        assert_eq!(copy.target_path.as_deref(), Some("sub/only.txt"), "目标侧孤立项按源 rel 创建");
-        let del = plan.iter().find(|p| p.op == PlannedOpKind::DeleteRight).unwrap();
+        assert_eq!(
+            copy.target_path.as_deref(),
+            Some("sub/only.txt"),
+            "目标侧孤立项按源 rel 创建"
+        );
+        let del = plan
+            .iter()
+            .find(|p| p.op == PlannedOpKind::DeleteRight)
+            .unwrap();
         assert_eq!(del.operation_path.as_deref(), Some("keep.txt"));
-        let report = run_sync(&vfs, &roots, &rows, &req(SyncPreset::MirrorLeftToRight), None, &CancelFlag::new()).await;
+        let report = run_sync(
+            &vfs,
+            &roots,
+            &rows,
+            &req(SyncPreset::MirrorLeftToRight),
+            None,
+            &CancelFlag::new(),
+        )
+        .await;
         assert_eq!(report.batch.stats.failed, 0, "{:?}", report.batch.details);
-        assert_eq!(vfs.read_file_bytes(&roots.1.join("sub/only.txt")).await.unwrap(), b"ONLY");
-        assert!(vfs.stat(&roots.1.join("keep.txt")).await.is_err(), "孤立项应被删除");
-        assert_eq!(vfs.read_file_bytes(&roots.0.join("sub/only.txt")).await.unwrap(), b"ONLY", "源不应被改写");
+        assert_eq!(
+            vfs.read_file_bytes(&roots.1.join("sub/only.txt"))
+                .await
+                .unwrap(),
+            b"ONLY"
+        );
+        assert!(
+            vfs.stat(&roots.1.join("keep.txt")).await.is_err(),
+            "孤立项应被删除"
+        );
+        assert_eq!(
+            vfs.read_file_bytes(&roots.0.join("sub/only.txt"))
+                .await
+                .unwrap(),
+            b"ONLY",
+            "源不应被改写"
+        );
     }
 
     // 7. leftWins 改向后真实源/目标必须同步换向（不能只改 op 枚举）
     #[tokio::test]
     async fn r3_03_left_wins_flips_real_paths() {
         let (_d, roots, vfs) = disk_case(&[("a.txt", b"LEFT")], &[("b.txt", b"RIGHT")]);
-        let row = path_row("a.txt", Some("a.txt"), Some("b.txt"), DirEntryStatus::ContentDiff, 100, 200);
-        let strategy = SyncStrategy { conflict_policy: ConflictPolicy::LeftWins, ..Default::default() };
-        let request = SyncRequest { preset: Some(SyncPreset::UpdateBoth), strategy, ..Default::default() };
+        let row = path_row(
+            "a.txt",
+            Some("a.txt"),
+            Some("b.txt"),
+            DirEntryStatus::ContentDiff,
+            100,
+            200,
+        );
+        let strategy = SyncStrategy {
+            conflict_policy: ConflictPolicy::LeftWins,
+            ..Default::default()
+        };
+        let request = SyncRequest {
+            preset: Some(SyncPreset::UpdateBoth),
+            strategy,
+            ..Default::default()
+        };
         let report = run_sync(&vfs, &roots, &[row], &request, None, &CancelFlag::new()).await;
         let p = &report.plan[0];
-        assert_eq!(p.op, PlannedOpKind::CopyLeftToRight, "右较新本应右→左，leftWins 改向");
+        assert_eq!(
+            p.op,
+            PlannedOpKind::CopyLeftToRight,
+            "右较新本应右→左，leftWins 改向"
+        );
         assert_eq!(p.source_path.as_deref(), Some("a.txt"), "源换成左");
         assert_eq!(p.target_path.as_deref(), Some("b.txt"), "目标换成右");
         assert_eq!(report.batch.stats.failed, 0, "{:?}", report.batch.details);
-        assert_eq!(vfs.read_file_bytes(&roots.1.join("b.txt")).await.unwrap(), b"LEFT", "左侧内容应胜出");
-        assert_eq!(vfs.read_file_bytes(&roots.0.join("a.txt")).await.unwrap(), b"LEFT", "左侧不应被回写");
+        assert_eq!(
+            vfs.read_file_bytes(&roots.1.join("b.txt")).await.unwrap(),
+            b"LEFT",
+            "左侧内容应胜出"
+        );
+        assert_eq!(
+            vfs.read_file_bytes(&roots.0.join("a.txt")).await.unwrap(),
+            b"LEFT",
+            "左侧不应被回写"
+        );
     }
 
     // 8. 大小写碰撞重排：按真实地址比较，先删后建不误删新文件
@@ -1389,38 +1950,142 @@ mod tests {
     async fn r3_03_case_collision_reorder_uses_real_address() {
         let (_d, roots, vfs) = disk_case(&[("old.txt", b"NEW")], &[("OLD.TXT", b"OLD")]);
         let rows = vec![
-            path_row("old.txt", Some("old.txt"), None, DirEntryStatus::LeftOnly, 100, 0),
-            path_row("OLD.TXT", None, Some("OLD.TXT"), DirEntryStatus::RightOnly, 0, 100),
+            path_row(
+                "old.txt",
+                Some("old.txt"),
+                None,
+                DirEntryStatus::LeftOnly,
+                100,
+                0,
+            ),
+            path_row(
+                "OLD.TXT",
+                None,
+                Some("OLD.TXT"),
+                DirEntryStatus::RightOnly,
+                0,
+                100,
+            ),
         ];
         let plan = plan_operations(&rows, Some(SyncPreset::MirrorLeftToRight), None, None);
-        let cpos = plan.iter().position(|p| p.op == PlannedOpKind::CopyLeftToRight).unwrap();
-        let dpos = plan.iter().position(|p| p.op == PlannedOpKind::DeleteRight).unwrap();
+        let cpos = plan
+            .iter()
+            .position(|p| p.op == PlannedOpKind::CopyLeftToRight)
+            .unwrap();
+        let dpos = plan
+            .iter()
+            .position(|p| p.op == PlannedOpKind::DeleteRight)
+            .unwrap();
         assert!(dpos < cpos, "大小写碰撞时删除必须先于复制: {plan:?}");
-        let report = run_sync(&vfs, &roots, &rows, &req(SyncPreset::MirrorLeftToRight), None, &CancelFlag::new()).await;
+        let report = run_sync(
+            &vfs,
+            &roots,
+            &rows,
+            &req(SyncPreset::MirrorLeftToRight),
+            None,
+            &CancelFlag::new(),
+        )
+        .await;
         assert_eq!(report.batch.stats.failed, 0, "{:?}", report.batch.details);
-        assert_eq!(vfs.read_file_bytes(&roots.1.join("old.txt")).await.unwrap(), b"NEW", "新文件不得被误删");
+        assert_eq!(
+            vfs.read_file_bytes(&roots.1.join("old.txt")).await.unwrap(),
+            b"NEW",
+            "新文件不得被误删"
+        );
     }
 
     // 9+10. dryRun 不落盘 / 真实执行落盘 / 失败隔离且无关文件不变
     #[tokio::test]
     async fn r3_03_dry_run_then_real_exec_and_failed_isolation() {
         let (_d, roots, vfs) = disk_case(&[("sub/x.txt", b"LEFT")], &[("sub/x.txt", b"RIGHT")]);
-        let row = path_row("x.txt", Some("sub/x.txt"), Some("sub/x.txt"), DirEntryStatus::ContentDiff, 200, 100);
-        let dry = SyncRequest { preset: Some(SyncPreset::MirrorLeftToRight), dry_run: true, ..Default::default() };
-        let d = run_sync(&vfs, &roots, std::slice::from_ref(&row), &dry, None, &CancelFlag::new()).await;
-        assert_eq!(vfs.read_file_bytes(&roots.1.join("sub/x.txt")).await.unwrap(), b"RIGHT", "dryRun 不得落盘");
+        let row = path_row(
+            "x.txt",
+            Some("sub/x.txt"),
+            Some("sub/x.txt"),
+            DirEntryStatus::ContentDiff,
+            200,
+            100,
+        );
+        let dry = SyncRequest {
+            preset: Some(SyncPreset::MirrorLeftToRight),
+            dry_run: true,
+            ..Default::default()
+        };
+        let d = run_sync(
+            &vfs,
+            &roots,
+            std::slice::from_ref(&row),
+            &dry,
+            None,
+            &CancelFlag::new(),
+        )
+        .await;
+        assert_eq!(
+            vfs.read_file_bytes(&roots.1.join("sub/x.txt"))
+                .await
+                .unwrap(),
+            b"RIGHT",
+            "dryRun 不得落盘"
+        );
         assert_eq!(d.batch.stats.failed, 0);
-        let real = run_sync(&vfs, &roots, &[row], &req(SyncPreset::MirrorLeftToRight), None, &CancelFlag::new()).await;
+        let real = run_sync(
+            &vfs,
+            &roots,
+            &[row],
+            &req(SyncPreset::MirrorLeftToRight),
+            None,
+            &CancelFlag::new(),
+        )
+        .await;
         assert_eq!(real.batch.stats.failed, 0);
-        assert_eq!(vfs.read_file_bytes(&roots.1.join("sub/x.txt")).await.unwrap(), b"LEFT", "真实执行落盘到正确位置");
+        assert_eq!(
+            vfs.read_file_bytes(&roots.1.join("sub/x.txt"))
+                .await
+                .unwrap(),
+            b"LEFT",
+            "真实执行落盘到正确位置"
+        );
 
         // 源侧缺文件：必须进 failed，右侧目标与无关文件保持不动
         let (_d2, roots2, vfs2) = disk_case(&[], &[("sub/x.txt", b"RIGHT"), ("keep.txt", b"KEEP")]);
-        let broken = path_row("x.txt", Some("sub/x.txt"), Some("sub/x.txt"), DirEntryStatus::ContentDiff, 200, 100);
-        let f = run_sync(&vfs2, &roots2, &[broken], &req(SyncPreset::MirrorLeftToRight), None, &CancelFlag::new()).await;
-        assert_eq!(f.batch.stats.failed, 1, "源不存在必须计入 failed: {:?}", f.batch.details);
-        assert_eq!(vfs2.read_file_bytes(&roots2.1.join("sub/x.txt")).await.unwrap(), b"RIGHT");
-        assert_eq!(vfs2.read_file_bytes(&roots2.1.join("keep.txt")).await.unwrap(), b"KEEP", "无关文件不变");
-        assert!(vfs2.stat(&roots2.1.join("x.txt")).await.is_err(), "不得按行 id 在根误建文件");
+        let broken = path_row(
+            "x.txt",
+            Some("sub/x.txt"),
+            Some("sub/x.txt"),
+            DirEntryStatus::ContentDiff,
+            200,
+            100,
+        );
+        let f = run_sync(
+            &vfs2,
+            &roots2,
+            &[broken],
+            &req(SyncPreset::MirrorLeftToRight),
+            None,
+            &CancelFlag::new(),
+        )
+        .await;
+        assert_eq!(
+            f.batch.stats.failed, 1,
+            "源不存在必须计入 failed: {:?}",
+            f.batch.details
+        );
+        assert_eq!(
+            vfs2.read_file_bytes(&roots2.1.join("sub/x.txt"))
+                .await
+                .unwrap(),
+            b"RIGHT"
+        );
+        assert_eq!(
+            vfs2.read_file_bytes(&roots2.1.join("keep.txt"))
+                .await
+                .unwrap(),
+            b"KEEP",
+            "无关文件不变"
+        );
+        assert!(
+            vfs2.stat(&roots2.1.join("x.txt")).await.is_err(),
+            "不得按行 id 在根误建文件"
+        );
     }
 }

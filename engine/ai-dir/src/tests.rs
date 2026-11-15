@@ -8,7 +8,7 @@
 use ai_protocol::{CompareCriteria, ContentCompareMode, DirEntryStatus};
 use ai_vfs::{LocalFs, VfsPath};
 
-use crate::{ByNameAligner, CancelFlag, DirScanOptions, NameAligner, rows_from_arena, scan};
+use crate::{rows_from_arena, scan, ByNameAligner, CancelFlag, DirScanOptions, NameAligner};
 
 async fn make_tree(files: &[(&str, &[u8])]) -> (tempfile::TempDir, VfsPath) {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -24,7 +24,11 @@ async fn make_tree(files: &[(&str, &[u8])]) -> (tempfile::TempDir, VfsPath) {
 }
 
 fn criteria(tol: u32, mode: ContentCompareMode) -> CompareCriteria {
-    CompareCriteria { mtime_tolerance_sec: tol, content_compare: mode, ..Default::default() }
+    CompareCriteria {
+        mtime_tolerance_sec: tol,
+        content_compare: mode,
+        ..Default::default()
+    }
 }
 
 async fn scan_tops(left: &VfsPath, right: &VfsPath, crit: CompareCriteria) -> crate::DirScanResult {
@@ -85,8 +89,10 @@ async fn mtime_tolerance_zero_disables_quick_same() {
     // tolerance=0：只要秒值不完全相等就判异；Never 模式 -> QuickDiff（未复核）
     let res = scan_tops(&left, &right, criteria(0, ContentCompareMode::Never)).await;
     let status = rows_from_arena(&res.arena)[0].status;
-    assert!(status == DirEntryStatus::QuickDiff || status == DirEntryStatus::Same,
-        "秒值恰好相等时 Same，否则 QuickDiff；实际 {status:?}");
+    assert!(
+        status == DirEntryStatus::QuickDiff || status == DirEntryStatus::Same,
+        "秒值恰好相等时 Same，否则 QuickDiff；实际 {status:?}"
+    );
     // Auto 模式：mtime 判异 -> 内容复核 -> 内容相同 -> Same（确定性）
     let res = scan_tops(&left, &right, criteria(0, ContentCompareMode::Auto)).await;
     assert_eq!(rows_from_arena(&res.arena)[0].status, DirEntryStatus::Same);
@@ -96,7 +102,9 @@ async fn mtime_tolerance_zero_disables_quick_same() {
 
 #[tokio::test]
 async fn binary_same_and_different() {
-    let blob: Vec<u8> = (0..200_000u32).map(|i| (i.wrapping_mul(31) % 256) as u8).collect();
+    let blob: Vec<u8> = (0..200_000u32)
+        .map(|i| (i.wrapping_mul(31) % 256) as u8)
+        .collect();
     let mut diff_blob = blob.clone();
     let last = diff_blob.len() - 1;
     diff_blob[last] ^= 0xff; // 同长度、跨多块的一字节差异
@@ -112,7 +120,10 @@ async fn binary_same_and_different() {
     let (ld, left) = make_tree(&[("a.bin", &blob)]).await;
     let (rd, right) = make_tree(&[("a.bin", &diff_blob)]).await;
     let res = scan_tops(&left, &right, criteria(0, ContentCompareMode::Always)).await;
-    assert_eq!(rows_from_arena(&res.arena)[0].status, DirEntryStatus::ContentDiff);
+    assert_eq!(
+        rows_from_arena(&res.arena)[0].status,
+        DirEntryStatus::ContentDiff
+    );
     drop(ld);
     drop(rd);
 
@@ -120,7 +131,10 @@ async fn binary_same_and_different() {
     let (ld, left) = make_tree(&[("a.bin", &blob)]).await;
     let (rd, right) = make_tree(&[("a.bin", &diff_blob[..1000])]).await;
     let res = scan_tops(&left, &right, criteria(0, ContentCompareMode::Never)).await;
-    assert_eq!(rows_from_arena(&res.arena)[0].status, DirEntryStatus::ContentDiff);
+    assert_eq!(
+        rows_from_arena(&res.arena)[0].status,
+        DirEntryStatus::ContentDiff
+    );
     drop(ld);
     drop(rd);
 }
@@ -144,8 +158,18 @@ async fn rename_becomes_orphan_pair() {
 
 #[tokio::test]
 async fn depth_controls_recursion_and_rows_deterministic() {
-    let (ld, left) = make_tree(&[("top.txt", b"1"), ("sub/inner.txt", b"2"), ("sub/deep/deeper.txt", b"3")]).await;
-    let (rd, right) = make_tree(&[("top.txt", b"1"), ("sub/inner.txt", b"2"), ("sub/deep/deeper.txt", b"3")]).await;
+    let (ld, left) = make_tree(&[
+        ("top.txt", b"1"),
+        ("sub/inner.txt", b"2"),
+        ("sub/deep/deeper.txt", b"3"),
+    ])
+    .await;
+    let (rd, right) = make_tree(&[
+        ("top.txt", b"1"),
+        ("sub/inner.txt", b"2"),
+        ("sub/deep/deeper.txt", b"3"),
+    ])
+    .await;
     let vfs = LocalFs::new();
 
     // depth=1：仅顶层
@@ -169,7 +193,11 @@ async fn depth_controls_recursion_and_rows_deterministic() {
         .collect();
     assert_eq!(ids, vec!["sub", "top.txt"], "BFS 序：字典序");
     let rows = rows_from_arena(&res.arena);
-    assert_eq!(rows[0].status, DirEntryStatus::DirSame, "目录两侧存在 -> DirSame（P0 占位，P2 聚合）");
+    assert_eq!(
+        rows[0].status,
+        DirEntryStatus::DirSame,
+        "目录两侧存在 -> DirSame（P0 占位，P2 聚合）"
+    );
     assert!(rows[0].has_children);
     assert!(!ids.iter().any(|i| i.contains('/')), "depth=1 不展开子目录");
 
@@ -194,7 +222,13 @@ async fn depth_controls_recursion_and_rows_deterministic() {
         .collect();
     assert_eq!(
         ids,
-        vec!["sub", "top.txt", "sub/deep", "sub/inner.txt", "sub/deep/deeper.txt"],
+        vec![
+            "sub",
+            "top.txt",
+            "sub/deep",
+            "sub/inner.txt",
+            "sub/deep/deeper.txt"
+        ],
         "BFS：根孩子 -> sub 孩子"
     );
     drop(ld);
@@ -206,8 +240,20 @@ async fn root_missing_is_error() {
     let (ld, left) = make_tree(&[]).await;
     let missing = left.join("does-not-exist");
     let vfs = LocalFs::new();
-    let err = scan(&vfs, &left, &missing, &DirScanOptions::default(), &ByNameAligner, &CancelFlag::new()).await.unwrap_err();
-    assert!(matches!(err, crate::DirScanError::RootNotFound { side: "right", .. }));
+    let err = scan(
+        &vfs,
+        &left,
+        &missing,
+        &DirScanOptions::default(),
+        &ByNameAligner,
+        &CancelFlag::new(),
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(
+        err,
+        crate::DirScanError::RootNotFound { side: "right", .. }
+    ));
     drop(ld);
 }
 
@@ -218,7 +264,16 @@ async fn cancel_flag_stops_scan() {
     let vfs = LocalFs::new();
     let flag = CancelFlag::new();
     flag.cancel();
-    let err = scan(&vfs, &left, &right, &DirScanOptions::default(), &ByNameAligner, &flag).await.unwrap_err();
+    let err = scan(
+        &vfs,
+        &left,
+        &right,
+        &DirScanOptions::default(),
+        &ByNameAligner,
+        &flag,
+    )
+    .await
+    .unwrap_err();
     assert!(matches!(err, crate::DirScanError::Cancelled));
     drop(ld);
     drop(rd);

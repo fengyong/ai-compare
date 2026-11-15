@@ -36,7 +36,11 @@ pub struct TableParseOptions {
 
 impl Default for TableParseOptions {
     fn default() -> Self {
-        TableParseOptions { delimiter: ',', quote_char: '"', has_header: true }
+        TableParseOptions {
+            delimiter: ',',
+            quote_char: '"',
+            has_header: true,
+        }
     }
 }
 
@@ -61,7 +65,12 @@ impl TableData {
 
     /// 全表最大列数（表头与数据行取最大；松散行短列视为空）
     pub fn width(&self) -> usize {
-        self.rows.iter().map(|r| r.len()).max().unwrap_or(0).max(self.header.len())
+        self.rows
+            .iter()
+            .map(|r| r.len())
+            .max()
+            .unwrap_or(0)
+            .max(self.header.len())
     }
 
     /// 取第 row 行第 col 列单元格（越界 = 空串；松散行补齐语义）
@@ -319,25 +328,37 @@ fn name_similarity_key(name: &str) -> String {
 }
 
 #[allow(clippy::needless_range_loop)] // 配对下标逻辑：索引循环即意图
-fn align_by_name(primary: &TableData, secondary: &TableData, by_left: bool) -> Vec<ComparisonColumn> {
+fn align_by_name(
+    primary: &TableData,
+    secondary: &TableData,
+    by_left: bool,
+) -> Vec<ComparisonColumn> {
     let pw = primary.width();
     let sw = secondary.width();
     let mut used_sec: Vec<bool> = vec![false; sw];
     let mut matched: Vec<Option<usize>> = vec![None; pw]; // primary col -> secondary col
-    // 两轮匹配：第一轮精确；第二轮大小写+空白规整（列名相似度）
+                                                          // 两轮匹配：第一轮精确；第二轮大小写+空白规整（列名相似度）
     for pass in 0..2 {
         for pc in 0..pw {
             if matched[pc].is_some() {
                 continue;
             }
             let pname = primary.column_name(pc);
-            let pkey = if pass == 0 { pname.clone() } else { name_similarity_key(&pname) };
+            let pkey = if pass == 0 {
+                pname.clone()
+            } else {
+                name_similarity_key(&pname)
+            };
             for sc in 0..sw {
                 if used_sec[sc] {
                     continue;
                 }
                 let sname = secondary.column_name(sc);
-                let skey = if pass == 0 { sname.clone() } else { name_similarity_key(&sname) };
+                let skey = if pass == 0 {
+                    sname.clone()
+                } else {
+                    name_similarity_key(&sname)
+                };
                 if skey == pkey {
                     used_sec[sc] = true;
                     matched[pc] = Some(sc);
@@ -380,7 +401,11 @@ fn align_by_name(primary: &TableData, secondary: &TableData, by_left: bool) -> V
 
 /// 列对齐（FR-TBL-003）。None = 位置对齐；ByLeftName/ByRightName = 名称匹配
 /// （未命中列成为单侧比较列，保持两侧列序）。
-pub fn align_columns(left: &TableData, right: &TableData, align: ColumnAlign) -> Vec<ComparisonColumn> {
+pub fn align_columns(
+    left: &TableData,
+    right: &TableData,
+    align: ColumnAlign,
+) -> Vec<ComparisonColumn> {
     let mut columns = match align {
         ColumnAlign::None => {
             let width = left.width().max(right.width());
@@ -493,12 +518,7 @@ fn cell_importance_key(value: &str, ty: ColumnType, imp: &TableImportance) -> St
 }
 
 /// 单行单元格比较（FR-TBL-003 数值容差：数值列两值均可解析且相差 ≤ 容差 -> 不重要）
-pub fn compare_cell(
-    l: &str,
-    r: &str,
-    ty: ColumnType,
-    imp: &TableImportance,
-) -> CellDiffStatus {
+pub fn compare_cell(l: &str, r: &str, ty: ColumnType, imp: &TableImportance) -> CellDiffStatus {
     if l == r {
         return CellDiffStatus::Same;
     }
@@ -625,14 +645,22 @@ impl Default for TableDiffOptions {
 pub const DEFAULT_SKEW: u32 = 5;
 
 /// 表格比较主入口：解析两侧 -> 列对齐 -> 行对齐 -> 单元格 diff。
-pub fn diff_tables(left_text: &str, right_text: &str, opts: &TableDiffOptions) -> Result<TableDiffModel, TableParseError> {
+pub fn diff_tables(
+    left_text: &str,
+    right_text: &str,
+    opts: &TableDiffOptions,
+) -> Result<TableDiffModel, TableParseError> {
     let left = parse_table(left_text, &opts.parse)?;
     let right = parse_table(right_text, &opts.parse)?;
     Ok(diff_table_data(&left, &right, opts))
 }
 
 /// 已解析表格数据的比较（解析可在外部缓存/复用）
-pub fn diff_table_data(left: &TableData, right: &TableData, opts: &TableDiffOptions) -> TableDiffModel {
+pub fn diff_table_data(
+    left: &TableData,
+    right: &TableData,
+    opts: &TableDiffOptions,
+) -> TableDiffModel {
     let columns = align_columns(left, right, opts.column_align);
     let imp = &opts.importance;
 
@@ -662,8 +690,16 @@ pub fn diff_table_data(left: &TableData, right: &TableData, opts: &TableDiffOpti
                 key.push('\u{1}');
             }
             let v = match which {
-                Side::Left => side.rows.get(row).and_then(|r| r.get(kc)).map(String::as_str),
-                Side::Right => side.rows.get(row).and_then(|r| r.get(kc)).map(String::as_str),
+                Side::Left => side
+                    .rows
+                    .get(row)
+                    .and_then(|r| r.get(kc))
+                    .map(String::as_str),
+                Side::Right => side
+                    .rows
+                    .get(row)
+                    .and_then(|r| r.get(kc))
+                    .map(String::as_str),
             }
             .unwrap_or("");
             key.push_str(&cell_importance_key(v, ColumnType::Text, imp));
@@ -698,7 +734,12 @@ pub fn diff_table_data(left: &TableData, right: &TableData, opts: &TableDiffOpti
                 (false, true) => CellDiffStatus::RightOnly,
                 (false, false) => CellDiffStatus::Same,
             };
-            if matches!(status, CellDiffStatus::ImportantDiff | CellDiffStatus::LeftOnly | CellDiffStatus::RightOnly) {
+            if matches!(
+                status,
+                CellDiffStatus::ImportantDiff
+                    | CellDiffStatus::LeftOnly
+                    | CellDiffStatus::RightOnly
+            ) {
                 important = true;
             }
             cells.push(CellDiff {
@@ -711,7 +752,11 @@ pub fn diff_table_data(left: &TableData, right: &TableData, opts: &TableDiffOpti
         // important 仅由重要差异决定（FR-TBL-001 沟槽红/蓝点：红 = 有重要差异，
         // 蓝 = 仅有不重要差异）
         let any_diff = cells.iter().any(|c| c.status != CellDiffStatus::Same);
-        let kind = kind_fixed.unwrap_or(if any_diff { TableRowKind::Changed } else { TableRowKind::Same });
+        let kind = kind_fixed.unwrap_or(if any_diff {
+            TableRowKind::Changed
+        } else {
+            TableRowKind::Same
+        });
         if kind == TableRowKind::Same {
             important = false;
         }
@@ -726,7 +771,16 @@ pub fn diff_table_data(left: &TableData, right: &TableData, opts: &TableDiffOpti
 
     if !opts.key_columns.is_empty() {
         // 键匹配路径：锚点间区域回退行序对齐（Myers 内容键）+ 偏斜容差补配
-        emit_keyed_rows(left, right, &pairs, &columns, opts, &row_key, &mut rows, &push_same_changed);
+        emit_keyed_rows(
+            left,
+            right,
+            &pairs,
+            &columns,
+            opts,
+            &row_key,
+            &mut rows,
+            &push_same_changed,
+        );
     } else {
         match opts.row_align {
             RowAlign::Unaligned => {
@@ -735,20 +789,46 @@ pub fn diff_table_data(left: &TableData, right: &TableData, opts: &TableDiffOpti
                     push_same_changed(&mut rows, left, right, i, i, &columns, imp, None);
                 }
                 for li in n..left.row_count() {
-                    push_single(&mut rows, left, &columns, Side::Left, li, TableRowKind::Removed);
+                    push_single(
+                        &mut rows,
+                        left,
+                        &columns,
+                        Side::Left,
+                        li,
+                        TableRowKind::Removed,
+                    );
                 }
                 for ri in n..right.row_count() {
-                    push_single(&mut rows, right, &columns, Side::Right, ri, TableRowKind::Added);
+                    push_single(
+                        &mut rows,
+                        right,
+                        &columns,
+                        Side::Right,
+                        ri,
+                        TableRowKind::Added,
+                    );
                 }
             }
             RowAlign::Standard => {
-                emit_myers_rows(left, right, &row_key, &columns, imp, &mut rows, &push_same_changed);
+                emit_myers_rows(
+                    left,
+                    right,
+                    &row_key,
+                    &columns,
+                    imp,
+                    &mut rows,
+                    &push_same_changed,
+                );
             }
         }
     }
 
     let summary = summarize(&rows);
-    TableDiffModel { columns, rows, summary }
+    TableDiffModel {
+        columns,
+        rows,
+        summary,
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -782,15 +862,31 @@ fn push_single(
             important = true;
         }
         cells.push(CellDiff {
-            left: if side == Side::Left { v.map(str::to_string) } else { None },
-            right: if side == Side::Right { v.map(str::to_string) } else { None },
+            left: if side == Side::Left {
+                v.map(str::to_string)
+            } else {
+                None
+            },
+            right: if side == Side::Right {
+                v.map(str::to_string)
+            } else {
+                None
+            },
             status,
         });
     }
     rows.push(TableDiffRow {
         kind,
-        left: if side == Side::Left { Some(row as u32) } else { None },
-        right: if side == Side::Right { Some(row as u32) } else { None },
+        left: if side == Side::Left {
+            Some(row as u32)
+        } else {
+            None
+        },
+        right: if side == Side::Right {
+            Some(row as u32)
+        } else {
+            None
+        },
         cells,
         important,
     });
@@ -804,9 +900,13 @@ fn key_pair_rows(
     right: &TableData,
     key_of: impl Fn(&TableData, usize, Side) -> String,
 ) -> Vec<Option<usize>> {
-    let mut queues: std::collections::HashMap<String, VecDeque<usize>> = std::collections::HashMap::new();
+    let mut queues: std::collections::HashMap<String, VecDeque<usize>> =
+        std::collections::HashMap::new();
     for ri in 0..right.row_count() {
-        queues.entry(key_of(right, ri, Side::Right)).or_default().push_back(ri);
+        queues
+            .entry(key_of(right, ri, Side::Right))
+            .or_default()
+            .push_back(ri);
     }
     let mut pairs = vec![None; left.row_count()];
     let mut last_right: isize = -1;
@@ -840,7 +940,16 @@ fn emit_keyed_rows(
     opts: &TableDiffOptions,
     row_key: &impl Fn(&TableData, usize, Side) -> String,
     rows: &mut Vec<TableDiffRow>,
-    push_pair: &impl Fn(&mut Vec<TableDiffRow>, &TableData, &TableData, usize, usize, &[ComparisonColumn], &TableImportance, Option<TableRowKind>),
+    push_pair: &impl Fn(
+        &mut Vec<TableDiffRow>,
+        &TableData,
+        &TableData,
+        usize,
+        usize,
+        &[ComparisonColumn],
+        &TableImportance,
+        Option<TableRowKind>,
+    ),
 ) {
     let imp = opts.importance.clone();
     let skew = opts.skew_tolerance as usize;
@@ -848,8 +957,12 @@ fn emit_keyed_rows(
     // 1. 内容补配：未命中键的行对中，内容键相等且距离 ≤ skew（单调、贪心最近）
     let mut extra: std::collections::HashMap<usize, usize> = std::collections::HashMap::new(); // left -> right
     {
-        let l_left: Vec<usize> = (0..left.row_count()).filter(|&i| pairs[i].is_none()).collect();
-        let r_left: Vec<usize> = (0..right.row_count()).filter(|&r| !pairs.contains(&Some(r))).collect();
+        let l_left: Vec<usize> = (0..left.row_count())
+            .filter(|&i| pairs[i].is_none())
+            .collect();
+        let r_left: Vec<usize> = (0..right.row_count())
+            .filter(|&r| !pairs.contains(&Some(r)))
+            .collect();
         let mut used_r: std::collections::HashSet<usize> = std::collections::HashSet::new();
         let mut last_r: isize = -1;
         for &li in &l_left {
@@ -893,7 +1006,10 @@ fn emit_keyed_rows(
                              emitted_right: &mut std::collections::HashSet<usize>,
                              bound: usize| {
         for r in 0..bound.min(right.row_count()) {
-            if !emitted_right.contains(&r) && !pairs.contains(&Some(r)) && !extra.values().any(|&v| v == r) {
+            if !emitted_right.contains(&r)
+                && !pairs.contains(&Some(r))
+                && !extra.values().any(|&v| v == r)
+            {
                 emitted_right.insert(r);
                 push_single(rows, right, columns, Side::Right, r, TableRowKind::Added);
             }
@@ -919,7 +1035,10 @@ fn emit_keyed_rows(
     }
     // 尾部剩余右侧未配对行 -> added
     for r in 0..right.row_count() {
-        if !emitted_right.contains(&r) && !pairs.contains(&Some(r)) && !extra.values().any(|&v| v == r) {
+        if !emitted_right.contains(&r)
+            && !pairs.contains(&Some(r))
+            && !extra.values().any(|&v| v == r)
+        {
             push_single(rows, right, columns, Side::Right, r, TableRowKind::Added);
         }
     }
@@ -935,10 +1054,23 @@ fn emit_myers_rows(
     columns: &[ComparisonColumn],
     imp: &TableImportance,
     rows: &mut Vec<TableDiffRow>,
-    push_pair: &impl Fn(&mut Vec<TableDiffRow>, &TableData, &TableData, usize, usize, &[ComparisonColumn], &TableImportance, Option<TableRowKind>),
+    push_pair: &impl Fn(
+        &mut Vec<TableDiffRow>,
+        &TableData,
+        &TableData,
+        usize,
+        usize,
+        &[ComparisonColumn],
+        &TableImportance,
+        Option<TableRowKind>,
+    ),
 ) {
-    let lkeys: Vec<String> = (0..left.row_count()).map(|i| row_key(left, i, Side::Left)).collect();
-    let rkeys: Vec<String> = (0..right.row_count()).map(|i| row_key(right, i, Side::Right)).collect();
+    let lkeys: Vec<String> = (0..left.row_count())
+        .map(|i| row_key(left, i, Side::Left))
+        .collect();
+    let rkeys: Vec<String> = (0..right.row_count())
+        .map(|i| row_key(right, i, Side::Right))
+        .collect();
     let ops = diff_seq(&lkeys, &rkeys);
     let mut li = 0usize;
     let mut ri = 0usize;
@@ -1044,7 +1176,10 @@ mod tests {
 
     #[test]
     fn parse_tsv_delimiter() {
-        let opts = TableParseOptions { delimiter: '\t', ..Default::default() };
+        let opts = TableParseOptions {
+            delimiter: '\t',
+            ..Default::default()
+        };
         let t = parse_table("a\tb\n1\t2\n", &opts).unwrap();
         assert_eq!(t.header, vec!["a", "b"]);
         assert_eq!(t.rows, vec![vec!["1", "2"]]);
@@ -1092,12 +1227,27 @@ mod tests {
 
     #[test]
     fn infer_types_loose() {
-        assert_eq!(infer_column_type(["1", "2.5", "-3e2"].into_iter().map(String::from)), ColumnType::Number);
-        assert_eq!(infer_column_type(["2024-01-02", "2024/3/4"].into_iter().map(String::from)), ColumnType::Date);
-        assert_eq!(infer_column_type(["1", "x"].into_iter().map(String::from)), ColumnType::Text);
+        assert_eq!(
+            infer_column_type(["1", "2.5", "-3e2"].into_iter().map(String::from)),
+            ColumnType::Number
+        );
+        assert_eq!(
+            infer_column_type(["2024-01-02", "2024/3/4"].into_iter().map(String::from)),
+            ColumnType::Date
+        );
+        assert_eq!(
+            infer_column_type(["1", "x"].into_iter().map(String::from)),
+            ColumnType::Text
+        );
         // 空值不破坏推断
-        assert_eq!(infer_column_type(["", "7"].into_iter().map(String::from)), ColumnType::Number);
-        assert_eq!(infer_column_type([""].into_iter().map(String::from)), ColumnType::Text);
+        assert_eq!(
+            infer_column_type(["", "7"].into_iter().map(String::from)),
+            ColumnType::Number
+        );
+        assert_eq!(
+            infer_column_type([""].into_iter().map(String::from)),
+            ColumnType::Text
+        );
         assert!(!parse_number("NaN").is_some() && parse_number("inf").is_none());
         assert!(parse_number(" 42 ").is_some());
         assert!(parse_date("2024-12-31"));
@@ -1154,20 +1304,52 @@ mod tests {
 
     #[test]
     fn cell_compare_case_and_whitespace() {
-        let imp = TableImportance { case_unimportant: true, ..Default::default() };
-        assert_eq!(compare_cell("Abc", "abc", ColumnType::Text, &imp), CellDiffStatus::UnimportantDiff);
-        let imp = TableImportance { whitespace: WhitespaceMode::IgnoreAmount, ..Default::default() };
-        assert_eq!(compare_cell("a  b", "a b", ColumnType::Text, &imp), CellDiffStatus::UnimportantDiff);
-        assert_eq!(compare_cell("a", "b", ColumnType::Text, &TableImportance::default()), CellDiffStatus::ImportantDiff);
+        let imp = TableImportance {
+            case_unimportant: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            compare_cell("Abc", "abc", ColumnType::Text, &imp),
+            CellDiffStatus::UnimportantDiff
+        );
+        let imp = TableImportance {
+            whitespace: WhitespaceMode::IgnoreAmount,
+            ..Default::default()
+        };
+        assert_eq!(
+            compare_cell("a  b", "a b", ColumnType::Text, &imp),
+            CellDiffStatus::UnimportantDiff
+        );
+        assert_eq!(
+            compare_cell("a", "b", ColumnType::Text, &TableImportance::default()),
+            CellDiffStatus::ImportantDiff
+        );
     }
 
     #[test]
     fn cell_compare_numeric_tolerance() {
-        let imp = TableImportance { numeric_tolerance: Some(0.5), ..Default::default() };
-        assert_eq!(compare_cell("1.0", "1.4", ColumnType::Number, &imp), CellDiffStatus::UnimportantDiff);
-        assert_eq!(compare_cell("1.0", "2.0", ColumnType::Number, &imp), CellDiffStatus::ImportantDiff);
+        let imp = TableImportance {
+            numeric_tolerance: Some(0.5),
+            ..Default::default()
+        };
+        assert_eq!(
+            compare_cell("1.0", "1.4", ColumnType::Number, &imp),
+            CellDiffStatus::UnimportantDiff
+        );
+        assert_eq!(
+            compare_cell("1.0", "2.0", ColumnType::Number, &imp),
+            CellDiffStatus::ImportantDiff
+        );
         // 无容差：数值不同即重要
-        assert_eq!(compare_cell("1.0", "1.0001", ColumnType::Number, &TableImportance::default()), CellDiffStatus::ImportantDiff);
+        assert_eq!(
+            compare_cell(
+                "1.0",
+                "1.0001",
+                ColumnType::Number,
+                &TableImportance::default()
+            ),
+            CellDiffStatus::ImportantDiff
+        );
     }
 
     // ---- 行对齐与 diff ----
@@ -1180,9 +1362,16 @@ mod tests {
     fn diff_key_mode_basic_and_gutter() {
         let l = csv("id,v\n1,a\n2,b\n3,c\n");
         let r = csv("id,v\n1,a\n2,B\n4,d\n");
-        let opts = TableDiffOptions { key_columns: vec![0], ..Default::default() };
+        let opts = TableDiffOptions {
+            key_columns: vec![0],
+            ..Default::default()
+        };
         let m = diff_table_data(&l, &r, &opts);
-        assert_eq!(kinds(&m), vec!["same", "changed", "removed", "added"], "{m:?}");
+        assert_eq!(
+            kinds(&m),
+            vec!["same", "changed", "removed", "added"],
+            "{m:?}"
+        );
         assert_eq!(m.rows[1].left, Some(1));
         assert_eq!(m.rows[1].right, Some(1));
         assert!(m.rows[1].important);
@@ -1195,42 +1384,98 @@ mod tests {
         // 键交叉（monotone 配对留下一对未命中）：内容一致 + 距离 ≤ skew -> 补配 Same
         let l = csv("id,v\n1,a\n2,b\n");
         let r = csv("id,v\n2,b\n1,a\n");
-        let opts = TableDiffOptions { key_columns: vec![0], ..Default::default() };
+        let opts = TableDiffOptions {
+            key_columns: vec![0],
+            ..Default::default()
+        };
         let m = diff_table_data(&l, &r, &opts);
-        assert_eq!(kinds(&m), vec!["same", "same"], "交叉键补配（距离 1 ≤ 默认 5）: {m:?}");
+        assert_eq!(
+            kinds(&m),
+            vec!["same", "same"],
+            "交叉键补配（距离 1 ≤ 默认 5）: {m:?}"
+        );
         // skew=0：无补配 -> removed + added
-        let opts0 = TableDiffOptions { key_columns: vec![0], skew_tolerance: 0, ..Default::default() };
+        let opts0 = TableDiffOptions {
+            key_columns: vec![0],
+            skew_tolerance: 0,
+            ..Default::default()
+        };
         let m0 = diff_table_data(&l, &r, &opts0);
-        assert_eq!(kinds(&m0), vec!["added", "same", "removed"], "无补配：锚点前右行 added 先行，未命中左行 removed: {m0:?}");
+        assert_eq!(
+            kinds(&m0),
+            vec!["added", "same", "removed"],
+            "无补配：锚点前右行 added 先行，未命中左行 removed: {m0:?}"
+        );
         // 键交叉场景的 skew 边界：每对未命中行的内容等价对距离为 1 ——
         // skew=0 不补配；skew=1 全部补配
         let l2 = csv("id,v\n1,a\n2,b\n3,c\n4,d\n5,e\n");
         let r2 = csv("id,v\n2,b\n3,c\n4,d\n5,e\n1,a\n");
-        let m0 = diff_table_data(&l2, &r2, &TableDiffOptions { key_columns: vec![0], skew_tolerance: 0, ..Default::default() });
+        let m0 = diff_table_data(
+            &l2,
+            &r2,
+            &TableDiffOptions {
+                key_columns: vec![0],
+                skew_tolerance: 0,
+                ..Default::default()
+            },
+        );
         assert_eq!(
             kinds(&m0),
-            vec!["added", "added", "added", "added", "same", "removed", "removed", "removed", "removed"],
+            vec![
+                "added", "added", "added", "added", "same", "removed", "removed", "removed",
+                "removed"
+            ],
             "skew=0：键单调配对只剩 (1,a)，其余 removed/added: {m0:?}"
         );
-        let m1 = diff_table_data(&l2, &r2, &TableDiffOptions { key_columns: vec![0], skew_tolerance: 1, ..Default::default() });
-        assert_eq!(kinds(&m1), vec!["same", "same", "same", "same", "same"], "skew=1：内容补配全部命中: {m1:?}");
+        let m1 = diff_table_data(
+            &l2,
+            &r2,
+            &TableDiffOptions {
+                key_columns: vec![0],
+                skew_tolerance: 1,
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            kinds(&m1),
+            vec!["same", "same", "same", "same", "same"],
+            "skew=1：内容补配全部命中: {m1:?}"
+        );
     }
 
     #[test]
     fn diff_key_mode_insert_before_anchor_flushes_added_first() {
         let l = csv("id,v\n1,a\n2,b\n");
         let r = csv("id,v\n9,z\n1,a\n2,b\n");
-        let m = diff_table_data(&l, &r, &TableDiffOptions { key_columns: vec![0], ..Default::default() });
-        assert_eq!(kinds(&m), vec!["added", "same", "same"], "锚点前新增行先输出: {m:?}");
+        let m = diff_table_data(
+            &l,
+            &r,
+            &TableDiffOptions {
+                key_columns: vec![0],
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            kinds(&m),
+            vec!["added", "same", "same"],
+            "锚点前新增行先输出: {m:?}"
+        );
     }
 
     #[test]
     fn diff_key_mode_duplicate_keys_pair_in_order() {
         let l = csv("id,v\n1,a\n1,b\n1,c\n");
         let r = csv("id,v\n1,A\n1,B\n");
-        let opts = TableDiffOptions { key_columns: vec![0], ..Default::default() };
+        let opts = TableDiffOptions {
+            key_columns: vec![0],
+            ..Default::default()
+        };
         let m = diff_table_data(&l, &r, &opts);
-        assert_eq!(kinds(&m), vec!["changed", "changed", "removed"], "键重复按出现序配对: {m:?}");
+        assert_eq!(
+            kinds(&m),
+            vec!["changed", "changed", "removed"],
+            "键重复按出现序配对: {m:?}"
+        );
     }
 
     #[test]
@@ -1245,7 +1490,10 @@ mod tests {
     fn diff_no_key_unaligned_positional() {
         let l = csv("v\na\nb\n");
         let r = csv("v\na\nB\nc\n");
-        let opts = TableDiffOptions { row_align: RowAlign::Unaligned, ..Default::default() };
+        let opts = TableDiffOptions {
+            row_align: RowAlign::Unaligned,
+            ..Default::default()
+        };
         let m = diff_table_data(&l, &r, &opts);
         assert_eq!(kinds(&m), vec!["same", "changed", "added"], "{m:?}");
     }
@@ -1269,7 +1517,14 @@ mod tests {
         assert!(!m.rows[0].important);
         assert_eq!(m.summary.unimportant_rows, 1);
         // 默认重要性：同样的差异是重要差异
-        let m2 = diff_table_data(&l, &r, &TableDiffOptions { key_columns: vec![0], ..Default::default() });
+        let m2 = diff_table_data(
+            &l,
+            &r,
+            &TableDiffOptions {
+                key_columns: vec![0],
+                ..Default::default()
+            },
+        );
         assert!(m2.rows[0].important);
         // 无键 Standard：整行键折叠后相同 -> Myers 判等，但单元格仍有不重要差异
         // -> changed + !important（蓝点行，"只显示差异"应包含）
@@ -1293,7 +1548,10 @@ mod tests {
     fn diff_columns_reordered_by_name_with_cell_values_mapped() {
         let l = csv("id,qty\n1,10\n");
         let r = csv("qty,id\n10,1\n");
-        let opts = TableDiffOptions { column_align: ColumnAlign::ByLeftName, ..Default::default() };
+        let opts = TableDiffOptions {
+            column_align: ColumnAlign::ByLeftName,
+            ..Default::default()
+        };
         let m = diff_table_data(&l, &r, &opts);
         assert_eq!(kinds(&m), vec!["same"], "列序打乱按名对齐后全同: {m:?}");
         assert_eq!(m.columns[0].name, "id");
@@ -1320,7 +1578,10 @@ mod tests {
     fn summary_counts() {
         let l = csv("id\n1\n2\n3\n");
         let r = csv("id\n1\n4\n");
-        let opts = TableDiffOptions { key_columns: vec![0], ..Default::default() };
+        let opts = TableDiffOptions {
+            key_columns: vec![0],
+            ..Default::default()
+        };
         let m = diff_table_data(&l, &r, &opts);
         assert_eq!(m.summary.same_rows, 1);
         assert_eq!(m.summary.changed_rows, 0);

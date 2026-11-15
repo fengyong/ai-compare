@@ -52,7 +52,11 @@ fn xxd_lines(data: &[u8]) -> Vec<(u64, String, String)> {
             .collect::<Vec<_>>()
             .join(" ")
             .to_lowercase();
-        rows.push((u64::from_str_radix(addr, 16).expect("地址"), hex, ascii_part.to_string()));
+        rows.push((
+            u64::from_str_radix(addr, 16).expect("地址"),
+            hex,
+            ascii_part.to_string(),
+        ));
     }
     rows
 }
@@ -62,10 +66,10 @@ fn render_matches_xxd_fixed_corpora() {
     let corpora: Vec<Vec<u8>> = vec![
         b"Hello, hex world!".to_vec(),
         (0u8..=255).collect(),
-        vec![0u8; 33],             // 两行 + 1 字节尾行
+        vec![0u8; 33], // 两行 + 1 字节尾行
         b"\x00\x01\x02\x1f\x7f\x80\xff".to_vec(),
         Vec::new(),
-        vec![0x20; 16],            // 恰一行空格
+        vec![0x20; 16], // 恰一行空格
     ];
     for (i, data) in corpora.iter().enumerate() {
         let total_rows = data.len().div_ceil(16);
@@ -80,8 +84,16 @@ fn render_matches_xxd_fixed_corpora() {
         );
         for (k, (o, t)) in ours.iter().zip(theirs.iter()).enumerate() {
             assert_eq!(o.addr, t.0, "语料 {i} 行 {k} 地址不一致");
-            assert_eq!(o.hex, t.1, "语料 {i} 行 {k} hex 列不一致:\n ours: {}\n xxd : {}", o.hex, t.1);
-            assert_eq!(o.ascii, t.2, "语料 {i} 行 {k} ASCII 侧栏不一致:\n ours: {}\n xxd : {}", o.ascii, t.2);
+            assert_eq!(
+                o.hex, t.1,
+                "语料 {i} 行 {k} hex 列不一致:\n ours: {}\n xxd : {}",
+                o.hex, t.1
+            );
+            assert_eq!(
+                o.ascii, t.2,
+                "语料 {i} 行 {k} ASCII 侧栏不一致:\n ours: {}\n xxd : {}",
+                o.ascii, t.2
+            );
         }
     }
 }
@@ -95,7 +107,10 @@ fn paged_render_equals_full_render_window() {
         let page = render_hex_lines(&data, start_row, 1);
         assert_eq!(page.len(), if start_row < 16 { 1 } else { 0 });
         if !page.is_empty() {
-            assert_eq!(page[0], full[start_row as usize], "行 {start_row} 分页切片不一致");
+            assert_eq!(
+                page[0], full[start_row as usize],
+                "行 {start_row} 分页切片不一致"
+            );
         }
     }
     // 越界行 -> 空页
@@ -124,23 +139,45 @@ fn blocks(m: &ai_core::hex::HexDiffModel) -> Vec<(HexBlockKind, u64, u64, u64, u
 /// None 模式：同偏移逐字节；尾部 inserted/deleted
 #[test]
 fn golden_none_mode() {
-    let opts = HexOptions { chunk_size: 4, align_mode: HexAlignMode::None };
+    let opts = HexOptions {
+        chunk_size: 4,
+        align_mode: HexAlignMode::None,
+    };
     let m = diff_bytes(b"AAAABXBB", b"AAAAYXBB", &opts);
     // B≠Y 变化（1 字节），X==X 与后续 BB 同段合并
     assert_eq!(
         blocks(&m),
-        vec![(HexBlockKind::Same, 0, 4, 0, 4), (HexBlockKind::Changed, 4, 1, 4, 1), (HexBlockKind::Same, 5, 3, 5, 3)]
+        vec![
+            (HexBlockKind::Same, 0, 4, 0, 4),
+            (HexBlockKind::Changed, 4, 1, 4, 1),
+            (HexBlockKind::Same, 5, 3, 5, 3)
+        ]
     );
     let m = diff_bytes(b"AB", b"ABXY", &opts);
-    assert_eq!(blocks(&m), vec![(HexBlockKind::Same, 0, 2, 0, 2), (HexBlockKind::Inserted, u64::MAX, u64::MAX, 2, 2)]);
+    assert_eq!(
+        blocks(&m),
+        vec![
+            (HexBlockKind::Same, 0, 2, 0, 2),
+            (HexBlockKind::Inserted, u64::MAX, u64::MAX, 2, 2)
+        ]
+    );
     let m = diff_bytes(b"ABXY", b"AB", &opts);
-    assert_eq!(blocks(&m), vec![(HexBlockKind::Same, 0, 2, 0, 2), (HexBlockKind::Deleted, 2, 2, u64::MAX, u64::MAX)]);
+    assert_eq!(
+        blocks(&m),
+        vec![
+            (HexBlockKind::Same, 0, 2, 0, 2),
+            (HexBlockKind::Deleted, 2, 2, u64::MAX, u64::MAX)
+        ]
+    );
 }
 
 /// Full 模式：中段插入/删除感知（FR-HEX-002 "完全"）
 #[test]
 fn golden_full_mode_insert_delete_aware() {
-    let opts = HexOptions { chunk_size: 4, align_mode: HexAlignMode::Full };
+    let opts = HexOptions {
+        chunk_size: 4,
+        align_mode: HexAlignMode::Full,
+    };
     // 中段插入 "brave "
     let m = diff_bytes(b"hello world", b"hello brave world", &opts);
     assert_eq!(m.summary.inserted_bytes, 6, "{m:?}");
@@ -169,9 +206,15 @@ fn golden_full_mode_insert_delete_aware() {
 /// Fast 模式：块哈希粗对齐 + 块内等位精对齐（无块内插入/删除感知）
 #[test]
 fn golden_fast_mode_changed_pair() {
-    let opts = HexOptions { chunk_size: 4, align_mode: HexAlignMode::Fast };
+    let opts = HexOptions {
+        chunk_size: 4,
+        align_mode: HexAlignMode::Fast,
+    };
     let m = diff_bytes(b"AAAABBBB", b"AAAAXXYY", &opts);
-    assert_eq!(m.summary.changed_bytes, 4, "等位精对齐：BB→XXYY 全部计 changed");
+    assert_eq!(
+        m.summary.changed_bytes, 4,
+        "等位精对齐：BB→XXYY 全部计 changed"
+    );
     assert_eq!(m.summary.inserted_bytes + m.summary.deleted_bytes, 0);
 }
 
@@ -180,9 +223,26 @@ fn golden_fast_mode_changed_pair() {
 fn golden_small_chunks_equivalent_to_bytewise() {
     let l: Vec<u8> = (0u8..64).chain([0xEE, 0xFF]).collect();
     let r: Vec<u8> = (0u8..64).chain([0x11, 0x22]).collect();
-    let none = diff_bytes(&l, &r, &HexOptions { chunk_size: 4, align_mode: HexAlignMode::None });
-    let full = diff_bytes(&l, &r, &HexOptions { chunk_size: 4, align_mode: HexAlignMode::Full });
-    assert_eq!(none.summary, full.summary, "尾部替换语料：None 与 Full 统计一致");
+    let none = diff_bytes(
+        &l,
+        &r,
+        &HexOptions {
+            chunk_size: 4,
+            align_mode: HexAlignMode::None,
+        },
+    );
+    let full = diff_bytes(
+        &l,
+        &r,
+        &HexOptions {
+            chunk_size: 4,
+            align_mode: HexAlignMode::Full,
+        },
+    );
+    assert_eq!(
+        none.summary, full.summary,
+        "尾部替换语料：None 与 Full 统计一致"
+    );
     assert_eq!(none.summary.changed_bytes, 2);
 }
 
@@ -192,7 +252,14 @@ fn status_maps_cover_all_kinds() {
     use ai_core::hex::HexByteStatus as S;
     let l = b"ABCDEF".to_vec();
     let r = b"ABCXYEFgh".to_vec(); // DE→XY changed；gh inserted
-    let m = diff_bytes(&l, &r, &HexOptions { chunk_size: 3, align_mode: HexAlignMode::Full });
+    let m = diff_bytes(
+        &l,
+        &r,
+        &HexOptions {
+            chunk_size: 3,
+            align_mode: HexAlignMode::Full,
+        },
+    );
     let (ls, rs) = status_maps(&m);
     assert_eq!(ls.len(), 6);
     assert_eq!(rs.len(), 9);
@@ -201,7 +268,11 @@ fn status_maps_cover_all_kinds() {
     assert_eq!(n_changed_l + n_same_l, 6, "左视图无 inserted");
     assert_eq!(n_changed_l, 1, "D→X 变化");
     // Myers 最优对齐：Delete(D)+Insert(XY) 的 min 段记 changed，余量 Y 与 gh 记 inserted
-    assert_eq!(rs.iter().filter(|&&s| s == S::Inserted).count(), 3, "Y + gh inserted");
+    assert_eq!(
+        rs.iter().filter(|&&s| s == S::Inserted).count(),
+        3,
+        "Y + gh inserted"
+    );
     assert!(ls.iter().all(|&s| s != S::Inserted));
     assert!(rs.iter().all(|&s| s != S::Deleted));
 }
@@ -216,7 +287,10 @@ fn aic() -> std::path::PathBuf {
 
 fn run(a: &[&str]) -> (i32, String) {
     let out = Command::new(aic()).args(a).output().expect("aic 启动");
-    (out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stdout).into_owned())
+    (
+        out.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+    )
 }
 
 #[test]
@@ -248,14 +322,29 @@ fn cli_table_exit_codes_and_tsv() {
     let r = dir.path().join("r.csv");
     std::fs::write(&l, "id,v\n1,a\n2,b\n").unwrap();
     std::fs::write(&r, "id,v\n1,a\n2,b\n").unwrap();
-    let (code, out) = run(&["table", l.to_str().unwrap(), r.to_str().unwrap(), "--key", "0"]);
+    let (code, out) = run(&[
+        "table",
+        l.to_str().unwrap(),
+        r.to_str().unwrap(),
+        "--key",
+        "0",
+    ]);
     assert_eq!(code, 0, "相同表格退出 0: {out}");
     assert!(out.is_empty());
 
     std::fs::write(&r, "id,v\n1,a\n2,B\n3,c\n").unwrap();
-    let (code, out) = run(&["table", l.to_str().unwrap(), r.to_str().unwrap(), "--key", "0"]);
+    let (code, out) = run(&[
+        "table",
+        l.to_str().unwrap(),
+        r.to_str().unwrap(),
+        "--key",
+        "0",
+    ]);
     assert_eq!(code, 1, "有差异退出 1");
-    assert!(out.contains("# same=1\tchanged=1\tadded=1\tremoved=0"), "摘要头: {out}");
+    assert!(
+        out.contains("# same=1\tchanged=1\tadded=1\tremoved=0"),
+        "摘要头: {out}"
+    );
     assert!(out.contains("changed\t1\t1"), "changed 行 TSV: {out}");
     assert!(out.contains("added\t-\t2"), "added 行 TSV: {out}");
 

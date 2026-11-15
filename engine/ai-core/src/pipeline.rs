@@ -82,8 +82,11 @@ pub(crate) fn keys_for_range<'a>(
         .collect();
     for r in isolate_local {
         for i in r.start..r.end {
-            keys[i as usize] =
-                Cow::Owned(format!("\u{0}ISOL\u{0}{}\u{0}{}", side_tag(side), range.0 + i));
+            keys[i as usize] = Cow::Owned(format!(
+                "\u{0}ISOL\u{0}{}\u{0}{}",
+                side_tag(side),
+                range.0 + i
+            ));
         }
     }
     keys
@@ -192,11 +195,7 @@ pub(crate) fn run_range(
     let rb_off = rr.0;
 
     // 分段装配：锚点前的段 + 锚点强制 section + 尾段
-    let emit_segment = |sections: &mut Vec<Section>,
-                            la0: u32,
-                            la1: u32,
-                            rb0: u32,
-                            rb1: u32| {
+    let emit_segment = |sections: &mut Vec<Section>, la0: u32, la1: u32, rb0: u32, rb1: u32| {
         if la0 == la1 && rb0 == rb1 {
             return;
         }
@@ -246,7 +245,14 @@ pub(crate) fn run_range(
     emit_segment(&mut sections, pa, lw, pb, rw);
 
     // 重要性重判（全量坐标 + 全量行表）→ 从不对齐拆分 → 相邻 Equal 合并
-    let classification = keys::classify_sections(&sections, left, right, opts, &cfg.importance, manual_adjusted);
+    let classification = keys::classify_sections(
+        &sections,
+        left,
+        right,
+        opts,
+        &cfg.importance,
+        manual_adjusted,
+    );
     for (sec, imp) in sections.iter_mut().zip(classification) {
         sec.important = imp;
     }
@@ -266,9 +272,18 @@ pub(crate) fn run_full(
 ) -> Result<KeyedDiffOutput, DiffError> {
     cfg.manual.validate(left.len() as u32, right.len() as u32)?;
     if cfg.base.algo == LineAlignAlgo::Standard {
-        return Ok(crate::progressive::ProgressiveDiffer::run_to_end(left, right, cfg));
+        return Ok(crate::progressive::ProgressiveDiffer::run_to_end(
+            left, right, cfg,
+        ));
     }
-    let mut sections = run_range(left, right, cfg, (0, left.len() as u32), (0, right.len() as u32), &cfg.manual)?;
+    let mut sections = run_range(
+        left,
+        right,
+        cfg,
+        (0, left.len() as u32),
+        (0, right.len() as u32),
+        &cfg.manual,
+    )?;
     let summary = renumber(&mut sections);
     Ok(keys::build_keyed_output(
         crate::sections::DiffOutput { sections, summary },
@@ -287,7 +302,10 @@ mod tests {
 
     fn cfg(algo: LineAlignAlgo) -> DiffConfig {
         DiffConfig {
-            base: TextDiffOptions { algo, ..TextDiffOptions::default() },
+            base: TextDiffOptions {
+                algo,
+                ..TextDiffOptions::default()
+            },
             importance: ImportanceOptions::default(),
             manual: ManualAlignOptions::default(),
         }
@@ -321,7 +339,10 @@ mod tests {
                     let r = s.right.expect("Equal 必有右区间");
                     assert_eq!(l.len(), r.len());
                     for k in 0..l.len() {
-                        assert_eq!(left.line((l.start + k) as usize).text, right.line((r.start + k) as usize).text);
+                        assert_eq!(
+                            left.line((l.start + k) as usize).text,
+                            right.line((r.start + k) as usize).text
+                        );
                     }
                     for i in l.start..l.end {
                         rebuilt.push(left.line(i as usize).text.clone());
@@ -346,10 +367,18 @@ mod tests {
     fn all_algos_agree_on_simple_change() {
         let left = LineTable::from_text(&lines(&["one", "two", "three"]));
         let right = LineTable::from_text(&lines(&["one", "TWO", "three", "four"]));
-        for algo in [LineAlignAlgo::Myers, LineAlignAlgo::Patience, LineAlignAlgo::Histogram, LineAlignAlgo::Standard] {
+        for algo in [
+            LineAlignAlgo::Myers,
+            LineAlignAlgo::Patience,
+            LineAlignAlgo::Histogram,
+            LineAlignAlgo::Standard,
+        ] {
             let out = run_full(&left, &right, &cfg(algo)).unwrap();
             assert_sane(&left, &right, &out.output.sections);
-            assert_eq!(out.output.summary.change_sections, 1, "{algo:?} 应为单 Change");
+            assert_eq!(
+                out.output.summary.change_sections, 1,
+                "{algo:?} 应为单 Change"
+            );
             assert_eq!(out.output.summary.equal_lines, 2, "{algo:?} one/three 对齐");
         }
     }
@@ -358,7 +387,12 @@ mod tests {
     fn moved_block_all_algos_replay() {
         let left = LineTable::from_text(&lines(&["1", "2", "3", "4", "5", "6", "7", "8"]));
         let right = LineTable::from_text(&lines(&["1", "6", "7", "2", "3", "4", "5", "8"]));
-        for algo in [LineAlignAlgo::Myers, LineAlignAlgo::Patience, LineAlignAlgo::Histogram, LineAlignAlgo::Standard] {
+        for algo in [
+            LineAlignAlgo::Myers,
+            LineAlignAlgo::Patience,
+            LineAlignAlgo::Histogram,
+            LineAlignAlgo::Standard,
+        ] {
             let out = run_full(&left, &right, &cfg(algo)).unwrap();
             assert_sane(&left, &right, &out.output.sections);
         }
@@ -395,8 +429,16 @@ mod tests {
         c.manual.isolate = vec![(DiffSide::Left, LineRange::new(1, 2))];
         let out = run_full(&left, &right, &c).unwrap();
         assert_sane(&left, &right, &out.output.sections);
-        let has_change = out.output.sections.iter().any(|s| s.kind != SectionKind::Equal);
-        assert!(has_change, "隔离行必须脱离对齐骨架: {:?}", out.output.sections);
+        let has_change = out
+            .output
+            .sections
+            .iter()
+            .any(|s| s.kind != SectionKind::Equal);
+        assert!(
+            has_change,
+            "隔离行必须脱离对齐骨架: {:?}",
+            out.output.sections
+        );
     }
 
     #[test]
@@ -416,7 +458,15 @@ mod tests {
         let left = LineTable::from_text(&lines(&["h1", "a", "b", "c", "d", "t1"]));
         let right = LineTable::from_text(&lines(&["h1", "a", "X", "Y", "d", "t1"]));
         let c = cfg(LineAlignAlgo::Patience);
-        let full = run_range(&left, &right, &c, (0, left.len() as u32), (0, right.len() as u32), &c.manual).unwrap();
+        let full = run_range(
+            &left,
+            &right,
+            &c,
+            (0, left.len() as u32),
+            (0, right.len() as u32),
+            &c.manual,
+        )
+        .unwrap();
         // 窗口取中段 [1..5)：结果应为全量坐标（含偏移）
         let win = run_range(&left, &right, &c, (1, 5), (1, 5), &c.manual).unwrap();
         assert_sane(&left, &right, &full);

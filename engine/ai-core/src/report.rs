@@ -97,7 +97,10 @@ pub fn status_is_diff(s: ReportEntryStatus) -> bool {
 
 /// 孤项类状态（单侧存在）
 pub fn status_is_orphan(s: ReportEntryStatus) -> bool {
-    matches!(s, ReportEntryStatus::LeftOnly | ReportEntryStatus::RightOnly)
+    matches!(
+        s,
+        ReportEntryStatus::LeftOnly | ReportEntryStatus::RightOnly
+    )
 }
 
 /// 单侧元数据（报告用；mtime 为 epoch 毫秒）
@@ -111,7 +114,11 @@ pub struct ReportSideInfo {
 
 impl ReportSideInfo {
     pub fn new(size: u64, mtime_ms: u64) -> Self {
-        ReportSideInfo { size, mtime_ms, attribute: None }
+        ReportSideInfo {
+            size,
+            mtime_ms,
+            attribute: None,
+        }
     }
 }
 
@@ -137,7 +144,11 @@ impl DirReportRow {
     }
     /// 深度（路径段数-1；顶层 = 0）
     pub fn depth(&self) -> usize {
-        self.rel_path.split('/').filter(|s| !s.is_empty()).count().saturating_sub(1)
+        self.rel_path
+            .split('/')
+            .filter(|s| !s.is_empty())
+            .count()
+            .saturating_sub(1)
     }
 }
 
@@ -211,7 +222,9 @@ impl TextSnapshot {
             left_label,
             right_label,
             (0..left.len()).map(|i| left.line(i).text.clone()).collect(),
-            (0..right.len()).map(|i| right.line(i).text.clone()).collect(),
+            (0..right.len())
+                .map(|i| right.line(i).text.clone())
+                .collect(),
             sections,
         );
         snap.left_no_trailing_newline = no_nl(left);
@@ -295,11 +308,13 @@ impl ReportSnapshot {
     pub fn has_differences(&self) -> bool {
         match self {
             ReportSnapshot::Text(s) => s.has_differences(),
-            ReportSnapshot::Dir(s) => s.stats.content_diff > 0
-                || s.stats.quick_diff > 0
-                || s.stats.left_only > 0
-                || s.stats.right_only > 0
-                || s.stats.dir_diff > 0,
+            ReportSnapshot::Dir(s) => {
+                s.stats.content_diff > 0
+                    || s.stats.quick_diff > 0
+                    || s.stats.left_only > 0
+                    || s.stats.right_only > 0
+                    || s.stats.dir_diff > 0
+            }
             ReportSnapshot::Table(s) => {
                 s.summary.changed_rows > 0 || s.summary.added_rows > 0 || s.summary.removed_rows > 0
             }
@@ -308,10 +323,17 @@ impl ReportSnapshot {
                     || s.model.summary.inserted_bytes > 0
                     || s.model.summary.deleted_bytes > 0
             }
-            ReportSnapshot::Merge(s) => s.model.conflict_count() > 0
-                || s.model.chunks.iter().any(|c| {
-                    matches!(c.origin, ChunkOrigin::LeftOnly | ChunkOrigin::RightOnly | ChunkOrigin::BothChanged)
-                }),
+            ReportSnapshot::Merge(s) => {
+                s.model.conflict_count() > 0
+                    || s.model.chunks.iter().any(|c| {
+                        matches!(
+                            c.origin,
+                            ChunkOrigin::LeftOnly
+                                | ChunkOrigin::RightOnly
+                                | ChunkOrigin::BothChanged
+                        )
+                    })
+            }
         }
     }
 }
@@ -432,9 +454,7 @@ impl DirDisplayFilter {
         let diff = status_is_diff(row.status);
         let orphan = status_is_orphan(row.status);
         let newer = |side_l: bool| match (&row.left, &row.right) {
-            (Some(l), Some(r)) if l.mtime_ms != r.mtime_ms => {
-                (l.mtime_ms > r.mtime_ms) == side_l
-            }
+            (Some(l), Some(r)) if l.mtime_ms != r.mtime_ms => (l.mtime_ms > r.mtime_ms) == side_l,
             _ => false,
         };
         match self {
@@ -446,8 +466,12 @@ impl DirDisplayFilter {
             DirDisplayFilter::Matches => !diff && !orphan,
             DirDisplayFilter::LeftNewer => newer(true),
             DirDisplayFilter::RightNewer => newer(false),
-            DirDisplayFilter::LeftNewerOrphans => newer(true) || matches!(row.status, ReportEntryStatus::LeftOnly),
-            DirDisplayFilter::RightNewerOrphans => newer(false) || matches!(row.status, ReportEntryStatus::RightOnly),
+            DirDisplayFilter::LeftNewerOrphans => {
+                newer(true) || matches!(row.status, ReportEntryStatus::LeftOnly)
+            }
+            DirDisplayFilter::RightNewerOrphans => {
+                newer(false) || matches!(row.status, ReportEntryStatus::RightOnly)
+            }
             DirDisplayFilter::LeftOrphans => matches!(row.status, ReportEntryStatus::LeftOnly),
             DirDisplayFilter::RightOrphans => matches!(row.status, ReportEntryStatus::RightOnly),
         }
@@ -571,7 +595,10 @@ pub const DEFAULT_REPORT_CONTEXT: u32 = 3;
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ReportError {
     #[error("布局 {layout} 不支持 {kind} 会话快照")]
-    Unsupported { layout: &'static str, kind: &'static str },
+    Unsupported {
+        layout: &'static str,
+        kind: &'static str,
+    },
     #[error("报告渲染失败: {0}")]
     Render(String),
 }
@@ -608,7 +635,10 @@ pub fn render_report(snap: &ReportSnapshot, opts: &ReportOptions) -> Result<Stri
 }
 
 fn unsupported(layout: ReportLayout, snap: &ReportSnapshot) -> ReportError {
-    ReportError::Unsupported { layout: layout.as_str(), kind: snap.kind() }
+    ReportError::Unsupported {
+        layout: layout.as_str(),
+        kind: snap.kind(),
+    }
 }
 
 fn effective_title(snap: &ReportSnapshot, opts: &ReportOptions) -> String {
@@ -770,8 +800,14 @@ impl ReportRenderer for SummaryRenderer {
                         out.push_str(&format!(
                             "  [{row_kind}] 行 L{left} R{right}\n",
                             row_kind = row.kind.as_str(),
-                            left = row.left.map(|v| v.to_string()).unwrap_or_else(|| "-".into()),
-                            right = row.right.map(|v| v.to_string()).unwrap_or_else(|| "-".into()),
+                            left = row
+                                .left
+                                .map(|v| v.to_string())
+                                .unwrap_or_else(|| "-".into()),
+                            right = row
+                                .right
+                                .map(|v| v.to_string())
+                                .unwrap_or_else(|| "-".into()),
                         ));
                     }
                 }
@@ -872,8 +908,12 @@ fn render_text_summary(out: &mut String, s: &TextSnapshot, opts: &ReportOptions)
             r = r.unwrap_or_else(|| "-".into()),
         ));
         // 首行预览（确定性：各侧第一行）
-        let left_first = lines_of(s, crate::options::DiffSide::Left, sec).first().cloned();
-        let right_first = lines_of(s, crate::options::DiffSide::Right, sec).first().cloned();
+        let left_first = lines_of(s, crate::options::DiffSide::Left, sec)
+            .first()
+            .cloned();
+        let right_first = lines_of(s, crate::options::DiffSide::Right, sec)
+            .first()
+            .cloned();
         if let Some(t) = left_first {
             out.push_str(&format!("    < {t}\n"));
         }
@@ -901,7 +941,9 @@ fn render_dir_summary(out: &mut String, s: &DirSnapshot, opts: &ReportOptions) {
     }
     out.push_str("差异清单:\n");
     for row in &s.rows {
-        if !opts.dir_display.keeps(row) || row.status == ReportEntryStatus::Same || row.status == ReportEntryStatus::DirSame
+        if !opts.dir_display.keeps(row)
+            || row.status == ReportEntryStatus::Same
+            || row.status == ReportEntryStatus::DirSame
         {
             continue;
         }
@@ -1061,7 +1103,11 @@ fn line_no_prefix(before: u32, count: u32, sign: char) -> String {
     }
 }
 
-fn render_unified_patch(snap: &TextSnapshot, script: &[PatchEntry], opts: &ReportOptions) -> String {
+fn render_unified_patch(
+    snap: &TextSnapshot,
+    script: &[PatchEntry],
+    opts: &ReportOptions,
+) -> String {
     let mut out = String::new();
     out.push_str(&format!("--- {}\n", snap.left_label));
     out.push_str(&format!("+++ {}\n", snap.right_label));
@@ -1097,10 +1143,18 @@ fn render_unified_patch(snap: &TextSnapshot, script: &[PatchEntry], opts: &Repor
         ));
         for e in &script[hs..he] {
             match e {
-                PatchEntry::SameLeft(i, _) => out.push_str(&format!(" {}\n", snap.left_lines[*i as usize])),
-                PatchEntry::SameRight(i) => out.push_str(&format!(" {}\n", snap.right_lines[*i as usize])),
-                PatchEntry::Left(i) => out.push_str(&format!("-{}\n", snap.left_lines[*i as usize])),
-                PatchEntry::Right(i) => out.push_str(&format!("+{}\n", snap.right_lines[*i as usize])),
+                PatchEntry::SameLeft(i, _) => {
+                    out.push_str(&format!(" {}\n", snap.left_lines[*i as usize]))
+                }
+                PatchEntry::SameRight(i) => {
+                    out.push_str(&format!(" {}\n", snap.right_lines[*i as usize]))
+                }
+                PatchEntry::Left(i) => {
+                    out.push_str(&format!("-{}\n", snap.left_lines[*i as usize]))
+                }
+                PatchEntry::Right(i) => {
+                    out.push_str(&format!("+{}\n", snap.right_lines[*i as usize]))
+                }
             }
             patch_no_newline_marker(&mut out, snap, e, last_left, last_right);
         }
@@ -1111,7 +1165,11 @@ fn render_unified_patch(snap: &TextSnapshot, script: &[PatchEntry], opts: &Repor
 /// `\ No newline at end of file`（unified patch 约定行）
 const NO_NEWLINE_MARKER: &str = "\\ No newline at end of file\n";
 
-fn render_context_patch(snap: &TextSnapshot, script: &[PatchEntry], opts: &ReportOptions) -> String {
+fn render_context_patch(
+    snap: &TextSnapshot,
+    script: &[PatchEntry],
+    opts: &ReportOptions,
+) -> String {
     let mut out = String::new();
     out.push_str(&format!("*** {}\n", snap.left_label));
     out.push_str(&format!("--- {}\n", snap.right_label));
@@ -1151,19 +1209,33 @@ fn render_context_patch(snap: &TextSnapshot, script: &[PatchEntry], opts: &Repor
         for e in &script[hs..he] {
             match e {
                 // 上下文：左块显左行（SameRight 为折叠的右侧行，右块显之）
-                PatchEntry::SameLeft(i, _) => out.push_str(&format!("  {}\n", snap.left_lines[*i as usize])),
+                PatchEntry::SameLeft(i, _) => {
+                    out.push_str(&format!("  {}\n", snap.left_lines[*i as usize]))
+                }
                 PatchEntry::SameRight(_) => {}
-                PatchEntry::Left(i) => out.push_str(&format!("! {}\n", snap.left_lines[*i as usize])),
+                PatchEntry::Left(i) => {
+                    out.push_str(&format!("! {}\n", snap.left_lines[*i as usize]))
+                }
                 PatchEntry::Right(_) => {}
             }
         }
-        let rhead = if rc == 0 { format!("{rb},0") } else if rc == 1 { format!("{}", rb + 1) } else { format!("{},{}", rb + 1, rb + rc) };
+        let rhead = if rc == 0 {
+            format!("{rb},0")
+        } else if rc == 1 {
+            format!("{}", rb + 1)
+        } else {
+            format!("{},{}", rb + 1, rb + rc)
+        };
         out.push_str(&format!("--- {rhead} ----\n"));
         for e in &script[hs..he] {
             match e {
                 PatchEntry::SameLeft(..) => {}
-                PatchEntry::SameRight(i) => out.push_str(&format!("  {}\n", snap.right_lines[*i as usize])),
-                PatchEntry::Right(i) => out.push_str(&format!("! {}\n", snap.right_lines[*i as usize])),
+                PatchEntry::SameRight(i) => {
+                    out.push_str(&format!("  {}\n", snap.right_lines[*i as usize]))
+                }
+                PatchEntry::Right(i) => {
+                    out.push_str(&format!("! {}\n", snap.right_lines[*i as usize]))
+                }
                 PatchEntry::Left(_) => {}
             }
         }
@@ -1207,8 +1279,20 @@ fn render_normal_patch(snap: &TextSnapshot, script: &[PatchEntry], opts: &Report
                 _ => unreachable!("改动段不含上下文"),
             }
         }
-        let lhead = if lc == 0 { format!("{lb}") } else if lc == 1 { format!("{}", lb + 1) } else { format!("{},{}", lb + 1, lc) };
-        let rhead = if rc == 0 { format!("{rb}") } else if rc == 1 { format!("{}", rb + 1) } else { format!("{},{}", rb + 1, rc) };
+        let lhead = if lc == 0 {
+            format!("{lb}")
+        } else if lc == 1 {
+            format!("{}", lb + 1)
+        } else {
+            format!("{},{}", lb + 1, lc)
+        };
+        let rhead = if rc == 0 {
+            format!("{rb}")
+        } else if rc == 1 {
+            format!("{}", rb + 1)
+        } else {
+            format!("{},{}", rb + 1, rc)
+        };
         // a / c / d 命令字
         let cmd = match (lc, rc) {
             (0, _) => 'a',
@@ -1272,11 +1356,16 @@ pub fn html_escape(s: &str) -> String {
     out
 }
 
-const HTML_CSS_COLOR_NONE: &str = "body{font-family:monospace}td{vertical-align:top;white-space:pre;}";
+const HTML_CSS_COLOR_NONE: &str =
+    "body{font-family:monospace}td{vertical-align:top;white-space:pre;}";
 const HTML_CSS_COLOR_WORD: &str = "body{font-family:monospace}td{vertical-align:top;}td.t{white-space:pre-wrap;word-break:break-word;}";
 
 fn html_stylesheet(color: ColorMode, wrap: WrapMode) -> String {
-    let base = if wrap == WrapMode::Word { HTML_CSS_COLOR_WORD } else { HTML_CSS_COLOR_NONE };
+    let base = if wrap == WrapMode::Word {
+        HTML_CSS_COLOR_WORD
+    } else {
+        HTML_CSS_COLOR_NONE
+    };
     if color == ColorMode::Mono {
         format!("<style>{base}\n.del .t{{text-decoration:line-through}}\n.ins .t{{font-weight:bold}}\n.chg .t{{font-weight:bold}}\n.orphan{{color:#666}}\n</style>")
     } else {
@@ -1367,8 +1456,14 @@ fn html_text(out: &mut String, s: &TextSnapshot, opts: &ReportOptions) {
             SectionKind::Change => {
                 let max = lefts.len().max(rights.len());
                 for i in 0..max {
-                    let ln = sec.left.filter(|_| i < lefts.len()).map(|r| r.start + i as u32 + 1);
-                    let rn = sec.right.filter(|_| i < rights.len()).map(|r| r.start + i as u32 + 1);
+                    let ln = sec
+                        .left
+                        .filter(|_| i < lefts.len())
+                        .map(|r| r.start + i as u32 + 1);
+                    let rn = sec
+                        .right
+                        .filter(|_| i < rights.len())
+                        .map(|r| r.start + i as u32 + 1);
                     rows.push((
                         ln,
                         lefts.get(i).cloned().unwrap_or_default(),
@@ -1442,30 +1537,55 @@ fn html_dir(out: &mut String, s: &DirSnapshot, opts: &ReportOptions) {
             "same"
         };
         let name_cell = if opts.include_file_links && row.kind == ReportEntryKind::File && !orphan {
-            format!("<a href=\"{}.html\">{}</a>", html_escape(&row.rel_path), html_escape(&row.name))
+            format!(
+                "<a href=\"{}.html\">{}</a>",
+                html_escape(&row.rel_path),
+                html_escape(&row.name)
+            )
         } else {
             html_escape(&row.display_path())
         };
-        out.push_str(&format!("<tr class=\"{class}\"><td>{name_cell}</td><td>{}</td>", html_escape(row.status.as_str())));
+        out.push_str(&format!(
+            "<tr class=\"{class}\"><td>{name_cell}</td><td>{}</td>",
+            html_escape(row.status.as_str())
+        ));
         if opts.columns.size {
             out.push_str(&format!(
                 "<td>{}</td><td>{}</td>",
-                row.left.as_ref().map(|i| i.size.to_string()).unwrap_or_default(),
-                row.right.as_ref().map(|i| i.size.to_string()).unwrap_or_default()
+                row.left
+                    .as_ref()
+                    .map(|i| i.size.to_string())
+                    .unwrap_or_default(),
+                row.right
+                    .as_ref()
+                    .map(|i| i.size.to_string())
+                    .unwrap_or_default()
             ));
         }
         if opts.columns.timestamp {
             out.push_str(&format!(
                 "<td>{}</td><td>{}</td>",
-                row.left.as_ref().map(|i| i.mtime_ms.to_string()).unwrap_or_default(),
-                row.right.as_ref().map(|i| i.mtime_ms.to_string()).unwrap_or_default()
+                row.left
+                    .as_ref()
+                    .map(|i| i.mtime_ms.to_string())
+                    .unwrap_or_default(),
+                row.right
+                    .as_ref()
+                    .map(|i| i.mtime_ms.to_string())
+                    .unwrap_or_default()
             ));
         }
         if opts.columns.attributes {
             out.push_str(&format!(
                 "<td>{}</td><td>{}</td>",
-                row.left.as_ref().and_then(|i| i.attribute.clone()).unwrap_or_default(),
-                row.right.as_ref().and_then(|i| i.attribute.clone()).unwrap_or_default()
+                row.left
+                    .as_ref()
+                    .and_then(|i| i.attribute.clone())
+                    .unwrap_or_default(),
+                row.right
+                    .as_ref()
+                    .and_then(|i| i.attribute.clone())
+                    .unwrap_or_default()
             ));
         }
         out.push_str("</tr>\n");
@@ -1503,7 +1623,10 @@ fn html_table(out: &mut String, s: &TableSnapshot, opts: &ReportOptions) {
             row.right.map(|v| v.to_string()).unwrap_or_default()
         ));
         for cell in &row.cells {
-            let (l, r) = (cell.left.clone().unwrap_or_default(), cell.right.clone().unwrap_or_default());
+            let (l, r) = (
+                cell.left.clone().unwrap_or_default(),
+                cell.right.clone().unwrap_or_default(),
+            );
             let _ = opts;
             // 单元格显示：有差异时 "L | R"
             let shown = if l == r { l } else { format!("{l} | {r}") };
@@ -1523,7 +1646,13 @@ fn byte_status_class(st: HexByteStatus) -> &'static str {
     }
 }
 
-fn html_hex_side(out: &mut String, label: &str, data: &[u8], status: &[HexByteStatus], opts: &ReportOptions) {
+fn html_hex_side(
+    out: &mut String,
+    label: &str,
+    data: &[u8],
+    status: &[HexByteStatus],
+    opts: &ReportOptions,
+) {
     out.push_str(&format!("<p class=\"meta\">{}</p>\n", html_escape(label)));
     out.push_str("<table class=\"hex\">\n");
     let lines = data.len().div_ceil(HEX_LINE_BYTES);
@@ -1536,9 +1665,16 @@ fn html_hex_side(out: &mut String, label: &str, data: &[u8], status: &[HexByteSt
         let mut spans: Vec<(HexByteStatus, String)> = Vec::new();
         for (i, b) in data[start..end].iter().enumerate() {
             hex.push_str(&format!("{b:02x} "));
-            let c = if b.is_ascii_graphic() || *b == b' ' { *b as char } else { '.' };
+            let c = if b.is_ascii_graphic() || *b == b' ' {
+                *b as char
+            } else {
+                '.'
+            };
             ascii.push(c);
-            let st = status.get(start + i).copied().unwrap_or(HexByteStatus::Same);
+            let st = status
+                .get(start + i)
+                .copied()
+                .unwrap_or(HexByteStatus::Same);
             match spans.last_mut() {
                 Some((s, buf)) if *s == st => buf.push_str(&format!("{b:02x} ")),
                 _ => spans.push((st, format!("{b:02x} "))),
@@ -1564,8 +1700,20 @@ fn html_hex_side(out: &mut String, label: &str, data: &[u8], status: &[HexByteSt
 }
 
 fn html_hex(out: &mut String, s: &HexSnapshot, opts: &ReportOptions) {
-    html_hex_side(out, &format!("左: {}", s.left_label), &s.left, &s.status_left, opts);
-    html_hex_side(out, &format!("右: {}", s.right_label), &s.right, &s.status_right, opts);
+    html_hex_side(
+        out,
+        &format!("左: {}", s.left_label),
+        &s.left,
+        &s.status_left,
+        opts,
+    );
+    html_hex_side(
+        out,
+        &format!("右: {}", s.right_label),
+        &s.right,
+        &s.status_right,
+        opts,
+    );
 }
 
 fn html_merge(out: &mut String, s: &MergeSnapshot, _opts: &ReportOptions) {
@@ -1579,7 +1727,13 @@ fn html_merge(out: &mut String, s: &MergeSnapshot, _opts: &ReportOptions) {
     for c in &s.model.chunks {
         let class = match c.origin {
             ChunkOrigin::Stable => "same",
-            ChunkOrigin::Conflict => if s.unresolved.contains(&c.id) { "del" } else { "chg" },
+            ChunkOrigin::Conflict => {
+                if s.unresolved.contains(&c.id) {
+                    "del"
+                } else {
+                    "chg"
+                }
+            }
             _ => "ins",
         };
         out.push_str(&format!(
@@ -1617,17 +1771,25 @@ fn xml_escape(s: &str) -> String {
 }
 
 fn xml_attr_row(row: &DirReportRow, indent: &str, out: &mut String) {
-    out.push_str(&format!("{}<row path=\"{}\" name=\"{}\" kind=\"{}\" status=\"{}\"",
+    out.push_str(&format!(
+        "{}<row path=\"{}\" name=\"{}\" kind=\"{}\" status=\"{}\"",
         indent,
         xml_escape(&row.rel_path),
         xml_escape(&row.name),
         row.kind.as_str(),
-        row.status.as_str()));
+        row.status.as_str()
+    ));
     if let Some(l) = &row.left {
-        out.push_str(&format!(" leftSize=\"{}\" leftMtimeMs=\"{}\"", l.size, l.mtime_ms));
+        out.push_str(&format!(
+            " leftSize=\"{}\" leftMtimeMs=\"{}\"",
+            l.size, l.mtime_ms
+        ));
     }
     if let Some(r) = &row.right {
-        out.push_str(&format!(" rightSize=\"{}\" rightMtimeMs=\"{}\"", r.size, r.mtime_ms));
+        out.push_str(&format!(
+            " rightSize=\"{}\" rightMtimeMs=\"{}\"",
+            r.size, r.mtime_ms
+        ));
     }
     out.push_str("/>\n");
 }
@@ -1642,15 +1804,26 @@ impl ReportRenderer for XmlRenderer {
         let mut out = String::from("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
         match snap {
             ReportSnapshot::Text(s) => {
-                out.push_str(&format!("<report kind=\"text\" title=\"{}\" left=\"{}\" right=\"{}\">\n",
-                    xml_escape(&title), xml_escape(&s.left_label), xml_escape(&s.right_label)));
+                out.push_str(&format!(
+                    "<report kind=\"text\" title=\"{}\" left=\"{}\" right=\"{}\">\n",
+                    xml_escape(&title),
+                    xml_escape(&s.left_label),
+                    xml_escape(&s.right_label)
+                ));
                 out.push_str("<summary");
-                for (k, sec) in [("equal", SectionKind::Equal), ("insert", SectionKind::Insert),
-                                 ("delete", SectionKind::Delete), ("change", SectionKind::Change)] {
+                for (k, sec) in [
+                    ("equal", SectionKind::Equal),
+                    ("insert", SectionKind::Insert),
+                    ("delete", SectionKind::Delete),
+                    ("change", SectionKind::Change),
+                ] {
                     let count = s.sections.iter().filter(|x| x.kind == sec).count();
                     out.push_str(&format!(" {k}Sections=\"{count}\""));
                 }
-                out.push_str(&format!(" unimportantSections=\"{}\"/>\n", s.unimportant_sections));
+                out.push_str(&format!(
+                    " unimportantSections=\"{}\"/>\n",
+                    s.unimportant_sections
+                ));
                 out.push_str("<sections>\n");
                 for sec in visible_text_sections(s, opts) {
                     out.push_str(&format!(
@@ -1662,24 +1835,43 @@ impl ReportRenderer for XmlRenderer {
                         out.push_str(&format!(" leftStart=\"{}\" leftEnd=\"{}\"", l.start, l.end));
                     }
                     if let Some(r) = sec.right {
-                        out.push_str(&format!(" rightStart=\"{}\" rightEnd=\"{}\"", r.start, r.end));
+                        out.push_str(&format!(
+                            " rightStart=\"{}\" rightEnd=\"{}\"",
+                            r.start, r.end
+                        ));
                     }
                     out.push_str(">\n");
-                    for (i, t) in lines_of(s, crate::options::DiffSide::Left, sec).iter().enumerate() {
+                    for (i, t) in lines_of(s, crate::options::DiffSide::Left, sec)
+                        .iter()
+                        .enumerate()
+                    {
                         let no = sec.left.map(|r| r.start + i as u32 + 1).unwrap_or(0);
-                        out.push_str(&format!("    <leftLine no=\"{no}\">{}</leftLine>\n", xml_escape(t)));
+                        out.push_str(&format!(
+                            "    <leftLine no=\"{no}\">{}</leftLine>\n",
+                            xml_escape(t)
+                        ));
                     }
-                    for (i, t) in lines_of(s, crate::options::DiffSide::Right, sec).iter().enumerate() {
+                    for (i, t) in lines_of(s, crate::options::DiffSide::Right, sec)
+                        .iter()
+                        .enumerate()
+                    {
                         let no = sec.right.map(|r| r.start + i as u32 + 1).unwrap_or(0);
-                        out.push_str(&format!("    <rightLine no=\"{no}\">{}</rightLine>\n", xml_escape(t)));
+                        out.push_str(&format!(
+                            "    <rightLine no=\"{no}\">{}</rightLine>\n",
+                            xml_escape(t)
+                        ));
                     }
                     out.push_str("  </section>\n");
                 }
                 out.push_str("</sections>\n</report>\n");
             }
             ReportSnapshot::Dir(s) => {
-                out.push_str(&format!("<report kind=\"folder\" title=\"{}\" left=\"{}\" right=\"{}\">\n",
-                    xml_escape(&title), xml_escape(&s.left_label), xml_escape(&s.right_label)));
+                out.push_str(&format!(
+                    "<report kind=\"folder\" title=\"{}\" left=\"{}\" right=\"{}\">\n",
+                    xml_escape(&title),
+                    xml_escape(&s.left_label),
+                    xml_escape(&s.right_label)
+                ));
                 out.push_str(&format!(
                     "<summary total=\"{}\" same=\"{}\" contentDiff=\"{}\" quickDiff=\"{}\" leftOnly=\"{}\" rightOnly=\"{}\" dirSame=\"{}\" dirDiff=\"{}\"/>\n",
                     s.stats.total, s.stats.same, s.stats.content_diff, s.stats.quick_diff,
@@ -1694,8 +1886,12 @@ impl ReportRenderer for XmlRenderer {
                 out.push_str("</rows>\n</report>\n");
             }
             ReportSnapshot::Table(s) => {
-                out.push_str(&format!("<report kind=\"table\" title=\"{}\" left=\"{}\" right=\"{}\">\n",
-                    xml_escape(&title), xml_escape(&s.left_label), xml_escape(&s.right_label)));
+                out.push_str(&format!(
+                    "<report kind=\"table\" title=\"{}\" left=\"{}\" right=\"{}\">\n",
+                    xml_escape(&title),
+                    xml_escape(&s.left_label),
+                    xml_escape(&s.right_label)
+                ));
                 out.push_str(&format!(
                     "<summary sameRows=\"{}\" changedRows=\"{}\" addedRows=\"{}\" removedRows=\"{}\" unimportantRows=\"{}\"/>\n",
                     s.summary.same_rows, s.summary.changed_rows, s.summary.added_rows,
@@ -1733,8 +1929,12 @@ impl ReportRenderer for XmlRenderer {
                 out.push_str("</rows>\n</report>\n");
             }
             ReportSnapshot::Hex(s) => {
-                out.push_str(&format!("<report kind=\"hex\" title=\"{}\" left=\"{}\" right=\"{}\">\n",
-                    xml_escape(&title), xml_escape(&s.left_label), xml_escape(&s.right_label)));
+                out.push_str(&format!(
+                    "<report kind=\"hex\" title=\"{}\" left=\"{}\" right=\"{}\">\n",
+                    xml_escape(&title),
+                    xml_escape(&s.left_label),
+                    xml_escape(&s.right_label)
+                ));
                 out.push_str(&format!(
                     "<summary sameBytes=\"{}\" changedBytes=\"{}\" insertedBytes=\"{}\" deletedBytes=\"{}\" blocks=\"{}\"/>\n",
                     s.model.summary.same_bytes, s.model.summary.changed_bytes,
@@ -1745,18 +1945,29 @@ impl ReportRenderer for XmlRenderer {
                 for b in &s.model.blocks {
                     out.push_str(&format!("  <block kind=\"{}\"", hex_block_kind_str(b.kind)));
                     if let Some(l) = &b.left {
-                        out.push_str(&format!(" leftOffset=\"{}\" leftLen=\"{}\"", l.offset, l.len));
+                        out.push_str(&format!(
+                            " leftOffset=\"{}\" leftLen=\"{}\"",
+                            l.offset, l.len
+                        ));
                     }
                     if let Some(r) = &b.right {
-                        out.push_str(&format!(" rightOffset=\"{}\" rightLen=\"{}\"", r.offset, r.len));
+                        out.push_str(&format!(
+                            " rightOffset=\"{}\" rightLen=\"{}\"",
+                            r.offset, r.len
+                        ));
                     }
                     out.push_str("/>\n");
                 }
                 out.push_str("</blocks>\n</report>\n");
             }
             ReportSnapshot::Merge(s) => {
-                out.push_str(&format!("<report kind=\"merge\" title=\"{}\" base=\"{}\" left=\"{}\" right=\"{}\">\n",
-                    xml_escape(&title), xml_escape(&s.base_label), xml_escape(&s.left_label), xml_escape(&s.right_label)));
+                out.push_str(&format!(
+                    "<report kind=\"merge\" title=\"{}\" base=\"{}\" left=\"{}\" right=\"{}\">\n",
+                    xml_escape(&title),
+                    xml_escape(&s.base_label),
+                    xml_escape(&s.left_label),
+                    xml_escape(&s.right_label)
+                ));
                 out.push_str(&format!(
                     "<summary chunks=\"{}\" conflicts=\"{}\" unresolved=\"{}\"/>\n",
                     s.model.chunks.len(),
@@ -1813,26 +2024,42 @@ impl ReportRenderer for CsvRenderer {
         let mut out = String::new();
         match snap {
             ReportSnapshot::Text(s) => {
-                out.push_str(&csv_row(&[
-                    "kind".into(), "leftStart".into(), "leftCount".into(),
-                    "rightStart".into(), "rightCount".into(), "leftText".into(), "rightText".into(),
-                ], d));
+                out.push_str(&csv_row(
+                    &[
+                        "kind".into(),
+                        "leftStart".into(),
+                        "leftCount".into(),
+                        "rightStart".into(),
+                        "rightCount".into(),
+                        "leftText".into(),
+                        "rightText".into(),
+                    ],
+                    d,
+                ));
                 for sec in visible_text_sections(s, opts) {
                     let ltext = lines_of(s, crate::options::DiffSide::Left, sec).join("\n");
                     let rtext = lines_of(s, crate::options::DiffSide::Right, sec).join("\n");
-                    out.push_str(&csv_row(&[
-                        section_kind_str(sec.kind).to_string(),
-                        sec.left.map(|r| r.start.to_string()).unwrap_or_default(),
-                        sec.left.map(|r| r.len().to_string()).unwrap_or_default(),
-                        sec.right.map(|r| r.start.to_string()).unwrap_or_default(),
-                        sec.right.map(|r| r.len().to_string()).unwrap_or_default(),
-                        ltext,
-                        rtext,
-                    ], d));
+                    out.push_str(&csv_row(
+                        &[
+                            section_kind_str(sec.kind).to_string(),
+                            sec.left.map(|r| r.start.to_string()).unwrap_or_default(),
+                            sec.left.map(|r| r.len().to_string()).unwrap_or_default(),
+                            sec.right.map(|r| r.start.to_string()).unwrap_or_default(),
+                            sec.right.map(|r| r.len().to_string()).unwrap_or_default(),
+                            ltext,
+                            rtext,
+                        ],
+                        d,
+                    ));
                 }
             }
             ReportSnapshot::Dir(s) => {
-                let mut header = vec!["path".to_string(), "name".to_string(), "kind".to_string(), "status".to_string()];
+                let mut header = vec![
+                    "path".to_string(),
+                    "name".to_string(),
+                    "kind".to_string(),
+                    "status".to_string(),
+                ];
                 if opts.columns.size {
                     header.push("leftSize".into());
                     header.push("rightSize".into());
@@ -1853,18 +2080,42 @@ impl ReportRenderer for CsvRenderer {
                         row.status.as_str().to_string(),
                     ];
                     if opts.columns.size {
-                        cells.push(row.left.as_ref().map(|i| i.size.to_string()).unwrap_or_default());
-                        cells.push(row.right.as_ref().map(|i| i.size.to_string()).unwrap_or_default());
+                        cells.push(
+                            row.left
+                                .as_ref()
+                                .map(|i| i.size.to_string())
+                                .unwrap_or_default(),
+                        );
+                        cells.push(
+                            row.right
+                                .as_ref()
+                                .map(|i| i.size.to_string())
+                                .unwrap_or_default(),
+                        );
                     }
                     if opts.columns.timestamp {
-                        cells.push(row.left.as_ref().map(|i| i.mtime_ms.to_string()).unwrap_or_default());
-                        cells.push(row.right.as_ref().map(|i| i.mtime_ms.to_string()).unwrap_or_default());
+                        cells.push(
+                            row.left
+                                .as_ref()
+                                .map(|i| i.mtime_ms.to_string())
+                                .unwrap_or_default(),
+                        );
+                        cells.push(
+                            row.right
+                                .as_ref()
+                                .map(|i| i.mtime_ms.to_string())
+                                .unwrap_or_default(),
+                        );
                     }
                     out.push_str(&csv_row(&cells, d));
                 }
             }
             ReportSnapshot::Table(s) => {
-                let mut header = vec!["rowKind".to_string(), "leftRow".to_string(), "rightRow".to_string()];
+                let mut header = vec![
+                    "rowKind".to_string(),
+                    "leftRow".to_string(),
+                    "rightRow".to_string(),
+                ];
                 for col in &s.columns {
                     header.push(format!("{}|left", col.name));
                     header.push(format!("{}|right", col.name));
@@ -1884,37 +2135,75 @@ impl ReportRenderer for CsvRenderer {
                 }
             }
             ReportSnapshot::Hex(s) => {
-                out.push_str(&csv_row(&[
-                    "kind".into(), "leftOffset".into(), "leftLen".into(),
-                    "rightOffset".into(), "rightLen".into(),
-                ], d));
+                out.push_str(&csv_row(
+                    &[
+                        "kind".into(),
+                        "leftOffset".into(),
+                        "leftLen".into(),
+                        "rightOffset".into(),
+                        "rightLen".into(),
+                    ],
+                    d,
+                ));
                 for b in &s.model.blocks {
-                    out.push_str(&csv_row(&[
-                        hex_block_kind_str(b.kind).to_string(),
-                        b.left.as_ref().map(|l| l.offset.to_string()).unwrap_or_default(),
-                        b.left.as_ref().map(|l| l.len.to_string()).unwrap_or_default(),
-                        b.right.as_ref().map(|r| r.offset.to_string()).unwrap_or_default(),
-                        b.right.as_ref().map(|r| r.len.to_string()).unwrap_or_default(),
-                    ], d));
+                    out.push_str(&csv_row(
+                        &[
+                            hex_block_kind_str(b.kind).to_string(),
+                            b.left
+                                .as_ref()
+                                .map(|l| l.offset.to_string())
+                                .unwrap_or_default(),
+                            b.left
+                                .as_ref()
+                                .map(|l| l.len.to_string())
+                                .unwrap_or_default(),
+                            b.right
+                                .as_ref()
+                                .map(|r| r.offset.to_string())
+                                .unwrap_or_default(),
+                            b.right
+                                .as_ref()
+                                .map(|r| r.len.to_string())
+                                .unwrap_or_default(),
+                        ],
+                        d,
+                    ));
                 }
             }
             ReportSnapshot::Merge(s) => {
-                out.push_str(&csv_row(&[
-                    "id".into(), "origin".into(), "baseStart".into(), "baseEnd".into(),
-                    "leftStart".into(), "leftEnd".into(), "rightStart".into(), "rightEnd".into(), "unresolved".into(),
-                ], d));
+                out.push_str(&csv_row(
+                    &[
+                        "id".into(),
+                        "origin".into(),
+                        "baseStart".into(),
+                        "baseEnd".into(),
+                        "leftStart".into(),
+                        "leftEnd".into(),
+                        "rightStart".into(),
+                        "rightEnd".into(),
+                        "unresolved".into(),
+                    ],
+                    d,
+                ));
                 for c in &s.model.chunks {
-                    out.push_str(&csv_row(&[
-                        c.id.to_string(),
-                        merge_origin_str(c.origin).to_string(),
-                        c.base.start.to_string(),
-                        c.base.end.to_string(),
-                        c.left.start.to_string(),
-                        c.left.end.to_string(),
-                        c.right.start.to_string(),
-                        c.right.end.to_string(),
-                        if s.unresolved.contains(&c.id) { "true".into() } else { "false".into() },
-                    ], d));
+                    out.push_str(&csv_row(
+                        &[
+                            c.id.to_string(),
+                            merge_origin_str(c.origin).to_string(),
+                            c.base.start.to_string(),
+                            c.base.end.to_string(),
+                            c.left.start.to_string(),
+                            c.left.end.to_string(),
+                            c.right.start.to_string(),
+                            c.right.end.to_string(),
+                            if s.unresolved.contains(&c.id) {
+                                "true".into()
+                            } else {
+                                "false".into()
+                            },
+                        ],
+                        d,
+                    ));
                 }
             }
         }
@@ -1958,10 +2247,24 @@ impl ReportRenderer for TreeRenderer {
             if !opts.dir_display.keeps(row) {
                 continue;
             }
-            let depth = row.rel_path.split('/').filter(|x| !x.is_empty()).count().saturating_sub(1);
+            let depth = row
+                .rel_path
+                .split('/')
+                .filter(|x| !x.is_empty())
+                .count()
+                .saturating_sub(1);
             let indent = "  ".repeat(depth);
-            let slash = if row.kind == ReportEntryKind::Dir { "/" } else { "" };
-            out.push_str(&format!("{indent}[{}] {}{}\n", status_mark(row.status), row.name, slash));
+            let slash = if row.kind == ReportEntryKind::Dir {
+                "/"
+            } else {
+                ""
+            };
+            out.push_str(&format!(
+                "{indent}[{}] {}{}\n",
+                status_mark(row.status),
+                row.name,
+                slash
+            ));
         }
         Ok(out)
     }
@@ -1987,8 +2290,16 @@ impl ReportRenderer for ListRenderer {
                     if !opts.dir_display.keeps(row) {
                         continue;
                     }
-                    let lsize = row.left.as_ref().map(|i| i.size.to_string()).unwrap_or_else(|| "-".into());
-                    let rsize = row.right.as_ref().map(|i| i.size.to_string()).unwrap_or_else(|| "-".into());
+                    let lsize = row
+                        .left
+                        .as_ref()
+                        .map(|i| i.size.to_string())
+                        .unwrap_or_else(|| "-".into());
+                    let rsize = row
+                        .right
+                        .as_ref()
+                        .map(|i| i.size.to_string())
+                        .unwrap_or_else(|| "-".into());
                     out.push_str(&format!(
                         "{}\t{}\t{}\t{}\n",
                         row.status.as_str(),
@@ -2023,8 +2334,12 @@ impl ReportRenderer for ListRenderer {
                     out.push_str(&format!(
                         "{}\tL{}\tR{}\n",
                         row.kind.as_str(),
-                        row.left.map(|v| v.to_string()).unwrap_or_else(|| "-".into()),
-                        row.right.map(|v| v.to_string()).unwrap_or_else(|| "-".into()),
+                        row.left
+                            .map(|v| v.to_string())
+                            .unwrap_or_else(|| "-".into()),
+                        row.right
+                            .map(|v| v.to_string())
+                            .unwrap_or_else(|| "-".into()),
                     ));
                 }
             }
@@ -2037,8 +2352,14 @@ impl ReportRenderer for ListRenderer {
                     out.push_str(&format!(
                         "{}\tL{}\tR{}\n",
                         hex_block_kind_str(b.kind),
-                        b.left.as_ref().map(|l| format!("0x{:x}+{}", l.offset, l.len)).unwrap_or_else(|| "-".into()),
-                        b.right.as_ref().map(|r| format!("0x{:x}+{}", r.offset, r.len)).unwrap_or_else(|| "-".into()),
+                        b.left
+                            .as_ref()
+                            .map(|l| format!("0x{:x}+{}", l.offset, l.len))
+                            .unwrap_or_else(|| "-".into()),
+                        b.right
+                            .as_ref()
+                            .map(|r| format!("0x{:x}+{}", r.offset, r.len))
+                            .unwrap_or_else(|| "-".into()),
                     ));
                 }
             }
@@ -2090,20 +2411,32 @@ impl ReportRenderer for StatsRenderer {
                     };
                     counts[idx] += 1;
                 }
-                let inserted: u32 = s.sections.iter().map(|s| match s.kind {
-                    SectionKind::Insert => s.right.map_or(0, |r| r.len()),
-                    SectionKind::Change => s.right.map_or(0, |r| r.len()),
-                    _ => 0,
-                }).sum();
-                let deleted: u32 = s.sections.iter().map(|s| match s.kind {
-                    SectionKind::Delete => s.left.map_or(0, |r| r.len()),
-                    SectionKind::Change => s.left.map_or(0, |r| r.len()),
-                    _ => 0,
-                }).sum();
-                let equal: u32 = s.sections.iter().map(|s| match s.kind {
-                    SectionKind::Equal => s.left.map_or(0, |r| r.len()),
-                    _ => 0,
-                }).sum();
+                let inserted: u32 = s
+                    .sections
+                    .iter()
+                    .map(|s| match s.kind {
+                        SectionKind::Insert => s.right.map_or(0, |r| r.len()),
+                        SectionKind::Change => s.right.map_or(0, |r| r.len()),
+                        _ => 0,
+                    })
+                    .sum();
+                let deleted: u32 = s
+                    .sections
+                    .iter()
+                    .map(|s| match s.kind {
+                        SectionKind::Delete => s.left.map_or(0, |r| r.len()),
+                        SectionKind::Change => s.left.map_or(0, |r| r.len()),
+                        _ => 0,
+                    })
+                    .sum();
+                let equal: u32 = s
+                    .sections
+                    .iter()
+                    .map(|s| match s.kind {
+                        SectionKind::Equal => s.left.map_or(0, |r| r.len()),
+                        _ => 0,
+                    })
+                    .sum();
                 out.push_str(&format!("sections={}\n", s.sections.len()));
                 out.push_str(&format!("equalSections={}\n", counts[0]));
                 out.push_str(&format!("insertSections={}\n", counts[1]));
@@ -2137,7 +2470,10 @@ impl ReportRenderer for StatsRenderer {
             ReportSnapshot::Hex(s) => {
                 out.push_str(&format!("sameBytes={}\n", s.model.summary.same_bytes));
                 out.push_str(&format!("changedBytes={}\n", s.model.summary.changed_bytes));
-                out.push_str(&format!("insertedBytes={}\n", s.model.summary.inserted_bytes));
+                out.push_str(&format!(
+                    "insertedBytes={}\n",
+                    s.model.summary.inserted_bytes
+                ));
                 out.push_str(&format!("deletedBytes={}\n", s.model.summary.deleted_bytes));
                 out.push_str(&format!("blocks={}\n", s.model.blocks.len()));
                 out.push_str(&format!("hasDifferences={}\n", snap.has_differences()));
@@ -2181,7 +2517,12 @@ impl ReportRenderer for SideBySideRenderer {
                 let pad = |t: &str| -> String {
                     let n = t.chars().count();
                     if n >= MAX_COL {
-                        format!("{}…", t.chars().take(MAX_COL.saturating_sub(1)).collect::<String>())
+                        format!(
+                            "{}…",
+                            t.chars()
+                                .take(MAX_COL.saturating_sub(1))
+                                .collect::<String>()
+                        )
                     } else {
                         format!("{t}{}", " ".repeat(width - n))
                     }
@@ -2190,14 +2531,26 @@ impl ReportRenderer for SideBySideRenderer {
                     let class = row_class(sec.kind, sec.important, opts.ignore_unimportant);
                     let lefts = lines_of(s, crate::options::DiffSide::Left, sec);
                     let rights = lines_of(s, crate::options::DiffSide::Right, sec);
-                    let emit = |out: &mut String, lt: Option<&str>, ln: Option<u32>, rt: Option<&str>, rn: Option<u32>| {
+                    let emit = |out: &mut String,
+                                lt: Option<&str>,
+                                ln: Option<u32>,
+                                rt: Option<&str>,
+                                rn: Option<u32>| {
                         let lnum = if opts.line_numbers {
-                            format!("{:>width$} ", ln.map(|v| v.to_string()).unwrap_or_default(), width = num_w - 1)
+                            format!(
+                                "{:>width$} ",
+                                ln.map(|v| v.to_string()).unwrap_or_default(),
+                                width = num_w - 1
+                            )
                         } else {
                             String::new()
                         };
                         let rnum = if opts.line_numbers {
-                            format!("{:>width$} ", rn.map(|v| v.to_string()).unwrap_or_default(), width = num_w - 1)
+                            format!(
+                                "{:>width$} ",
+                                rn.map(|v| v.to_string()).unwrap_or_default(),
+                                width = num_w - 1
+                            )
                         } else {
                             String::new()
                         };
@@ -2224,9 +2577,21 @@ impl ReportRenderer for SideBySideRenderer {
                         SectionKind::Change => {
                             let max = lefts.len().max(rights.len());
                             for i in 0..max {
-                                let ln = sec.left.filter(|_| i < lefts.len()).map(|r| r.start + i as u32 + 1);
-                                let rn = sec.right.filter(|_| i < rights.len()).map(|r| r.start + i as u32 + 1);
-                                emit(&mut out, lefts.get(i).map(String::as_str), ln, rights.get(i).map(String::as_str), rn);
+                                let ln = sec
+                                    .left
+                                    .filter(|_| i < lefts.len())
+                                    .map(|r| r.start + i as u32 + 1);
+                                let rn = sec
+                                    .right
+                                    .filter(|_| i < rights.len())
+                                    .map(|r| r.start + i as u32 + 1);
+                                emit(
+                                    &mut out,
+                                    lefts.get(i).map(String::as_str),
+                                    ln,
+                                    rights.get(i).map(String::as_str),
+                                    rn,
+                                );
                             }
                         }
                         SectionKind::Delete => {
@@ -2259,8 +2624,14 @@ impl ReportRenderer for SideBySideRenderer {
                         "{:<40} {:<12} {:>12} {:>12}\n",
                         truncate_pad(&row.display_path(), 40),
                         row.status.as_str(),
-                        row.left.as_ref().map(|i| i.size.to_string()).unwrap_or_else(|| "-".into()),
-                        row.right.as_ref().map(|i| i.size.to_string()).unwrap_or_else(|| "-".into()),
+                        row.left
+                            .as_ref()
+                            .map(|i| i.size.to_string())
+                            .unwrap_or_else(|| "-".into()),
+                        row.right
+                            .as_ref()
+                            .map(|i| i.size.to_string())
+                            .unwrap_or_else(|| "-".into()),
                     ));
                 }
                 Ok(out)
@@ -2539,7 +2910,10 @@ mod tests {
         assert!(out.contains("< beta"), "首行预览:\n{out}");
         assert!(out.contains("> epsilon"));
         // matches 模式：无差异清单
-        let opts = ReportOptions { display: DisplayFilter::Matches, ..Default::default() };
+        let opts = ReportOptions {
+            display: DisplayFilter::Matches,
+            ..Default::default()
+        };
         let out = render_report(&snap, &opts).unwrap();
         assert!(!out.contains("差异清单"));
     }
@@ -2547,11 +2921,17 @@ mod tests {
     #[test]
     fn patch_unified_matches_diff_u_shape() {
         let snap = ReportSnapshot::Text(text_snap(SAMPLE_A, SAMPLE_B));
-        let opts = ReportOptions { layout: ReportLayout::Patch, ..Default::default() };
+        let opts = ReportOptions {
+            layout: ReportLayout::Patch,
+            ..Default::default()
+        };
         let out = render_report(&snap, &opts).unwrap();
         assert!(out.starts_with("--- a.txt\n+++ b.txt\n"));
         assert!(out.contains("@@ -1,4 +1,5 @@"), "实际:\n{out}");
-        assert!(out.contains("-beta\n+BETA\n gamma\n delta\n+epsilon\n"), "实际:\n{out}");
+        assert!(
+            out.contains("-beta\n+BETA\n gamma\n delta\n+epsilon\n"),
+            "实际:\n{out}"
+        );
     }
 
     #[test]
@@ -2583,14 +2963,20 @@ mod tests {
     #[test]
     fn patch_identical_is_empty() {
         let snap = ReportSnapshot::Text(text_snap("x\n", "x\n"));
-        let opts = ReportOptions { layout: ReportLayout::Patch, ..Default::default() };
+        let opts = ReportOptions {
+            layout: ReportLayout::Patch,
+            ..Default::default()
+        };
         assert_eq!(render_report(&snap, &opts).unwrap(), "");
     }
 
     #[test]
     fn html_is_self_contained_and_escaped() {
         let snap = ReportSnapshot::Text(text_snap("a<b>&\"x\"\n", "a<b>&\"y\"\n"));
-        let opts = ReportOptions { layout: ReportLayout::Html, ..Default::default() };
+        let opts = ReportOptions {
+            layout: ReportLayout::Html,
+            ..Default::default()
+        };
         let out = render_report(&snap, &opts).unwrap();
         assert!(out.starts_with("<!DOCTYPE html>"));
         assert!(out.contains("<style>"), "样式内联");
@@ -2598,7 +2984,10 @@ mod tests {
         assert!(out.contains("&lt;b&gt;&amp;&quot;x&quot;"), "内容转义");
         assert!(out.contains("tr class=\"chg\""));
         // 标签配对
-        assert_eq!(out.matches("<table").count(), out.matches("</table>").count());
+        assert_eq!(
+            out.matches("<table").count(),
+            out.matches("</table>").count()
+        );
         assert_eq!(out.matches("<tr").count(), out.matches("</tr>").count());
         assert!(out.trim_end().ends_with("</html>"));
     }
@@ -2621,12 +3010,18 @@ mod tests {
     #[test]
     fn xml_structure_roundtrip_escape() {
         let snap = ReportSnapshot::Text(text_snap("<t>\n", "&>\n"));
-        let opts = ReportOptions { layout: ReportLayout::Xml, ..Default::default() };
+        let opts = ReportOptions {
+            layout: ReportLayout::Xml,
+            ..Default::default()
+        };
         let out = render_report(&snap, &opts).unwrap();
         assert!(out.starts_with("<?xml version=\"1.0\" encoding=\"UTF-8\"?>"));
         assert!(out.contains("&lt;t&gt;"));
         assert!(out.contains("&amp;&gt;"));
-        assert_eq!(out.matches("<section ").count(), out.matches("</section>").count());
+        assert_eq!(
+            out.matches("<section ").count(),
+            out.matches("</section>").count()
+        );
         let snap = ReportSnapshot::Dir(dir_snap());
         let out = render_report(&snap, &opts).unwrap();
         assert!(out.contains("status=\"contentDiff\""));
@@ -2636,10 +3031,17 @@ mod tests {
     #[test]
     fn csv_escapes_and_tsv_delimiter() {
         let snap = ReportSnapshot::Text(text_snap("a,b\n", "a\tb\n"));
-        let opts = ReportOptions { layout: ReportLayout::Csv, ..Default::default() };
+        let opts = ReportOptions {
+            layout: ReportLayout::Csv,
+            ..Default::default()
+        };
         let out = render_report(&snap, &opts).unwrap();
         assert!(out.contains("\"a,b\""), "含分隔符需引号: {out}");
-        let opts = ReportOptions { layout: ReportLayout::Csv, delimiter: '\t', ..Default::default() };
+        let opts = ReportOptions {
+            layout: ReportLayout::Csv,
+            delimiter: '\t',
+            ..Default::default()
+        };
         let out = render_report(&snap, &opts).unwrap();
         assert!(out.contains("\"a\tb\""));
         assert!(out.lines().next().unwrap().contains("leftStart"));
@@ -2648,7 +3050,10 @@ mod tests {
     #[test]
     fn tree_layout_indents_by_depth() {
         let snap = ReportSnapshot::Dir(dir_snap());
-        let opts = ReportOptions { layout: ReportLayout::Tree, ..Default::default() };
+        let opts = ReportOptions {
+            layout: ReportLayout::Tree,
+            ..Default::default()
+        };
         let out = render_report(&snap, &opts).unwrap();
         assert!(out.contains("[=] same.txt"));
         assert!(out.contains("[!] changed.txt"));
@@ -2663,7 +3068,10 @@ mod tests {
     #[test]
     fn stats_layout_has_no_content() {
         let snap = ReportSnapshot::Text(text_snap(SAMPLE_A, SAMPLE_B));
-        let opts = ReportOptions { layout: ReportLayout::Stats, ..Default::default() };
+        let opts = ReportOptions {
+            layout: ReportLayout::Stats,
+            ..Default::default()
+        };
         let out = render_report(&snap, &opts).unwrap();
         assert!(out.contains("insertedLines=2"));
         assert!(out.contains("deletedLines=1"));
@@ -2677,18 +3085,34 @@ mod tests {
 
     #[test]
     fn display_filters() {
-        let snap = ReportSnapshot::Text(text_snap("k\n1\n2\n3\n4\n5\nX\n6\n7\n8\n9\nz\n", "k\n1\n2\n3\n4\n5\nY\n6\n7\n8\n9\nz\n"));
+        let snap = ReportSnapshot::Text(text_snap(
+            "k\n1\n2\n3\n4\n5\nX\n6\n7\n8\n9\nz\n",
+            "k\n1\n2\n3\n4\n5\nY\n6\n7\n8\n9\nz\n",
+        ));
         // mismatches：只剩差异
-        let opts = ReportOptions { display: DisplayFilter::Mismatches, layout: ReportLayout::Xml, ..Default::default() };
+        let opts = ReportOptions {
+            display: DisplayFilter::Mismatches,
+            layout: ReportLayout::Xml,
+            ..Default::default()
+        };
         let out = render_report(&snap, &opts).unwrap();
         assert_eq!(out.matches("<section ").count(), 1, "实际:\n{out}");
         // context=1：差异 + 邻近 1 行
-        let opts = ReportOptions { display: DisplayFilter::Context, context_lines: 1, layout: ReportLayout::Xml, ..Default::default() };
+        let opts = ReportOptions {
+            display: DisplayFilter::Context,
+            context_lines: 1,
+            layout: ReportLayout::Xml,
+            ..Default::default()
+        };
         let out = render_report(&snap, &opts).unwrap();
         let secs = out.matches("<section ").count();
         assert!((2..=3).contains(&secs), "context=1 应裁剪: {secs}");
         // matches
-        let opts = ReportOptions { display: DisplayFilter::Matches, layout: ReportLayout::Xml, ..Default::default() };
+        let opts = ReportOptions {
+            display: DisplayFilter::Matches,
+            layout: ReportLayout::Xml,
+            ..Default::default()
+        };
         let out = render_report(&snap, &opts).unwrap();
         assert!(!out.contains("kind=\"change\""));
     }
@@ -2704,9 +3128,21 @@ mod tests {
         }
         snap.unimportant_sections = 1;
         let s = ReportSnapshot::Text(snap);
-        let opts = ReportOptions { layout: ReportLayout::Patch, ignore_unimportant: true, ..Default::default() };
-        assert_eq!(render_report(&s, &opts).unwrap(), "", "全不重要 -> patch 空");
-        let opts = ReportOptions { layout: ReportLayout::Stats, ignore_unimportant: true, ..Default::default() };
+        let opts = ReportOptions {
+            layout: ReportLayout::Patch,
+            ignore_unimportant: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            render_report(&s, &opts).unwrap(),
+            "",
+            "全不重要 -> patch 空"
+        );
+        let opts = ReportOptions {
+            layout: ReportLayout::Stats,
+            ignore_unimportant: true,
+            ..Default::default()
+        };
         let out = render_report(&s, &opts).unwrap();
         assert!(out.contains("unimportantSections=1"));
     }
@@ -2714,14 +3150,21 @@ mod tests {
     #[test]
     fn side_by_side_and_interleaved() {
         let snap = ReportSnapshot::Text(text_snap("one\ntwo\n", "one\nTWO\n"));
-        let opts = ReportOptions { layout: ReportLayout::SideBySide, line_numbers: true, ..Default::default() };
+        let opts = ReportOptions {
+            layout: ReportLayout::SideBySide,
+            line_numbers: true,
+            ..Default::default()
+        };
         let out = render_report(&snap, &opts).unwrap();
         assert!(out.contains("one"), "{out}");
         assert!(out.contains("*two"), "{out}");
         assert!(out.contains("*TWO"), "{out}");
         // 双栏分隔
         assert!(out.contains(" | "));
-        let opts = ReportOptions { layout: ReportLayout::Interleaved, ..Default::default() };
+        let opts = ReportOptions {
+            layout: ReportLayout::Interleaved,
+            ..Default::default()
+        };
         let out = render_report(&snap, &opts).unwrap();
         assert!(out.contains("--- a.txt"));
         assert!(out.contains("+++ b.txt"));
@@ -2732,14 +3175,29 @@ mod tests {
     #[test]
     fn dir_display_filters() {
         let snap = ReportSnapshot::Dir(dir_snap());
-        let base = ReportOptions { layout: ReportLayout::List, ..Default::default() };
+        let base = ReportOptions {
+            layout: ReportLayout::List,
+            ..Default::default()
+        };
         let out = render_report(&snap, &base).unwrap();
-        assert_eq!(out.lines().count(), 6, "标题+4 差异行(目录行+子行): \n{out}");
-        let opts = ReportOptions { layout: ReportLayout::List, dir_display: DirDisplayFilter::Orphans, ..Default::default() };
+        assert_eq!(
+            out.lines().count(),
+            6,
+            "标题+4 差异行(目录行+子行): \n{out}"
+        );
+        let opts = ReportOptions {
+            layout: ReportLayout::List,
+            dir_display: DirDisplayFilter::Orphans,
+            ..Default::default()
+        };
         let out = render_report(&snap, &opts).unwrap();
         assert!(out.contains("only_l.txt"));
         assert!(!out.contains("changed.txt"));
-        let opts = ReportOptions { layout: ReportLayout::List, dir_display: DirDisplayFilter::MismatchesNoOrphans, ..Default::default() };
+        let opts = ReportOptions {
+            layout: ReportLayout::List,
+            dir_display: DirDisplayFilter::MismatchesNoOrphans,
+            ..Default::default()
+        };
         let out = render_report(&snap, &opts).unwrap();
         assert!(out.contains("changed.txt"));
         assert!(!out.contains("only_l.txt"));
@@ -2747,7 +3205,12 @@ mod tests {
 
     #[test]
     fn table_and_hex_snapshots_render() {
-        let model = diff_tables("id,v\n1,a\n2,b\n", "id,v\n1,a\n2,B\n3,c\n", &TableDiffOptions::default()).unwrap();
+        let model = diff_tables(
+            "id,v\n1,a\n2,b\n",
+            "id,v\n1,a\n2,B\n3,c\n",
+            &TableDiffOptions::default(),
+        )
+        .unwrap();
         let snap = ReportSnapshot::Table(TableSnapshot {
             left_label: "l.csv".into(),
             right_label: "r.csv".into(),
@@ -2756,11 +3219,17 @@ mod tests {
             summary: model.summary,
             has_header: true,
         });
-        let opts = ReportOptions { layout: ReportLayout::Csv, ..Default::default() };
+        let opts = ReportOptions {
+            layout: ReportLayout::Csv,
+            ..Default::default()
+        };
         let out = render_report(&snap, &opts).unwrap();
         assert!(out.contains("added,,2,,3,,c"), "added 行 CSV 形状: {out}");
         assert!(out.contains("changed,1,1,2,2,b,B"));
-        let opts = ReportOptions { layout: ReportLayout::Html, ..Default::default() };
+        let opts = ReportOptions {
+            layout: ReportLayout::Html,
+            ..Default::default()
+        };
         assert!(render_report(&snap, &opts).unwrap().contains("table-diff"));
 
         let hex_model = diff_bytes(b"AAAABBBB", b"AAAAXXBB", &HexOptions::default());
@@ -2774,12 +3243,24 @@ mod tests {
             status_left: sl,
             status_right: sr,
         });
-        for layout in [ReportLayout::Xml, ReportLayout::Html, ReportLayout::Csv, ReportLayout::Stats, ReportLayout::List] {
-            let opts = ReportOptions { layout, ..Default::default() };
+        for layout in [
+            ReportLayout::Xml,
+            ReportLayout::Html,
+            ReportLayout::Csv,
+            ReportLayout::Stats,
+            ReportLayout::List,
+        ] {
+            let opts = ReportOptions {
+                layout,
+                ..Default::default()
+            };
             let out = render_report(&snap, &opts).unwrap();
             assert!(!out.is_empty(), "{layout:?} 应有输出");
         }
-        let opts = ReportOptions { layout: ReportLayout::Html, ..Default::default() };
+        let opts = ReportOptions {
+            layout: ReportLayout::Html,
+            ..Default::default()
+        };
         let out = render_report(&snap, &opts).unwrap();
         assert!(out.contains("hc"), "字节级着色类");
     }
@@ -2798,11 +3279,17 @@ mod tests {
             model,
             unresolved: unresolved.clone(),
         });
-        let opts = ReportOptions { layout: ReportLayout::Xml, ..Default::default() };
+        let opts = ReportOptions {
+            layout: ReportLayout::Xml,
+            ..Default::default()
+        };
         let out = render_report(&snap, &opts).unwrap();
         assert!(out.contains("origin=\"conflict\""));
         assert!(out.contains("unresolved=\"true\""));
-        let opts = ReportOptions { layout: ReportLayout::Stats, ..Default::default() };
+        let opts = ReportOptions {
+            layout: ReportLayout::Stats,
+            ..Default::default()
+        };
         let out = render_report(&snap, &opts).unwrap();
         assert!(out.contains(&format!("unresolved={}", unresolved.len())));
     }
@@ -2813,11 +3300,19 @@ mod tests {
         let orig = "alpha\nbeta\ngamma\ndelta\n";
         let modified = "alpha\nBETA\ngamma\ndelta\nepsilon\n";
         let snap = ReportSnapshot::Text(text_snap(orig, modified));
-        let opts = ReportOptions { layout: ReportLayout::Patch, context_lines: 3, ..Default::default() };
+        let opts = ReportOptions {
+            layout: ReportLayout::Patch,
+            context_lines: 3,
+            ..Default::default()
+        };
         let patch_text = render_report(&snap, &opts).unwrap();
         let parsed = crate::patch::parse_patch(&patch_text).expect("补丁可解析");
         assert_eq!(parsed.files.len(), 1);
-        let applied = crate::patch::apply_file(orig, &parsed.files[0], &crate::patch::PatchApplyOptions::default());
+        let applied = crate::patch::apply_file(
+            orig,
+            &parsed.files[0],
+            &crate::patch::PatchApplyOptions::default(),
+        );
         match applied.unwrap() {
             crate::patch::ApplyOutcome::Applied { text, .. } => assert_eq!(text, modified),
             other => panic!("应用失败: {other:?}"),
@@ -2833,11 +3328,20 @@ mod tests {
             kind: "folder".into(),
         };
         assert_eq!(expand_template("%f vs %F", &naming), "a.txt vs b.txt");
-        assert_eq!(expand_template("%k_%t", &naming), "folder_2023-11-13_18-26-40");
-        assert_eq!(expand_template("%T/%Y%m%d_%H%M%S", &naming), "2023-11-13/20231113_182640");
+        assert_eq!(
+            expand_template("%k_%t", &naming),
+            "folder_2023-11-13_18-26-40"
+        );
+        assert_eq!(
+            expand_template("%T/%Y%m%d_%H%M%S", &naming),
+            "2023-11-13/20231113_182640"
+        );
         assert_eq!(expand_template("100%%", &naming), "100%");
         assert_eq!(expand_template("%z", &naming), "%z", "未知占位符保留");
-        assert_eq!(default_report_name(&naming, "html"), "folder-report_2023-11-13_18-26-40.html");
+        assert_eq!(
+            default_report_name(&naming, "html"),
+            "folder-report_2023-11-13_18-26-40.html"
+        );
     }
 
     #[test]
@@ -2864,13 +3368,28 @@ mod tests {
     fn renderer_trait_dispatch_all_layouts() {
         let snap = ReportSnapshot::Dir(dir_snap());
         for layout in [
-            ReportLayout::Summary, ReportLayout::Tree, ReportLayout::List,
-            ReportLayout::Stats, ReportLayout::Html, ReportLayout::Xml, ReportLayout::Csv,
+            ReportLayout::Summary,
+            ReportLayout::Tree,
+            ReportLayout::List,
+            ReportLayout::Stats,
+            ReportLayout::Html,
+            ReportLayout::Xml,
+            ReportLayout::Csv,
             ReportLayout::SideBySide,
         ] {
             let r = renderer_for_layout(layout);
             assert_eq!(r.layout(), layout);
-            assert!(r.render(&snap, &ReportOptions { layout, ..Default::default() }).is_ok(), "{layout:?}");
+            assert!(
+                r.render(
+                    &snap,
+                    &ReportOptions {
+                        layout,
+                        ..Default::default()
+                    }
+                )
+                .is_ok(),
+                "{layout:?}"
+            );
         }
         // tree 不支持文本快照
         let t = ReportSnapshot::Text(text_snap("a\n", "b\n"));
@@ -2908,9 +3427,16 @@ mod tests {
             (PatchStyle::Context, "! a"),
             (PatchStyle::Normal, "< a"),
         ] {
-            let opts = ReportOptions { layout: ReportLayout::Patch, patch_style: style, ..Default::default() };
+            let opts = ReportOptions {
+                layout: ReportLayout::Patch,
+                patch_style: style,
+                ..Default::default()
+            };
             let out = render_report(&snap, &opts).expect("右短于左不得 panic");
-            assert!(out.contains(mark_a), "{style:?}: 期望含 \"{mark_a}\": {out}");
+            assert!(
+                out.contains(mark_a),
+                "{style:?}: 期望含 \"{mark_a}\": {out}"
+            );
             if style != PatchStyle::Normal {
                 // 右块上下文用真实右下标（b），不再越界/错位（normal 无上下文行）
                 assert!(out.contains('b'), "{style:?}: {out}");
@@ -2930,7 +3456,11 @@ mod tests {
         }
         snap.unimportant_sections = 2;
         let s = ReportSnapshot::Text(snap);
-        let opts = ReportOptions { layout: ReportLayout::Patch, ignore_unimportant: true, ..Default::default() };
+        let opts = ReportOptions {
+            layout: ReportLayout::Patch,
+            ignore_unimportant: true,
+            ..Default::default()
+        };
         let out = render_report(&s, &opts).unwrap();
         // 全部差异均不重要 -> patch 为空（不记入补丁）
         assert_eq!(out, "");

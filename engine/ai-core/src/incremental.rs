@@ -16,7 +16,9 @@ use crate::keys;
 use crate::lines::{LineEntry, LineTable};
 use crate::options::{DiffConfig, DiffSide, ManualAlignOptions};
 use crate::pipeline;
-use crate::sections::{renumber, DiffError, DiffSummary, Importance, LineRange, Section, SectionEvent, SectionKind};
+use crate::sections::{
+    renumber, DiffError, DiffSummary, Importance, LineRange, Section, SectionEvent, SectionKind,
+};
 
 /// 一次行区间替换编辑：`[start, end)` 行被 `new_text`（按行分割）替换。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -42,7 +44,13 @@ impl DiffEngine {
         let out = pipeline::run_full(&left, &right, &cfg)?;
         let mut sections = out.output.sections;
         let summary = renumber(&mut sections);
-        Ok(DiffEngine { left, right, cfg, sections, summary })
+        Ok(DiffEngine {
+            left,
+            right,
+            cfg,
+            sections,
+            summary,
+        })
     }
 
     pub fn sections(&self) -> &[Section] {
@@ -90,8 +98,14 @@ impl DiffEngine {
 
         // ---- 4. 行表落盘 + 窗口范围（新坐标）----
         match edit.side {
-            DiffSide::Left => self.left.replace_lines_entries(a0 as usize, a1 as usize, new_entries),
-            DiffSide::Right => self.right.replace_lines_entries(a0 as usize, a1 as usize, new_entries),
+            DiffSide::Left => {
+                self.left
+                    .replace_lines_entries(a0 as usize, a1 as usize, new_entries)
+            }
+            DiffSide::Right => {
+                self.right
+                    .replace_lines_entries(a0 as usize, a1 as usize, new_entries)
+            }
         }
         let (lr, rr) = match edit.side {
             DiffSide::Left => ((ws.0, (we.0 as isize + delta) as u32), (ws.1, we.1)),
@@ -99,7 +113,8 @@ impl DiffEngine {
         };
 
         // ---- 5. 窗口重算（全量坐标 sections）----
-        let mut window_secs = pipeline::run_range(&self.left, &self.right, &self.cfg, lr, rr, &adjusted)?;
+        let mut window_secs =
+            pipeline::run_range(&self.left, &self.right, &self.cfg, lr, rr, &adjusted)?;
         let win_len = window_secs.len();
 
         // ---- 6. 拼回全量列表（窗口后的 sections 编辑侧平移 delta + 边界 Equal 吸收）----
@@ -111,7 +126,10 @@ impl DiffEngine {
         let events = match span {
             None => with.into_iter().map(SectionEvent::Append).collect(),
             Some(span) => {
-                vec![SectionEvent::Replace { span, with }, SectionEvent::Done(self.summary)]
+                vec![
+                    SectionEvent::Replace { span, with },
+                    SectionEvent::Done(self.summary),
+                ]
             }
         };
         Ok(events)
@@ -119,7 +137,10 @@ impl DiffEngine {
 
     /// 重要性规则变更：不重跑 diff，只重判（docs/03 §4.1 ImportanceUpdate）。
     /// 返回按重要性分组的事件序列（末尾附 Done）。
-    pub fn reclassify_importance(&mut self, imp: crate::options::ImportanceOptions) -> Vec<SectionEvent> {
+    pub fn reclassify_importance(
+        &mut self,
+        imp: crate::options::ImportanceOptions,
+    ) -> Vec<SectionEvent> {
         self.cfg.importance = imp;
         let classification = keys::classify_sections(
             &self.sections,
@@ -131,14 +152,25 @@ impl DiffEngine {
         );
         let changed = keys::apply_classification(&mut self.sections, &classification);
         let mut events = Vec::new();
-        for imp in [Importance::Unimportant, Importance::Ignored, Importance::Important] {
+        for imp in [
+            Importance::Unimportant,
+            Importance::Ignored,
+            Importance::Important,
+        ] {
             let ids: Vec<u32> = changed
                 .iter()
-                .filter(|id| self.sections.get(**id as usize).is_some_and(|s| s.important == imp))
+                .filter(|id| {
+                    self.sections
+                        .get(**id as usize)
+                        .is_some_and(|s| s.important == imp)
+                })
                 .copied()
                 .collect();
             if !ids.is_empty() {
-                events.push(SectionEvent::ImportanceUpdate { ids, important: imp });
+                events.push(SectionEvent::ImportanceUpdate {
+                    ids,
+                    important: imp,
+                });
             }
         }
         self.summary = renumber(&mut self.sections);
@@ -166,7 +198,12 @@ impl DiffEngine {
         boundaries.sort_unstable();
         boundaries.dedup();
 
-        let ws = boundaries.iter().rev().find(|(l, _)| *l <= a0).copied().unwrap_or((0, 0));
+        let ws = boundaries
+            .iter()
+            .rev()
+            .find(|(l, _)| *l <= a0)
+            .copied()
+            .unwrap_or((0, 0));
         let mut we = boundaries
             .iter()
             .find(|(l, _)| *l >= a1)
@@ -259,7 +296,8 @@ impl DiffEngine {
                 DiffSide::Right => shift_range(&mut a.right),
             }
         }
-        m.align_anchors.retain(|a| !a.left.is_empty() && !a.right.is_empty());
+        m.align_anchors
+            .retain(|a| !a.left.is_empty() && !a.right.is_empty());
         let filter_side = |(s, r): &(DiffSide, LineRange)| -> Option<(DiffSide, LineRange)> {
             let mut r = *r;
             if *s == side {
@@ -311,7 +349,7 @@ impl DiffEngine {
         }
         let mut with_start = replace.start;
         let mut with_end = replace.end; // 独占下标（span 覆盖 [with_start, with_end)）
-        // 头部吸收
+                                        // 头部吸收
         while let Some(first) = window.first() {
             if with_start == 0 {
                 break;
@@ -392,14 +430,22 @@ mod tests {
 
     fn cfg_algo(algo: LineAlignAlgo) -> DiffConfig {
         DiffConfig {
-            base: TextDiffOptions { algo, ..TextDiffOptions::default() },
+            base: TextDiffOptions {
+                algo,
+                ..TextDiffOptions::default()
+            },
             importance: ImportanceOptions::default(),
             manual: ManualAlignOptions::default(),
         }
     }
 
     fn engine(a: &str, b: &str) -> DiffEngine {
-        DiffEngine::new(LineTable::from_text(a), LineTable::from_text(b), DiffConfig::default()).unwrap()
+        DiffEngine::new(
+            LineTable::from_text(a),
+            LineTable::from_text(b),
+            DiffConfig::default(),
+        )
+        .unwrap()
     }
 
     /// sections 无缝覆盖 + Equal 真等 + 重放还原右侧全文
@@ -455,7 +501,10 @@ mod tests {
     }
 
     fn shape(eng: &DiffEngine) -> Vec<(SectionKind, Option<LineRange>, Option<LineRange>)> {
-        eng.sections().iter().map(|s| (s.kind, s.left, s.right)).collect()
+        eng.sections()
+            .iter()
+            .map(|s| (s.kind, s.left, s.right))
+            .collect()
     }
 
     #[test]
@@ -475,11 +524,20 @@ mod tests {
         let before: Vec<Section> = eng.sections().to_vec();
         assert_eq!(before.len(), 200, "100 Change + 100 Equal");
         assert_ids_contiguous(&before);
-        assert_eq!(before[0].kind, SectionKind::Change, "行 0 已改 -> 首 Change");
+        assert_eq!(
+            before[0].kind,
+            SectionKind::Change,
+            "行 0 已改 -> 首 Change"
+        );
         assert_eq!(before[101].kind, SectionKind::Equal, "行 501..509 为 Equal");
 
         // 行 501（Equal 段内）只改一个字符
-        let edit = TextEdit { side: DiffSide::Left, start: 501, end: 502, new_text: "line 501!".into() };
+        let edit = TextEdit {
+            side: DiffSide::Left,
+            start: 501,
+            end: 502,
+            new_text: "line 501!".into(),
+        };
         let events = eng.apply_edit(&edit).unwrap();
         assert_eq!(events.len(), 2, "Replace + Done");
         let (span, with) = match &events[0] {
@@ -488,8 +546,16 @@ mod tests {
         };
         // 事件范围断言：行 501 所在 Equal section（id=101）重算为 Change+Equal，
         // 其 Change 与相邻 Change(500) 同类合并（与全量重 diff 块结构一致）
-        assert_eq!(span, (100, 101), "span = 相邻 Change 合并 + 所在 Equal: {span:?}");
-        assert_eq!(with.len(), 2, "with = 合并后 Change(500..502) + Equal(502..510)");
+        assert_eq!(
+            span,
+            (100, 101),
+            "span = 相邻 Change 合并 + 所在 Equal: {span:?}"
+        );
+        assert_eq!(
+            with.len(),
+            2,
+            "with = 合并后 Change(500..502) + Equal(502..510)"
+        );
         assert_eq!(with[0].kind, SectionKind::Change);
         assert_eq!(with[0].left, Some(LineRange::new(500, 502)));
         assert_eq!(with[1].kind, SectionKind::Equal);
@@ -500,16 +566,26 @@ mod tests {
         let shift = with.len() as isize - (span.1 - span.0 + 1) as isize; // = 0（1→2 替换 2→2）
         for i in (span.1 as usize + 1)..after.len() {
             let old = &before[(i as isize - shift) as usize];
-            assert_eq!((old.kind, old.left, old.right), (after[i].kind, after[i].left, after[i].right), "span 外不得变化（下标 {i}）");
+            assert_eq!(
+                (old.kind, old.left, old.right),
+                (after[i].kind, after[i].left, after[i].right),
+                "span 外不得变化（下标 {i}）"
+            );
         }
         // span 之前的 sections 完全一致
         for i in 0..span.0 as usize {
-            assert_eq!((before[i].kind, before[i].left, before[i].right), (after[i].kind, after[i].left, after[i].right), "span 前不得变化（下标 {i}）");
+            assert_eq!(
+                (before[i].kind, before[i].left, before[i].right),
+                (after[i].kind, after[i].left, after[i].right),
+                "span 前不得变化（下标 {i}）"
+            );
         }
         // 与全量重 diff 结构等价
-        let fresh = engine(eng.tables().0.to_text().as_str(), eng.tables().1.to_text().as_str());
-        assert_eq!(shape(&fresh),
-        shape(&eng), "增量结果必须与全量重 diff 等价");
+        let fresh = engine(
+            eng.tables().0.to_text().as_str(),
+            eng.tables().1.to_text().as_str(),
+        );
+        assert_eq!(shape(&fresh), shape(&eng), "增量结果必须与全量重 diff 等价");
         assert_sane(eng.tables().0, eng.tables().1, eng.sections());
         assert!(matches!(events[1], SectionEvent::Done(_)));
     }
@@ -517,7 +593,12 @@ mod tests {
     #[test]
     fn edit_inside_change_section() {
         let mut eng = engine("alpha\nold line\nomega\n", "alpha\nold line\nomega\n");
-        let edit = TextEdit { side: DiffSide::Right, start: 1, end: 2, new_text: "new line\n".into() };
+        let edit = TextEdit {
+            side: DiffSide::Right,
+            start: 1,
+            end: 2,
+            new_text: "new line\n".into(),
+        };
         let events = eng.apply_edit(&edit).unwrap();
         assert!(matches!(events[0], SectionEvent::Replace { .. }));
         assert!(matches!(events[1], SectionEvent::Done(_)));
@@ -531,7 +612,12 @@ mod tests {
     #[test]
     fn pure_insert_at_aligned_boundary() {
         let mut eng = engine("a\nb\nc\n", "a\nb\nc\n");
-        let edit = TextEdit { side: DiffSide::Right, start: 1, end: 1, new_text: "x\n".into() };
+        let edit = TextEdit {
+            side: DiffSide::Right,
+            start: 1,
+            end: 1,
+            new_text: "x\n".into(),
+        };
         let events = eng.apply_edit(&edit).unwrap();
         match &events[0] {
             SectionEvent::Replace { span, with } => {
@@ -542,25 +628,36 @@ mod tests {
         }
         assert_sane(eng.tables().0, eng.tables().1, eng.sections());
         let fresh = engine("a\nb\nc\n", "a\nx\nb\nc\n");
-        assert_eq!(shape(&fresh),
-        shape(&eng), "纯插入与全量重 diff 等价");
+        assert_eq!(shape(&fresh), shape(&eng), "纯插入与全量重 diff 等价");
     }
 
     #[test]
     fn delete_range_and_multi_line_edit() {
         let mut eng = engine("a\nb\nc\nd\ne\n", "a\nb\nc\nd\ne\n");
-        let edit = TextEdit { side: DiffSide::Left, start: 1, end: 3, new_text: "B1\nB2\nB3\n".into() };
+        let edit = TextEdit {
+            side: DiffSide::Left,
+            start: 1,
+            end: 3,
+            new_text: "B1\nB2\nB3\n".into(),
+        };
         eng.apply_edit(&edit).unwrap();
         assert_sane(eng.tables().0, eng.tables().1, eng.sections());
-        let fresh = engine(eng.tables().0.to_text().as_str(), eng.tables().1.to_text().as_str());
-        assert_eq!(shape(&fresh),
-        shape(&eng), "多行编辑与全量重 diff 等价");
+        let fresh = engine(
+            eng.tables().0.to_text().as_str(),
+            eng.tables().1.to_text().as_str(),
+        );
+        assert_eq!(shape(&fresh), shape(&eng), "多行编辑与全量重 diff 等价");
     }
 
     #[test]
     fn append_at_file_end_uses_append_events() {
         let mut eng = engine("a\nb\n", "a\nb\n");
-        let edit = TextEdit { side: DiffSide::Right, start: 2, end: 2, new_text: "c\nd\n".into() };
+        let edit = TextEdit {
+            side: DiffSide::Right,
+            start: 2,
+            end: 2,
+            new_text: "c\nd\n".into(),
+        };
         let events = eng.apply_edit(&edit).unwrap();
         assert!(
             events.iter().all(|e| matches!(e, SectionEvent::Append(_))),
@@ -573,7 +670,12 @@ mod tests {
     #[test]
     fn empty_file_first_insert() {
         let mut eng = engine("", "");
-        let edit = TextEdit { side: DiffSide::Left, start: 0, end: 0, new_text: "hello\n".into() };
+        let edit = TextEdit {
+            side: DiffSide::Left,
+            start: 0,
+            end: 0,
+            new_text: "hello\n".into(),
+        };
         let events = eng.apply_edit(&edit).unwrap();
         assert!(matches!(events[0], SectionEvent::Append(_)));
         assert_sane(eng.tables().0, eng.tables().1, eng.sections());
@@ -582,8 +684,16 @@ mod tests {
     #[test]
     fn out_of_bounds_edit_rejected() {
         let mut eng = engine("a\n", "a\n");
-        let edit = TextEdit { side: DiffSide::Left, start: 0, end: 5, new_text: String::new() };
-        assert!(matches!(eng.apply_edit(&edit), Err(DiffError::InvalidEdit(_))));
+        let edit = TextEdit {
+            side: DiffSide::Left,
+            start: 0,
+            end: 5,
+            new_text: String::new(),
+        };
+        assert!(matches!(
+            eng.apply_edit(&edit),
+            Err(DiffError::InvalidEdit(_))
+        ));
     }
 
     #[test]
@@ -606,7 +716,11 @@ mod tests {
         )
         .unwrap();
         for round in 0..40 {
-            let side = if next() % 2 == 0 { DiffSide::Left } else { DiffSide::Right };
+            let side = if next() % 2 == 0 {
+                DiffSide::Left
+            } else {
+                DiffSide::Right
+            };
             let n = match side {
                 DiffSide::Left => eng.tables().0.len() as u32,
                 DiffSide::Right => eng.tables().1.len() as u32,
@@ -617,7 +731,12 @@ mod tests {
             for _ in 0..next() % 3 {
                 new_text.push_str(&format!("edit {}\n", next() % 97));
             }
-            let edit = TextEdit { side, start: s, end: e, new_text };
+            let edit = TextEdit {
+                side,
+                start: s,
+                end: e,
+                new_text,
+            };
             let events = eng.apply_edit(&edit).unwrap();
             assert!(!events.is_empty(), "round {round}: 必须产生事件");
             // 事件引用的 with sections 与引擎状态一致（Replace 场景）
@@ -627,7 +746,11 @@ mod tests {
                     .iter()
                     .position(|x| x.id == span.0)
                     .expect("span 起点存在");
-                assert_eq!(&eng.sections()[start_pos..start_pos + with.len()], with.as_slice(), "with 必须与全量列表一致");
+                assert_eq!(
+                    &eng.sections()[start_pos..start_pos + with.len()],
+                    with.as_slice(),
+                    "with 必须与全量列表一致"
+                );
             }
             assert_ids_contiguous(eng.sections());
             assert_sane(eng.tables().0, eng.tables().1, eng.sections());
@@ -636,10 +759,23 @@ mod tests {
             for sec in eng.sections() {
                 s2.section_count += 1;
                 match sec.kind {
-                    SectionKind::Equal => { s2.equal_sections += 1; s2.equal_lines += sec.left.map_or(0, |r| r.len()); }
-                    SectionKind::Insert => { s2.insert_sections += 1; s2.inserted_lines += sec.right.map_or(0, |r| r.len()); }
-                    SectionKind::Delete => { s2.delete_sections += 1; s2.deleted_lines += sec.left.map_or(0, |r| r.len()); }
-                    SectionKind::Change => { s2.change_sections += 1; s2.deleted_lines += sec.left.map_or(0, |r| r.len()); s2.inserted_lines += sec.right.map_or(0, |r| r.len()); }
+                    SectionKind::Equal => {
+                        s2.equal_sections += 1;
+                        s2.equal_lines += sec.left.map_or(0, |r| r.len());
+                    }
+                    SectionKind::Insert => {
+                        s2.insert_sections += 1;
+                        s2.inserted_lines += sec.right.map_or(0, |r| r.len());
+                    }
+                    SectionKind::Delete => {
+                        s2.delete_sections += 1;
+                        s2.deleted_lines += sec.left.map_or(0, |r| r.len());
+                    }
+                    SectionKind::Change => {
+                        s2.change_sections += 1;
+                        s2.deleted_lines += sec.left.map_or(0, |r| r.len());
+                        s2.inserted_lines += sec.right.map_or(0, |r| r.len());
+                    }
                 }
             }
             assert_eq!(s2, eng.summary(), "round {round}: 统计必须与 sections 一致");
@@ -671,7 +807,13 @@ mod tests {
     fn summary_tracks_edits() {
         let mut eng = engine("a\nb\n", "a\nb\n");
         assert_eq!(eng.summary().change_sections, 0);
-        eng.apply_edit(&TextEdit { side: DiffSide::Left, start: 1, end: 2, new_text: "B\n".into() }).unwrap();
+        eng.apply_edit(&TextEdit {
+            side: DiffSide::Left,
+            start: 1,
+            end: 2,
+            new_text: "B\n".into(),
+        })
+        .unwrap();
         assert_eq!(eng.summary().change_sections, 1);
         assert_ids_contiguous(eng.sections());
     }

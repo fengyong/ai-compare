@@ -22,15 +22,28 @@ where
     T: PartialEq + Eq + Hash,
 {
     let mut out: Vec<RawOp> = Vec::new();
-    let mut stack = vec![Task::Range { a0: 0, a1: a.len() as u32, b0: 0, b1: b.len() as u32 }];
+    let mut stack = vec![Task::Range {
+        a0: 0,
+        a1: a.len() as u32,
+        b0: 0,
+        b1: b.len() as u32,
+    }];
 
     while let Some(task) = stack.pop() {
         match task {
             Task::Eq(len) => out.push(RawOp::Equal(len)),
-            Task::Range { mut a0, a1, mut b0, b1 } => {
+            Task::Range {
+                mut a0,
+                a1,
+                mut b0,
+                b1,
+            } => {
                 // 公共前缀/后缀裁剪（与 myers 同策略；后缀延后输出）
                 let mut pre = 0u32;
-                while a0 + pre < a1 && b0 + pre < b1 && a[(a0 + pre) as usize] == b[(b0 + pre) as usize] {
+                while a0 + pre < a1
+                    && b0 + pre < b1
+                    && a[(a0 + pre) as usize] == b[(b0 + pre) as usize]
+                {
                     pre += 1;
                 }
                 if pre > 0 {
@@ -39,7 +52,10 @@ where
                     b0 += pre;
                 }
                 let mut suf = 0u32;
-                while a1 > a0 + suf && b1 > b0 + suf && a[(a1 - 1 - suf) as usize] == b[(b1 - 1 - suf) as usize] {
+                while a1 > a0 + suf
+                    && b1 > b0 + suf
+                    && a[(a1 - 1 - suf) as usize] == b[(b1 - 1 - suf) as usize]
+                {
                     suf += 1;
                 }
                 let a1 = a1 - suf;
@@ -58,7 +74,9 @@ where
                     out.push(RawOp::Insert(m as u32));
                 } else if m == 0 {
                     out.push(RawOp::Delete(n as u32));
-                } else if let Some(pairs) = unique_anchor_lis(&a[a0 as usize..a1 as usize], &b[b0 as usize..b1 as usize]) {
+                } else if let Some(pairs) =
+                    unique_anchor_lis(&a[a0 as usize..a1 as usize], &b[b0 as usize..b1 as usize])
+                {
                     // 锚点对 (i, j)：严格递增；锚点之间递归，锚点本身输出 Equal(1)
                     // 按输出顺序构建任务，再倒序压栈（LIFO 弹出顺序 == 输出顺序）
                     let mut tasks: Vec<Task> = Vec::with_capacity(pairs.len() * 2 + 2);
@@ -66,18 +84,29 @@ where
                     for (i, j) in &pairs {
                         let ai = a0 + i;
                         let bj = b0 + j;
-                        tasks.push(Task::Range { a0: prev_a, a1: ai, b0: prev_b, b1: bj });
+                        tasks.push(Task::Range {
+                            a0: prev_a,
+                            a1: ai,
+                            b0: prev_b,
+                            b1: bj,
+                        });
                         tasks.push(Task::Eq(1));
                         prev_a = ai + 1;
                         prev_b = bj + 1;
                     }
-                    tasks.push(Task::Range { a0: prev_a, a1, b0: prev_b, b1 });
+                    tasks.push(Task::Range {
+                        a0: prev_a,
+                        a1,
+                        b0: prev_b,
+                        b1,
+                    });
                     for t in tasks.into_iter().rev() {
                         stack.push(t);
                     }
                 } else {
                     // 无唯一锚点：回退 Myers（该子问题一次性最优）
-                    let ops = myers::diff_seq(&a[a0 as usize..a1 as usize], &b[b0 as usize..b1 as usize]);
+                    let ops =
+                        myers::diff_seq(&a[a0 as usize..a1 as usize], &b[b0 as usize..b1 as usize]);
                     out.extend(ops);
                 }
             }
@@ -88,7 +117,10 @@ where
 
 /// 找出两侧均唯一出现的行并做 LIS 匹配。
 /// 返回 (a 内下标, b 内下标) 对（各自严格递增）；无锚点（含空序列）时返回 None。
-pub(crate) fn unique_anchor_lis<T: PartialEq + Eq + Hash>(a: &[T], b: &[T]) -> Option<Vec<(u32, u32)>> {
+pub(crate) fn unique_anchor_lis<T: PartialEq + Eq + Hash>(
+    a: &[T],
+    b: &[T],
+) -> Option<Vec<(u32, u32)>> {
     if a.is_empty() || b.is_empty() {
         return None;
     }
@@ -134,7 +166,11 @@ pub(crate) fn unique_anchor_lis<T: PartialEq + Eq + Hash>(a: &[T], b: &[T]) -> O
             pile_top[pos] = *bj;
             pile_idx[pos] = ci;
         }
-        back[ci] = if pos > 0 { Some(pile_idx[pos - 1]) } else { None };
+        back[ci] = if pos > 0 {
+            Some(pile_idx[pos - 1])
+        } else {
+            None
+        };
     }
     // 回溯 LIS
     let mut result: Vec<(u32, u32)> = Vec::with_capacity(pile_idx.len());
@@ -158,7 +194,11 @@ mod tests {
         for op in ops {
             match op {
                 RawOp::Equal(k) => {
-                    assert_eq!(&a[ia..ia + *k as usize], &b[ib..ib + *k as usize], "Equal 段必须真等");
+                    assert_eq!(
+                        &a[ia..ia + *k as usize],
+                        &b[ib..ib + *k as usize],
+                        "Equal 段必须真等"
+                    );
                     ia += *k as usize;
                     ib += *k as usize;
                 }
@@ -183,12 +223,27 @@ mod tests {
     fn classic_patience_case() {
         // Myers 会把独特的 unique3 行作为"更改"的一部分；
         // patience 以唯一行（change1/2、unique1..3）为锚，保留独立块
-        let a = vec!["void f() {", "    unique1();", "    unique2();", "    common1();", "}"];
+        let a = vec![
+            "void f() {",
+            "    unique1();",
+            "    unique2();",
+            "    common1();",
+            "}",
+        ];
         let b = vec!["void g() {", "    common1();", "    unique3();", "}"];
         let ops = diff_seq(&a, &b);
         replay_ok(&ops, &a, &b);
         // common1 与 "}" 为两侧唯一共同行 → 必为 Equal 锚点
-        let equal_total: u32 = ops.iter().filter_map(|o| if let RawOp::Equal(k) = o { Some(*k) } else { None }).sum();
+        let equal_total: u32 = ops
+            .iter()
+            .filter_map(|o| {
+                if let RawOp::Equal(k) = o {
+                    Some(*k)
+                } else {
+                    None
+                }
+            })
+            .sum();
         assert_eq!(equal_total, 2, "common1 与右花括号各匹配一行");
     }
 
@@ -207,8 +262,26 @@ mod tests {
         let b = vec![2, 2, 1, 1, 1, 1, 1];
         let ops = diff_seq(&a, &b);
         replay_ok(&ops, &a, &b);
-        let del: u32 = ops.iter().filter_map(|o| if let RawOp::Delete(k) = o { Some(*k) } else { None }).sum();
-        let ins: u32 = ops.iter().filter_map(|o| if let RawOp::Insert(k) = o { Some(*k) } else { None }).sum();
+        let del: u32 = ops
+            .iter()
+            .filter_map(|o| {
+                if let RawOp::Delete(k) = o {
+                    Some(*k)
+                } else {
+                    None
+                }
+            })
+            .sum();
+        let ins: u32 = ops
+            .iter()
+            .filter_map(|o| {
+                if let RawOp::Insert(k) = o {
+                    Some(*k)
+                } else {
+                    None
+                }
+            })
+            .sum();
         // 最优编辑距离：m + n - 2*LCS；LCS([1,1,2,2,1,1],[2,2,1,1,1,1,1]) = 4
         assert_eq!(del + ins, 6 + 7 - 2 * 4);
     }

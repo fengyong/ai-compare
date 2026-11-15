@@ -7,8 +7,8 @@ pub mod app;
 pub mod report_cmd;
 pub mod script;
 
-use ai_core::sections::SectionKind;
 use ai_core::lines::LineEnding;
+use ai_core::sections::SectionKind;
 use ai_core::{DiffOutput, LineTable};
 use ai_dir::DirNode;
 use ai_protocol::{DirEntryStatus, EntryKind};
@@ -44,7 +44,13 @@ pub struct Palette {
     pub reset: &'static str,
 }
 
-pub const PLAIN: Palette = Palette { delete: "", insert: "", hunk: "", header: "", reset: "" };
+pub const PLAIN: Palette = Palette {
+    delete: "",
+    insert: "",
+    hunk: "",
+    header: "",
+    reset: "",
+};
 
 pub const ANSI: Palette = Palette {
     delete: "\x1b[31m",
@@ -180,10 +186,26 @@ pub fn render_unified(
             }
         }
         // git 约定：count == 0 时显示前导行数（顶部插入显示 -0,0）；count == 1 时省略 `,1`
-        let ls = if left_count > 0 { left_before + 1 } else { left_before };
-        let rs = if right_count > 0 { right_before + 1 } else { right_before };
-        let lpart = if left_count == 1 { format!("-{ls}") } else { format!("-{ls},{left_count}") };
-        let rpart = if right_count == 1 { format!("+{rs}") } else { format!("+{rs},{right_count}") };
+        let ls = if left_count > 0 {
+            left_before + 1
+        } else {
+            left_before
+        };
+        let rs = if right_count > 0 {
+            right_before + 1
+        } else {
+            right_before
+        };
+        let lpart = if left_count == 1 {
+            format!("-{ls}")
+        } else {
+            format!("-{ls},{left_count}")
+        };
+        let rpart = if right_count == 1 {
+            format!("+{rs}")
+        } else {
+            format!("+{rs},{right_count}")
+        };
         text.push_str(&paint(palette.hunk, format!("@@ {lpart} {rpart} @@")));
         text.push('\n');
         for e in &script[*hs..*he] {
@@ -196,14 +218,20 @@ pub fn render_unified(
                     }
                 }
                 Entry::Left(i) => {
-                    text.push_str(&paint(palette.delete, format!("-{}", left.line(*i as usize).text)));
+                    text.push_str(&paint(
+                        palette.delete,
+                        format!("-{}", left.line(*i as usize).text),
+                    ));
                     text.push('\n');
                     if *i == last_left && left_no_nl {
                         text.push_str(NO_NEWLINE_MARKER);
                     }
                 }
                 Entry::Right(i) => {
-                    text.push_str(&paint(palette.insert, format!("+{}", right.line(*i as usize).text)));
+                    text.push_str(&paint(
+                        palette.insert,
+                        format!("+{}", right.line(*i as usize).text),
+                    ));
                     text.push('\n');
                     if *i == last_right && right_no_nl {
                         text.push_str(NO_NEWLINE_MARKER);
@@ -426,11 +454,31 @@ mod dir_diff_tests {
                 aligned_with: None,
                 scan_failed: false,
             },
-            node("a.txt", "a.txt", EntryKind::File, DirEntryStatus::ContentDiff),
-            node("same.txt", "same.txt", EntryKind::File, DirEntryStatus::Same),
+            node(
+                "a.txt",
+                "a.txt",
+                EntryKind::File,
+                DirEntryStatus::ContentDiff,
+            ),
+            node(
+                "same.txt",
+                "same.txt",
+                EntryKind::File,
+                DirEntryStatus::Same,
+            ),
             node("sub", "sub", EntryKind::Dir, DirEntryStatus::DirDiff),
-            node("only_l.txt", "only_l.txt", EntryKind::File, DirEntryStatus::LeftOnly),
-            node("only_r", "only_r", EntryKind::Dir, DirEntryStatus::RightOnly),
+            node(
+                "only_l.txt",
+                "only_l.txt",
+                EntryKind::File,
+                DirEntryStatus::LeftOnly,
+            ),
+            node(
+                "only_r",
+                "only_r",
+                EntryKind::Dir,
+                DirEntryStatus::RightOnly,
+            ),
         ];
         let text = render_dir_diff("L", "R", &arena);
         assert_eq!(
@@ -441,6 +489,16 @@ mod dir_diff_tests {
         );
         // 无差异 -> 空串
         let clean = [node("x", "x", EntryKind::File, DirEntryStatus::Same)];
-        assert_eq!(render_dir_diff("L", "R", &[node("", "", EntryKind::Dir, DirEntryStatus::DirSame), clean[0].clone()]), "");
+        assert_eq!(
+            render_dir_diff(
+                "L",
+                "R",
+                &[
+                    node("", "", EntryKind::Dir, DirEntryStatus::DirSame),
+                    clean[0].clone()
+                ]
+            ),
+            ""
+        );
     }
 }

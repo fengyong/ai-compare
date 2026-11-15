@@ -76,16 +76,30 @@ fn record_then_replay_is_identical() {
 
     // ---- 与固化 fixture 比对（归一化：剥 mtime、路径 token 化、剥异步 progress） ----
     let progress_a = count_progress(&out_a);
-    assert!(progress_a >= 1, "模型会话应产生 dir/progress 终态通知（A={progress_a}）");
-    assert_eq!(count_progress(&out_b), progress_a, "回放 progress 通知计数一致");
+    assert!(
+        progress_a >= 1,
+        "模型会话应产生 dir/progress 终态通知（A={progress_a}）"
+    );
+    assert_eq!(
+        count_progress(&out_b),
+        progress_a,
+        "回放 progress 通知计数一致"
+    );
 
     let mut normalized = strip_async_progress(&out_a);
     for v in normalized.iter_mut() {
-        harness::normalize(v, &[(&corpus.left_str(), "<LEFT>"), (&corpus.right_str(), "<RIGHT>")]);
+        harness::normalize(
+            v,
+            &[
+                (&corpus.left_str(), "<LEFT>"),
+                (&corpus.right_str(), "<RIGHT>"),
+            ],
+        );
     }
     let actual = record_format(&normalized);
     let fixture_path = harness::fixtures_dir().join(FIXTURE_NAME);
-    harness::assert_matches_snapshot(FIXTURE_NAME, &fixture_path, &actual).expect("录制 fixture 一致");
+    harness::assert_matches_snapshot(FIXTURE_NAME, &fixture_path, &actual)
+        .expect("录制 fixture 一致");
 }
 
 fn session_inputs(corpus: &harness::Corpus) -> Vec<Value> {
@@ -95,69 +109,141 @@ fn session_inputs(corpus: &harness::Corpus) -> Vec<Value> {
             "initialize",
             json!({"clientInfo": {"name": "replay-test", "version": "0"}, "protocolVersion": "1.0"}),
         ),
-        harness::req(2, "dir/open", json!({
-            "sessionId": "s1",
-            "left": corpus.left_str(),
-            "right": corpus.right_str(),
-            "depth": 1,
-            "criteria": { "mtimeToleranceSec": 2, "contentCompare": "always" }
-        })),
+        harness::req(
+            2,
+            "dir/open",
+            json!({
+                "sessionId": "s1",
+                "left": corpus.left_str(),
+                "right": corpus.right_str(),
+                "depth": 1,
+                "criteria": { "mtimeToleranceSec": 2, "contentCompare": "always" }
+            }),
+        ),
         harness::note("$/cancel", json!({"id": 999})), // 无在途请求：no-op 通知
-        harness::req(3, "text/open", json!({
-            "sessionId": "t1",
-            "left": corpus.left.join("same.txt").to_string_lossy(),
-            "right": corpus.right.join("same.txt").to_string_lossy(),
-        })),
-        harness::req(4, "text/sections", json!({"sessionId": "t1", "offset": 0, "count": 5})),
+        harness::req(
+            3,
+            "text/open",
+            json!({
+                "sessionId": "t1",
+                "left": corpus.left.join("same.txt").to_string_lossy(),
+                "right": corpus.right.join("same.txt").to_string_lossy(),
+            }),
+        ),
+        harness::req(
+            4,
+            "text/sections",
+            json!({"sessionId": "t1", "offset": 0, "count": 5}),
+        ),
         harness::req(5, "session/close", json!({"sessionId": "t1"})),
-        harness::req(6, "text/open", json!({
-            "sessionId": "t2",
-            "left": corpus.left.join("nope.txt").to_string_lossy(),
-            "right": corpus.right.join("same.txt").to_string_lossy(),
-        })),
+        harness::req(
+            6,
+            "text/open",
+            json!({
+                "sessionId": "t2",
+                "left": corpus.left.join("nope.txt").to_string_lossy(),
+                "right": corpus.right.join("same.txt").to_string_lossy(),
+            }),
+        ),
         // ---- P3：dir/expand（P2 模型会话；displayFilter 触发模型路径，非惰性全内联） ----
-        harness::req(7, "dir/open", json!({
-            "sessionId": "s2",
-            "left": corpus.left_str(),
-            "right": corpus.right_str(),
-            "depth": 1,
-            "criteria": { "mtimeToleranceSec": 2, "contentCompare": "always" },
-            "displayFilter": {}
-        })),
-        harness::req(8, "dir/expand", json!({"sessionId": "s2", "path": "sub", "depth": 1})),
+        harness::req(
+            7,
+            "dir/open",
+            json!({
+                "sessionId": "s2",
+                "left": corpus.left_str(),
+                "right": corpus.right_str(),
+                "depth": 1,
+                "criteria": { "mtimeToleranceSec": 2, "contentCompare": "always" },
+                "displayFilter": {}
+            }),
+        ),
+        harness::req(
+            8,
+            "dir/expand",
+            json!({"sessionId": "s2", "path": "sub", "depth": 1}),
+        ),
         harness::req(9, "session/close", json!({"sessionId": "s2"})),
         // ---- P3：text/lines 分页 ----
-        harness::req(10, "text/open", json!({
-            "sessionId": "t3",
-            "left": corpus.left.join("changed.txt").to_string_lossy(),
-            "right": corpus.right.join("changed.txt").to_string_lossy(),
-        })),
-        harness::req(11, "text/lines", json!({"sessionId": "t3", "side": "left", "start": 0, "count": 2})),
-        harness::req(12, "text/lines", json!({"sessionId": "t3", "side": "right", "start": 2, "count": 10})),
-        harness::req(13, "text/lines", json!({"sessionId": "t3", "side": "left", "start": 100, "count": 5})),
+        harness::req(
+            10,
+            "text/open",
+            json!({
+                "sessionId": "t3",
+                "left": corpus.left.join("changed.txt").to_string_lossy(),
+                "right": corpus.right.join("changed.txt").to_string_lossy(),
+            }),
+        ),
+        harness::req(
+            11,
+            "text/lines",
+            json!({"sessionId": "t3", "side": "left", "start": 0, "count": 2}),
+        ),
+        harness::req(
+            12,
+            "text/lines",
+            json!({"sessionId": "t3", "side": "right", "start": 2, "count": 10}),
+        ),
+        harness::req(
+            13,
+            "text/lines",
+            json!({"sessionId": "t3", "side": "left", "start": 100, "count": 5}),
+        ),
         // ---- P3：text/inlineDiff（changed.txt 的 Change section id=1） ----
-        harness::req(14, "text/sections", json!({"sessionId": "t3", "offset": 0, "count": 10})),
-        harness::req(15, "text/inlineDiff", json!({"sessionId": "t3", "sectionId": 1})),
-        harness::req(16, "text/inlineDiff", json!({"sessionId": "t3", "sectionId": 99})),
+        harness::req(
+            14,
+            "text/sections",
+            json!({"sessionId": "t3", "offset": 0, "count": 10}),
+        ),
+        harness::req(
+            15,
+            "text/inlineDiff",
+            json!({"sessionId": "t3", "sectionId": 1}),
+        ),
+        harness::req(
+            16,
+            "text/inlineDiff",
+            json!({"sessionId": "t3", "sectionId": 99}),
+        ),
         // ---- P3：withKeys 双键 + importance 重判（"two" vs "TWO" 大小写不重要 -> ImportanceUpdate） ----
-        harness::req(17, "text/sections", json!({"sessionId": "t3", "offset": 0, "count": 10, "withKeys": true})),
-        harness::req(18, "text/sections", json!({
-            "sessionId": "t3", "offset": 0, "count": 10,
-            "importance": { "caseUnimportant": true }
-        })),
+        harness::req(
+            17,
+            "text/sections",
+            json!({"sessionId": "t3", "offset": 0, "count": 10, "withKeys": true}),
+        ),
+        harness::req(
+            18,
+            "text/sections",
+            json!({
+                "sessionId": "t3", "offset": 0, "count": 10,
+                "importance": { "caseUnimportant": true }
+            }),
+        ),
         harness::req(19, "session/close", json!({"sessionId": "t3"})),
         // ---- P7：text/merge3/*（三向合并录制面：open/sections/decide/output） ----
-        harness::req(20, "text/merge3/open", json!({
-            "sessionId": "m1",
-            "base": corpus.left.join("same.txt").to_string_lossy(),
-            "left": corpus.left.join("changed.txt").to_string_lossy(),
-            "right": corpus.right.join("changed.txt").to_string_lossy(),
-        })),
-        harness::req(21, "text/merge3/sections", json!({"sessionId": "m1", "offset": 0, "count": 10})),
-        harness::req(22, "text/merge3/decide", json!({
-            "sessionId": "m1",
-            "decisions": [{"chunkId": 0, "action": "left"}]
-        })),
+        harness::req(
+            20,
+            "text/merge3/open",
+            json!({
+                "sessionId": "m1",
+                "base": corpus.left.join("same.txt").to_string_lossy(),
+                "left": corpus.left.join("changed.txt").to_string_lossy(),
+                "right": corpus.right.join("changed.txt").to_string_lossy(),
+            }),
+        ),
+        harness::req(
+            21,
+            "text/merge3/sections",
+            json!({"sessionId": "m1", "offset": 0, "count": 10}),
+        ),
+        harness::req(
+            22,
+            "text/merge3/decide",
+            json!({
+                "sessionId": "m1",
+                "decisions": [{"chunkId": 0, "action": "left"}]
+            }),
+        ),
         harness::req(23, "text/merge3/output", json!({"sessionId": "m1"})),
         harness::req(24, "session/close", json!({"sessionId": "m1"})),
         harness::req(25, "shutdown", json!({})),

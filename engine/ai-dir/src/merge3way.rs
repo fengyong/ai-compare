@@ -174,7 +174,9 @@ impl MergeRowState {
             | MergeCategory::DeletedLeft
             | MergeCategory::DeletedRight => MergeRowState::Auto,
             MergeCategory::Conflict => MergeRowState::Conflict,
-            MergeCategory::LeftOnly | MergeCategory::RightOnly | MergeCategory::BaseOnly => MergeRowState::Orphan,
+            MergeCategory::LeftOnly | MergeCategory::RightOnly | MergeCategory::BaseOnly => {
+                MergeRowState::Orphan
+            }
         }
     }
 }
@@ -271,7 +273,10 @@ fn side_info(stat: &StatInfo) -> SideInfo {
     SideInfo::base(stat.size, stat.mtime_ms)
 }
 
-async fn list_sorted(vfs: &dyn VfsProvider, dir: &VfsPath) -> Result<Vec<VfsDirEntry>, DirScanError> {
+async fn list_sorted(
+    vfs: &dyn VfsProvider,
+    dir: &VfsPath,
+) -> Result<Vec<VfsDirEntry>, DirScanError> {
     let mut list = vfs.list_dir(dir).await?;
     list.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(list)
@@ -289,9 +294,14 @@ pub async fn scan_merge(
     cancel: &CancelFlag,
 ) -> Result<MergeScanResult, DirScanError> {
     for (side, path) in [("base", base), ("left", left), ("right", right)] {
-        let stat = vfs.stat(path).await.map_err(|e| crate::map_root_err(side, path, e))?;
+        let stat = vfs
+            .stat(path)
+            .await
+            .map_err(|e| crate::map_root_err(side, path, e))?;
         if stat.kind != VfsEntryKind::Dir {
-            return Err(DirScanError::Vfs(ai_vfs::VfsError::NotADirectory { path: path.as_str().into() }));
+            return Err(DirScanError::Vfs(ai_vfs::VfsError::NotADirectory {
+                path: path.as_str().into(),
+            }));
         }
     }
     let mut arena = vec![MergeNode {
@@ -307,7 +317,16 @@ pub async fn scan_merge(
         parent: None,
         children: Vec::new(),
     }];
-    walk(vfs, Some(base), Some(left), Some(right), 0, &mut arena, cancel).await?;
+    walk(
+        vfs,
+        Some(base),
+        Some(left),
+        Some(right),
+        0,
+        &mut arena,
+        cancel,
+    )
+    .await?;
     aggregate(&mut arena);
     let stats = summarize(&arena);
     Ok(MergeScanResult { arena, stats })
@@ -351,7 +370,11 @@ fn walk<'a>(
             let rkind = rstat.map(|s| s.kind);
 
             let parent_rel = arena[parent as usize].rel_path.clone();
-            let child_rel = if parent_rel.is_empty() { t.name.clone() } else { format!("{parent_rel}/{}", t.name) };
+            let child_rel = if parent_rel.is_empty() {
+                t.name.clone()
+            } else {
+                format!("{parent_rel}/{}", t.name)
+            };
             let kind = if matches!(bkind, Some(VfsEntryKind::Dir))
                 || matches!(lkind, Some(VfsEntryKind::Dir))
                 || matches!(rkind, Some(VfsEntryKind::Dir))
@@ -364,7 +387,9 @@ fn walk<'a>(
             // 类型冲突：任一侧 Dir 与另一侧 File 同名 -> 冲突叶（不入子树）
             let kinds = [bkind, lkind, rkind];
             let has_dir = kinds.contains(&Some(VfsEntryKind::Dir));
-            let has_file = kinds.iter().any(|k| k.is_some() && *k != Some(VfsEntryKind::Dir));
+            let has_file = kinds
+                .iter()
+                .any(|k| k.is_some() && *k != Some(VfsEntryKind::Dir));
             let clash = has_dir && has_file;
 
             let id = arena.len() as NodeId;
@@ -373,7 +398,10 @@ fn walk<'a>(
                 (MergeCategory::Conflict, None)
             } else if kind == EntryKind::Dir {
                 // 目录节点：为 Dir 的侧继续下钻；缺失/非目录侧置 None
-                let sub = |k: Option<VfsEntryKind>, base: Option<&VfsPath>, name: &str| -> Option<VfsPath> {
+                let sub = |k: Option<VfsEntryKind>,
+                           base: Option<&VfsPath>,
+                           name: &str|
+                 -> Option<VfsPath> {
                     if k == Some(VfsEntryKind::Dir) {
                         base.map(|p| p.join(name))
                     } else {
@@ -413,7 +441,16 @@ fn walk<'a>(
             arena[parent as usize].children.push(id);
 
             if let Some((b2, l2, r2)) = recurse {
-                walk(vfs, b2.as_ref(), l2.as_ref(), r2.as_ref(), id, arena, cancel).await?;
+                walk(
+                    vfs,
+                    b2.as_ref(),
+                    l2.as_ref(),
+                    r2.as_ref(),
+                    id,
+                    arena,
+                    cancel,
+                )
+                .await?;
             }
         }
         Ok(())
@@ -445,28 +482,48 @@ async fn classify_file(
             let bl = same(vfs, name, bp, lp).await?;
             if bl {
                 let br = same(vfs, name, bp, rp).await?;
-                Ok(if br { MergeCategory::Same } else { MergeCategory::RightChanged })
+                Ok(if br {
+                    MergeCategory::Same
+                } else {
+                    MergeCategory::RightChanged
+                })
             } else {
                 let br = same(vfs, name, bp, rp).await?;
                 if br {
                     Ok(MergeCategory::LeftChanged)
                 } else {
                     let lr = same(vfs, name, lp, rp).await?;
-                    Ok(if lr { MergeCategory::BothSame } else { MergeCategory::Conflict })
+                    Ok(if lr {
+                        MergeCategory::BothSame
+                    } else {
+                        MergeCategory::Conflict
+                    })
                 }
             }
         }
         (Some(_), Some(_), None) => {
             let bl = same(vfs, name, bp, lp).await?;
-            Ok(if bl { MergeCategory::DeletedRight } else { MergeCategory::Conflict })
+            Ok(if bl {
+                MergeCategory::DeletedRight
+            } else {
+                MergeCategory::Conflict
+            })
         }
         (Some(_), None, Some(_)) => {
             let br = same(vfs, name, bp, rp).await?;
-            Ok(if br { MergeCategory::DeletedLeft } else { MergeCategory::Conflict })
+            Ok(if br {
+                MergeCategory::DeletedLeft
+            } else {
+                MergeCategory::Conflict
+            })
         }
         (None, Some(_), Some(_)) => {
             let lr = same(vfs, name, lp, rp).await?;
-            Ok(if lr { MergeCategory::BothSame } else { MergeCategory::Conflict })
+            Ok(if lr {
+                MergeCategory::BothSame
+            } else {
+                MergeCategory::Conflict
+            })
         }
         (None, Some(_), None) => Ok(MergeCategory::LeftOnly),
         (None, None, Some(_)) => Ok(MergeCategory::RightOnly),
@@ -484,7 +541,11 @@ fn aggregate(arena: &mut [MergeNode]) {
                 continue;
             }
             // 自身存在性（孤立/两侧已删的空目录无子项可聚合）
-            let presence_cat = match (node.base.is_some(), node.left.is_some(), node.right.is_some()) {
+            let presence_cat = match (
+                node.base.is_some(),
+                node.left.is_some(),
+                node.right.is_some(),
+            ) {
                 (false, true, false) => Some(MergeCategory::LeftOnly),
                 (false, false, true) => Some(MergeCategory::RightOnly),
                 (true, false, false) => Some(MergeCategory::BaseOnly),
@@ -496,16 +557,29 @@ fn aggregate(arena: &mut [MergeNode]) {
                 .chain(node.children.iter().map(|&c| arena[c as usize].category))
                 .min_by_key(|c| category_rank(*c))
                 .unwrap_or(MergeCategory::Same);
-            let child_state = if node.children.iter().any(|&c| arena[c as usize].row_state == MergeRowState::Conflict) {
+            let child_state = if node
+                .children
+                .iter()
+                .any(|&c| arena[c as usize].row_state == MergeRowState::Conflict)
+            {
                 MergeRowState::Conflict
-            } else if node.children.iter().any(|&c| arena[c as usize].row_state == MergeRowState::Orphan) {
+            } else if node
+                .children
+                .iter()
+                .any(|&c| arena[c as usize].row_state == MergeRowState::Orphan)
+            {
                 MergeRowState::Orphan
-            } else if node.children.iter().any(|&c| arena[c as usize].row_state == MergeRowState::Auto) {
+            } else if node
+                .children
+                .iter()
+                .any(|&c| arena[c as usize].row_state == MergeRowState::Auto)
+            {
                 MergeRowState::Auto
             } else {
                 MergeRowState::Same
             };
-            let own_state = MergeRowState::from_category(presence_cat.unwrap_or(MergeCategory::Same));
+            let own_state =
+                MergeRowState::from_category(presence_cat.unwrap_or(MergeCategory::Same));
             let state = worse_state(own_state, child_state);
             (state, cat)
         };
@@ -680,16 +754,28 @@ fn walk_plan(
                     _ => MergeOpKind::TakeLeft,
                 },
             };
-            let dir = if kind == MergeOpKind::TakeLeft { "左" } else { "右" };
+            let dir = if kind == MergeOpKind::TakeLeft {
+                "左"
+            } else {
+                "右"
+            };
             let reason = if effective == MergeDecision::Auto {
                 format!("孤立空目录并入（取{dir}）")
             } else {
                 "决策:目录并入（空目录）".into()
             };
-            out.ops.push(MergePlannedOp { kind, path: node.rel_path.clone(), reason });
+            out.ops.push(MergePlannedOp {
+                kind,
+                path: node.rel_path.clone(),
+                reason,
+            });
             out.stats.copied += 1;
         }
-        let pass_down = if effective == MergeDecision::Auto { None } else { Some(effective) };
+        let pass_down = if effective == MergeDecision::Auto {
+            None
+        } else {
+            Some(effective)
+        };
         for &child in &node.children {
             walk_plan(nodes, child, params, pass_down, out);
         }
@@ -697,21 +783,37 @@ fn walk_plan(
     }
 
     // 文件叶
-    let (kind, reason) =
-        decide_file(effective, node.category, params.target, node.left.is_some(), node.right.is_some());
+    let (kind, reason) = decide_file(
+        effective,
+        node.category,
+        params.target,
+        node.left.is_some(),
+        node.right.is_some(),
+    );
     match kind {
         MergeOpKind::Keep => {
             // 决策跳过 / 目标已是所需状态：记 Keep 便于预览解释
             if effective != MergeDecision::Auto {
-                out.ops.push(MergePlannedOp { kind, path: node.rel_path.clone(), reason });
+                out.ops.push(MergePlannedOp {
+                    kind,
+                    path: node.rel_path.clone(),
+                    reason,
+                });
                 out.stats.skipped += 1;
             }
             // Auto 的 Keep（三方一致等）不入计划（对齐 sync 计划口径：只含动作）
         }
         _ => {
-            out.stats.copied += usize::from(matches!(kind, MergeOpKind::TakeLeft | MergeOpKind::TakeRight));
+            out.stats.copied += usize::from(matches!(
+                kind,
+                MergeOpKind::TakeLeft | MergeOpKind::TakeRight
+            ));
             out.stats.deleted += usize::from(kind == MergeOpKind::DeleteTarget);
-            out.ops.push(MergePlannedOp { kind, path: node.rel_path.clone(), reason });
+            out.ops.push(MergePlannedOp {
+                kind,
+                path: node.rel_path.clone(),
+                reason,
+            });
         }
     }
 }
@@ -765,29 +867,58 @@ fn decide_file(
 /// Auto 分类默认表（目标 = Right 时取左改/并左孤儿；镜像于 Left；Output 输出快照）
 fn auto_default(cat: MergeCategory, target: MergeTarget) -> (MergeOpKind, String) {
     match (cat, target) {
-        (MergeCategory::Same, MergeTarget::Output) => (MergeOpKind::TakeLeft, "三方一致（输出取左）".into()),
-        (MergeCategory::Same, _) => (MergeOpKind::Keep, "三方一致".into()),
-        (MergeCategory::LeftChanged, MergeTarget::Left) => (MergeOpKind::Keep, "目标侧即左侧（已含修改）".into()),
-        (MergeCategory::LeftChanged, _) => (MergeOpKind::TakeLeft, "仅左改 → 取左".into()),
-        (MergeCategory::RightChanged, MergeTarget::Right) => (MergeOpKind::Keep, "目标侧即右侧（已含修改）".into()),
-        (MergeCategory::RightChanged, _) => (MergeOpKind::TakeRight, "仅右改 → 取右".into()),
-        (MergeCategory::BothSame, MergeTarget::Output) => {
-            (MergeOpKind::TakeLeft, "两侧同改一致（输出取左，等价取右）".into())
+        (MergeCategory::Same, MergeTarget::Output) => {
+            (MergeOpKind::TakeLeft, "三方一致（输出取左）".into())
         }
+        (MergeCategory::Same, _) => (MergeOpKind::Keep, "三方一致".into()),
+        (MergeCategory::LeftChanged, MergeTarget::Left) => {
+            (MergeOpKind::Keep, "目标侧即左侧（已含修改）".into())
+        }
+        (MergeCategory::LeftChanged, _) => (MergeOpKind::TakeLeft, "仅左改 → 取左".into()),
+        (MergeCategory::RightChanged, MergeTarget::Right) => {
+            (MergeOpKind::Keep, "目标侧即右侧（已含修改）".into())
+        }
+        (MergeCategory::RightChanged, _) => (MergeOpKind::TakeRight, "仅右改 → 取右".into()),
+        (MergeCategory::BothSame, MergeTarget::Output) => (
+            MergeOpKind::TakeLeft,
+            "两侧同改一致（输出取左，等价取右）".into(),
+        ),
         (MergeCategory::BothSame, _) => (MergeOpKind::Keep, "两侧同改一致".into()),
-        (MergeCategory::DeletedRight, MergeTarget::Right) => (MergeOpKind::Keep, "目标侧已删除".into()),
-        (MergeCategory::DeletedRight, MergeTarget::Left) => (MergeOpKind::DeleteTarget, "跟随右侧删除".into()),
-        (MergeCategory::DeletedRight, MergeTarget::Output) => (MergeOpKind::Keep, "右侧已删除（输出不含该项）".into()),
-        (MergeCategory::DeletedLeft, MergeTarget::Left) => (MergeOpKind::Keep, "目标侧已删除".into()),
-        (MergeCategory::DeletedLeft, MergeTarget::Right) => (MergeOpKind::DeleteTarget, "跟随左侧删除".into()),
-        (MergeCategory::DeletedLeft, MergeTarget::Output) => (MergeOpKind::Keep, "左侧已删除（输出不含该项）".into()),
+        (MergeCategory::DeletedRight, MergeTarget::Right) => {
+            (MergeOpKind::Keep, "目标侧已删除".into())
+        }
+        (MergeCategory::DeletedRight, MergeTarget::Left) => {
+            (MergeOpKind::DeleteTarget, "跟随右侧删除".into())
+        }
+        (MergeCategory::DeletedRight, MergeTarget::Output) => {
+            (MergeOpKind::Keep, "右侧已删除（输出不含该项）".into())
+        }
+        (MergeCategory::DeletedLeft, MergeTarget::Left) => {
+            (MergeOpKind::Keep, "目标侧已删除".into())
+        }
+        (MergeCategory::DeletedLeft, MergeTarget::Right) => {
+            (MergeOpKind::DeleteTarget, "跟随左侧删除".into())
+        }
+        (MergeCategory::DeletedLeft, MergeTarget::Output) => {
+            (MergeOpKind::Keep, "左侧已删除（输出不含该项）".into())
+        }
         (MergeCategory::Conflict, _) => (MergeOpKind::Keep, "冲突需人工处理".into()),
-        (MergeCategory::LeftOnly, MergeTarget::Right) => (MergeOpKind::TakeLeft, "左孤立并入目标".into()),
+        (MergeCategory::LeftOnly, MergeTarget::Right) => {
+            (MergeOpKind::TakeLeft, "左孤立并入目标".into())
+        }
         (MergeCategory::LeftOnly, MergeTarget::Left) => (MergeOpKind::Keep, "目标侧即左侧".into()),
-        (MergeCategory::LeftOnly, MergeTarget::Output) => (MergeOpKind::TakeLeft, "左孤立并入输出".into()),
-        (MergeCategory::RightOnly, MergeTarget::Left) => (MergeOpKind::TakeRight, "右孤立并入目标".into()),
-        (MergeCategory::RightOnly, MergeTarget::Right) => (MergeOpKind::Keep, "目标侧即右侧".into()),
-        (MergeCategory::RightOnly, MergeTarget::Output) => (MergeOpKind::TakeRight, "右孤立并入输出".into()),
+        (MergeCategory::LeftOnly, MergeTarget::Output) => {
+            (MergeOpKind::TakeLeft, "左孤立并入输出".into())
+        }
+        (MergeCategory::RightOnly, MergeTarget::Left) => {
+            (MergeOpKind::TakeRight, "右孤立并入目标".into())
+        }
+        (MergeCategory::RightOnly, MergeTarget::Right) => {
+            (MergeOpKind::Keep, "目标侧即右侧".into())
+        }
+        (MergeCategory::RightOnly, MergeTarget::Output) => {
+            (MergeOpKind::TakeRight, "右孤立并入输出".into())
+        }
         (MergeCategory::BaseOnly, _) => (MergeOpKind::Keep, "两侧均已删除".into()),
     }
 }
@@ -806,32 +937,57 @@ pub struct MergeRoots {
 }
 
 /// 计划 -> (FileOp, 源根, 目标根) 批次项（输出侧借 execute 双根形态）
-fn plan_to_exec(roots: &MergeRoots, target: MergeTarget, plan: &MergePlannedOp) -> Result<(FileOp, VfsPath, VfsPath), String> {
+fn plan_to_exec(
+    roots: &MergeRoots,
+    target: MergeTarget,
+    plan: &MergePlannedOp,
+) -> Result<(FileOp, VfsPath, VfsPath), String> {
     match (target, plan.kind) {
         (MergeTarget::Right, MergeOpKind::TakeLeft) => Ok((
-            FileOp::Copy { path: plan.path.clone(), target_path: None, from: Side::Left, to: Side::Right },
+            FileOp::Copy {
+                path: plan.path.clone(),
+                target_path: None,
+                from: Side::Left,
+                to: Side::Right,
+            },
             roots.left.clone(),
             roots.right.clone(),
         )),
         (MergeTarget::Left, MergeOpKind::TakeRight) => Ok((
-            FileOp::Copy { path: plan.path.clone(), target_path: None, from: Side::Right, to: Side::Left },
+            FileOp::Copy {
+                path: plan.path.clone(),
+                target_path: None,
+                from: Side::Right,
+                to: Side::Left,
+            },
             roots.right.clone(),
             roots.left.clone(),
         )),
         (MergeTarget::Right, MergeOpKind::DeleteTarget) => Ok((
-            FileOp::Delete { path: plan.path.clone(), side: Side::Right },
+            FileOp::Delete {
+                path: plan.path.clone(),
+                side: Side::Right,
+            },
             roots.left.clone(),
             roots.right.clone(),
         )),
         (MergeTarget::Left, MergeOpKind::DeleteTarget) => Ok((
-            FileOp::Delete { path: plan.path.clone(), side: Side::Left },
+            FileOp::Delete {
+                path: plan.path.clone(),
+                side: Side::Left,
+            },
             roots.left.clone(),
             roots.right.clone(),
         )),
         (MergeTarget::Output, MergeOpKind::TakeLeft) => {
             let out = output_root(roots)?;
             Ok((
-                FileOp::Copy { path: plan.path.clone(), target_path: None, from: Side::Left, to: Side::Right },
+                FileOp::Copy {
+                    path: plan.path.clone(),
+                    target_path: None,
+                    from: Side::Left,
+                    to: Side::Right,
+                },
                 roots.left.clone(),
                 out,
             ))
@@ -839,24 +995,40 @@ fn plan_to_exec(roots: &MergeRoots, target: MergeTarget, plan: &MergePlannedOp) 
         (MergeTarget::Output, MergeOpKind::TakeRight) => {
             let out = output_root(roots)?;
             Ok((
-                FileOp::Copy { path: plan.path.clone(), target_path: None, from: Side::Left, to: Side::Right },
+                FileOp::Copy {
+                    path: plan.path.clone(),
+                    target_path: None,
+                    from: Side::Left,
+                    to: Side::Right,
+                },
                 roots.right.clone(),
                 out,
             ))
         }
         (MergeTarget::Output, MergeOpKind::DeleteTarget) => {
             let out = output_root(roots)?;
-            Ok((FileOp::Delete { path: plan.path.clone(), side: Side::Right }, out.clone(), out))
+            Ok((
+                FileOp::Delete {
+                    path: plan.path.clone(),
+                    side: Side::Right,
+                },
+                out.clone(),
+                out,
+            ))
         }
         (_, MergeOpKind::Keep) => Err("Keep 项不进入执行批次".into()),
-        (MergeTarget::Right, MergeOpKind::TakeRight) | (MergeTarget::Left, MergeOpKind::TakeLeft) => {
+        (MergeTarget::Right, MergeOpKind::TakeRight)
+        | (MergeTarget::Left, MergeOpKind::TakeLeft) => {
             Err("目标即源侧的取侧决策不应出现在计划中".into())
         }
     }
 }
 
 fn output_root(roots: &MergeRoots) -> Result<VfsPath, String> {
-    roots.output.clone().ok_or_else(|| "输出目标需要提供第三目录".to_string())
+    roots
+        .output
+        .clone()
+        .ok_or_else(|| "输出目标需要提供第三目录".to_string())
 }
 
 /// 端到端文件夹合并：计划（已由 [`plan_merge`] 预览确认）-> 执行 -> 报告。
@@ -874,7 +1046,10 @@ pub async fn run_folder_merge(
     let mut report = BatchRunReport {
         dry_run: false,
         cancelled: false,
-        stats: BatchStats { total: plan.len(), ..Default::default() },
+        stats: BatchStats {
+            total: plan.len(),
+            ..Default::default()
+        },
         details: Vec::with_capacity(plan.len()),
         log: vec![format!(
             "合并目标：{}",
@@ -945,15 +1120,26 @@ pub async fn run_folder_merge(
         }
     }
 
-    let exec = crate::execute::execute_ops_with_roots(vfs, &items, &ExecuteOptions::default(), progress, cancel).await;
+    let exec = crate::execute::execute_ops_with_roots(
+        vfs,
+        &items,
+        &ExecuteOptions::default(),
+        progress,
+        cancel,
+    )
+    .await;
     report.cancelled |= exec.cancelled;
     for r in exec.succeeded.iter() {
         let p = planned_by_path.get(r.op.path()).copied();
-        report.stats.copied +=
-            usize::from(matches!(p.map(|x| x.kind), Some(MergeOpKind::TakeLeft | MergeOpKind::TakeRight)));
+        report.stats.copied += usize::from(matches!(
+            p.map(|x| x.kind),
+            Some(MergeOpKind::TakeLeft | MergeOpKind::TakeRight)
+        ));
         report.stats.deleted += usize::from(p.is_some_and(|x| x.kind == MergeOpKind::DeleteTarget));
         report.details.push(OpRecord {
-            kind: p.map(|x| x.kind.as_str().into()).unwrap_or_else(|| "unknown".into()),
+            kind: p
+                .map(|x| x.kind.as_str().into())
+                .unwrap_or_else(|| "unknown".into()),
             path: r.op.path().into(),
             reason: p.map(|x| x.reason.clone()).unwrap_or_default(),
             status: match p.map(|x| x.kind) {
@@ -963,7 +1149,12 @@ pub async fn run_folder_merge(
             detail: r.detail.clone(),
         });
     }
-    for (r, status) in exec.failed.iter().map(|r| (r, RecordStatus::Failed)).chain(exec.skipped.iter().map(|r| (r, RecordStatus::Skipped))) {
+    for (r, status) in exec
+        .failed
+        .iter()
+        .map(|r| (r, RecordStatus::Failed))
+        .chain(exec.skipped.iter().map(|r| (r, RecordStatus::Skipped)))
+    {
         let p = planned_by_path.get(r.op.path()).copied();
         if status == RecordStatus::Failed {
             report.stats.failed += 1;
@@ -971,7 +1162,9 @@ pub async fn run_folder_merge(
             report.stats.skipped += 1;
         }
         report.details.push(OpRecord {
-            kind: p.map(|x| x.kind.as_str().into()).unwrap_or_else(|| "unknown".into()),
+            kind: p
+                .map(|x| x.kind.as_str().into())
+                .unwrap_or_else(|| "unknown".into()),
             path: r.op.path().into(),
             reason: p.map(|x| x.reason.clone()).unwrap_or_default(),
             status,
@@ -982,7 +1175,12 @@ pub async fn run_folder_merge(
     report.log.push(report.summary_line("合并完成"));
     for d in &report.details {
         if d.status == RecordStatus::Failed {
-            report.log.push(format!("失败 {}: {} — {}", d.path, d.kind, d.detail.clone().unwrap_or_default()));
+            report.log.push(format!(
+                "失败 {}: {} — {}",
+                d.path,
+                d.kind,
+                d.detail.clone().unwrap_or_default()
+            ));
         }
     }
     report
@@ -1027,18 +1225,32 @@ mod tests {
 
     async fn scan3(b: &VfsPath, l: &VfsPath, r: &VfsPath) -> MergeScanResult {
         let vfs = LocalFs::new();
-        scan_merge(&vfs, b, l, r, &CancelFlag::new()).await.expect("scan")
+        scan_merge(&vfs, b, l, r, &CancelFlag::new())
+            .await
+            .expect("scan")
     }
 
     fn cat_of(res: &MergeScanResult, rel: &str) -> MergeCategory {
-        res.arena.iter().find(|n| n.rel_path == rel).expect("node").category
+        res.arena
+            .iter()
+            .find(|n| n.rel_path == rel)
+            .expect("node")
+            .category
     }
 
     fn state_of(res: &MergeScanResult, rel: &str) -> MergeRowState {
-        res.arena.iter().find(|n| n.rel_path == rel).expect("node").row_state
+        res.arena
+            .iter()
+            .find(|n| n.rel_path == rel)
+            .expect("node")
+            .row_state
     }
 
-    fn plan_of(res: &MergeScanResult, target: MergeTarget, decisions: &BTreeMap<String, MergeDecision>) -> MergePlanResult {
+    fn plan_of(
+        res: &MergeScanResult,
+        target: MergeTarget,
+        decisions: &BTreeMap<String, MergeDecision>,
+    ) -> MergePlanResult {
         plan_merge(&res.arena, &MergePlanParams { target, decisions })
     }
 
@@ -1054,7 +1266,12 @@ mod tests {
 
     #[tokio::test]
     async fn three_way_all_same() {
-        let (_d, b, l, r) = make3(&[("a.txt", b"v1")], &[("a.txt", b"v1")], &[("a.txt", b"v1")]).await;
+        let (_d, b, l, r) = make3(
+            &[("a.txt", b"v1")],
+            &[("a.txt", b"v1")],
+            &[("a.txt", b"v1")],
+        )
+        .await;
         let res = scan3(&b, &l, &r).await;
         assert_eq!(cat_of(&res, "a.txt"), MergeCategory::Same);
         assert_eq!(state_of(&res, "a.txt"), MergeRowState::Same);
@@ -1063,7 +1280,12 @@ mod tests {
 
     #[tokio::test]
     async fn left_changed_only_is_auto() {
-        let (_d, b, l, r) = make3(&[("a.txt", b"v0")], &[("a.txt", b"v1")], &[("a.txt", b"v0")]).await;
+        let (_d, b, l, r) = make3(
+            &[("a.txt", b"v0")],
+            &[("a.txt", b"v1")],
+            &[("a.txt", b"v0")],
+        )
+        .await;
         let res = scan3(&b, &l, &r).await;
         assert_eq!(cat_of(&res, "a.txt"), MergeCategory::LeftChanged);
         assert_eq!(state_of(&res, "a.txt"), MergeRowState::Auto);
@@ -1071,26 +1293,46 @@ mod tests {
 
     #[tokio::test]
     async fn right_changed_only_is_auto() {
-        let (_d, b, l, r) = make3(&[("a.txt", b"v0")], &[("a.txt", b"v0")], &[("a.txt", b"v2")]).await;
+        let (_d, b, l, r) = make3(
+            &[("a.txt", b"v0")],
+            &[("a.txt", b"v0")],
+            &[("a.txt", b"v2")],
+        )
+        .await;
         let res = scan3(&b, &l, &r).await;
         assert_eq!(cat_of(&res, "a.txt"), MergeCategory::RightChanged);
     }
 
     #[tokio::test]
     async fn both_changed_same_way_is_both_same() {
-        let (_d, b, l, r) = make3(&[("a.txt", b"v0")], &[("a.txt", b"v1")], &[("a.txt", b"v1")]).await;
+        let (_d, b, l, r) = make3(
+            &[("a.txt", b"v0")],
+            &[("a.txt", b"v1")],
+            &[("a.txt", b"v1")],
+        )
+        .await;
         let res = scan3(&b, &l, &r).await;
         assert_eq!(cat_of(&res, "a.txt"), MergeCategory::BothSame);
     }
 
     #[tokio::test]
     async fn different_changes_conflict() {
-        let (_d, b, l, r) = make3(&[("a.txt", b"v0")], &[("a.txt", b"v1")], &[("a.txt", b"v2")]).await;
+        let (_d, b, l, r) = make3(
+            &[("a.txt", b"v0")],
+            &[("a.txt", b"v1")],
+            &[("a.txt", b"v2")],
+        )
+        .await;
         let res = scan3(&b, &l, &r).await;
         assert_eq!(cat_of(&res, "a.txt"), MergeCategory::Conflict);
         assert_eq!(state_of(&res, "a.txt"), MergeRowState::Conflict);
         let rows = res.rows();
-        assert!(rows.iter().find(|x| x.rel_path == "a.txt").unwrap().conflict_leaf);
+        assert!(
+            rows.iter()
+                .find(|x| x.rel_path == "a.txt")
+                .unwrap()
+                .conflict_leaf
+        );
     }
 
     #[tokio::test]
@@ -1161,7 +1403,12 @@ mod tests {
 
     #[tokio::test]
     async fn type_conflict_file_vs_dir() {
-        let (_d, b, l, r) = make3(&[("clash", b"file")], &[("clash/inner.txt", b"x")], &[("clash", b"file")]).await;
+        let (_d, b, l, r) = make3(
+            &[("clash", b"file")],
+            &[("clash/inner.txt", b"x")],
+            &[("clash", b"file")],
+        )
+        .await;
         let res = scan3(&b, &l, &r).await;
         assert_eq!(cat_of(&res, "clash"), MergeCategory::Conflict);
         // 不入子树：左目录内容不展开
@@ -1170,13 +1417,18 @@ mod tests {
 
     #[test]
     fn align3_covers_all_entries_sorted() {
-        let mk = |name: &str| VfsDirEntry { name: name.into(), stat: ai_vfs::StatInfo::minimal(1, 0, ai_vfs::EntryKind::File) };
+        let mk = |name: &str| VfsDirEntry {
+            name: name.into(),
+            stat: ai_vfs::StatInfo::minimal(1, 0, ai_vfs::EntryKind::File),
+        };
         let b = vec![mk("a"), mk("c")];
         let l = vec![mk("a"), mk("b")];
         let r = vec![mk("b"), mk("c"), mk("d")];
         let t = align3(&b, &l, &r, |n| n.to_string());
         assert_eq!(
-            t.iter().map(|x| (x.name.as_str(), x.base, x.left, x.right)).collect::<Vec<_>>(),
+            t.iter()
+                .map(|x| (x.name.as_str(), x.base, x.left, x.right))
+                .collect::<Vec<_>>(),
             vec![
                 ("a", Some(0), Some(0), None),
                 ("b", None, Some(1), Some(0)),
@@ -1192,9 +1444,27 @@ mod tests {
     /// same=三方同；lc=仅左改；rc=仅右改；cf=冲突；dl=左删（base+右）；lo=左孤立
     async fn make_mixed_tree() -> (tempfile::TempDir, MergeScanResult) {
         let (_d, b, l, r) = make3(
-            &[("same.txt", b"s"), ("lc.txt", b"v0"), ("rc.txt", b"v0"), ("cf.txt", b"v0"), ("dl.txt", b"v0")],
-            &[("same.txt", b"s"), ("lc.txt", b"v1"), ("rc.txt", b"v0"), ("cf.txt", b"v1"), ("lo.txt", b"o")],
-            &[("same.txt", b"s"), ("lc.txt", b"v0"), ("rc.txt", b"v2"), ("cf.txt", b"v2"), ("dl.txt", b"v0")],
+            &[
+                ("same.txt", b"s"),
+                ("lc.txt", b"v0"),
+                ("rc.txt", b"v0"),
+                ("cf.txt", b"v0"),
+                ("dl.txt", b"v0"),
+            ],
+            &[
+                ("same.txt", b"s"),
+                ("lc.txt", b"v1"),
+                ("rc.txt", b"v0"),
+                ("cf.txt", b"v1"),
+                ("lo.txt", b"o"),
+            ],
+            &[
+                ("same.txt", b"s"),
+                ("lc.txt", b"v0"),
+                ("rc.txt", b"v2"),
+                ("cf.txt", b"v2"),
+                ("dl.txt", b"v0"),
+            ],
         )
         .await;
         let res = scan3(&b, &l, &r).await;
@@ -1223,7 +1493,10 @@ mod tests {
         let (_d, res) = make_mixed_tree().await;
         let plan = plan_of(&res, MergeTarget::Left, &BTreeMap::new());
         // 右改取右；右删（dr）跟随删除 —— 本树无右删/右孤立，仅 rc 需动作
-        assert_eq!(op_tuples(&plan), vec![(MergeOpKind::TakeRight, "rc.txt".to_string())]);
+        assert_eq!(
+            op_tuples(&plan),
+            vec![(MergeOpKind::TakeRight, "rc.txt".to_string())]
+        );
     }
 
     /// Auto 默认决策表全矩阵（10 分类 × 3 目标 = 30 格）逐格钉死。
@@ -1235,14 +1508,32 @@ mod tests {
         use MergeTarget::*;
         let table: [(MergeCategory, [(MergeOpKind, MergeTarget); 3]); 10] = [
             (Same, [(Keep, Left), (Keep, Right), (TakeLeft, Output)]),
-            (LeftChanged, [(Keep, Left), (TakeLeft, Right), (TakeLeft, Output)]),
-            (RightChanged, [(TakeRight, Left), (Keep, Right), (TakeRight, Output)]),
+            (
+                LeftChanged,
+                [(Keep, Left), (TakeLeft, Right), (TakeLeft, Output)],
+            ),
+            (
+                RightChanged,
+                [(TakeRight, Left), (Keep, Right), (TakeRight, Output)],
+            ),
             (BothSame, [(Keep, Left), (Keep, Right), (TakeLeft, Output)]),
-            (DeletedRight, [(DeleteTarget, Left), (Keep, Right), (Keep, Output)]),
-            (DeletedLeft, [(Keep, Left), (DeleteTarget, Right), (Keep, Output)]),
+            (
+                DeletedRight,
+                [(DeleteTarget, Left), (Keep, Right), (Keep, Output)],
+            ),
+            (
+                DeletedLeft,
+                [(Keep, Left), (DeleteTarget, Right), (Keep, Output)],
+            ),
             (Conflict, [(Keep, Left), (Keep, Right), (Keep, Output)]),
-            (LeftOnly, [(Keep, Left), (TakeLeft, Right), (TakeLeft, Output)]),
-            (RightOnly, [(TakeRight, Left), (Keep, Right), (TakeRight, Output)]),
+            (
+                LeftOnly,
+                [(Keep, Left), (TakeLeft, Right), (TakeLeft, Output)],
+            ),
+            (
+                RightOnly,
+                [(TakeRight, Left), (Keep, Right), (TakeRight, Output)],
+            ),
             (BaseOnly, [(Keep, Left), (Keep, Right), (Keep, Output)]),
         ];
         for (cat, cells) in table {
@@ -1264,7 +1555,11 @@ mod tests {
         assert!(ops.contains(&(MergeOpKind::TakeLeft, "lc.txt".to_string())));
         assert!(ops.contains(&(MergeOpKind::TakeRight, "rc.txt".to_string())));
         assert!(ops.contains(&(MergeOpKind::TakeLeft, "lo.txt".to_string())));
-        assert!(ops.iter().all(|(_k, p)| !p.contains("cf.txt") && !p.contains("dl.txt")), "冲突/已删不进输出: {ops:?}");
+        assert!(
+            ops.iter()
+                .all(|(_k, p)| !p.contains("cf.txt") && !p.contains("dl.txt")),
+            "冲突/已删不进输出: {ops:?}"
+        );
         assert_eq!(plan.stats.copied, 4);
     }
 
@@ -1317,12 +1612,19 @@ mod tests {
         let d = dec(&[("d", MergeDecision::TakeRight)]);
         let plan = plan_of(&res, MergeTarget::Right, &d);
         // 目录取右继承到子项：全部 takeRight（目标=右侧，取右即保持 → Keep 不入计划）
-        assert!(plan.ops.iter().all(|p| p.kind == MergeOpKind::Keep), "{:?}", plan.ops);
+        assert!(
+            plan.ops.iter().all(|p| p.kind == MergeOpKind::Keep),
+            "{:?}",
+            plan.ops
+        );
         // 换目标 = 左：子项全部复制右→左
         let plan_l = plan_of(&res, MergeTarget::Left, &d);
         assert_eq!(
             op_tuples(&plan_l),
-            vec![(MergeOpKind::TakeRight, "d/x.txt".to_string()), (MergeOpKind::TakeRight, "d/y.txt".to_string())]
+            vec![
+                (MergeOpKind::TakeRight, "d/x.txt".to_string()),
+                (MergeOpKind::TakeRight, "d/y.txt".to_string())
+            ]
         );
     }
 
@@ -1340,7 +1642,11 @@ mod tests {
         // 冲突子项在 both 继承下仍按默认（人工冲突不动）
         let op = plan.ops.iter().find(|p| p.path == "d/x.txt").unwrap();
         assert_eq!(op.kind, MergeOpKind::Keep);
-        assert!(op.reason.contains("冲突") || op.reason.contains("both"), "{}", op.reason);
+        assert!(
+            op.reason.contains("冲突") || op.reason.contains("both"),
+            "{}",
+            op.reason
+        );
     }
 
     #[tokio::test]
@@ -1349,7 +1655,10 @@ mod tests {
         let res = scan3(&b, &l, &r).await;
         assert_eq!(state_of(&res, "ed"), MergeRowState::Orphan);
         let plan = plan_of(&res, MergeTarget::Right, &BTreeMap::new());
-        assert_eq!(op_tuples(&plan), vec![(MergeOpKind::TakeLeft, "ed".to_string())]);
+        assert_eq!(
+            op_tuples(&plan),
+            vec![(MergeOpKind::TakeLeft, "ed".to_string())]
+        );
         assert!(plan.ops[0].reason.contains("空目录"));
     }
 
@@ -1369,18 +1678,63 @@ mod tests {
     #[tokio::test]
     async fn run_merge_to_right_end_to_end() {
         let (_dir, b, l, r) = make3(
-            &[("same.txt", b"s"), ("lc.txt", b"v0"), ("cf.txt", b"v0"), ("dl.txt", b"v0")],
-            &[("same.txt", b"s"), ("lc.txt", b"v1"), ("cf.txt", b"v1"), ("new.txt", b"n")],
-            &[("same.txt", b"s"), ("lc.txt", b"v0"), ("cf.txt", b"v2"), ("dl.txt", b"v0")],
+            &[
+                ("same.txt", b"s"),
+                ("lc.txt", b"v0"),
+                ("cf.txt", b"v0"),
+                ("dl.txt", b"v0"),
+            ],
+            &[
+                ("same.txt", b"s"),
+                ("lc.txt", b"v1"),
+                ("cf.txt", b"v1"),
+                ("new.txt", b"n"),
+            ],
+            &[
+                ("same.txt", b"s"),
+                ("lc.txt", b"v0"),
+                ("cf.txt", b"v2"),
+                ("dl.txt", b"v0"),
+            ],
         )
         .await;
         let vfs = LocalFs::new();
-        let res = scan_merge(&vfs, &b, &l, &r, &CancelFlag::new()).await.unwrap();
-        let plan = plan_merge(&res.arena, &MergePlanParams { target: MergeTarget::Right, decisions: &BTreeMap::new() });
+        let res = scan_merge(&vfs, &b, &l, &r, &CancelFlag::new())
+            .await
+            .unwrap();
+        let plan = plan_merge(
+            &res.arena,
+            &MergePlanParams {
+                target: MergeTarget::Right,
+                decisions: &BTreeMap::new(),
+            },
+        );
         let mut progress_seen = 0usize;
-        let roots = MergeRoots { base: b.clone(), left: l.clone(), right: r.clone(), output: None };
-        let report = run_folder_merge(&vfs, &roots, &plan.ops, MergeTarget::Right, Some(&mut |done, _t, _| progress_seen = done), &CancelFlag::new()).await;
-        assert_eq!(report.stats.failed, 0, "{:?}", report.details.iter().filter(|d| d.status == RecordStatus::Failed).collect::<Vec<_>>());
+        let roots = MergeRoots {
+            base: b.clone(),
+            left: l.clone(),
+            right: r.clone(),
+            output: None,
+        };
+        let report = run_folder_merge(
+            &vfs,
+            &roots,
+            &plan.ops,
+            MergeTarget::Right,
+            Some(&mut |done, _t, _| progress_seen = done),
+            &CancelFlag::new(),
+        )
+        .await;
+        assert_eq!(
+            report.stats.failed,
+            0,
+            "{:?}",
+            report
+                .details
+                .iter()
+                .filter(|d| d.status == RecordStatus::Failed)
+                .collect::<Vec<_>>()
+        );
         // lc：左改 → 右侧被左覆盖；new：左孤立并入；dl：左删 → 右侧删除；cf：冲突保持
         assert_eq!(vfs.read_file_bytes(&r.join("lc.txt")).await.unwrap(), b"v1");
         assert_eq!(vfs.read_file_bytes(&r.join("new.txt")).await.unwrap(), b"n");
@@ -1396,28 +1750,63 @@ mod tests {
     async fn run_merge_to_output_snapshot() {
         let (dir, b, l, r) = make3(
             &[("same.txt", b"s"), ("lc.txt", b"v0"), ("cf.txt", b"v0")],
-            &[("same.txt", b"s"), ("lc.txt", b"v1"), ("cf.txt", b"v1"), ("lo.txt", b"o")],
+            &[
+                ("same.txt", b"s"),
+                ("lc.txt", b"v1"),
+                ("cf.txt", b"v1"),
+                ("lo.txt", b"o"),
+            ],
             &[("same.txt", b"s"), ("lc.txt", b"v0"), ("cf.txt", b"v2")],
         )
         .await;
         let out_root = dir.path().join("OUT");
         std::fs::create_dir_all(&out_root).unwrap();
         let vfs = LocalFs::new();
-        let res = scan_merge(&vfs, &b, &l, &r, &CancelFlag::new()).await.unwrap();
-        let plan = plan_merge(&res.arena, &MergePlanParams { target: MergeTarget::Output, decisions: &BTreeMap::new() });
+        let res = scan_merge(&vfs, &b, &l, &r, &CancelFlag::new())
+            .await
+            .unwrap();
+        let plan = plan_merge(
+            &res.arena,
+            &MergePlanParams {
+                target: MergeTarget::Output,
+                decisions: &BTreeMap::new(),
+            },
+        );
         let roots = MergeRoots {
             base: b.clone(),
             left: l.clone(),
             right: r.clone(),
             output: Some(VfsPath::parse(out_root.to_str().unwrap()).unwrap()),
         };
-        let report = run_folder_merge(&vfs, &roots, &plan.ops, MergeTarget::Output, None, &CancelFlag::new()).await;
+        let report = run_folder_merge(
+            &vfs,
+            &roots,
+            &plan.ops,
+            MergeTarget::Output,
+            None,
+            &CancelFlag::new(),
+        )
+        .await;
         assert_eq!(report.stats.failed, 0, "{:?}", report.details);
         let out = VfsPath::parse(out_root.to_str().unwrap()).unwrap();
-        assert_eq!(vfs.read_file_bytes(&out.join("same.txt")).await.unwrap(), b"s");
-        assert_eq!(vfs.read_file_bytes(&out.join("lc.txt")).await.unwrap(), b"v1", "输出取左");
-        assert_eq!(vfs.read_file_bytes(&out.join("lo.txt")).await.unwrap(), b"o", "左孤立并入输出");
-        assert!(vfs.stat(&out.join("cf.txt")).await.is_err(), "冲突项不进输出");
+        assert_eq!(
+            vfs.read_file_bytes(&out.join("same.txt")).await.unwrap(),
+            b"s"
+        );
+        assert_eq!(
+            vfs.read_file_bytes(&out.join("lc.txt")).await.unwrap(),
+            b"v1",
+            "输出取左"
+        );
+        assert_eq!(
+            vfs.read_file_bytes(&out.join("lo.txt")).await.unwrap(),
+            b"o",
+            "左孤立并入输出"
+        );
+        assert!(
+            vfs.stat(&out.join("cf.txt")).await.is_err(),
+            "冲突项不进输出"
+        );
         assert!(!report.cancelled);
     }
 
@@ -1425,80 +1814,191 @@ mod tests {
     async fn run_merge_output_creates_fresh_root() {
         let (dir, b, l, r) = make3(
             &[("top.txt", b"v0"), ("sub/deep.txt", b"v0")],
-            &[("top.txt", b"v1"), ("sub/deep.txt", b"v1"), ("lo.txt", b"o")],
+            &[
+                ("top.txt", b"v1"),
+                ("sub/deep.txt", b"v1"),
+                ("lo.txt", b"o"),
+            ],
             &[("top.txt", b"v0"), ("sub/deep.txt", b"v0")],
         )
         .await;
         // 第三目录全新（BC 常规流程）：不得要求调用方先建根
         let out_root = dir.path().join("FRESH/OUT");
         let vfs = LocalFs::new();
-        let res = scan_merge(&vfs, &b, &l, &r, &CancelFlag::new()).await.unwrap();
-        let plan = plan_merge(&res.arena, &MergePlanParams { target: MergeTarget::Output, decisions: &BTreeMap::new() });
+        let res = scan_merge(&vfs, &b, &l, &r, &CancelFlag::new())
+            .await
+            .unwrap();
+        let plan = plan_merge(
+            &res.arena,
+            &MergePlanParams {
+                target: MergeTarget::Output,
+                decisions: &BTreeMap::new(),
+            },
+        );
         let roots = MergeRoots {
             base: b,
             left: l,
             right: r,
             output: Some(VfsPath::parse(out_root.to_str().unwrap()).unwrap()),
         };
-        let report = run_folder_merge(&vfs, &roots, &plan.ops, MergeTarget::Output, None, &CancelFlag::new()).await;
+        let report = run_folder_merge(
+            &vfs,
+            &roots,
+            &plan.ops,
+            MergeTarget::Output,
+            None,
+            &CancelFlag::new(),
+        )
+        .await;
         assert_eq!(report.stats.failed, 0, "{:?}", report.details);
         let out = VfsPath::parse(out_root.to_str().unwrap()).unwrap();
-        assert_eq!(vfs.read_file_bytes(&out.join("top.txt")).await.unwrap(), b"v1");
-        assert_eq!(vfs.read_file_bytes(&out.join("sub/deep.txt")).await.unwrap(), b"v1");
-        assert_eq!(vfs.read_file_bytes(&out.join("lo.txt")).await.unwrap(), b"o");
+        assert_eq!(
+            vfs.read_file_bytes(&out.join("top.txt")).await.unwrap(),
+            b"v1"
+        );
+        assert_eq!(
+            vfs.read_file_bytes(&out.join("sub/deep.txt"))
+                .await
+                .unwrap(),
+            b"v1"
+        );
+        assert_eq!(
+            vfs.read_file_bytes(&out.join("lo.txt")).await.unwrap(),
+            b"o"
+        );
     }
 
     #[tokio::test]
     async fn run_merge_output_root_occupied_by_file_fails_whole_batch() {
-        let (dir, b, l, r) = make3(&[("a.txt", b"v0")], &[("a.txt", b"v1")], &[("a.txt", b"v0")]).await;
+        let (dir, b, l, r) = make3(
+            &[("a.txt", b"v0")],
+            &[("a.txt", b"v1")],
+            &[("a.txt", b"v0")],
+        )
+        .await;
         let out_root = dir.path().join("OUT");
         std::fs::write(&out_root, "占位文件").unwrap();
         let vfs = LocalFs::new();
-        let res = scan_merge(&vfs, &b, &l, &r, &CancelFlag::new()).await.unwrap();
-        let plan = plan_merge(&res.arena, &MergePlanParams { target: MergeTarget::Output, decisions: &BTreeMap::new() });
+        let res = scan_merge(&vfs, &b, &l, &r, &CancelFlag::new())
+            .await
+            .unwrap();
+        let plan = plan_merge(
+            &res.arena,
+            &MergePlanParams {
+                target: MergeTarget::Output,
+                decisions: &BTreeMap::new(),
+            },
+        );
         let roots = MergeRoots {
             base: b,
             left: l,
             right: r,
             output: Some(VfsPath::parse(out_root.to_str().unwrap()).unwrap()),
         };
-        let report = run_folder_merge(&vfs, &roots, &plan.ops, MergeTarget::Output, None, &CancelFlag::new()).await;
+        let report = run_folder_merge(
+            &vfs,
+            &roots,
+            &plan.ops,
+            MergeTarget::Output,
+            None,
+            &CancelFlag::new(),
+        )
+        .await;
         assert_eq!(report.stats.copied, 0);
-        assert_eq!(report.stats.failed, report.stats.total, "建根失败必须整批记失败: {:?}", report.details);
+        assert_eq!(
+            report.stats.failed, report.stats.total,
+            "建根失败必须整批记失败: {:?}",
+            report.details
+        );
         assert_eq!(report.details.len(), plan.ops.len());
-        assert!(report.details.iter().all(|d| d.status == RecordStatus::Failed));
+        assert!(report
+            .details
+            .iter()
+            .all(|d| d.status == RecordStatus::Failed));
         assert!(
             report.log.iter().any(|l| l.contains("创建输出目录失败")),
             "失败原因须指向建根而非逐项复制: {:?}",
             report.log
         );
-        assert_eq!(std::fs::read(&out_root).unwrap(), "占位文件".as_bytes(), "占位文件不得被改写");
+        assert_eq!(
+            std::fs::read(&out_root).unwrap(),
+            "占位文件".as_bytes(),
+            "占位文件不得被改写"
+        );
     }
 
     #[tokio::test]
     async fn run_merge_output_requires_third_root() {
-        let (_d, b, l, r) = make3(&[("a.txt", b"v0")], &[("a.txt", b"v1")], &[("a.txt", b"v0")]).await;
+        let (_d, b, l, r) = make3(
+            &[("a.txt", b"v0")],
+            &[("a.txt", b"v1")],
+            &[("a.txt", b"v0")],
+        )
+        .await;
         let vfs = LocalFs::new();
-        let res = scan_merge(&vfs, &b, &l, &r, &CancelFlag::new()).await.unwrap();
-        let plan = plan_merge(&res.arena, &MergePlanParams { target: MergeTarget::Output, decisions: &BTreeMap::new() });
-        let roots = MergeRoots { base: b, left: l, right: r, output: None };
-        let report = run_folder_merge(&vfs, &roots, &plan.ops, MergeTarget::Output, None, &CancelFlag::new()).await;
+        let res = scan_merge(&vfs, &b, &l, &r, &CancelFlag::new())
+            .await
+            .unwrap();
+        let plan = plan_merge(
+            &res.arena,
+            &MergePlanParams {
+                target: MergeTarget::Output,
+                decisions: &BTreeMap::new(),
+            },
+        );
+        let roots = MergeRoots {
+            base: b,
+            left: l,
+            right: r,
+            output: None,
+        };
+        let report = run_folder_merge(
+            &vfs,
+            &roots,
+            &plan.ops,
+            MergeTarget::Output,
+            None,
+            &CancelFlag::new(),
+        )
+        .await;
         assert_eq!(report.stats.copied, 0);
-        assert_eq!(report.stats.failed, report.stats.total, "缺第三目录时明细必须齐备");
+        assert_eq!(
+            report.stats.failed, report.stats.total,
+            "缺第三目录时明细必须齐备"
+        );
         assert_eq!(report.details.len(), plan.ops.len());
         assert!(report.log.iter().any(|l| l.contains("第三目录")));
     }
 
     #[tokio::test]
     async fn run_merge_cancel_skips_remaining() {
-        let (_d, b, l, r) = make3(&[("a.txt", b"v0")], &[("a.txt", b"v1")], &[("a.txt", b"v0")]).await;
+        let (_d, b, l, r) = make3(
+            &[("a.txt", b"v0")],
+            &[("a.txt", b"v1")],
+            &[("a.txt", b"v0")],
+        )
+        .await;
         let vfs = LocalFs::new();
-        let res = scan_merge(&vfs, &b, &l, &r, &CancelFlag::new()).await.unwrap();
-        let plan = plan_merge(&res.arena, &MergePlanParams { target: MergeTarget::Right, decisions: &BTreeMap::new() });
+        let res = scan_merge(&vfs, &b, &l, &r, &CancelFlag::new())
+            .await
+            .unwrap();
+        let plan = plan_merge(
+            &res.arena,
+            &MergePlanParams {
+                target: MergeTarget::Right,
+                decisions: &BTreeMap::new(),
+            },
+        );
         let cancel = CancelFlag::new();
         cancel.cancel();
-        let roots = MergeRoots { base: b.clone(), left: l.clone(), right: r.clone(), output: None };
-        let report = run_folder_merge(&vfs, &roots, &plan.ops, MergeTarget::Right, None, &cancel).await;
+        let roots = MergeRoots {
+            base: b.clone(),
+            left: l.clone(),
+            right: r.clone(),
+            output: None,
+        };
+        let report =
+            run_folder_merge(&vfs, &roots, &plan.ops, MergeTarget::Right, None, &cancel).await;
         assert!(report.cancelled);
         assert_eq!(report.stats.copied, 0, "取消后不落盘");
         assert!(report.stats.skipped >= 1);
@@ -1509,10 +2009,31 @@ mod tests {
     async fn run_merge_empty_orphan_dir_created_on_target() {
         let (_d, b, l, r) = make3(&[], &[("ed/", b"")], &[]).await;
         let vfs = LocalFs::new();
-        let res = scan_merge(&vfs, &b, &l, &r, &CancelFlag::new()).await.unwrap();
-        let plan = plan_merge(&res.arena, &MergePlanParams { target: MergeTarget::Right, decisions: &BTreeMap::new() });
-        let roots = MergeRoots { base: b.clone(), left: l.clone(), right: r.clone(), output: None };
-        let report = run_folder_merge(&vfs, &roots, &plan.ops, MergeTarget::Right, None, &CancelFlag::new()).await;
+        let res = scan_merge(&vfs, &b, &l, &r, &CancelFlag::new())
+            .await
+            .unwrap();
+        let plan = plan_merge(
+            &res.arena,
+            &MergePlanParams {
+                target: MergeTarget::Right,
+                decisions: &BTreeMap::new(),
+            },
+        );
+        let roots = MergeRoots {
+            base: b.clone(),
+            left: l.clone(),
+            right: r.clone(),
+            output: None,
+        };
+        let report = run_folder_merge(
+            &vfs,
+            &roots,
+            &plan.ops,
+            MergeTarget::Right,
+            None,
+            &CancelFlag::new(),
+        )
+        .await;
         assert_eq!(report.stats.failed, 0, "{:?}", report.details);
         let st = vfs.stat(&r.join("ed")).await.unwrap();
         assert_eq!(st.kind, ai_vfs::EntryKind::Dir);
@@ -1524,12 +2045,33 @@ mod tests {
         let (_d, b, l, r) = make3(&[("x", b"v0")], &[("x", b"v1")], &[("x", b"v0")]).await;
         // 把右侧 x 改成目录（扫描后再改，制造执行期冲突）
         let vfs = LocalFs::new();
-        let res = scan_merge(&vfs, &b, &l, &r, &CancelFlag::new()).await.unwrap();
+        let res = scan_merge(&vfs, &b, &l, &r, &CancelFlag::new())
+            .await
+            .unwrap();
         std::fs::remove_file(r.as_str().to_string() + "/x").unwrap();
         std::fs::create_dir(r.as_str().to_string() + "/x").unwrap();
-        let plan = plan_merge(&res.arena, &MergePlanParams { target: MergeTarget::Right, decisions: &BTreeMap::new() });
-        let roots = MergeRoots { base: b.clone(), left: l.clone(), right: r.clone(), output: None };
-        let report = run_folder_merge(&vfs, &roots, &plan.ops, MergeTarget::Right, None, &CancelFlag::new()).await;
+        let plan = plan_merge(
+            &res.arena,
+            &MergePlanParams {
+                target: MergeTarget::Right,
+                decisions: &BTreeMap::new(),
+            },
+        );
+        let roots = MergeRoots {
+            base: b.clone(),
+            left: l.clone(),
+            right: r.clone(),
+            output: None,
+        };
+        let report = run_folder_merge(
+            &vfs,
+            &roots,
+            &plan.ops,
+            MergeTarget::Right,
+            None,
+            &CancelFlag::new(),
+        )
+        .await;
         assert_eq!(report.stats.failed, 1, "{:?}", report.details);
         assert!(report.log.iter().any(|l| l.contains("失败")));
     }

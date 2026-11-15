@@ -22,7 +22,10 @@ type Hunk = [u32; 4];
 
 fn algo_cfg(algo: LineAlignAlgo) -> DiffConfig {
     DiffConfig {
-        base: TextDiffOptions { algo, ..TextDiffOptions::default() },
+        base: TextDiffOptions {
+            algo,
+            ..TextDiffOptions::default()
+        },
         manual: ManualAlignOptions::default(),
         ..DiffConfig::default()
     }
@@ -64,7 +67,12 @@ fn sections_to_hunks(sections: &[ai_core::Section]) -> Vec<Hunk> {
 ///
 /// 注意：默认骨架忽略行尾风格（FR-TXT-010 / docs/03 §6.1），Equal 段两侧
 /// 行尾可能不同（CRLF 混合语料），因此逐行比较**行内容**而非整文件字节。
-fn assert_properties(left: &LineTable, right: &LineTable, sections: &[ai_core::Section], name: &str) {
+fn assert_properties(
+    left: &LineTable,
+    right: &LineTable,
+    sections: &[ai_core::Section],
+    name: &str,
+) {
     let (mut lc, mut rc) = (0u32, 0u32);
     for s in sections {
         if let Some(l) = s.left {
@@ -99,7 +107,8 @@ fn changed_lines(hunks: &[Hunk]) -> u32 {
 
 fn load_fixtures() -> serde_json::Value {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/algodiff_matrix/fixtures.json");
-    let raw = std::fs::read_to_string(path).expect("fixtures.json 存在（先运行 generate_fixtures.py）");
+    let raw =
+        std::fs::read_to_string(path).expect("fixtures.json 存在（先运行 generate_fixtures.py）");
     serde_json::from_str(&raw).expect("fixtures.json 合法")
 }
 
@@ -148,13 +157,15 @@ fn algodiff_matrix_matches_difflib_and_git() {
             let mine = sections_to_hunks(&out.output.sections);
 
             if exact {
-                assert_eq!(
-                    mine, difflib,
-                    "{name}/{algo_name}: hunks 与 difflib 不一致"
-                );
+                assert_eq!(mine, difflib, "{name}/{algo_name}: hunks 与 difflib 不一致");
                 assert_eq!(mine, git, "{name}/{algo_name}: hunks 与 git 不一致");
             } else {
-                assert_properties(&left, &right, &out.output.sections, &format!("{name}/{algo_name}"));
+                assert_properties(
+                    &left,
+                    &right,
+                    &out.output.sections,
+                    &format!("{name}/{algo_name}"),
+                );
                 // 编辑量守恒：两种合法对齐的 删+插 行数必须相同（LCS 不变）
                 assert_eq!(
                     changed_lines(&mine),
@@ -163,7 +174,12 @@ fn algodiff_matrix_matches_difflib_and_git() {
                 );
             }
             // 所有用例（含 exact）都做性质校验
-            assert_properties(&left, &right, &out.output.sections, &format!("{name}/{algo_name}"));
+            assert_properties(
+                &left,
+                &right,
+                &out.output.sections,
+                &format!("{name}/{algo_name}"),
+            );
         }
     }
 }
@@ -179,7 +195,10 @@ fn importance_toggle_keeps_skeleton() {
         ..ai_core::options::ImportanceOptions::default()
     };
     let strict_cfg = DiffConfig::default();
-    let relaxed_cfg = DiffConfig { importance: imp, ..DiffConfig::default() };
+    let relaxed_cfg = DiffConfig {
+        importance: imp,
+        ..DiffConfig::default()
+    };
 
     let strict = diff_config(&left, &right, &strict_cfg).unwrap();
     let relaxed = diff_config(&left, &right, &relaxed_cfg).unwrap();
@@ -190,10 +209,19 @@ fn importance_toggle_keeps_skeleton() {
         o.output
             .sections
             .iter()
-            .map(|s| (s.kind, s.left.map(|r| [r.start, r.end]), s.right.map(|r| [r.start, r.end])))
+            .map(|s| {
+                (
+                    s.kind,
+                    s.left.map(|r| [r.start, r.end]),
+                    s.right.map(|r| [r.start, r.end]),
+                )
+            })
             .collect()
     }
     assert_eq!(skel(&strict), skel(&relaxed), "重要性开关不得改变骨架");
-    assert!(relaxed.unimportant_sections >= 1, "大小写+行尾空白差异应为不重要");
+    assert!(
+        relaxed.unimportant_sections >= 1,
+        "大小写+行尾空白差异应为不重要"
+    );
     assert_eq!(strict.unimportant_sections, 0);
 }

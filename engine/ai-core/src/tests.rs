@@ -6,7 +6,12 @@ use crate::sections::{SectionEvent, SectionKind};
 use crate::{diff_stream, diff_text, LineTable};
 
 fn diff(a: &str, b: &str) -> crate::DiffOutput {
-    diff_text(&LineTable::from_text(a), &LineTable::from_text(b), &TextDiffOptions::default()).unwrap()
+    diff_text(
+        &LineTable::from_text(a),
+        &LineTable::from_text(b),
+        &TextDiffOptions::default(),
+    )
+    .unwrap()
 }
 
 /// 补丁重放等价：按 section 应用补丁必须精确还原右侧文本（对拍性质的内部形态）
@@ -114,11 +119,20 @@ fn inline_diff_within_changed_section() {
     let left = LineTable::from_text(a);
     let right = LineTable::from_text(b);
     let out = diff(a, b);
-    let change = out.sections.iter().find(|s| s.kind == SectionKind::Change).expect("应有 Change");
+    let change = out
+        .sections
+        .iter()
+        .find(|s| s.kind == SectionKind::Change)
+        .expect("应有 Change");
     let inline = crate::inline_diff_section(&left, &right, change, &TextDiffOptions::default());
     assert_eq!(inline.len(), 1);
     let spans = &inline[0].result.spans;
-    assert!(spans.iter().any(|s| s.kind == crate::InlineSpanKind::Replace), "应含词级替换: {spans:?}");
+    assert!(
+        spans
+            .iter()
+            .any(|s| s.kind == crate::InlineSpanKind::Replace),
+        "应含词级替换: {spans:?}"
+    );
 }
 
 #[test]
@@ -144,9 +158,15 @@ fn mixed_crlf_ignored_by_default() {
     assert_eq!(out.sections[0].kind, SectionKind::Equal);
 
     // 打开行尾比较后应产生差异
-    let opts = TextDiffOptions { ignore_eol_style: false, ..TextDiffOptions::default() };
+    let opts = TextDiffOptions {
+        ignore_eol_style: false,
+        ..TextDiffOptions::default()
+    };
     let out = diff_text(&LineTable::from_text(a), &LineTable::from_text(b), &opts).unwrap();
-    assert!(out.summary.change_sections + out.summary.delete_sections + out.summary.insert_sections >= 1);
+    assert!(
+        out.summary.change_sections + out.summary.delete_sections + out.summary.insert_sections
+            >= 1
+    );
 }
 
 #[test]
@@ -180,8 +200,16 @@ fn unicode_lines_and_inline() {
     assert_patch_roundtrip(a, b);
 
     // CJK 词级差异：无空白整行为一个词，Replace 覆盖整词（Unicode scalar 计）
-    let r = crate::inline_diff_line("中文第一行", "中文第二行", &TextDiffOptions::default().inline);
-    let rep = r.spans.iter().find(|s| s.kind == crate::InlineSpanKind::Replace).unwrap();
+    let r = crate::inline_diff_line(
+        "中文第一行",
+        "中文第二行",
+        &TextDiffOptions::default().inline,
+    );
+    let rep = r
+        .spans
+        .iter()
+        .find(|s| s.kind == crate::InlineSpanKind::Replace)
+        .unwrap();
     assert_eq!(rep.left, Some(crate::CharSpan { start: 0, end: 5 }));
     assert_eq!(rep.right, Some(crate::CharSpan { start: 0, end: 5 }));
 }
@@ -191,7 +219,10 @@ fn stream_events_append_then_done() {
     let left = LineTable::from_text("1\n2\n3\n");
     let right = LineTable::from_text("1\nX\n3\n");
     let mut events = Vec::new();
-    let summary = diff_stream(&left, &right, &TextDiffOptions::default(), &mut |e| events.push(e)).unwrap();
+    let summary = diff_stream(&left, &right, &TextDiffOptions::default(), &mut |e| {
+        events.push(e)
+    })
+    .unwrap();
     assert!(matches!(events.last(), Some(SectionEvent::Done(_))));
     assert_eq!(events.len(), 4); // Append(Equal) + Append(Change) + Append(Equal) + Done
     assert!(matches!(&events[0], SectionEvent::Append(s) if s.kind == SectionKind::Equal));
@@ -226,7 +257,12 @@ fn golden_corpus_shape_preserved_by_standard_pipeline() {
     let kinds: Vec<SectionKind> = out.sections.iter().map(|s| s.kind).collect();
     assert_eq!(
         kinds,
-        vec![SectionKind::Equal, SectionKind::Change, SectionKind::Equal, SectionKind::Insert],
+        vec![
+            SectionKind::Equal,
+            SectionKind::Change,
+            SectionKind::Equal,
+            SectionKind::Insert
+        ],
         "Standard 管线在 golden 语料上的 section 结构必须与 P0 一致: {out:?}"
     );
     assert_eq!(out.summary.change_sections, 1);

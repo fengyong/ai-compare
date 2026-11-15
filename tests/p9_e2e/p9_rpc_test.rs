@@ -27,7 +27,11 @@ fn p9_rpc_e2e_table_hex_patch_dir_execute() {
     let l_csv = root.join("l.csv");
     let r_csv = root.join("r.csv");
     std::fs::write(&l_csv, "id,name,qty\n1,Alpha,10\n2,Beta,20\n3,Gamma,30\n").unwrap();
-    std::fs::write(&r_csv, "id,name,qty\n1,Alpha,10\n2,BETA,20\n3,Gamma,35\n4,Delta,40\n").unwrap();
+    std::fs::write(
+        &r_csv,
+        "id,name,qty\n1,Alpha,10\n2,BETA,20\n3,Gamma,35\n4,Delta,40\n",
+    )
+    .unwrap();
 
     // ---- hex 语料：前 4 字节同 + 中段变化 + 尾部插入 ----
     let l_bin = root.join("l.bin");
@@ -68,7 +72,11 @@ fn p9_rpc_e2e_table_hex_patch_dir_execute() {
                 "options": {"keyColumns": [0]}
             }),
         ),
-        harness::req(3, "table/sections", json!({"sessionId": "tb", "offset": 0, "count": 10})),
+        harness::req(
+            3,
+            "table/sections",
+            json!({"sessionId": "tb", "offset": 0, "count": 10}),
+        ),
         // ---- hex ----
         harness::req(
             4,
@@ -81,11 +89,23 @@ fn p9_rpc_e2e_table_hex_patch_dir_execute() {
             json!({"sessionId": "hx", "side": "right", "offset": 0, "length": 16}),
         ),
         // ---- patch: dryRun ----
-        harness::req(6, "text/patch/apply", json!({"patch": patch, "root": root_s, "dryRun": true})),
+        harness::req(
+            6,
+            "text/patch/apply",
+            json!({"patch": patch, "root": root_s, "dryRun": true}),
+        ),
         // ---- patch: 应用 ----
-        harness::req(7, "text/patch/apply", json!({"patch": patch, "root": root_s})),
+        harness::req(
+            7,
+            "text/patch/apply",
+            json!({"patch": patch, "root": root_s}),
+        ),
         // ---- patch: 重放 -> alreadyApplied ----
-        harness::req(8, "text/patch/apply", json!({"patch": patch, "root": root_s})),
+        harness::req(
+            8,
+            "text/patch/apply",
+            json!({"patch": patch, "root": root_s}),
+        ),
         // ---- dir/open（lazyScan 模型会话） ----
         harness::req(
             9,
@@ -146,7 +166,9 @@ fn p9_rpc_e2e_table_hex_patch_dir_execute() {
     assert_eq!(columns[0]["ty"], "number", "id 列类型推断");
 
     // ---- table/sections：行类别与单元格 ----
-    let rows = resp_by_id(&outputs, 3)["result"]["rows"].as_array().unwrap();
+    let rows = resp_by_id(&outputs, 3)["result"]["rows"]
+        .as_array()
+        .unwrap();
     assert_eq!(rows[0]["kind"], "same");
     assert_eq!(rows[1]["kind"], "changed");
     assert_eq!(rows[1]["important"], true, "BETA 大小写默认重要");
@@ -163,11 +185,16 @@ fn p9_rpc_e2e_table_hex_patch_dir_execute() {
     assert_eq!(h["summary"]["insertedBytes"], 3);
 
     // ---- hex/bytes：hex 列 + ASCII 侧栏 + 逐字节状态 ----
-    let lines = resp_by_id(&outputs, 5)["result"]["lines"].as_array().unwrap();
+    let lines = resp_by_id(&outputs, 5)["result"]["lines"]
+        .as_array()
+        .unwrap();
     assert_eq!(lines[0]["hex"], "41 41 41 41 58 58 42 42 43 43 43 43 5a 5a");
     assert_eq!(lines[0]["ascii"], "AAAAXXBBCCCCZZ");
     let status = lines[0]["status"].as_str().unwrap();
-    assert_eq!(status, "====x+======++", "4 同 + 变化(B↔X) + 插入(X) + 6 同 + 尾部插入(ZZ): {status}");
+    assert_eq!(
+        status, "====x+======++",
+        "4 同 + 变化(B↔X) + 插入(X) + 6 同 + 尾部插入(ZZ): {status}"
+    );
 
     // ---- patch：dryRun 报告语义（文件状态断言在下方独立会话验证——
     // 本会话所有请求完成后才做断言，apply 请求已先行落盘） ----
@@ -181,7 +208,10 @@ fn p9_rpc_e2e_table_hex_patch_dir_execute() {
     let applied = &resp_by_id(&outputs, 7)["result"];
     assert_eq!(applied["applied"], 1);
     assert_eq!(applied["allApplied"], true);
-    assert_eq!(std::fs::read_to_string(root.join("t.txt")).unwrap(), "1\nTWO\n3\n");
+    assert_eq!(
+        std::fs::read_to_string(root.join("t.txt")).unwrap(),
+        "1\nTWO\n3\n"
+    );
 
     // ---- patch：重放 -> alreadyApplied（git apply --check 同语义拒绝） ----
     assert_eq!(
@@ -210,7 +240,11 @@ fn p9_rpc_e2e_table_hex_patch_dir_execute() {
         .iter()
         .filter(|m| m.get("method").and_then(|v| v.as_str()) == Some("dir/delta"))
         .collect();
-    assert!(!deltas.is_empty(), "执行后应推送 rescan dir/delta: {:#?}", outputs);
+    assert!(
+        !deltas.is_empty(),
+        "执行后应推送 rescan dir/delta: {:#?}",
+        outputs
+    );
     let mut saw_removal = false;
     let mut saw_lonly_same = false;
     for d in deltas {
@@ -242,8 +276,16 @@ fn p9_rpc_e2e_patch_dry_run_does_not_write() {
     let patch = "--- a/t.txt\n+++ b/t.txt\n@@ -1,3 +1,3 @@\n 1\n-2\n+TWO\n 3\n";
 
     let inputs = vec![
-        harness::req(1, "initialize", json!({"clientInfo": {"name": "p9-dry", "version": "0"}, "protocolVersion": "1.0"})),
-        harness::req(2, "text/patch/apply", json!({"patch": patch, "root": root.to_string_lossy(), "dryRun": true})),
+        harness::req(
+            1,
+            "initialize",
+            json!({"clientInfo": {"name": "p9-dry", "version": "0"}, "protocolVersion": "1.0"}),
+        ),
+        harness::req(
+            2,
+            "text/patch/apply",
+            json!({"patch": patch, "root": root.to_string_lossy(), "dryRun": true}),
+        ),
         harness::req(3, "shutdown", json!({})),
     ];
     let outputs = harness::run_engine(&inputs, None);
@@ -251,5 +293,9 @@ fn p9_rpc_e2e_patch_dry_run_does_not_write() {
     assert_eq!(outputs[1]["result"]["applied"], 1);
     assert_eq!(outputs[1]["result"]["allApplied"], true);
     // 会话结束文件保持原样（dryRun 不落盘）
-    assert_eq!(std::fs::read_to_string(root.join("t.txt")).unwrap(), "1\n2\n3\n", "dryRun 不得写盘");
+    assert_eq!(
+        std::fs::read_to_string(root.join("t.txt")).unwrap(),
+        "1\n2\n3\n",
+        "dryRun 不得写盘"
+    );
 }

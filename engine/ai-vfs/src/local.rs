@@ -11,15 +11,19 @@ use std::path::{Path, PathBuf};
 use async_trait::async_trait;
 
 use crate::{
-    dos_attr, stat_from_metadata, EntryKind, VfsCaps, VfsDirEntry, VfsError, VfsPath, VfsProvider,
-    StatInfo,
+    dos_attr, stat_from_metadata, EntryKind, StatInfo, VfsCaps, VfsDirEntry, VfsError, VfsPath,
+    VfsProvider,
 };
 
 /// io::ErrorKind -> VfsError（写路径错误分类：NotFound / AlreadyExists / 其余 Io）
 fn map_write_io(path: &VfsPath, err: std::io::Error) -> VfsError {
     match err.kind() {
-        std::io::ErrorKind::NotFound => VfsError::NotFound { path: path.as_str().to_string() },
-        std::io::ErrorKind::AlreadyExists => VfsError::AlreadyExists { path: path.as_str().to_string() },
+        std::io::ErrorKind::NotFound => VfsError::NotFound {
+            path: path.as_str().to_string(),
+        },
+        std::io::ErrorKind::AlreadyExists => VfsError::AlreadyExists {
+            path: path.as_str().to_string(),
+        },
         _ => VfsError::Io(err),
     }
 }
@@ -38,7 +42,9 @@ impl LocalFs {
 
     /// 以指定根解析相对路径
     pub fn with_base(base: impl Into<PathBuf>) -> Self {
-        LocalFs { base: Some(base.into()) }
+        LocalFs {
+            base: Some(base.into()),
+        }
     }
 
     /// VfsPath -> 文件系统路径（相对路径补 cwd/base）
@@ -49,14 +55,18 @@ impl LocalFs {
         } else {
             match &self.base {
                 Some(base) => base.join(p),
-                None => std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")).join(p),
+                None => std::env::current_dir()
+                    .unwrap_or_else(|_| PathBuf::from("."))
+                    .join(p),
             }
         }
     }
 
     fn map_io(&self, path: &VfsPath, err: std::io::Error) -> VfsError {
         match err.kind() {
-            std::io::ErrorKind::NotFound => VfsError::NotFound { path: path.as_str().to_string() },
+            std::io::ErrorKind::NotFound => VfsError::NotFound {
+                path: path.as_str().to_string(),
+            },
             _ => VfsError::Io(err),
         }
     }
@@ -104,9 +114,13 @@ impl VfsProvider for LocalFs {
             .await
             .map_err(|e| self.map_io(path, e))?;
         if !meta.is_dir() {
-            return Err(VfsError::NotADirectory { path: path.as_str().to_string() });
+            return Err(VfsError::NotADirectory {
+                path: path.as_str().to_string(),
+            });
         }
-        let mut rd = tokio::fs::read_dir(&fs_path).await.map_err(|e| self.map_io(path, e))?;
+        let mut rd = tokio::fs::read_dir(&fs_path)
+            .await
+            .map_err(|e| self.map_io(path, e))?;
         let mut out = Vec::new();
         while let Some(entry) = rd.next_entry().await.map_err(VfsError::Io)? {
             let ft = entry.file_type().await.map_err(VfsError::Io)?;
@@ -121,9 +135,7 @@ impl VfsProvider for LocalFs {
             let stat = if ft.is_symlink() {
                 match tokio::fs::symlink_metadata(entry.path()).await {
                     Ok(m) => stat_from_metadata(&m),
-                    Err(e) if is_not_found(&e) => {
-                        StatInfo::minimal(0, 0, kind)
-                    }
+                    Err(e) if is_not_found(&e) => StatInfo::minimal(0, 0, kind),
                     Err(e) => return Err(VfsError::Io(e)),
                 }
             } else {
@@ -148,19 +160,30 @@ impl VfsProvider for LocalFs {
             .await
             .map_err(|e| self.map_io(path, e))?;
         if meta.is_dir() {
-            return Err(VfsError::NotAFile { path: path.as_str().to_string() });
+            return Err(VfsError::NotAFile {
+                path: path.as_str().to_string(),
+            });
         }
-        tokio::fs::read(&fs_path).await.map_err(|e| self.map_io(path, e))
+        tokio::fs::read(&fs_path)
+            .await
+            .map_err(|e| self.map_io(path, e))
     }
 
-    async fn read_range(&self, path: &VfsPath, offset: u64, len: usize) -> Result<Vec<u8>, VfsError> {
+    async fn read_range(
+        &self,
+        path: &VfsPath,
+        offset: u64,
+        len: usize,
+    ) -> Result<Vec<u8>, VfsError> {
         use tokio::io::{AsyncReadExt, AsyncSeekExt};
         let fs_path = self.to_fs_path(path);
         let mut file = tokio::fs::File::open(&fs_path)
             .await
             .map_err(|e| self.map_io(path, e))?;
         if offset > 0 {
-            file.seek(std::io::SeekFrom::Start(offset)).await.map_err(VfsError::Io)?;
+            file.seek(std::io::SeekFrom::Start(offset))
+                .await
+                .map_err(VfsError::Io)?;
         }
         let mut buf = vec![0u8; len];
         let mut filled = 0usize;
@@ -181,12 +204,16 @@ impl VfsProvider for LocalFs {
 
     async fn write_file_bytes(&self, path: &VfsPath, data: &[u8]) -> Result<(), VfsError> {
         let fs_path = self.to_fs_path(path);
-        tokio::fs::write(&fs_path, data).await.map_err(|e| map_write_io(path, e))
+        tokio::fs::write(&fs_path, data)
+            .await
+            .map_err(|e| map_write_io(path, e))
     }
 
     async fn mkdir(&self, path: &VfsPath) -> Result<(), VfsError> {
         let fs_path = self.to_fs_path(path);
-        tokio::fs::create_dir(&fs_path).await.map_err(|e| map_write_io(path, e))
+        tokio::fs::create_dir(&fs_path)
+            .await
+            .map_err(|e| map_write_io(path, e))
     }
 
     async fn rename(&self, from: &VfsPath, to: &VfsPath) -> Result<(), VfsError> {
@@ -204,25 +231,37 @@ impl VfsProvider for LocalFs {
             .await
             .map_err(|e| map_write_io(path, e))?;
         if meta.file_type().is_symlink() {
-            return tokio::fs::remove_file(&fs_path).await.map_err(|e| map_write_io(path, e));
+            return tokio::fs::remove_file(&fs_path)
+                .await
+                .map_err(|e| map_write_io(path, e));
         }
         if meta.is_dir() {
             return if recursive {
-                remove_dir_tree(&fs_path).await.map_err(|e| map_write_io(path, e))
+                remove_dir_tree(&fs_path)
+                    .await
+                    .map_err(|e| map_write_io(path, e))
             } else {
-                tokio::fs::remove_dir(&fs_path).await.map_err(|e| map_write_io(path, e))
+                tokio::fs::remove_dir(&fs_path)
+                    .await
+                    .map_err(|e| map_write_io(path, e))
             };
         }
-        tokio::fs::remove_file(&fs_path).await.map_err(|e| map_write_io(path, e))
+        tokio::fs::remove_file(&fs_path)
+            .await
+            .map_err(|e| map_write_io(path, e))
     }
 
     async fn copy_file(&self, from: &VfsPath, to: &VfsPath) -> Result<(), VfsError> {
         let from_fs = self.to_fs_path(from);
         let to_fs = self.to_fs_path(to);
         // 源 lstat：复制目标是符号链接时复制链接指向的内容（读跟随语义）
-        let src_meta = tokio::fs::metadata(&from_fs).await.map_err(|e| map_write_io(from, e))?;
+        let src_meta = tokio::fs::metadata(&from_fs)
+            .await
+            .map_err(|e| map_write_io(from, e))?;
         if src_meta.is_dir() {
-            return Err(VfsError::NotAFile { path: from.as_str().to_string() });
+            return Err(VfsError::NotAFile {
+                path: from.as_str().to_string(),
+            });
         }
         tokio::fs::copy(&from_fs, &to_fs)
             .await
@@ -248,7 +287,9 @@ impl VfsProvider for LocalFs {
 }
 
 /// 递归删除目录树（符号链接不跟随：链接项一律 remove_file）
-fn remove_dir_tree<'a>(root: &'a Path) -> std::pin::Pin<Box<dyn Future<Output = std::io::Result<()>> + Send + 'a>> {
+fn remove_dir_tree<'a>(
+    root: &'a Path,
+) -> std::pin::Pin<Box<dyn Future<Output = std::io::Result<()>> + Send + 'a>> {
     Box::pin(async move { remove_dir_tree_inner(root).await })
 }
 
@@ -281,9 +322,16 @@ mod tests {
     async fn setup() -> (tempfile::TempDir, VfsPath) {
         let dir = tempfile::tempdir().expect("临时目录");
         let root = VfsPath::parse(dir.path().to_str().unwrap()).unwrap();
-        tokio::fs::write(dir.path().join("hello.txt"), "héllo\r\nworld\n").await.unwrap();
+        tokio::fs::write(dir.path().join("hello.txt"), "héllo\r\nworld\n")
+            .await
+            .unwrap();
         tokio::fs::create_dir(dir.path().join("sub")).await.unwrap();
-        tokio::fs::write(dir.path().join("sub").join("bom.txt"), "\u{feff}bom content").await.unwrap();
+        tokio::fs::write(
+            dir.path().join("sub").join("bom.txt"),
+            "\u{feff}bom content",
+        )
+        .await
+        .unwrap();
         let _ = tokio::fs::write(dir.path().join("bad.bin"), [0xff, 0xfe, 0x01]).await;
         (dir, root)
     }
@@ -305,10 +353,16 @@ mod tests {
 
         // 非目录 list 报错
         let file = root.join("hello.txt");
-        assert!(matches!(fs.list_dir(&file).await, Err(VfsError::NotADirectory { .. })));
+        assert!(matches!(
+            fs.list_dir(&file).await,
+            Err(VfsError::NotADirectory { .. })
+        ));
         // 不存在
         let missing = root.join("nope");
-        assert!(matches!(fs.stat(&missing).await, Err(VfsError::NotFound { .. })));
+        assert!(matches!(
+            fs.stat(&missing).await,
+            Err(VfsError::NotFound { .. })
+        ));
         drop(dir);
     }
 
@@ -319,7 +373,10 @@ mod tests {
         let text = fs.read_file_text(&root.join("hello.txt")).await.unwrap();
         assert_eq!(text, "héllo\r\nworld\n");
 
-        let bom = fs.read_file_text(&root.join("sub").join("bom.txt")).await.unwrap();
+        let bom = fs
+            .read_file_text(&root.join("sub").join("bom.txt"))
+            .await
+            .unwrap();
         assert_eq!(bom, "bom content", "UTF-8 BOM 应被剥离");
 
         let err = fs.read_file_text(&root.join("bad.bin")).await.unwrap_err();
@@ -363,9 +420,19 @@ mod tests {
         let (dir, root) = setup().await;
         let fs = LocalFs::new();
         fs.mkdir(&root.join("newdir")).await.unwrap();
-        assert_eq!(fs.stat(&root.join("newdir")).await.unwrap().kind, EntryKind::Dir);
-        fs.write_file_bytes(&root.join("newdir").join("a.txt"), b"AAA").await.unwrap();
-        assert_eq!(fs.read_file_bytes(&root.join("newdir").join("a.txt")).await.unwrap(), b"AAA");
+        assert_eq!(
+            fs.stat(&root.join("newdir")).await.unwrap().kind,
+            EntryKind::Dir
+        );
+        fs.write_file_bytes(&root.join("newdir").join("a.txt"), b"AAA")
+            .await
+            .unwrap();
+        assert_eq!(
+            fs.read_file_bytes(&root.join("newdir").join("a.txt"))
+                .await
+                .unwrap(),
+            b"AAA"
+        );
 
         // 已存在目录重复创建 -> AlreadyExists
         assert!(matches!(
@@ -380,11 +447,16 @@ mod tests {
         let (dir, root) = setup().await;
         let fs = LocalFs::new();
         fs.mkdir_all(&root.join("a/b/c")).await.unwrap();
-        assert_eq!(fs.stat(&root.join("a/b/c")).await.unwrap().kind, EntryKind::Dir);
+        assert_eq!(
+            fs.stat(&root.join("a/b/c")).await.unwrap().kind,
+            EntryKind::Dir
+        );
         // 幂等：全部已存在
         fs.mkdir_all(&root.join("a/b/c")).await.unwrap();
         // 中间存在同名文件 -> AlreadyExists
-        fs.write_file_bytes(&root.join("block"), b"x").await.unwrap();
+        fs.write_file_bytes(&root.join("block"), b"x")
+            .await
+            .unwrap();
         assert!(matches!(
             fs.mkdir_all(&root.join("block/sub")).await,
             Err(VfsError::AlreadyExists { .. })
@@ -408,7 +480,10 @@ mod tests {
             fs.read_file_bytes(&src).await.unwrap()
         );
         // 目录不可 copy_file
-        assert!(matches!(fs.copy_file(&root.join("sub"), &root.join("x")).await, Err(VfsError::NotAFile { .. })));
+        assert!(matches!(
+            fs.copy_file(&root.join("sub"), &root.join("x")).await,
+            Err(VfsError::NotAFile { .. })
+        ));
         drop(dir);
     }
 
@@ -416,11 +491,15 @@ mod tests {
     async fn rename_moves_and_overwrites() {
         let (dir, root) = setup().await;
         let fs = LocalFs::new();
-        fs.rename(&root.join("hello.txt"), &root.join("renamed.txt")).await.unwrap();
+        fs.rename(&root.join("hello.txt"), &root.join("renamed.txt"))
+            .await
+            .unwrap();
         assert!(fs.stat(&root.join("hello.txt")).await.is_err());
         assert!(fs.stat(&root.join("renamed.txt")).await.is_ok());
         // 目标已存在（覆盖语义）
-        fs.rename(&root.join("bad.bin"), &root.join("renamed.txt")).await.unwrap();
+        fs.rename(&root.join("bad.bin"), &root.join("renamed.txt"))
+            .await
+            .unwrap();
         assert_eq!(fs.stat(&root.join("renamed.txt")).await.unwrap().size, 3);
         drop(dir);
     }
@@ -474,7 +553,10 @@ mod tests {
         symlink(&victim, tree.join("esc")).unwrap();
         fs.remove(&root.join("tree"), true).await.unwrap();
         assert!(std::fs::symlink_metadata(&tree).is_err(), "树应被删除");
-        assert!(victim.join("keep.txt").exists(), "符号链接目标不得被删（逃逸防护）");
+        assert!(
+            victim.join("keep.txt").exists(),
+            "符号链接目标不得被删（逃逸防护）"
+        );
         drop(dir);
     }
 

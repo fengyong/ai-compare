@@ -11,9 +11,10 @@ pub fn vfs_error_to_rpc(err: &VfsError) -> ai_protocol::RpcErrorObject {
         VfsError::NotADirectory { path } => (codes::PATH_NOT_FOUND, format!("不是目录: {path}")),
         VfsError::NotAFile { path } => (codes::PATH_NOT_FOUND, format!("不是文件: {path}")),
         VfsError::InvalidPath(m) => (codes::INVALID_PARAMS, format!("非法路径: {m}")),
-        VfsError::InvalidEncoding { path } => {
-            (codes::INVALID_ENCODING, format!("文件不是合法 UTF-8 文本: {path}"))
-        }
+        VfsError::InvalidEncoding { path } => (
+            codes::INVALID_ENCODING,
+            format!("文件不是合法 UTF-8 文本: {path}"),
+        ),
         VfsError::Encoding(m) => (codes::INVALID_ENCODING, format!("编码错误: {m}")),
         VfsError::Cancelled => (codes::REQUEST_CANCELLED, "操作被取消".to_string()),
         VfsError::Unsupported(m) => (codes::INTERNAL_ERROR, format!("不支持的操作: {m}")),
@@ -67,7 +68,10 @@ pub fn section_to_dto(s: &ai_core::sections::Section) -> Section {
 }
 
 fn line_range_to_dto(r: ai_core::sections::LineRange) -> LineRange {
-    LineRange { start: r.start, end: r.end }
+    LineRange {
+        start: r.start,
+        end: r.end,
+    }
 }
 
 /// 文本选项 DTO -> ai-core 选项
@@ -126,7 +130,10 @@ pub fn side_to_dto(side: ai_core::options::DiffSide) -> ai_protocol::DiffSide {
 }
 
 fn char_range_to_dto(r: ai_core::CharSpan) -> ai_protocol::CharRange {
-    ai_protocol::CharRange { start: r.start, end: r.end }
+    ai_protocol::CharRange {
+        start: r.start,
+        end: r.end,
+    }
 }
 
 /// core 行内区间 -> 协议 InlineSpanDto
@@ -154,7 +161,9 @@ pub fn inline_line_diff_to_dto(d: &ai_core::InlineLineDiff) -> ai_protocol::Inli
 }
 
 /// 重要性选项 DTO -> core 选项（字段一一对应；缺省值与 core 默认一致）
-pub fn importance_from_dto(spec: &ai_protocol::ImportanceOptionsSpec) -> ai_core::ImportanceOptions {
+pub fn importance_from_dto(
+    spec: &ai_protocol::ImportanceOptionsSpec,
+) -> ai_core::ImportanceOptions {
     ai_core::ImportanceOptions {
         leading_ws_unimportant: spec.leading_ws_unimportant,
         embedded_ws_unimportant: spec.embedded_ws_unimportant,
@@ -167,8 +176,13 @@ pub fn importance_from_dto(spec: &ai_protocol::ImportanceOptionsSpec) -> ai_core
 
 /// 手动对齐选项 DTO -> core 选项（偏斜容差 0 由 core effective_skew 取默认）
 pub fn manual_from_dto(spec: &ai_protocol::TextManualAlignSpec) -> ai_core::ManualAlignOptions {
-    fn side_range(sr: &ai_protocol::SideLineRange) -> (ai_core::options::DiffSide, ai_core::sections::LineRange) {
-        (side_from_dto(sr.side), ai_core::sections::LineRange::new(sr.range.start, sr.range.end))
+    fn side_range(
+        sr: &ai_protocol::SideLineRange,
+    ) -> (ai_core::options::DiffSide, ai_core::sections::LineRange) {
+        (
+            side_from_dto(sr.side),
+            ai_core::sections::LineRange::new(sr.range.start, sr.range.end),
+        )
     }
     ai_core::ManualAlignOptions {
         align_anchors: spec
@@ -213,26 +227,39 @@ pub fn line_keys_entry(
 fn syntax_item_to_spec(item: &ai_core::SyntaxItem) -> ai_protocol::GrammarItemSpec {
     use ai_core::SyntaxItem;
     match item {
-        SyntaxItem::Text { pattern, regex, case_sensitive } => ai_protocol::GrammarItemSpec {
+        SyntaxItem::Text {
+            pattern,
+            regex,
+            case_sensitive,
+        } => ai_protocol::GrammarItemSpec {
             kind: ai_protocol::GrammarItemKind::Text,
             pattern: Some(pattern.clone()),
             regex: *regex,
             case_sensitive: *case_sensitive,
             ..Default::default()
         },
-        SyntaxItem::Delimited { start, end, escape, to_eol, regex, case_sensitive } => {
-            ai_protocol::GrammarItemSpec {
-                kind: ai_protocol::GrammarItemKind::Delimited,
-                start: Some(start.clone()),
-                end: end.clone(),
-                escape: escape.clone(),
-                to_eol: *to_eol,
-                regex: *regex,
-                case_sensitive: *case_sensitive,
-                ..Default::default()
-            }
-        }
-        SyntaxItem::List { tokens, regex, case_sensitive } => ai_protocol::GrammarItemSpec {
+        SyntaxItem::Delimited {
+            start,
+            end,
+            escape,
+            to_eol,
+            regex,
+            case_sensitive,
+        } => ai_protocol::GrammarItemSpec {
+            kind: ai_protocol::GrammarItemKind::Delimited,
+            start: Some(start.clone()),
+            end: end.clone(),
+            escape: escape.clone(),
+            to_eol: *to_eol,
+            regex: *regex,
+            case_sensitive: *case_sensitive,
+            ..Default::default()
+        },
+        SyntaxItem::List {
+            tokens,
+            regex,
+            case_sensitive,
+        } => ai_protocol::GrammarItemSpec {
             kind: ai_protocol::GrammarItemKind::List,
             tokens: tokens.clone(),
             regex: *regex,
@@ -245,7 +272,11 @@ fn syntax_item_to_spec(item: &ai_core::SyntaxItem) -> ai_protocol::GrammarItemSp
             to: *to,
             ..Default::default()
         },
-        SyntaxItem::RowTitle { pattern, lines, or_first_line } => ai_protocol::GrammarItemSpec {
+        SyntaxItem::RowTitle {
+            pattern,
+            lines,
+            or_first_line,
+        } => ai_protocol::GrammarItemSpec {
             kind: ai_protocol::GrammarItemKind::RowTitle,
             pattern: Some(pattern.clone()),
             lines: Some(*lines),
@@ -381,11 +412,19 @@ fn compare_rules_to_spec(c: &ai_core::CompareRules) -> ai_protocol::CompareRules
 fn compare_rules_from_spec(spec: &ai_protocol::CompareRulesSpec) -> ai_core::CompareRules {
     let d = ai_core::CompareRules::default();
     ai_core::CompareRules {
-        leading_ws_unimportant: spec.leading_ws_unimportant.unwrap_or(d.leading_ws_unimportant),
-        embedded_ws_unimportant: spec.embedded_ws_unimportant.unwrap_or(d.embedded_ws_unimportant),
-        trailing_ws_unimportant: spec.trailing_ws_unimportant.unwrap_or(d.trailing_ws_unimportant),
+        leading_ws_unimportant: spec
+            .leading_ws_unimportant
+            .unwrap_or(d.leading_ws_unimportant),
+        embedded_ws_unimportant: spec
+            .embedded_ws_unimportant
+            .unwrap_or(d.embedded_ws_unimportant),
+        trailing_ws_unimportant: spec
+            .trailing_ws_unimportant
+            .unwrap_or(d.trailing_ws_unimportant),
         case_unimportant: spec.case_unimportant.unwrap_or(d.case_unimportant),
-        eol_style_unimportant: spec.eol_style_unimportant.unwrap_or(d.eol_style_unimportant),
+        eol_style_unimportant: spec
+            .eol_style_unimportant
+            .unwrap_or(d.eol_style_unimportant),
         encoding_unimportant: spec.encoding_unimportant.unwrap_or(d.encoding_unimportant),
     }
 }
@@ -400,14 +439,24 @@ pub fn effective_rules_to_spec(e: &ai_core::EffectiveRules) -> ai_protocol::Effe
 
 /// 会话 rules 载荷（text/open params.rules）-> (ImportanceOptions, 元素集 Option)。
 /// None 字段 = 引擎缺省（ImportanceOptions::default）；元素集 None = 不启用语法折叠。
-pub fn rules_spec_to_core(spec: &ai_protocol::RulesSpec) -> (ai_core::ImportanceOptions, Option<Vec<String>>) {
+pub fn rules_spec_to_core(
+    spec: &ai_protocol::RulesSpec,
+) -> (ai_core::ImportanceOptions, Option<Vec<String>>) {
     let d = ai_core::ImportanceOptions::default();
     let imp = ai_core::ImportanceOptions {
-        leading_ws_unimportant: spec.leading_ws_unimportant.unwrap_or(d.leading_ws_unimportant),
-        embedded_ws_unimportant: spec.embedded_ws_unimportant.unwrap_or(d.embedded_ws_unimportant),
-        trailing_ws_unimportant: spec.trailing_ws_unimportant.unwrap_or(d.trailing_ws_unimportant),
+        leading_ws_unimportant: spec
+            .leading_ws_unimportant
+            .unwrap_or(d.leading_ws_unimportant),
+        embedded_ws_unimportant: spec
+            .embedded_ws_unimportant
+            .unwrap_or(d.embedded_ws_unimportant),
+        trailing_ws_unimportant: spec
+            .trailing_ws_unimportant
+            .unwrap_or(d.trailing_ws_unimportant),
         case_unimportant: spec.case_unimportant.unwrap_or(d.case_unimportant),
-        eol_style_unimportant: spec.eol_style_unimportant.unwrap_or(d.eol_style_unimportant),
+        eol_style_unimportant: spec
+            .eol_style_unimportant
+            .unwrap_or(d.eol_style_unimportant),
         encoding_unimportant: spec.encoding_unimportant.unwrap_or(d.encoding_unimportant),
     };
     (imp, spec.unimportant_elements.clone())
@@ -457,8 +506,12 @@ pub fn merge_options_from_dto(spec: &ai_protocol::Merge3OptionsSpec) -> ai_core:
             ai_protocol::MergeConflictDefault::Left => ai_core::ConflictDefault::TakeLeft,
             ai_protocol::MergeConflictDefault::Right => ai_core::ConflictDefault::TakeRight,
             ai_protocol::MergeConflictDefault::Base => ai_core::ConflictDefault::TakeBase,
-            ai_protocol::MergeConflictDefault::LeftThenRight => ai_core::ConflictDefault::TakeLeftThenRight,
-            ai_protocol::MergeConflictDefault::RightThenLeft => ai_core::ConflictDefault::TakeRightThenLeft,
+            ai_protocol::MergeConflictDefault::LeftThenRight => {
+                ai_core::ConflictDefault::TakeLeftThenRight
+            }
+            ai_protocol::MergeConflictDefault::RightThenLeft => {
+                ai_core::ConflictDefault::TakeRightThenLeft
+            }
             ai_protocol::MergeConflictDefault::Marker => ai_core::ConflictDefault::Marker,
         };
     }
@@ -499,7 +552,10 @@ fn decision_kind_to_dto(d: &ai_core::MergeDecision) -> ai_protocol::MergeDecisio
 }
 
 fn line_range_dto(r: ai_core::sections::LineRange) -> ai_protocol::LineRange {
-    ai_protocol::LineRange { start: r.start, end: r.end }
+    ai_protocol::LineRange {
+        start: r.start,
+        end: r.end,
+    }
 }
 
 /// 合并块 -> 协议 MergeChunkDto（三方行内容 + 决策状态 + 当前合成输出行）
@@ -514,7 +570,9 @@ pub fn merge_chunk_to_dto(
     use ai_core::ChunkOrigin as O;
     let decision = decisions.get(&c.id).or(c.auto_decision.as_ref());
     let one = |t: &ai_core::LineTable, r: std::ops::Range<u32>| {
-        (r.start..r.end).map(|i| t.line(i as usize).text.clone()).collect::<Vec<_>>()
+        (r.start..r.end)
+            .map(|i| t.line(i as usize).text.clone())
+            .collect::<Vec<_>>()
     };
     // 当前块输出行（决策/策略生效后；marker 行由 output 模式整体渲染，此处为空）
     let output_lines = chunk_output_lines(c, decisions, base, left, right, syn);
@@ -539,13 +597,29 @@ pub fn merge_chunk_to_dto(
         conflict_rows: conflict.map(|d| {
             d.rows
                 .iter()
-                .map(|r| ai_protocol::MergeConflictRowDto { left: r.left, right: r.right, unimportant: r.unimportant })
+                .map(|r| ai_protocol::MergeConflictRowDto {
+                    left: r.left,
+                    right: r.right,
+                    unimportant: r.unimportant,
+                })
                 .collect()
         }),
         conflict_unimportant: conflict.map(|d| d.unimportant),
-        base_lines: if c.base.is_empty() { Vec::new() } else { one(base, c.base.start..c.base.end) },
-        left_lines: if c.left.is_empty() { Vec::new() } else { one(left, c.left.start..c.left.end) },
-        right_lines: if c.right.is_empty() { Vec::new() } else { one(right, c.right.start..c.right.end) },
+        base_lines: if c.base.is_empty() {
+            Vec::new()
+        } else {
+            one(base, c.base.start..c.base.end)
+        },
+        left_lines: if c.left.is_empty() {
+            Vec::new()
+        } else {
+            one(left, c.left.start..c.left.end)
+        },
+        right_lines: if c.right.is_empty() {
+            Vec::new()
+        } else {
+            one(right, c.right.start..c.right.end)
+        },
         decided: decisions.contains_key(&c.id),
         decision: decision.map(decision_kind_to_dto),
         auto_resolved: c.auto_decision.is_some(),
@@ -564,7 +638,9 @@ fn chunk_output_lines(
     syn: &ai_core::SynthesizeOptions,
 ) -> Vec<String> {
     let take = |t: &ai_core::LineTable, r: std::ops::Range<u32>| {
-        (r.start..r.end).map(|i| t.line(i as usize).text.clone()).collect::<Vec<_>>()
+        (r.start..r.end)
+            .map(|i| t.line(i as usize).text.clone())
+            .collect::<Vec<_>>()
     };
     let decision = decisions.get(&c.id).or(c.auto_decision.as_ref());
     match decision {
@@ -585,9 +661,9 @@ fn chunk_output_lines(
             ai_core::MergeDecision::Manual(lines) => lines.clone(),
         },
         None => match c.origin {
-            ai_core::ChunkOrigin::Stable | ai_core::ChunkOrigin::LeftOnly | ai_core::ChunkOrigin::BothChanged => {
-                take(left, c.left.start..c.left.end)
-            }
+            ai_core::ChunkOrigin::Stable
+            | ai_core::ChunkOrigin::LeftOnly
+            | ai_core::ChunkOrigin::BothChanged => take(left, c.left.start..c.left.end),
             ai_core::ChunkOrigin::RightOnly => take(right, c.right.start..c.right.end),
             ai_core::ChunkOrigin::Conflict => match &syn.unresolved {
                 ai_core::UnresolvedPolicy::TakeLeft => take(left, c.left.start..c.left.end),
@@ -658,10 +734,18 @@ pub fn table_row_to_dto(r: &ai_core::table::TableDiffRow) -> ai_protocol::TableR
                 right: c.right.clone(),
                 status: match c.status {
                     ai_core::table::CellDiffStatus::Same => ai_protocol::TableCellStatus::Same,
-                    ai_core::table::CellDiffStatus::UnimportantDiff => ai_protocol::TableCellStatus::UnimportantDiff,
-                    ai_core::table::CellDiffStatus::ImportantDiff => ai_protocol::TableCellStatus::ImportantDiff,
-                    ai_core::table::CellDiffStatus::LeftOnly => ai_protocol::TableCellStatus::LeftOnly,
-                    ai_core::table::CellDiffStatus::RightOnly => ai_protocol::TableCellStatus::RightOnly,
+                    ai_core::table::CellDiffStatus::UnimportantDiff => {
+                        ai_protocol::TableCellStatus::UnimportantDiff
+                    }
+                    ai_core::table::CellDiffStatus::ImportantDiff => {
+                        ai_protocol::TableCellStatus::ImportantDiff
+                    }
+                    ai_core::table::CellDiffStatus::LeftOnly => {
+                        ai_protocol::TableCellStatus::LeftOnly
+                    }
+                    ai_core::table::CellDiffStatus::RightOnly => {
+                        ai_protocol::TableCellStatus::RightOnly
+                    }
                 },
             })
             .collect(),
@@ -677,8 +761,12 @@ pub fn patch_report_to_dto(r: &ai_core::patch::PatchApplyReport) -> ai_protocol:
             path: f.path.clone(),
             status: match f.status {
                 ai_core::patch::FileApplyStatus::Applied => ai_protocol::PatchFileStatus::Applied,
-                ai_core::patch::FileApplyStatus::AlreadyApplied => ai_protocol::PatchFileStatus::AlreadyApplied,
-                ai_core::patch::FileApplyStatus::SkippedBinary => ai_protocol::PatchFileStatus::SkippedBinary,
+                ai_core::patch::FileApplyStatus::AlreadyApplied => {
+                    ai_protocol::PatchFileStatus::AlreadyApplied
+                }
+                ai_core::patch::FileApplyStatus::SkippedBinary => {
+                    ai_protocol::PatchFileStatus::SkippedBinary
+                }
                 ai_core::patch::FileApplyStatus::NoOp => ai_protocol::PatchFileStatus::NoOp,
                 ai_core::patch::FileApplyStatus::Failed => ai_protocol::PatchFileStatus::Failed,
             },
@@ -687,8 +775,22 @@ pub fn patch_report_to_dto(r: &ai_core::patch::PatchApplyReport) -> ai_protocol:
             detail: f.detail.clone(),
         })
         .collect();
-    let applied = r.results.iter().filter(|f| matches!(f.status, ai_core::patch::FileApplyStatus::Applied)).count();
-    let failed = r.results.iter().filter(|f| matches!(f.status, ai_core::patch::FileApplyStatus::Failed | ai_core::patch::FileApplyStatus::AlreadyApplied)).count();
+    let applied = r
+        .results
+        .iter()
+        .filter(|f| matches!(f.status, ai_core::patch::FileApplyStatus::Applied))
+        .count();
+    let failed = r
+        .results
+        .iter()
+        .filter(|f| {
+            matches!(
+                f.status,
+                ai_core::patch::FileApplyStatus::Failed
+                    | ai_core::patch::FileApplyStatus::AlreadyApplied
+            )
+        })
+        .count();
     ai_protocol::PatchApplyResult {
         total: u32::try_from(r.total).unwrap_or(u32::MAX),
         applied: u32::try_from(applied).unwrap_or(u32::MAX),
@@ -713,16 +815,37 @@ pub fn dir_execute_op_from_dto(op: &ai_protocol::DirExecuteOp) -> Result<ai_dir:
     };
     let target = op.target_side.map(side_of).unwrap_or(opposite);
     match op.kind {
-        ai_protocol::DirExecuteOpKind::Copy => Ok(ai_dir::FileOp::Copy { path: op.path.clone(), target_path: op.target_path.clone(), from: side, to: target }),
-        ai_protocol::DirExecuteOpKind::Move => Ok(ai_dir::FileOp::Move { path: op.path.clone(), target_path: op.target_path.clone(), from: side, to: target }),
+        ai_protocol::DirExecuteOpKind::Copy => Ok(ai_dir::FileOp::Copy {
+            path: op.path.clone(),
+            target_path: op.target_path.clone(),
+            from: side,
+            to: target,
+        }),
+        ai_protocol::DirExecuteOpKind::Move => Ok(ai_dir::FileOp::Move {
+            path: op.path.clone(),
+            target_path: op.target_path.clone(),
+            from: side,
+            to: target,
+        }),
         ai_protocol::DirExecuteOpKind::Rename => Ok(ai_dir::FileOp::Rename {
             path: op.path.clone(),
             side,
             new_name: op.new_name.clone().ok_or("rename 操作需要 newName 字段")?,
         }),
-        ai_protocol::DirExecuteOpKind::Delete => Ok(ai_dir::FileOp::Delete { path: op.path.clone(), side }),
-        ai_protocol::DirExecuteOpKind::Touch => Ok(ai_dir::FileOp::Touch { path: op.path.clone(), target_path: op.target_path.clone(), side, mtime_ms: op.mtime_ms.unwrap_or(0) }),
-        ai_protocol::DirExecuteOpKind::Mkdir => Ok(ai_dir::FileOp::Mkdir { path: op.path.clone(), side }),
+        ai_protocol::DirExecuteOpKind::Delete => Ok(ai_dir::FileOp::Delete {
+            path: op.path.clone(),
+            side,
+        }),
+        ai_protocol::DirExecuteOpKind::Touch => Ok(ai_dir::FileOp::Touch {
+            path: op.path.clone(),
+            target_path: op.target_path.clone(),
+            side,
+            mtime_ms: op.mtime_ms.unwrap_or(0),
+        }),
+        ai_protocol::DirExecuteOpKind::Mkdir => Ok(ai_dir::FileOp::Mkdir {
+            path: op.path.clone(),
+            side,
+        }),
     }
 }
 
@@ -738,7 +861,12 @@ pub fn dir_execute_op_to_dto(op: &ai_dir::FileOp) -> ai_protocol::DirExecuteOp {
         Side::Right => Side::Left,
     };
     match op {
-        ai_dir::FileOp::Copy { path, target_path, from, to } => ai_protocol::DirExecuteOp {
+        ai_dir::FileOp::Copy {
+            path,
+            target_path,
+            from,
+            to,
+        } => ai_protocol::DirExecuteOp {
             kind: ai_protocol::DirExecuteOpKind::Copy,
             path: path.clone(),
             side: side_dto(*from),
@@ -747,7 +875,12 @@ pub fn dir_execute_op_to_dto(op: &ai_dir::FileOp) -> ai_protocol::DirExecuteOp {
             new_name: None,
             mtime_ms: None,
         },
-        ai_dir::FileOp::Move { path, target_path, from, to } => ai_protocol::DirExecuteOp {
+        ai_dir::FileOp::Move {
+            path,
+            target_path,
+            from,
+            to,
+        } => ai_protocol::DirExecuteOp {
             kind: ai_protocol::DirExecuteOpKind::Move,
             path: path.clone(),
             side: side_dto(*from),
@@ -756,7 +889,11 @@ pub fn dir_execute_op_to_dto(op: &ai_dir::FileOp) -> ai_protocol::DirExecuteOp {
             new_name: None,
             mtime_ms: None,
         },
-        ai_dir::FileOp::Rename { path, side, new_name } => ai_protocol::DirExecuteOp {
+        ai_dir::FileOp::Rename {
+            path,
+            side,
+            new_name,
+        } => ai_protocol::DirExecuteOp {
             kind: ai_protocol::DirExecuteOpKind::Rename,
             path: path.clone(),
             side: side_dto(*side),
@@ -774,7 +911,12 @@ pub fn dir_execute_op_to_dto(op: &ai_dir::FileOp) -> ai_protocol::DirExecuteOp {
             new_name: None,
             mtime_ms: None,
         },
-        ai_dir::FileOp::Touch { path, target_path, side, mtime_ms } => ai_protocol::DirExecuteOp {
+        ai_dir::FileOp::Touch {
+            path,
+            target_path,
+            side,
+            mtime_ms,
+        } => ai_protocol::DirExecuteOp {
             kind: ai_protocol::DirExecuteOpKind::Touch,
             path: path.clone(),
             side: side_dto(*side),
@@ -929,7 +1071,9 @@ pub fn dir_merge_exec_kind_from_str(s: &str) -> ai_protocol::DirMergeExecKind {
     }
 }
 
-pub fn dir_merge_exec_status_to_dto(s: ai_dir::sync::RecordStatus) -> ai_protocol::DirMergeExecStatus {
+pub fn dir_merge_exec_status_to_dto(
+    s: ai_dir::sync::RecordStatus,
+) -> ai_protocol::DirMergeExecStatus {
     use ai_dir::sync::RecordStatus as S;
     use ai_protocol::DirMergeExecStatus as D;
     match s {
@@ -1066,17 +1210,31 @@ pub fn report_options_from_dto(p: &ai_protocol::ReportGenerateParams) -> ai_core
         },
         dir_display: match p.dir_display.unwrap_or_default() {
             ai_protocol::ReportDirDisplayFilter::All => ai_core::DirDisplayFilter::All,
-            ai_protocol::ReportDirDisplayFilter::Mismatches => ai_core::DirDisplayFilter::Mismatches,
+            ai_protocol::ReportDirDisplayFilter::Mismatches => {
+                ai_core::DirDisplayFilter::Mismatches
+            }
             ai_protocol::ReportDirDisplayFilter::NoOrphans => ai_core::DirDisplayFilter::NoOrphans,
-            ai_protocol::ReportDirDisplayFilter::MismatchesNoOrphans => ai_core::DirDisplayFilter::MismatchesNoOrphans,
+            ai_protocol::ReportDirDisplayFilter::MismatchesNoOrphans => {
+                ai_core::DirDisplayFilter::MismatchesNoOrphans
+            }
             ai_protocol::ReportDirDisplayFilter::Orphans => ai_core::DirDisplayFilter::Orphans,
             ai_protocol::ReportDirDisplayFilter::Matches => ai_core::DirDisplayFilter::Matches,
             ai_protocol::ReportDirDisplayFilter::LeftNewer => ai_core::DirDisplayFilter::LeftNewer,
-            ai_protocol::ReportDirDisplayFilter::RightNewer => ai_core::DirDisplayFilter::RightNewer,
-            ai_protocol::ReportDirDisplayFilter::LeftNewerOrphans => ai_core::DirDisplayFilter::LeftNewerOrphans,
-            ai_protocol::ReportDirDisplayFilter::RightNewerOrphans => ai_core::DirDisplayFilter::RightNewerOrphans,
-            ai_protocol::ReportDirDisplayFilter::LeftOrphans => ai_core::DirDisplayFilter::LeftOrphans,
-            ai_protocol::ReportDirDisplayFilter::RightOrphans => ai_core::DirDisplayFilter::RightOrphans,
+            ai_protocol::ReportDirDisplayFilter::RightNewer => {
+                ai_core::DirDisplayFilter::RightNewer
+            }
+            ai_protocol::ReportDirDisplayFilter::LeftNewerOrphans => {
+                ai_core::DirDisplayFilter::LeftNewerOrphans
+            }
+            ai_protocol::ReportDirDisplayFilter::RightNewerOrphans => {
+                ai_core::DirDisplayFilter::RightNewerOrphans
+            }
+            ai_protocol::ReportDirDisplayFilter::LeftOrphans => {
+                ai_core::DirDisplayFilter::LeftOrphans
+            }
+            ai_protocol::ReportDirDisplayFilter::RightOrphans => {
+                ai_core::DirDisplayFilter::RightOrphans
+            }
         },
         ignore_unimportant: p.ignore_unimportant.unwrap_or(false),
         line_numbers: p.line_numbers.unwrap_or(false),
@@ -1142,8 +1300,16 @@ mod tests {
     fn importance_spec_maps_to_core() {
         let spec = ai_protocol::ImportanceOptionsSpec::default();
         let imp = importance_from_dto(&spec);
-        assert_eq!(imp, ai_core::ImportanceOptions::default(), "缺省 DTO == core 默认");
-        let spec = ai_protocol::ImportanceOptionsSpec { case_unimportant: true, trailing_ws_unimportant: true, ..Default::default() };
+        assert_eq!(
+            imp,
+            ai_core::ImportanceOptions::default(),
+            "缺省 DTO == core 默认"
+        );
+        let spec = ai_protocol::ImportanceOptionsSpec {
+            case_unimportant: true,
+            trailing_ws_unimportant: true,
+            ..Default::default()
+        };
         let imp = importance_from_dto(&spec);
         assert!(imp.case_unimportant && imp.trailing_ws_unimportant);
         assert!(!imp.leading_ws_unimportant);
@@ -1171,8 +1337,20 @@ mod tests {
         let m = manual_from_dto(&spec);
         assert_eq!(m.align_anchors.len(), 1);
         assert_eq!(m.align_anchors[0].left.len(), 2);
-        assert_eq!(m.isolate, vec![(ai_core::options::DiffSide::Right, ai_core::sections::LineRange::new(4, 6))]);
-        assert_eq!(m.ignore, vec![(ai_core::options::DiffSide::Left, ai_core::sections::LineRange::new(7, 8))]);
+        assert_eq!(
+            m.isolate,
+            vec![(
+                ai_core::options::DiffSide::Right,
+                ai_core::sections::LineRange::new(4, 6)
+            )]
+        );
+        assert_eq!(
+            m.ignore,
+            vec![(
+                ai_core::options::DiffSide::Left,
+                ai_core::sections::LineRange::new(7, 8)
+            )]
+        );
         assert!(m.never_align_important && m.proximity_match);
         assert_eq!(m.skew_tolerance, 0, "0 = core 层取默认偏斜容差");
     }
@@ -1197,7 +1375,10 @@ mod tests {
         assert_eq!(dto.right_line, 2);
         assert_eq!(dto.spans.len(), 1);
         assert_eq!(dto.spans[0].kind, ai_protocol::InlineSpanKind::Replace);
-        assert_eq!(dto.spans[0].left, Some(ai_protocol::CharRange { start: 0, end: 3 }));
+        assert_eq!(
+            dto.spans[0].left,
+            Some(ai_protocol::CharRange { start: 0, end: 3 })
+        );
         assert!(!dto.truncated);
     }
 
@@ -1206,13 +1387,19 @@ mod tests {
         let lt = ai_core::LineTable::from_text("hello\n");
         let rt = ai_core::LineTable::from_text("Hello  \n");
         let opts = ai_core::TextDiffOptions::default();
-        let imp = ai_core::ImportanceOptions { trailing_ws_unimportant: true, ..Default::default() };
+        let imp = ai_core::ImportanceOptions {
+            trailing_ws_unimportant: true,
+            ..Default::default()
+        };
         let e = line_keys_entry(ai_core::options::DiffSide::Left, 0, &lt, 0, &opts, &imp);
         assert_eq!(e.side, ai_protocol::DiffSide::Left);
         assert_eq!(e.line, 0);
         assert_eq!(e.raw, "hello");
         let e = line_keys_entry(ai_core::options::DiffSide::Right, 0, &rt, 0, &opts, &imp);
         assert_eq!(e.raw, "Hello  ");
-        assert_eq!(e.importance, "Hello", "尾随空白不重要键折叠（大小写仍区分）");
+        assert_eq!(
+            e.importance, "Hello",
+            "尾随空白不重要键折叠（大小写仍区分）"
+        );
     }
 }

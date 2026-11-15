@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use ai_core::LineTable;
-use ai_core::{MergeDecision, MarkerOptions, MarkerStyle, SynthesizeOptions, UnresolvedPolicy};
+use ai_core::{MarkerOptions, MarkerStyle, MergeDecision, SynthesizeOptions, UnresolvedPolicy};
 use ai_protocol::{error::codes, RpcErrorObject};
 use ai_vfs::VfsPath;
 use serde_json::json;
@@ -19,8 +19,8 @@ use tokio::sync::Mutex;
 use crate::batch;
 use crate::cancel::CancelRegistry;
 use crate::mapping;
-use crate::server::{DirSessionData, Session, SessionMap, SideEncoding, TextSessionData};
 use crate::pump;
+use crate::server::{DirSessionData, Session, SessionMap, SideEncoding, TextSessionData};
 
 /// 会话表 + 共享状态的容器
 pub struct HandlerCtx {
@@ -205,7 +205,9 @@ fn initialize(params: Option<serde_json::Value>) -> Result<Handled, RpcErrorObje
         },
         license: ai_protocol::LicenseCapabilities { pro_unlocked: true },
     };
-    Ok(Handled::Value(serde_json::to_value(&result).expect("initialize 结果可序列化")))
+    Ok(Handled::Value(
+        serde_json::to_value(&result).expect("initialize 结果可序列化"),
+    ))
 }
 
 /// 是否使用 P2 会话模型（任一 P2 能力出现）
@@ -308,7 +310,11 @@ async fn dir_open_sync(
         let mut sessions = ctx.sessions.lock().await;
         sessions.insert(
             params.session_id.clone(),
-            Session::Dir(DirSessionData { model: None, scan: Some(scan_result.clone()), roots: Some((left.clone(), right.clone())) }),
+            Session::Dir(DirSessionData {
+                model: None,
+                scan: Some(scan_result.clone()),
+                roots: Some((left.clone(), right.clone())),
+            }),
         );
     }
 
@@ -350,7 +356,8 @@ async fn dir_open_model(
         // 非惰性（仅过滤器/平铺/对齐）：完整内联扫描，行为接近 P0 同步路径
         target_depth.unwrap_or(u32::MAX)
     };
-    let mut opts = ai_dir::DirSessionOptions::new(params.criteria.clone(), Arc::new(ai_dir::ByNameAligner));
+    let mut opts =
+        ai_dir::DirSessionOptions::new(params.criteria.clone(), Arc::new(ai_dir::ByNameAligner));
     opts.importance = dir_importance(&params.rules);
     opts.target_depth = target_depth;
     opts.visible_depth = visible_depth;
@@ -363,7 +370,12 @@ async fn dir_open_model(
     opts.manual_pairs = params
         .manual_align
         .iter()
-        .flat_map(|pairs| pairs.iter().map(|p| (p.left.clone(), p.right.clone())).collect::<Vec<_>>())
+        .flat_map(|pairs| {
+            pairs
+                .iter()
+                .map(|p| (p.left.clone(), p.right.clone()))
+                .collect::<Vec<_>>()
+        })
         .collect();
 
     let (model, first) = ai_dir::DirModel::open(
@@ -398,7 +410,11 @@ async fn dir_open_model(
         let mut sessions = ctx.sessions.lock().await;
         sessions.insert(
             params.session_id.clone(),
-            Session::Dir(DirSessionData { model: Some(model.clone()), scan: None, roots: Some((left.clone(), right.clone())) }),
+            Session::Dir(DirSessionData {
+                model: Some(model.clone()),
+                scan: None,
+                roots: Some((left.clone(), right.clone())),
+            }),
         );
     }
 
@@ -426,7 +442,11 @@ async fn dir_open_model(
             &b,
             first.stats,
             Some(first.progress),
-            if i == 0 { first.removals.clone() } else { Vec::new() },
+            if i == 0 {
+                first.removals.clone()
+            } else {
+                Vec::new()
+            },
         );
         if i == 0 {
             delta.scan_errors = batch::scan_issues(&first.scan_errors);
@@ -527,7 +547,10 @@ async fn dir_expand(
     let delta = model.take_delta().await;
     let stats = model.stats_snapshot();
     let progress = model.progress();
-    let rev = delta.as_ref().map(|d| d.rev).unwrap_or(model.rev_snapshot());
+    let rev = delta
+        .as_ref()
+        .map(|d| d.rev)
+        .unwrap_or(model.rev_snapshot());
     if let Some(d) = &delta {
         push_delta(&out, &params.session_id, d, ctx.max_batch_rows).await;
     }
@@ -538,7 +561,9 @@ async fn dir_expand(
         stats,
         progress: Some(progress),
     };
-    Ok(Handled::Value(serde_json::to_value(&response).expect("dir/expand 结果可序列化")))
+    Ok(Handled::Value(
+        serde_json::to_value(&response).expect("dir/expand 结果可序列化"),
+    ))
 }
 
 /// dir/filter：名称/其他过滤（重扫）+ 显示过滤/抑制/平铺（仅显示）
@@ -550,10 +575,15 @@ async fn dir_filter(
     let params: ai_protocol::DirFilterParams = parse_params(params)?;
     let model = dir_model(&ctx.sessions, &params.session_id).await?;
     if params.rescan == Some(true) {
-        model.refresh().await.map_err(|e| mapping::dir_scan_error_to_rpc(&e))?;
+        model
+            .refresh()
+            .await
+            .map_err(|e| mapping::dir_scan_error_to_rpc(&e))?;
         model.start_background();
     } else if params.name_filter.is_some() || params.other_filter.is_some() {
-        model.update_filters(params.name_filter.clone(), params.other_filter.clone()).await
+        model
+            .update_filters(params.name_filter.clone(), params.other_filter.clone())
+            .await
             .map_err(|e| mapping::dir_scan_error_to_rpc(&e))?;
         model.start_background(); // 重扫后的后台推进（幂等）
     }
@@ -562,7 +592,10 @@ async fn dir_filter(
     }
     let delta = model.take_delta().await;
     let stats = model.stats_snapshot();
-    let rev = delta.as_ref().map(|d| d.rev).unwrap_or(model.rev_snapshot());
+    let rev = delta
+        .as_ref()
+        .map(|d| d.rev)
+        .unwrap_or(model.rev_snapshot());
     if let Some(d) = &delta {
         push_delta(&out, &params.session_id, d, ctx.max_batch_rows).await;
     }
@@ -576,7 +609,9 @@ async fn dir_filter(
         hidden_rows: hidden,
         stats,
     };
-    Ok(Handled::Value(serde_json::to_value(&response).expect("dir/filter 结果可序列化")))
+    Ok(Handled::Value(
+        serde_json::to_value(&response).expect("dir/filter 结果可序列化"),
+    ))
 }
 
 /// dir/align：手动对齐 / 解除对齐（FR-DIR-022）
@@ -588,13 +623,26 @@ async fn dir_align(
     let params: ai_protocol::DirAlignParams = parse_params(params)?;
     let model = dir_model(&ctx.sessions, &params.session_id).await?;
     let updated = match (&params.left, &params.right, &params.unalign) {
-        (Some(l), Some(r), _) => model.align(l, r).await.map_err(|e| mapping::dir_scan_error_to_rpc(&e))?,
-        (None, None, Some(p)) => model.unalign(p).await.map_err(|e| mapping::dir_scan_error_to_rpc(&e))?,
-        _ => return Err(bad_params("dir/align 需要 left+right（对齐）或 unalign（解除）")),
+        (Some(l), Some(r), _) => model
+            .align(l, r)
+            .await
+            .map_err(|e| mapping::dir_scan_error_to_rpc(&e))?,
+        (None, None, Some(p)) => model
+            .unalign(p)
+            .await
+            .map_err(|e| mapping::dir_scan_error_to_rpc(&e))?,
+        _ => {
+            return Err(bad_params(
+                "dir/align 需要 left+right（对齐）或 unalign（解除）",
+            ))
+        }
     };
     let delta = model.take_delta().await;
     let stats = model.stats_snapshot();
-    let rev = delta.as_ref().map(|d| d.rev).unwrap_or(model.rev_snapshot());
+    let rev = delta
+        .as_ref()
+        .map(|d| d.rev)
+        .unwrap_or(model.rev_snapshot());
     if let Some(d) = &delta {
         push_delta(&out, &params.session_id, d, ctx.max_batch_rows).await;
     }
@@ -604,7 +652,9 @@ async fn dir_align(
         updated_rows: updated,
         stats,
     };
-    Ok(Handled::Value(serde_json::to_value(&response).expect("dir/align 结果可序列化")))
+    Ok(Handled::Value(
+        serde_json::to_value(&response).expect("dir/align 结果可序列化"),
+    ))
 }
 
 /// dir/operate：生成同步操作计划（不执行；SYNC-002/DMRG-003 数据层）
@@ -629,7 +679,9 @@ async fn dir_operate(
         total,
         plan,
     };
-    Ok(Handled::Value(serde_json::to_value(&response).expect("dir/operate 结果可序列化")))
+    Ok(Handled::Value(
+        serde_json::to_value(&response).expect("dir/operate 结果可序列化"),
+    ))
 }
 
 /// dir/compareContent：手动内容比较（R3-16，FR-DIR-012 三方式 + 五态结果）
@@ -670,17 +722,17 @@ async fn dir_model(
     id: &str,
 ) -> Result<Arc<ai_dir::DirModel>, RpcErrorObject> {
     let sessions = sessions.lock().await;
-    let session = sessions
-        .get(id)
-        .ok_or_else(|| session_not_found(id))?;
+    let session = sessions.get(id).ok_or_else(|| session_not_found(id))?;
     match session {
         Session::Dir(data) => data.model.clone().ok_or_else(|| {
             bad_params("该会话未启用 P2 会话模型（lazyScan/过滤器/平铺/对齐任一即可启用）")
         }),
-        Session::Text(_) | Session::Merge(_) | Session::DirMerge(_) | Session::Table(_) | Session::Hex(_)
-        | Session::Picture(_) => {
-            Err(bad_params(format!("会话不是目录会话: {id}")))
-        }
+        Session::Text(_)
+        | Session::Merge(_)
+        | Session::DirMerge(_)
+        | Session::Table(_)
+        | Session::Hex(_)
+        | Session::Picture(_) => Err(bad_params(format!("会话不是目录会话: {id}"))),
     }
 }
 
@@ -699,7 +751,11 @@ async fn push_delta(
             &b,
             d.stats,
             Some(d.progress),
-            if i == 0 { d.removals.clone() } else { Vec::new() },
+            if i == 0 {
+                d.removals.clone()
+            } else {
+                Vec::new()
+            },
         );
         if i == 0 {
             delta.scan_errors = batch::scan_issues(&d.scan_errors);
@@ -741,7 +797,10 @@ async fn text_open(
     let rt = LineTable::from_text(&right_dec.text);
 
     // P3：骨架选项 + 重要性模型 + 手动对齐（无新参数时与 P0 diff_text 行为一致）
-    let mut config = ai_core::DiffConfig { base: mapping::text_options_from_dto(&opts_dto), ..ai_core::DiffConfig::default() };
+    let mut config = ai_core::DiffConfig {
+        base: mapping::text_options_from_dto(&opts_dto),
+        ..ai_core::DiffConfig::default()
+    };
     if let Some(spec) = &params.importance {
         config.importance = mapping::importance_from_dto(spec);
     }
@@ -813,7 +872,9 @@ async fn text_open(
         left_encoding: left_dec.encoding.to_string(),
         right_encoding: right_dec.encoding.to_string(),
     };
-    Ok(Handled::Value(serde_json::to_value(&result).expect("text/open 结果可序列化")))
+    Ok(Handled::Value(
+        serde_json::to_value(&result).expect("text/open 结果可序列化"),
+    ))
 }
 
 /// text/edit：编辑增量落行表 -> 按会话配置重 diff -> 应答权威 sections（R3-18）。
@@ -1128,10 +1189,12 @@ async fn with_text_session<T>(
     let session = sessions.get_mut(id).ok_or_else(|| session_not_found(id))?;
     match session {
         Session::Text(data) => f(data),
-        Session::Dir(_) | Session::Merge(_) | Session::DirMerge(_) | Session::Table(_) | Session::Hex(_)
-        | Session::Picture(_) => {
-            Err(bad_params(format!("会话不是文本会话: {id}")))
-        }
+        Session::Dir(_)
+        | Session::Merge(_)
+        | Session::DirMerge(_)
+        | Session::Table(_)
+        | Session::Hex(_)
+        | Session::Picture(_) => Err(bad_params(format!("会话不是文本会话: {id}"))),
     }
 }
 
@@ -1156,7 +1219,11 @@ fn compute_inline(
     for k in 0..n {
         let li = l.start as usize + k;
         let ri = r.start as usize + k;
-        let result = ai_core::inline_diff_line(&data.left.line(li).text, &data.right.line(ri).text, &inline_opts);
+        let result = ai_core::inline_diff_line(
+            &data.left.line(li).text,
+            &data.right.line(ri).text,
+            &inline_opts,
+        );
         any_truncated |= result.truncated;
         dtos.push(mapping::inline_line_diff_to_dto(&ai_core::InlineLineDiff {
             left_line: li as u32,
@@ -1213,9 +1280,18 @@ async fn text_sections(
             // core SectionEvent::ImportanceUpdate 语义：一组 ids 共享一个重要性；
             // 按 Importance 枚举序分组推送（顺序确定，录制/回放友好）
             let groups: [(ai_protocol::Importance, ai_core::sections::Importance); 3] = [
-                (ai_protocol::Importance::Important, ai_core::sections::Importance::Important),
-                (ai_protocol::Importance::Unimportant, ai_core::sections::Importance::Unimportant),
-                (ai_protocol::Importance::Ignored, ai_core::sections::Importance::Ignored),
+                (
+                    ai_protocol::Importance::Important,
+                    ai_core::sections::Importance::Important,
+                ),
+                (
+                    ai_protocol::Importance::Unimportant,
+                    ai_core::sections::Importance::Unimportant,
+                ),
+                (
+                    ai_protocol::Importance::Ignored,
+                    ai_core::sections::Importance::Ignored,
+                ),
             ];
             let sections_snapshot =
                 with_text_session(&ctx.sessions, &session_id, |data| Ok(data.sections.clone()))
@@ -1229,7 +1305,8 @@ async fn text_sections(
                 if ids.is_empty() {
                     continue;
                 }
-                let rev = with_text_session(&ctx.sessions, &session_id, |data| Ok(data.rev)).await?;
+                let rev =
+                    with_text_session(&ctx.sessions, &session_id, |data| Ok(data.rev)).await?;
                 let payload = ai_protocol::TextSectionsNotification {
                     session_id: session_id.clone(),
                     rev,
@@ -1254,7 +1331,9 @@ async fn text_sections(
     let result = with_text_session(&ctx.sessions, &session_id, |data| {
         let total = u32::try_from(data.sections.len()).unwrap_or(u32::MAX);
         let start = params.offset.min(total) as usize;
-        let end = start.saturating_add(params.count as usize).min(data.sections.len());
+        let end = start
+            .saturating_add(params.count as usize)
+            .min(data.sections.len());
         let window = start..end;
 
         // Change section 行内懒计算（NotComputed 才算；已算过直接取状态）
@@ -1284,7 +1363,8 @@ async fn text_sections(
             for sec in &data.sections[window] {
                 match sec.kind {
                     ai_core::sections::SectionKind::Equal => {}
-                    ai_core::sections::SectionKind::Change | ai_core::sections::SectionKind::Delete => {
+                    ai_core::sections::SectionKind::Change
+                    | ai_core::sections::SectionKind::Delete => {
                         let l = sec.left.expect("Change/Delete 必有左区间");
                         for i in l.start..l.end {
                             entries.push(mapping::line_keys_entry(
@@ -1374,11 +1454,23 @@ async fn text_lines(
         let (table_len, texts): (usize, Vec<String>) = match params.side {
             ai_protocol::DiffSide::Left => {
                 let t = &data.left;
-                (t.len(), t.lines_range(0, t.len()).iter().map(|e| e.text.clone()).collect())
+                (
+                    t.len(),
+                    t.lines_range(0, t.len())
+                        .iter()
+                        .map(|e| e.text.clone())
+                        .collect(),
+                )
             }
             ai_protocol::DiffSide::Right => {
                 let t = &data.right;
-                (t.len(), t.lines_range(0, t.len()).iter().map(|e| e.text.clone()).collect())
+                (
+                    t.len(),
+                    t.lines_range(0, t.len())
+                        .iter()
+                        .map(|e| e.text.clone())
+                        .collect(),
+                )
             }
         };
         let start = (params.start as usize).min(table_len);
@@ -1391,7 +1483,9 @@ async fn text_lines(
         })
     })
     .await?;
-    Ok(Handled::Value(serde_json::to_value(&result).expect("text/lines 结果可序列化")))
+    Ok(Handled::Value(
+        serde_json::to_value(&result).expect("text/lines 结果可序列化"),
+    ))
 }
 
 /// text/inlineDiff：单个 section 的行内差异懒计算（能力位 inlineDiff=true）
@@ -1440,7 +1534,9 @@ async fn text_inline_diff(
         })
     })
     .await?;
-    Ok(Handled::Value(serde_json::to_value(&result).expect("text/inlineDiff 结果可序列化")))
+    Ok(Handled::Value(
+        serde_json::to_value(&result).expect("text/inlineDiff 结果可序列化"),
+    ))
 }
 
 /// session/close：幂等关闭（不存在也返回成功）；目录会话取消后台扫描
@@ -1558,7 +1654,11 @@ async fn merge3_open(
                 right,
                 model,
                 options,
-                labels: (params.base.clone(), params.left.clone(), params.right.clone()),
+                labels: (
+                    params.base.clone(),
+                    params.left.clone(),
+                    params.right.clone(),
+                ),
                 encoding: SideEncoding::from_decoded(&base_dec),
                 decisions: HashMap::new(),
                 rev: 0,
@@ -1575,7 +1675,9 @@ async fn merge3_open(
         conflict_count,
         rev: 0,
     };
-    Ok(Handled::Value(serde_json::to_value(&result).expect("merge3/open 结果可序列化")))
+    Ok(Handled::Value(
+        serde_json::to_value(&result).expect("merge3/open 结果可序列化"),
+    ))
 }
 
 /// 取合并会话（可变访问；会话表锁内不做重活/不做 await）
@@ -1600,7 +1702,10 @@ fn session_syn_options(data: &crate::server::MergeSessionData) -> SynthesizeOpti
 }
 
 /// marker 模式的策略（标签 = 打开时路径原串）
-fn marker_policy_of(data: &crate::server::MergeSessionData, style: MarkerStyle) -> SynthesizeOptions {
+fn marker_policy_of(
+    data: &crate::server::MergeSessionData,
+    style: MarkerStyle,
+) -> SynthesizeOptions {
     SynthesizeOptions {
         unresolved: UnresolvedPolicy::Markers(MarkerOptions {
             style,
@@ -1620,11 +1725,22 @@ async fn merge3_sections(
     let result = with_merge_session(&ctx.sessions, &params.session_id, |data| {
         let total = u32::try_from(data.model.chunks.len()).unwrap_or(u32::MAX);
         let start = params.offset.min(total) as usize;
-        let end = start.saturating_add(params.count as usize).min(data.model.chunks.len());
+        let end = start
+            .saturating_add(params.count as usize)
+            .min(data.model.chunks.len());
         let syn = session_syn_options(data);
         let chunks: Vec<ai_protocol::MergeChunkDto> = data.model.chunks[start..end]
             .iter()
-            .map(|c| mapping::merge_chunk_to_dto(c, &data.decisions, &data.base, &data.left, &data.right, &syn))
+            .map(|c| {
+                mapping::merge_chunk_to_dto(
+                    c,
+                    &data.decisions,
+                    &data.base,
+                    &data.left,
+                    &data.right,
+                    &syn,
+                )
+            })
             .collect();
         let has_more = end < data.model.chunks.len();
         Ok(ai_protocol::MergeSectionsResult {
@@ -1637,7 +1753,9 @@ async fn merge3_sections(
         })
     })
     .await?;
-    Ok(Handled::Value(serde_json::to_value(&result).expect("merge3/sections 结果可序列化")))
+    Ok(Handled::Value(
+        serde_json::to_value(&result).expect("merge3/sections 结果可序列化"),
+    ))
 }
 
 /// text/merge3/decide：块决策提交（幂等——决策内容不变时 rev 与结果不变）
@@ -1659,7 +1777,9 @@ async fn merge3_decide(
             parsed.push((d.chunk_id, core));
         }
         // 幂等：决策内容与现状完全一致时不递增 rev、不改会话
-        let changed = parsed.iter().any(|(id, dec)| data.decisions.get(id) != Some(dec));
+        let changed = parsed
+            .iter()
+            .any(|(id, dec)| data.decisions.get(id) != Some(dec));
         if changed {
             for (id, dec) in parsed {
                 data.decisions.insert(id, dec);
@@ -1676,7 +1796,9 @@ async fn merge3_decide(
         })
     })
     .await?;
-    Ok(Handled::Value(serde_json::to_value(&result).expect("merge3/decide 结果可序列化")))
+    Ok(Handled::Value(
+        serde_json::to_value(&result).expect("merge3/decide 结果可序列化"),
+    ))
 }
 
 /// 输出合成的策略选择（output/save 共用）：Marker 显式渲染冲突标记，
@@ -1706,7 +1828,14 @@ async fn merge3_output(
     let params: ai_protocol::MergeOutputParams = parse_params(params)?;
     let result = with_merge_session(&ctx.sessions, &params.session_id, |data| {
         let syn = output_syn_options(data, params.mode, params.marker_style);
-        let out = ai_core::synthesize(&data.model, &data.base, &data.left, &data.right, &data.decisions, &syn);
+        let out = ai_core::synthesize(
+            &data.model,
+            &data.base,
+            &data.left,
+            &data.right,
+            &data.decisions,
+            &syn,
+        );
         let unresolved = data.model.unresolved_with(&data.decisions);
         let has_conflicts = !unresolved.is_empty();
         Ok(ai_protocol::MergeOutputResult {
@@ -1719,7 +1848,9 @@ async fn merge3_output(
         })
     })
     .await?;
-    Ok(Handled::Value(serde_json::to_value(&result).expect("merge3/output 结果可序列化")))
+    Ok(Handled::Value(
+        serde_json::to_value(&result).expect("merge3/output 结果可序列化"),
+    ))
 }
 
 /// text/merge3/save：把合成输出写入"合并到"目标文件（R3-20，FR-TMRG-006）。
@@ -1833,14 +1964,24 @@ async fn table_open(
     }
     let left_path = VfsPath::parse(&params.left).map_err(|e| mapping::vfs_error_to_rpc(&e))?;
     let right_path = VfsPath::parse(&params.right).map_err(|e| mapping::vfs_error_to_rpc(&e))?;
-    let left_text = ctx.vfs.read_file_text(&left_path).await.map_err(|e| mapping::vfs_error_to_rpc(&e))?;
-    let right_text = ctx.vfs.read_file_text(&right_path).await.map_err(|e| mapping::vfs_error_to_rpc(&e))?;
+    let left_text = ctx
+        .vfs
+        .read_file_text(&left_path)
+        .await
+        .map_err(|e| mapping::vfs_error_to_rpc(&e))?;
+    let right_text = ctx
+        .vfs
+        .read_file_text(&right_path)
+        .await
+        .map_err(|e| mapping::vfs_error_to_rpc(&e))?;
 
     let opts = table_options_from_dto(params.options.as_ref());
-    let left = ai_core::table::parse_table(&left_text, &opts.parse)
-        .map_err(|e| ai_protocol::error_object(codes::INVALID_PARAMS, format!("左侧表格解析失败: {e}")))?;
-    let right = ai_core::table::parse_table(&right_text, &opts.parse)
-        .map_err(|e| ai_protocol::error_object(codes::INVALID_PARAMS, format!("右侧表格解析失败: {e}")))?;
+    let left = ai_core::table::parse_table(&left_text, &opts.parse).map_err(|e| {
+        ai_protocol::error_object(codes::INVALID_PARAMS, format!("左侧表格解析失败: {e}"))
+    })?;
+    let right = ai_core::table::parse_table(&right_text, &opts.parse).map_err(|e| {
+        ai_protocol::error_object(codes::INVALID_PARAMS, format!("右侧表格解析失败: {e}"))
+    })?;
     let model = ai_core::table::diff_table_data(&left, &right, &opts);
 
     let row_count = u32::try_from(model.rows.len()).unwrap_or(u32::MAX);
@@ -1848,7 +1989,11 @@ async fn table_open(
         u32::try_from(left.row_count()).unwrap_or(u32::MAX),
         u32::try_from(right.row_count()).unwrap_or(u32::MAX),
     );
-    let columns = model.columns.iter().map(mapping::table_column_to_dto).collect();
+    let columns = model
+        .columns
+        .iter()
+        .map(mapping::table_column_to_dto)
+        .collect();
     let summary = mapping::table_summary_to_dto(&model.summary);
 
     {
@@ -1880,11 +2025,15 @@ async fn table_open(
         columns,
         summary,
     };
-    Ok(Handled::Value(serde_json::to_value(&result).expect("table/open 结果可序列化")))
+    Ok(Handled::Value(
+        serde_json::to_value(&result).expect("table/open 结果可序列化"),
+    ))
 }
 
 /// ai_protocol TableOptionsSpec -> ai_core TableDiffOptions（缺省 = 引擎默认）
-fn table_options_from_dto(spec: Option<&ai_protocol::TableOptionsSpec>) -> ai_core::table::TableDiffOptions {
+fn table_options_from_dto(
+    spec: Option<&ai_protocol::TableOptionsSpec>,
+) -> ai_core::table::TableDiffOptions {
     let mut opts = ai_core::table::TableDiffOptions::default();
     let Some(spec) = spec else { return opts };
     if let Some(d) = &spec.delimiter {
@@ -1914,16 +2063,25 @@ fn table_options_from_dto(spec: Option<&ai_protocol::TableOptionsSpec>) -> ai_co
     if let Some(sk) = spec.skew_tolerance {
         opts.skew_tolerance = sk;
     }
-    if spec.case_unimportant.is_some() || spec.whitespace.is_some() || spec.numeric_tolerance.is_some() {
+    if spec.case_unimportant.is_some()
+        || spec.whitespace.is_some()
+        || spec.numeric_tolerance.is_some()
+    {
         let mut imp = ai_core::table::TableImportance::default();
         if let Some(c) = spec.case_unimportant {
             imp.case_unimportant = c;
         }
         if let Some(w) = spec.whitespace {
             imp.whitespace = match w {
-                ai_protocol::WhitespaceMode::Significant => ai_core::options::WhitespaceMode::Significant,
-                ai_protocol::WhitespaceMode::IgnoreAmount => ai_core::options::WhitespaceMode::IgnoreAmount,
-                ai_protocol::WhitespaceMode::IgnoreAll => ai_core::options::WhitespaceMode::IgnoreAll,
+                ai_protocol::WhitespaceMode::Significant => {
+                    ai_core::options::WhitespaceMode::Significant
+                }
+                ai_protocol::WhitespaceMode::IgnoreAmount => {
+                    ai_core::options::WhitespaceMode::IgnoreAmount
+                }
+                ai_protocol::WhitespaceMode::IgnoreAll => {
+                    ai_core::options::WhitespaceMode::IgnoreAll
+                }
             };
         }
         imp.numeric_tolerance = spec.numeric_tolerance;
@@ -1941,7 +2099,9 @@ async fn table_sections(
     let result = with_table_session(&ctx.sessions, &params.session_id, |data| {
         let total = u32::try_from(data.model.rows.len()).unwrap_or(u32::MAX);
         let start = params.offset.min(total) as usize;
-        let end = start.saturating_add(params.count as usize).min(data.model.rows.len());
+        let end = start
+            .saturating_add(params.count as usize)
+            .min(data.model.rows.len());
         let rows: Vec<ai_protocol::TableRowDto> = data.model.rows[start..end]
             .iter()
             .map(mapping::table_row_to_dto)
@@ -1956,7 +2116,9 @@ async fn table_sections(
         })
     })
     .await?;
-    Ok(Handled::Value(serde_json::to_value(&result).expect("table/sections 结果可序列化")))
+    Ok(Handled::Value(
+        serde_json::to_value(&result).expect("table/sections 结果可序列化"),
+    ))
 }
 
 /// 取表格会话（可变访问；会话表锁内不做重活/不做 await）
@@ -2008,12 +2170,11 @@ async fn picture_open(
         }
     }
 
-    let result = picture::diff_bytes(&left, &right, &opts)
-        .map_err(|e| RpcErrorObject {
-            code: codes::INVALID_PARAMS,
-            message: e,
-            data: None,
-        })?;
+    let result = picture::diff_bytes(&left, &right, &opts).map_err(|e| RpcErrorObject {
+        code: codes::INVALID_PARAMS,
+        message: e,
+        data: None,
+    })?;
 
     // 块数上限保护（>10 万截断，truncated=true）
     const MAX_BLOCKS: usize = 100_000;
@@ -2064,7 +2225,9 @@ async fn picture_open(
         blocks,
         truncated,
     };
-    Ok(Handled::Value(serde_json::to_value(&out).expect("picture/open 结果可序列化")))
+    Ok(Handled::Value(
+        serde_json::to_value(&out).expect("picture/open 结果可序列化"),
+    ))
 }
 
 /// hex/open：读两侧字节流 -> 分块哈希粗对齐 + 精对齐 -> 块模型 + 每字节状态图
@@ -2079,8 +2242,16 @@ async fn hex_open(
     }
     let left_path = VfsPath::parse(&params.left).map_err(|e| mapping::vfs_error_to_rpc(&e))?;
     let right_path = VfsPath::parse(&params.right).map_err(|e| mapping::vfs_error_to_rpc(&e))?;
-    let left = ctx.vfs.read_file_bytes(&left_path).await.map_err(|e| mapping::vfs_error_to_rpc(&e))?;
-    let right = ctx.vfs.read_file_bytes(&right_path).await.map_err(|e| mapping::vfs_error_to_rpc(&e))?;
+    let left = ctx
+        .vfs
+        .read_file_bytes(&left_path)
+        .await
+        .map_err(|e| mapping::vfs_error_to_rpc(&e))?;
+    let right = ctx
+        .vfs
+        .read_file_bytes(&right_path)
+        .await
+        .map_err(|e| mapping::vfs_error_to_rpc(&e))?;
 
     let mut opts = ai_core::hex::HexOptions::default();
     if let Some(spec) = &params.options {
@@ -2137,7 +2308,9 @@ async fn hex_open(
         block_count,
         summary,
     };
-    Ok(Handled::Value(serde_json::to_value(&result).expect("hex/open 结果可序列化")))
+    Ok(Handled::Value(
+        serde_json::to_value(&result).expect("hex/open 结果可序列化"),
+    ))
 }
 
 /// 取十六进制会话（可变访问）
@@ -2175,24 +2348,33 @@ async fn hex_bytes(
         let want = (params.length.max(1) as usize).min(PAGE_BYTES).min(max_len);
         let want = want.div_ceil(ai_core::hex::HEX_LINE_BYTES) * ai_core::hex::HEX_LINE_BYTES;
         let end = (start as usize + want).min(bytes.len());
-        let lines: Vec<ai_protocol::HexLineDto> = ai_core::hex::render_hex_lines(bytes, row_index, (end - start as usize).div_ceil(ai_core::hex::HEX_LINE_BYTES))
-            .into_iter()
-            .map(|l| {
-                let b0 = l.addr as usize;
-                let b1 = (b0 + ai_core::hex::HEX_LINE_BYTES).min(bytes.len());
-                let status: String = bytes[b0..b1]
-                    .iter()
-                    .zip(&status[b0..b1])
-                    .map(|(_, s)| match s {
-                        ai_core::hex::HexByteStatus::Same => '=',
-                        ai_core::hex::HexByteStatus::Changed => 'x',
-                        ai_core::hex::HexByteStatus::Inserted => '+',
-                        ai_core::hex::HexByteStatus::Deleted => '-',
-                    })
-                    .collect();
-                ai_protocol::HexLineDto { addr: l.addr, hex: l.hex, ascii: l.ascii, status }
-            })
-            .collect();
+        let lines: Vec<ai_protocol::HexLineDto> = ai_core::hex::render_hex_lines(
+            bytes,
+            row_index,
+            (end - start as usize).div_ceil(ai_core::hex::HEX_LINE_BYTES),
+        )
+        .into_iter()
+        .map(|l| {
+            let b0 = l.addr as usize;
+            let b1 = (b0 + ai_core::hex::HEX_LINE_BYTES).min(bytes.len());
+            let status: String = bytes[b0..b1]
+                .iter()
+                .zip(&status[b0..b1])
+                .map(|(_, s)| match s {
+                    ai_core::hex::HexByteStatus::Same => '=',
+                    ai_core::hex::HexByteStatus::Changed => 'x',
+                    ai_core::hex::HexByteStatus::Inserted => '+',
+                    ai_core::hex::HexByteStatus::Deleted => '-',
+                })
+                .collect();
+            ai_protocol::HexLineDto {
+                addr: l.addr,
+                hex: l.hex,
+                ascii: l.ascii,
+                status,
+            }
+        })
+        .collect();
         let done = end >= bytes.len();
         Ok(ai_protocol::HexBytesResult {
             session_id: params.session_id.clone(),
@@ -2203,7 +2385,9 @@ async fn hex_bytes(
         })
     })
     .await?;
-    Ok(Handled::Value(serde_json::to_value(&result).expect("hex/bytes 结果可序列化")))
+    Ok(Handled::Value(
+        serde_json::to_value(&result).expect("hex/bytes 结果可序列化"),
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -2235,7 +2419,9 @@ async fn patch_apply(
     )
     .map_err(|e| ai_protocol::error_object(codes::INVALID_PARAMS, format!("补丁解析失败: {e}")))?;
     let result = mapping::patch_report_to_dto(&report);
-    Ok(Handled::Value(serde_json::to_value(&result).expect("text/patch/apply 结果可序列化")))
+    Ok(Handled::Value(
+        serde_json::to_value(&result).expect("text/patch/apply 结果可序列化"),
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -2256,10 +2442,14 @@ async fn dir_execute(
     // 会话 + 根路径（dir/open 打开时记录）
     let (roots, model, scan) = {
         let sessions = ctx.sessions.lock().await;
-        let session = sessions.get(&session_id).ok_or_else(|| session_not_found(&session_id))?;
+        let session = sessions
+            .get(&session_id)
+            .ok_or_else(|| session_not_found(&session_id))?;
         match session {
             Session::Dir(data) => (
-                data.roots.clone().ok_or_else(|| bad_params("会话缺少根路径（非目录打开路径）"))?,
+                data.roots
+                    .clone()
+                    .ok_or_else(|| bad_params("会话缺少根路径（非目录打开路径）"))?,
                 data.model.clone(),
                 data.scan.clone(),
             ),
@@ -2294,7 +2484,9 @@ async fn dir_execute(
         succeeded: report
             .succeeded
             .iter()
-            .map(|r| mapping::dir_execute_result_to_dto(r, ai_protocol::DirExecuteOpStatus::Succeeded))
+            .map(|r| {
+                mapping::dir_execute_result_to_dto(r, ai_protocol::DirExecuteOpStatus::Succeeded)
+            })
             .collect(),
         failed: report
             .failed
@@ -2304,7 +2496,9 @@ async fn dir_execute(
         skipped: report
             .skipped
             .iter()
-            .map(|r| mapping::dir_execute_result_to_dto(r, ai_protocol::DirExecuteOpStatus::Skipped))
+            .map(|r| {
+                mapping::dir_execute_result_to_dto(r, ai_protocol::DirExecuteOpStatus::Skipped)
+            })
             .collect(),
         dry_run: report.dry_run,
         cancelled: report.cancelled,
@@ -2316,7 +2510,10 @@ async fn dir_execute(
     let mut notifications = Vec::new();
     if !dry_run {
         if let Some(model) = &model {
-            model.refresh().await.map_err(|e| mapping::dir_scan_error_to_rpc(&e))?;
+            model
+                .refresh()
+                .await
+                .map_err(|e| mapping::dir_scan_error_to_rpc(&e))?;
             if let Some(d) = model.take_delta().await {
                 notifications = delta_notifications(&session_id, &d, ctx.max_batch_rows);
             }
@@ -2350,7 +2547,9 @@ async fn dir_execute(
     }
 
     if notifications.is_empty() {
-        Ok(Handled::Value(serde_json::to_value(&result).expect("dir/execute 结果可序列化")))
+        Ok(Handled::Value(
+            serde_json::to_value(&result).expect("dir/execute 结果可序列化"),
+        ))
     } else {
         Ok(Handled::WithNotifications {
             response: serde_json::to_value(&result).expect("dir/execute 结果可序列化"),
@@ -2377,19 +2576,30 @@ async fn dir_merge_scan(
 
     let result = ai_protocol::DirMergeScanResult {
         session_id: params.session_id.clone(),
-        rows: scan.rows().iter().map(mapping::dir_merge_row_to_dto).collect(),
+        rows: scan
+            .rows()
+            .iter()
+            .map(mapping::dir_merge_row_to_dto)
+            .collect(),
         stats: mapping::dir_merge_scan_stats_to_dto(&scan.stats),
     };
 
     ctx.sessions.lock().await.insert(
         params.session_id.clone(),
         Session::DirMerge(crate::server::DirMergeSessionData {
-            roots: ai_dir::MergeRoots { base, left, right, output: None },
+            roots: ai_dir::MergeRoots {
+                base,
+                left,
+                right,
+                output: None,
+            },
             scan,
         }),
     );
 
-    Ok(Handled::Value(serde_json::to_value(&result).expect("dir/mergeScan 结果可序列化")))
+    Ok(Handled::Value(
+        serde_json::to_value(&result).expect("dir/mergeScan 结果可序列化"),
+    ))
 }
 
 /// 取文件夹合并会话（不存在 / 类型不符均报 INVALID_PARAMS）
@@ -2419,7 +2629,9 @@ async fn dir_merge_plan(
         data.roots.output = Some(VfsPath::parse(out).map_err(|e| mapping::vfs_error_to_rpc(&e))?);
     }
     if target == ai_dir::MergeTarget::Output && data.roots.output.is_none() {
-        return Err(bad_params("target=output 需要提供 outputPath（第三输出目录）"));
+        return Err(bad_params(
+            "target=output 需要提供 outputPath（第三输出目录）",
+        ));
     }
 
     let decisions: std::collections::BTreeMap<String, ai_dir::MergeDecision> = params
@@ -2429,13 +2641,20 @@ async fn dir_merge_plan(
         .collect();
     let plan = ai_dir::merge3way::plan_merge(
         &data.scan.arena,
-        &ai_dir::MergePlanParams { target, decisions: &decisions },
+        &ai_dir::MergePlanParams {
+            target,
+            decisions: &decisions,
+        },
     );
 
     let result = ai_protocol::DirMergePlanResult {
         session_id: params.session_id.clone(),
         target: params.target,
-        ops: plan.ops.iter().map(mapping::dir_merge_planned_op_to_dto).collect(),
+        ops: plan
+            .ops
+            .iter()
+            .map(mapping::dir_merge_planned_op_to_dto)
+            .collect(),
         stats: mapping::dir_merge_batch_stats_to_dto(&plan.stats),
     };
 
@@ -2444,7 +2663,9 @@ async fn dir_merge_plan(
         d.roots.output = data.roots.output.clone();
     }
 
-    Ok(Handled::Value(serde_json::to_value(&result).expect("dir/mergePlan 结果可序列化")))
+    Ok(Handled::Value(
+        serde_json::to_value(&result).expect("dir/mergePlan 结果可序列化"),
+    ))
 }
 
 /// dir/mergeExecute：执行已预览的计划（复用 execute 层护栏/部分成功/取消语义）。
@@ -2462,11 +2683,16 @@ async fn dir_merge_execute(
         data.roots.output = Some(VfsPath::parse(out).map_err(|e| mapping::vfs_error_to_rpc(&e))?);
     }
     if target == ai_dir::MergeTarget::Output && data.roots.output.is_none() {
-        return Err(bad_params("target=output 需要提供 outputPath（第三输出目录）"));
+        return Err(bad_params(
+            "target=output 需要提供 outputPath（第三输出目录）",
+        ));
     }
 
-    let ops: Vec<ai_dir::MergePlannedOp> =
-        params.ops.iter().map(mapping::dir_merge_planned_op_from_dto).collect();
+    let ops: Vec<ai_dir::MergePlannedOp> = params
+        .ops
+        .iter()
+        .map(mapping::dir_merge_planned_op_from_dto)
+        .collect();
     let report = ai_dir::merge3way::run_folder_merge(
         ctx.vfs.as_ref(),
         &data.roots,
@@ -2487,11 +2713,17 @@ async fn dir_merge_execute(
         skipped: mapping::sat_u32(report.stats.skipped),
         failed: mapping::sat_u32(report.stats.failed),
         cancelled: report.cancelled,
-        details: report.details.iter().map(mapping::dir_merge_exec_detail_to_dto).collect(),
+        details: report
+            .details
+            .iter()
+            .map(mapping::dir_merge_exec_detail_to_dto)
+            .collect(),
         log: report.log.clone(),
     };
 
-    Ok(Handled::Value(serde_json::to_value(&result).expect("dir/mergeExecute 结果可序列化")))
+    Ok(Handled::Value(
+        serde_json::to_value(&result).expect("dir/mergeExecute 结果可序列化"),
+    ))
 }
 
 /// 一份 delta 数据切批为通知（removals 只随首批；同 push_delta 的返回版）
@@ -2511,7 +2743,11 @@ fn delta_notifications(
                 &b,
                 d.stats,
                 Some(d.progress),
-                if i == 0 { d.removals.clone() } else { Vec::new() },
+                if i == 0 {
+                    d.removals.clone()
+                } else {
+                    Vec::new()
+                },
             );
             if i == 0 {
                 delta.scan_errors = batch::scan_issues(&d.scan_errors);
@@ -2534,11 +2770,19 @@ async fn formats_list(
     let formats: Vec<ai_protocol::FileFormatSpec> =
         reg.formats.iter().map(mapping::format_to_spec).collect();
     let builtin_count = u32::try_from(
-        reg.formats.iter().filter(|f| f.id.starts_with("builtin-")).count(),
+        reg.formats
+            .iter()
+            .filter(|f| f.id.starts_with("builtin-"))
+            .count(),
     )
     .unwrap_or(u32::MAX);
-    let response = ai_protocol::FormatsListResult { formats, builtin_count };
-    Ok(Handled::Value(serde_json::to_value(&response).expect("formats/list 结果可序列化")))
+    let response = ai_protocol::FormatsListResult {
+        formats,
+        builtin_count,
+    };
+    Ok(Handled::Value(
+        serde_json::to_value(&response).expect("formats/list 结果可序列化"),
+    ))
 }
 
 /// formats/save：按 id 覆盖/追加重注册表（引擎会话期态；持久化由 UI 负责）
@@ -2556,7 +2800,9 @@ async fn formats_save(
         reg.formats.iter().map(mapping::format_to_spec).collect();
     drop(reg);
     let response = ai_protocol::FormatsSaveResult { saved, formats };
-    Ok(Handled::Value(serde_json::to_value(&response).expect("formats/save 结果可序列化")))
+    Ok(Handled::Value(
+        serde_json::to_value(&response).expect("formats/save 结果可序列化"),
+    ))
 }
 
 /// formats/load：从文件加载格式集（.bcpack / JSON；版本 > 1 拒绝）
@@ -2574,8 +2820,8 @@ async fn formats_load(
     let text = String::from_utf8(bytes).map_err(|_| {
         ai_protocol::error_object(codes::INVALID_ENCODING, "格式集文件不是合法 UTF-8")
     })?;
-    let pack: ai_protocol::FormatPackSpec = serde_json::from_str(&text)
-        .map_err(|e| bad_params(format!("格式集解析失败: {e}")))?;
+    let pack: ai_protocol::FormatPackSpec =
+        serde_json::from_str(&text).map_err(|e| bad_params(format!("格式集解析失败: {e}")))?;
     if pack.version > 1 {
         return Err(bad_params(format!("格式集版本不支持: {}", pack.version)));
     }
@@ -2590,7 +2836,9 @@ async fn formats_load(
         reg.formats.iter().map(mapping::format_to_spec).collect();
     drop(reg);
     let response = ai_protocol::FormatsLoadResult { loaded, formats };
-    Ok(Handled::Value(serde_json::to_value(&response).expect("formats/load 结果可序列化")))
+    Ok(Handled::Value(
+        serde_json::to_value(&response).expect("formats/load 结果可序列化"),
+    ))
 }
 
 /// rules/get：三层原始层 + 生效解析（Global → Kind → Session → FormatBinding）
@@ -2623,7 +2871,9 @@ async fn rules_get(
             })
             .collect(),
     };
-    Ok(Handled::Value(serde_json::to_value(&response).expect("rules/get 结果可序列化")))
+    Ok(Handled::Value(
+        serde_json::to_value(&response).expect("rules/get 结果可序列化"),
+    ))
 }
 
 /// rules/set：写一层（global/kind/session）；可选全量替换格式绑定
@@ -2635,7 +2885,11 @@ async fn rules_set(
     let target = match params.scope {
         ai_protocol::RuleScope::Global => ai_core::RuleTarget::Global,
         ai_protocol::RuleScope::Kind => ai_core::RuleTarget::TypeDefault(
-            params.kind.clone().filter(|k| !k.is_empty()).ok_or_else(|| bad_params("scope=kind 需要 kind"))?,
+            params
+                .kind
+                .clone()
+                .filter(|k| !k.is_empty())
+                .ok_or_else(|| bad_params("scope=kind 需要 kind"))?,
         ),
         ai_protocol::RuleScope::Session => ai_core::RuleTarget::Session(
             params
@@ -2675,7 +2929,9 @@ async fn rules_effective_response(
     let response = ai_protocol::RulesSetResult {
         effective: mapping::effective_rules_to_spec(&effective),
     };
-    Ok(Handled::Value(serde_json::to_value(&response).expect("rules/set 结果可序列化")))
+    Ok(Handled::Value(
+        serde_json::to_value(&response).expect("rules/set 结果可序列化"),
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -2696,7 +2952,9 @@ async fn report_generate(
     // 会话快照构建（持锁只做取数，渲染在锁外）
     let snap = {
         let sessions = ctx.sessions.lock().await;
-        let session = sessions.get(&params.session_id).ok_or_else(|| session_not_found(&params.session_id))?;
+        let session = sessions
+            .get(&params.session_id)
+            .ok_or_else(|| session_not_found(&params.session_id))?;
         match session {
             Session::Text(data) => {
                 ai_core::ReportSnapshot::Text(ai_core::TextSnapshot::from_tables(
@@ -2714,7 +2972,12 @@ async fn report_generate(
                     .map(|(l, r)| (l.as_str().to_string(), r.as_str().to_string()))
                     .unwrap_or_default();
                 let (rows, stats) = if let Some(model) = &data.model {
-                    let rows = model.rows_snapshot().await.iter().map(mapping::dir_row_to_report_row).collect();
+                    let rows = model
+                        .rows_snapshot()
+                        .await
+                        .iter()
+                        .map(mapping::dir_row_to_report_row)
+                        .collect();
                     let stats = mapping::dir_stats_to_report_stats(&model.stats_snapshot());
                     (rows, stats)
                 } else if let Some(scan) = &data.scan {
@@ -2727,7 +2990,12 @@ async fn report_generate(
                 } else {
                     (Vec::new(), ai_core::DirReportStats::default())
                 };
-                ai_core::ReportSnapshot::Dir(ai_core::DirSnapshot { left_label, right_label, rows, stats })
+                ai_core::ReportSnapshot::Dir(ai_core::DirSnapshot {
+                    left_label,
+                    right_label,
+                    rows,
+                    stats,
+                })
             }
             Session::Merge(data) => {
                 let unresolved = data.model.unresolved_with(&data.decisions);
@@ -2758,12 +3026,16 @@ async fn report_generate(
             }),
             // P14：图片会话暂无文本报告布局（视图批次交付 html 图片报告）
             Session::Picture(_) => {
-                return Err(bad_params("图片会话不支持 report/generate（P14 视图批次交付）"));
+                return Err(bad_params(
+                    "图片会话不支持 report/generate（P14 视图批次交付）",
+                ));
             }
             // R3-07：文件夹合并的执行报告走 dir/mergeExecute 的 details/log，
             // 不复用文本报告布局
             Session::DirMerge(_) => {
-                return Err(bad_params("文件夹合并会话不支持 report/generate（执行报告见 dir/mergeExecute）"));
+                return Err(bad_params(
+                    "文件夹合并会话不支持 report/generate（执行报告见 dir/mergeExecute）",
+                ));
             }
         }
     };
@@ -2792,7 +3064,9 @@ async fn report_generate(
         offset,
         has_more,
     };
-    Ok(Handled::Value(serde_json::to_value(&result).expect("report/generate 结果可序列化")))
+    Ok(Handled::Value(
+        serde_json::to_value(&result).expect("report/generate 结果可序列化"),
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -2849,7 +3123,11 @@ mod p2_tests {
         std::fs::write(r.join("sub").join("inner.txt"), b"IR").unwrap();
         std::fs::write(l.join("skip.log"), b"log").unwrap();
         std::fs::write(r.join("skip.log"), b"log").unwrap();
-        (dir, l.to_string_lossy().into_owned(), r.to_string_lossy().into_owned())
+        (
+            dir,
+            l.to_string_lossy().into_owned(),
+            r.to_string_lossy().into_owned(),
+        )
     }
 
     async fn collect(mut rx: tokio::sync::mpsc::Receiver<Outbound>) -> Vec<serde_json::Value> {
@@ -2890,7 +3168,11 @@ mod p2_tests {
             _ => panic!("应答形态错误"),
         };
         // depth=1 已被可视层覆盖 -> completed；纯惰性（depth=null）才是 running
-        assert_eq!(resp["scanState"], "completed", "惰性+目标覆盖应答 scanState: {}", resp);
+        assert_eq!(
+            resp["scanState"], "completed",
+            "惰性+目标覆盖应答 scanState: {}",
+            resp
+        );
         for n in match &handled {
             Handled::WithNotifications { notifications, .. } => notifications.clone(),
             _ => Vec::new(),
@@ -2902,7 +3184,9 @@ mod p2_tests {
         let r2 = dispatch(
             "dir/expand",
             Some(json!({"sessionId": "d1", "path": "sub", "depth": 1})),
-            &c, &ai_dir::CancelFlag::new(), tx.clone(),
+            &c,
+            &ai_dir::CancelFlag::new(),
+            tx.clone(),
         )
         .await
         .unwrap();
@@ -2916,7 +3200,9 @@ mod p2_tests {
         let r3 = dispatch(
             "dir/filter",
             Some(json!({"sessionId": "d1", "nameFilter": {"excludeFiles": ["*.log"]}})),
-            &c, &ai_dir::CancelFlag::new(), tx.clone(),
+            &c,
+            &ai_dir::CancelFlag::new(),
+            tx.clone(),
         )
         .await
         .unwrap();
@@ -2926,13 +3212,19 @@ mod p2_tests {
         };
         // 重扫后可见：same.txt / diff.txt / sub（skip.log 被排除；
         // 重扫会重置展开状态，sub/inner.txt 需再次 expand）
-        assert_eq!(filter_resp["visibleRows"], 3, "排除 skip.log 后可见行: {}", filter_resp);
+        assert_eq!(
+            filter_resp["visibleRows"], 3,
+            "排除 skip.log 后可见行: {}",
+            filter_resp
+        );
 
         // 4. dir/operate 镜像左→右 计划
         let r4 = dispatch(
             "dir/operate",
             Some(json!({"sessionId": "d1", "preset": "mirrorLeftToRight"})),
-            &c, &ai_dir::CancelFlag::new(), tx.clone(),
+            &c,
+            &ai_dir::CancelFlag::new(),
+            tx.clone(),
         )
         .await
         .unwrap();
@@ -2940,14 +3232,23 @@ mod p2_tests {
             Handled::Value(v) => v,
             _ => panic!("dir/operate 应答形态"),
         };
-        let plan: Vec<&str> = ops["plan"].as_array().unwrap().iter().map(|p| p["op"].as_str().unwrap()).collect();
+        let plan: Vec<&str> = ops["plan"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| p["op"].as_str().unwrap())
+            .collect();
         assert!(plan.contains(&"copyLeftToRight"), "计划: {}", ops);
 
         // 5. 收集通知：delta + progress（completed）
         let msgs = collect(rx).await;
-        assert!(msgs.iter().any(|m| m["method"] == "dir/delta"), "应推送 delta");
         assert!(
-            msgs.iter().any(|m| m["method"] == "dir/progress" && m["params"]["phase"] == "completed"),
+            msgs.iter().any(|m| m["method"] == "dir/delta"),
+            "应推送 delta"
+        );
+        assert!(
+            msgs.iter()
+                .any(|m| m["method"] == "dir/progress" && m["params"]["phase"] == "completed"),
             "应推送完成进度: {:?}",
             msgs.iter().map(|m| m["method"].clone()).collect::<Vec<_>>()
         );
@@ -2956,7 +3257,9 @@ mod p2_tests {
         let r6 = dispatch(
             "session/close",
             Some(json!({"sessionId": "d1"})),
-            &c, &ai_dir::CancelFlag::new(), tx.clone(),
+            &c,
+            &ai_dir::CancelFlag::new(),
+            tx.clone(),
         )
         .await
         .unwrap();
@@ -2976,7 +3279,9 @@ mod p2_tests {
                 "depth": 1,
                 "criteria": {"mtimeToleranceSec": 0, "contentCompare": "always"}
             })),
-            &c, &ai_dir::CancelFlag::new(), tx,
+            &c,
+            &ai_dir::CancelFlag::new(),
+            tx,
         )
         .await
         .unwrap();
@@ -2997,14 +3302,18 @@ mod p2_tests {
         let _ = dispatch(
             "dir/open",
             Some(json!({"sessionId": "s2", "left": left, "right": right, "depth": 1})),
-            &c, &ai_dir::CancelFlag::new(), tx.clone(),
+            &c,
+            &ai_dir::CancelFlag::new(),
+            tx.clone(),
         )
         .await
         .unwrap();
         let err = dispatch(
             "dir/expand",
             Some(json!({"sessionId": "s2", "path": ""})),
-            &c, &ai_dir::CancelFlag::new(), tx,
+            &c,
+            &ai_dir::CancelFlag::new(),
+            tx,
         )
         .await
         .unwrap_err();
@@ -3031,14 +3340,18 @@ mod p2_tests {
                 "criteria": {"mtimeToleranceSec": 0, "contentCompare": "always"},
                 "lazyScan": true
             })),
-            &c, &ai_dir::CancelFlag::new(), tx.clone(),
+            &c,
+            &ai_dir::CancelFlag::new(),
+            tx.clone(),
         )
         .await
         .unwrap();
         let r = dispatch(
             "dir/align",
             Some(json!({"sessionId": "s3", "left": "old.txt", "right": "new.txt"})),
-            &c, &ai_dir::CancelFlag::new(), tx,
+            &c,
+            &ai_dir::CancelFlag::new(),
+            tx,
         )
         .await
         .unwrap();
@@ -3344,7 +3657,9 @@ mod p3_tests {
         let (tx, _rx) = chan();
         let _ = dispatch(
             "text/open",
-            Some(json!({"sessionId": id, "left": l.to_string_lossy(), "right": r.to_string_lossy()})),
+            Some(
+                json!({"sessionId": id, "left": l.to_string_lossy(), "right": r.to_string_lossy()}),
+            ),
             c,
             &ai_dir::CancelFlag::new(),
             tx,
@@ -3361,11 +3676,16 @@ mod p3_tests {
         let r = dispatch(
             "text/lines",
             Some(json!({"sessionId": "t1", "side": "left", "start": 0, "count": 2})),
-            &c, &ai_dir::CancelFlag::new(), chan().0,
+            &c,
+            &ai_dir::CancelFlag::new(),
+            chan().0,
         )
         .await
         .unwrap();
-        let v = match r { Handled::Value(v) => v, _ => panic!("形态") };
+        let v = match r {
+            Handled::Value(v) => v,
+            _ => panic!("形态"),
+        };
         assert_eq!(v["side"], "left");
         assert_eq!(v["start"], 0);
         assert_eq!(v["lines"].as_array().unwrap().len(), 2);
@@ -3374,11 +3694,16 @@ mod p3_tests {
         let r = dispatch(
             "text/lines",
             Some(json!({"sessionId": "t1", "side": "left", "start": 2, "count": 10})),
-            &c, &ai_dir::CancelFlag::new(), chan().0,
+            &c,
+            &ai_dir::CancelFlag::new(),
+            chan().0,
         )
         .await
         .unwrap();
-        let v = match r { Handled::Value(v) => v, _ => panic!("形态") };
+        let v = match r {
+            Handled::Value(v) => v,
+            _ => panic!("形态"),
+        };
         assert_eq!(v["start"], 2);
         assert_eq!(v["lines"].as_array().unwrap().len(), 1);
         assert_eq!(v["done"], true);
@@ -3386,11 +3711,16 @@ mod p3_tests {
         let r = dispatch(
             "text/lines",
             Some(json!({"sessionId": "t1", "side": "right", "start": 99, "count": 5})),
-            &c, &ai_dir::CancelFlag::new(), chan().0,
+            &c,
+            &ai_dir::CancelFlag::new(),
+            chan().0,
         )
         .await
         .unwrap();
-        let v = match r { Handled::Value(v) => v, _ => panic!("形态") };
+        let v = match r {
+            Handled::Value(v) => v,
+            _ => panic!("形态"),
+        };
         assert_eq!(v["start"], 4, "right 侧行数 4，start 钳制到表尾");
         assert_eq!(v["lines"].as_array().unwrap().len(), 0);
         assert_eq!(v["done"], true);
@@ -3398,7 +3728,9 @@ mod p3_tests {
         let e = dispatch(
             "text/lines",
             Some(json!({"sessionId": "ghost", "side": "left", "start": 0, "count": 1})),
-            &c, &ai_dir::CancelFlag::new(), chan().0,
+            &c,
+            &ai_dir::CancelFlag::new(),
+            chan().0,
         )
         .await
         .unwrap_err();
@@ -3413,40 +3745,63 @@ mod p3_tests {
         let r = dispatch(
             "text/sections",
             Some(json!({"sessionId": "t2", "offset": 0, "count": 10})),
-            &c, &ai_dir::CancelFlag::new(), chan().0,
+            &c,
+            &ai_dir::CancelFlag::new(),
+            chan().0,
         )
         .await
         .unwrap();
-        let v = match r { Handled::Value(v) => v, _ => panic!("形态") };
+        let v = match r {
+            Handled::Value(v) => v,
+            _ => panic!("形态"),
+        };
         let secs = v["sections"].as_array().unwrap();
-        assert_eq!(secs[1]["inline"], "full", "text/sections 窗口内 Change 触发懒计算: {v}");
+        assert_eq!(
+            secs[1]["inline"], "full",
+            "text/sections 窗口内 Change 触发懒计算: {v}"
+        );
         assert_eq!(secs[2]["inline"], "notComputed", "Insert 无行内内容");
         // inlineDiff RPC：Change section 返回 spans（"beta one  " vs "beta one" 词级 Replace）
         let r = dispatch(
             "text/inlineDiff",
             Some(json!({"sessionId": "t2", "sectionId": 1})),
-            &c, &ai_dir::CancelFlag::new(), chan().0,
+            &c,
+            &ai_dir::CancelFlag::new(),
+            chan().0,
         )
         .await
         .unwrap();
-        let v = match r { Handled::Value(v) => v, _ => panic!("形态") };
+        let v = match r {
+            Handled::Value(v) => v,
+            _ => panic!("形态"),
+        };
         assert_eq!(v["kind"], "change");
         assert_eq!(v["state"], "full");
         let lines = v["lines"].as_array().unwrap();
         assert_eq!(lines.len(), 1, "Change 单行配对");
         assert_eq!(lines[0]["leftLine"], 1);
         assert_eq!(lines[0]["rightLine"], 1);
-        let kinds: Vec<&str> = lines[0]["spans"].as_array().unwrap().iter().map(|s| s["kind"].as_str().unwrap()).collect();
+        let kinds: Vec<&str> = lines[0]["spans"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s["kind"].as_str().unwrap())
+            .collect();
         assert!(kinds.contains(&"delete"), "尾随空白词级差异: {kinds:?}");
         // 非 Change section：状态 Full、无行内容
         let r = dispatch(
             "text/inlineDiff",
             Some(json!({"sessionId": "t2", "sectionId": 0})),
-            &c, &ai_dir::CancelFlag::new(), chan().0,
+            &c,
+            &ai_dir::CancelFlag::new(),
+            chan().0,
         )
         .await
         .unwrap();
-        let v = match r { Handled::Value(v) => v, _ => panic!("形态") };
+        let v = match r {
+            Handled::Value(v) => v,
+            _ => panic!("形态"),
+        };
         assert_eq!(v["kind"], "equal");
         assert_eq!(v["state"], "full");
         assert_eq!(v["lines"].as_array().unwrap().len(), 0);
@@ -3454,7 +3809,9 @@ mod p3_tests {
         let e = dispatch(
             "text/inlineDiff",
             Some(json!({"sessionId": "t2", "sectionId": 99})),
-            &c, &ai_dir::CancelFlag::new(), chan().0,
+            &c,
+            &ai_dir::CancelFlag::new(),
+            chan().0,
         )
         .await
         .unwrap_err();
@@ -3481,16 +3838,28 @@ mod p3_tests {
         let r = dispatch(
             "text/inlineDiff",
             Some(json!({"sessionId": "t3", "sectionId": 0})),
-            &c, &ai_dir::CancelFlag::new(), chan().0,
+            &c,
+            &ai_dir::CancelFlag::new(),
+            chan().0,
         )
         .await
         .unwrap();
-        let v = match r { Handled::Value(v) => v, _ => panic!("形态") };
-        assert_eq!(v["state"], "partial", "超长行（> maxLineChars 1000）降级: {v}");
+        let v = match r {
+            Handled::Value(v) => v,
+            _ => panic!("形态"),
+        };
+        assert_eq!(
+            v["state"], "partial",
+            "超长行（> maxLineChars 1000）降级: {v}"
+        );
         let lines = v["lines"].as_array().unwrap();
         assert_eq!(lines.len(), 1);
         assert_eq!(lines[0]["truncated"], true);
-        assert_eq!(lines[0]["spans"].as_array().unwrap().len(), 0, "降级行无 spans");
+        assert_eq!(
+            lines[0]["spans"].as_array().unwrap().len(),
+            0,
+            "降级行无 spans"
+        );
     }
 
     #[tokio::test]
@@ -3501,11 +3870,16 @@ mod p3_tests {
         let r = dispatch(
             "text/sections",
             Some(json!({"sessionId": "t4", "offset": 0, "count": 10, "withKeys": true})),
-            &c, &ai_dir::CancelFlag::new(), chan().0,
+            &c,
+            &ai_dir::CancelFlag::new(),
+            chan().0,
         )
         .await
         .unwrap();
-        let v = match r { Handled::Value(v) => v, _ => panic!("形态") };
+        let v = match r {
+            Handled::Value(v) => v,
+            _ => panic!("形态"),
+        };
         let keys = v["lineKeys"].as_array().expect("withKeys 应返回 lineKeys");
         assert_eq!(keys.len(), 3);
         assert_eq!(keys[0]["side"], "left");
@@ -3524,14 +3898,25 @@ mod p3_tests {
                 "sessionId": "t4", "offset": 0, "count": 10,
                 "importance": {"trailingWsUnimportant": true}
             })),
-            &c, &ai_dir::CancelFlag::new(), tx,
+            &c,
+            &ai_dir::CancelFlag::new(),
+            tx,
         )
         .await
         .unwrap();
-        let v = match r { Handled::Value(v) => v, _ => panic!("形态") };
+        let v = match r {
+            Handled::Value(v) => v,
+            _ => panic!("形态"),
+        };
         let secs = v["sections"].as_array().unwrap();
-        assert_eq!(secs[1]["important"], "unimportant", "尾随空白差异重判为不重要: {v}");
-        assert_eq!(secs[2]["important"], "important", "孤儿行始终重要（FR-TXT-010）");
+        assert_eq!(
+            secs[1]["important"], "unimportant",
+            "尾随空白差异重判为不重要: {v}"
+        );
+        assert_eq!(
+            secs[2]["important"], "important",
+            "孤儿行始终重要（FR-TXT-010）"
+        );
         // 通知：通知先于应答入队（此时应答尚在返回值中），rx 里只有通知
         let mut got = Vec::new();
         while let Ok(msg) = rx.try_recv() {
@@ -3552,13 +3937,21 @@ mod p3_tests {
         let r = dispatch(
             "text/sections",
             Some(json!({"sessionId": "t4", "offset": 0, "count": 10, "withKeys": true})),
-            &c, &ai_dir::CancelFlag::new(), chan().0,
+            &c,
+            &ai_dir::CancelFlag::new(),
+            chan().0,
         )
         .await
         .unwrap();
-        let v = match r { Handled::Value(v) => v, _ => panic!("形态") };
+        let v = match r {
+            Handled::Value(v) => v,
+            _ => panic!("形态"),
+        };
         let keys = v["lineKeys"].as_array().unwrap();
-        assert_eq!(keys[0]["importance"], keys[1]["importance"], "重判后双键一致");
+        assert_eq!(
+            keys[0]["importance"], keys[1]["importance"],
+            "重判后双键一致"
+        );
     }
 
     #[tokio::test]
@@ -3582,7 +3975,11 @@ mod p3_tests {
         )
         .await
         .unwrap_err();
-        assert_eq!(err.code, codes::INVALID_PARAMS, "等长校验：锚点行数不等应拒绝");
+        assert_eq!(
+            err.code,
+            codes::INVALID_PARAMS,
+            "等长校验：锚点行数不等应拒绝"
+        );
         // 隔离左侧行 1..3 -> A/B 不与右侧行配对（独立 Delete），不产生 Change
         let (tx, _rx) = chan();
         let r = dispatch(
@@ -3591,23 +3988,44 @@ mod p3_tests {
                 "sessionId": "t5", "left": l.to_string_lossy(), "right": r.to_string_lossy(),
                 "manual": {"isolate": [{"side": "left", "range": {"start": 1, "end": 3}}]}
             })),
-            &c, &ai_dir::CancelFlag::new(), tx,
+            &c,
+            &ai_dir::CancelFlag::new(),
+            tx,
         )
         .await
         .unwrap();
-        let v = match r { Handled::Value(v) => v, _ => panic!("形态") };
+        let v = match r {
+            Handled::Value(v) => v,
+            _ => panic!("形态"),
+        };
         let _ = v;
         let r = dispatch(
             "text/sections",
             Some(json!({"sessionId": "t5", "offset": 0, "count": 10})),
-            &c, &ai_dir::CancelFlag::new(), chan().0,
+            &c,
+            &ai_dir::CancelFlag::new(),
+            chan().0,
         )
         .await
         .unwrap();
-        let v = match r { Handled::Value(v) => v, _ => panic!("形态") };
-        let kinds: Vec<&str> = v["sections"].as_array().unwrap().iter().map(|s| s["kind"].as_str().unwrap()).collect();
-        assert!(kinds.contains(&"delete"), "隔离后 A/B 成 Delete 块: {kinds:?}");
-        assert!(!kinds.contains(&"change"), "隔离行不与对侧配对成 Change: {kinds:?}");
+        let v = match r {
+            Handled::Value(v) => v,
+            _ => panic!("形态"),
+        };
+        let kinds: Vec<&str> = v["sections"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s["kind"].as_str().unwrap())
+            .collect();
+        assert!(
+            kinds.contains(&"delete"),
+            "隔离后 A/B 成 Delete 块: {kinds:?}"
+        );
+        assert!(
+            !kinds.contains(&"change"),
+            "隔离行不与对侧配对成 Change: {kinds:?}"
+        );
     }
 }
 
@@ -3648,18 +4066,40 @@ mod p7_tests {
         )
         .await
         .unwrap();
-        let v = match handled { Handled::Value(v) => v, _ => panic!("形态") };
-        assert_eq!(v["chunkCount"], 6, "Stable+冲突+Stable+冲突+Stable+RightOnly: {v}");
+        let v = match handled {
+            Handled::Value(v) => v,
+            _ => panic!("形态"),
+        };
+        assert_eq!(
+            v["chunkCount"], 6,
+            "Stable+冲突+Stable+冲突+Stable+RightOnly: {v}"
+        );
         assert_eq!(v["conflictCount"], 2);
-        (dir, b.to_string_lossy().into_owned(), l.to_string_lossy().into_owned(), r.to_string_lossy().into_owned())
+        (
+            dir,
+            b.to_string_lossy().into_owned(),
+            l.to_string_lossy().into_owned(),
+            r.to_string_lossy().into_owned(),
+        )
     }
 
     #[tokio::test]
     async fn merge3_open_sections_and_capability() {
         let c = ctx();
         let (tx, _rx) = chan();
-        let init = dispatch("initialize", Some(json!({"clientInfo": {"name": "t"}, "protocolVersion": "1.0"})), &c, &ai_dir::CancelFlag::new(), tx).await.unwrap();
-        let v = match init { Handled::Value(v) => v, _ => panic!("形态") };
+        let init = dispatch(
+            "initialize",
+            Some(json!({"clientInfo": {"name": "t"}, "protocolVersion": "1.0"})),
+            &c,
+            &ai_dir::CancelFlag::new(),
+            tx,
+        )
+        .await
+        .unwrap();
+        let v = match init {
+            Handled::Value(v) => v,
+            _ => panic!("形态"),
+        };
         assert_eq!(v["capabilities"]["threeWayMerge"], true, "P7 能力位");
 
         let (_d, _b, _l, _r) = open_merge(&c, "m1").await;
@@ -3667,11 +4107,16 @@ mod p7_tests {
         let r = dispatch(
             "text/merge3/sections",
             Some(json!({"sessionId": "m1", "offset": 1, "count": 2})),
-            &c, &ai_dir::CancelFlag::new(), chan().0,
+            &c,
+            &ai_dir::CancelFlag::new(),
+            chan().0,
         )
         .await
         .unwrap();
-        let v = match r { Handled::Value(v) => v, _ => panic!("形态") };
+        let v = match r {
+            Handled::Value(v) => v,
+            _ => panic!("形态"),
+        };
         assert_eq!(v["total"], 6);
         assert_eq!(v["hasMore"], true);
         assert_eq!(v["rev"], 0);
@@ -3689,17 +4134,24 @@ mod p7_tests {
         let r = dispatch(
             "text/merge3/sections",
             Some(json!({"sessionId": "m1", "offset": 99, "count": 3})),
-            &c, &ai_dir::CancelFlag::new(), chan().0,
+            &c,
+            &ai_dir::CancelFlag::new(),
+            chan().0,
         )
         .await
         .unwrap();
-        let v = match r { Handled::Value(v) => v, _ => panic!("形态") };
+        let v = match r {
+            Handled::Value(v) => v,
+            _ => panic!("形态"),
+        };
         assert_eq!(v["chunks"].as_array().unwrap().len(), 0);
         // 会话不存在 -> 410
         let e = dispatch(
             "text/merge3/sections",
             Some(json!({"sessionId": "ghost", "offset": 0, "count": 1})),
-            &c, &ai_dir::CancelFlag::new(), chan().0,
+            &c,
+            &ai_dir::CancelFlag::new(),
+            chan().0,
         )
         .await
         .unwrap_err();
@@ -3715,15 +4167,23 @@ mod p7_tests {
         let r = dispatch(
             "text/merge3/output",
             Some(json!({"sessionId": "m2", "mode": "marker"})),
-            &c, &ai_dir::CancelFlag::new(), chan().0,
+            &c,
+            &ai_dir::CancelFlag::new(),
+            chan().0,
         )
         .await
         .unwrap();
-        let v = match r { Handled::Value(v) => v, _ => panic!("形态") };
+        let v = match r {
+            Handled::Value(v) => v,
+            _ => panic!("形态"),
+        };
         let marker_text = v["text"].as_str().unwrap();
         assert_eq!(v["unresolvedChunks"], json!([1, 3]));
         assert_eq!(v["hasConflicts"], true);
-        assert!(marker_text.contains("<<<<<<<"), "marker 模式渲染冲突: {marker_text}");
+        assert!(
+            marker_text.contains("<<<<<<<"),
+            "marker 模式渲染冲突: {marker_text}"
+        );
         assert_eq!(marker_text.matches("<<<<<<<").count(), 2);
 
         // 2. 决策：块 1 取左、块 3 取右
@@ -3736,11 +4196,16 @@ mod p7_tests {
                     {"chunkId": 3, "action": "right"}
                 ]
             })),
-            &c, &ai_dir::CancelFlag::new(), chan().0,
+            &c,
+            &ai_dir::CancelFlag::new(),
+            chan().0,
         )
         .await
         .unwrap();
-        let v = match r { Handled::Value(v) => v, _ => panic!("形态") };
+        let v = match r {
+            Handled::Value(v) => v,
+            _ => panic!("形态"),
+        };
         assert_eq!(v["rev"], 1);
         assert_eq!(v["unresolvedChunks"], json!([]), "决策后无未决冲突");
         assert_eq!(v["conflictCount"], 2);
@@ -3749,11 +4214,16 @@ mod p7_tests {
         let r = dispatch(
             "text/merge3/output",
             Some(json!({"sessionId": "m2"})),
-            &c, &ai_dir::CancelFlag::new(), chan().0,
+            &c,
+            &ai_dir::CancelFlag::new(),
+            chan().0,
         )
         .await
         .unwrap();
-        let v = match r { Handled::Value(v) => v, _ => panic!("形态") };
+        let v = match r {
+            Handled::Value(v) => v,
+            _ => panic!("形态"),
+        };
         assert_eq!(v["text"], "h\nL1\nb\nR2\nt\nR3\n");
         assert_eq!(v["hasConflicts"], false);
         assert_eq!(v["decidedCount"], 2);
@@ -3768,20 +4238,30 @@ mod p7_tests {
                     {"chunkId": 3, "action": "right"}
                 ]
             })),
-            &c, &ai_dir::CancelFlag::new(), chan().0,
+            &c,
+            &ai_dir::CancelFlag::new(),
+            chan().0,
         )
         .await
         .unwrap();
-        let v = match r { Handled::Value(v) => v, _ => panic!("形态") };
+        let v = match r {
+            Handled::Value(v) => v,
+            _ => panic!("形态"),
+        };
         assert_eq!(v["rev"], 1, "幂等提交不递增 rev");
         let r = dispatch(
             "text/merge3/output",
             Some(json!({"sessionId": "m2"})),
-            &c, &ai_dir::CancelFlag::new(), chan().0,
+            &c,
+            &ai_dir::CancelFlag::new(),
+            chan().0,
         )
         .await
         .unwrap();
-        let v = match r { Handled::Value(v) => v, _ => panic!("形态") };
+        let v = match r {
+            Handled::Value(v) => v,
+            _ => panic!("形态"),
+        };
         assert_eq!(v["text"], "h\nL1\nb\nR2\nt\nR3\n", "重复 decide 不漂移");
 
         // 5. manual 决策
@@ -3792,23 +4272,33 @@ mod p7_tests {
         )
         .await
         .unwrap();
-        let v = match r { Handled::Value(v) => v, _ => panic!("形态") };
+        let v = match r {
+            Handled::Value(v) => v,
+            _ => panic!("形态"),
+        };
         assert_eq!(v["rev"], 2);
         let r = dispatch(
             "text/merge3/output",
             Some(json!({"sessionId": "m2"})),
-            &c, &ai_dir::CancelFlag::new(), chan().0,
+            &c,
+            &ai_dir::CancelFlag::new(),
+            chan().0,
         )
         .await
         .unwrap();
-        let v = match r { Handled::Value(v) => v, _ => panic!("形态") };
+        let v = match r {
+            Handled::Value(v) => v,
+            _ => panic!("形态"),
+        };
         assert_eq!(v["text"], "h\n手\n工\nb\nR2\nt\nR3\n");
 
         // 6. Manual 缺 text -> INVALID_PARAMS
         let e = dispatch(
             "text/merge3/decide",
             Some(json!({"sessionId": "m2", "decisions": [{"chunkId": 1, "action": "manual"}]})),
-            &c, &ai_dir::CancelFlag::new(), chan().0,
+            &c,
+            &ai_dir::CancelFlag::new(),
+            chan().0,
         )
         .await
         .unwrap_err();
@@ -3817,7 +4307,9 @@ mod p7_tests {
         let e = dispatch(
             "text/merge3/decide",
             Some(json!({"sessionId": "m2", "decisions": [{"chunkId": 99, "action": "left"}]})),
-            &c, &ai_dir::CancelFlag::new(), chan().0,
+            &c,
+            &ai_dir::CancelFlag::new(),
+            chan().0,
         )
         .await
         .unwrap_err();
@@ -3847,12 +4339,21 @@ mod p7_tests {
         let got = dispatch(
             "text/merge3/output",
             Some(json!({"sessionId": "mi1"})),
-            &c, &ai_dir::CancelFlag::new(), chan().0,
+            &c,
+            &ai_dir::CancelFlag::new(),
+            chan().0,
         )
         .await
         .unwrap();
-        let v = match got { Handled::Value(v) => v, _ => panic!("形态") };
-        assert_eq!(v["unresolvedChunks"], json!([1]), "默认重要性下为未决冲突: {v}");
+        let v = match got {
+            Handled::Value(v) => v,
+            _ => panic!("形态"),
+        };
+        assert_eq!(
+            v["unresolvedChunks"],
+            json!([1]),
+            "默认重要性下为未决冲突: {v}"
+        );
 
         // /iu + favorRight：不重要冲突自动采用右侧，不升级为未决
         let (tx, _rx) = chan();
@@ -3870,13 +4371,21 @@ mod p7_tests {
         let got = dispatch(
             "text/merge3/sections",
             Some(json!({"sessionId": "mi2", "offset": 0, "count": 10})),
-            &c, &ai_dir::CancelFlag::new(), chan().0,
+            &c,
+            &ai_dir::CancelFlag::new(),
+            chan().0,
         )
         .await
         .unwrap();
-        let v = match got { Handled::Value(v) => v, _ => panic!("形态") };
+        let v = match got {
+            Handled::Value(v) => v,
+            _ => panic!("形态"),
+        };
         let chunks = v["chunks"].as_array().unwrap();
-        let cf = chunks.iter().find(|x| x["origin"] == "conflict").expect("冲突块仍在（来源标记）");
+        let cf = chunks
+            .iter()
+            .find(|x| x["origin"] == "conflict")
+            .expect("冲突块仍在（来源标记）");
         assert_eq!(cf["conflictUnimportant"], true);
         assert_eq!(cf["autoResolved"], true);
         assert_eq!(cf["unresolved"], false);
@@ -3884,11 +4393,16 @@ mod p7_tests {
         let got = dispatch(
             "text/merge3/output",
             Some(json!({"sessionId": "mi2"})),
-            &c, &ai_dir::CancelFlag::new(), chan().0,
+            &c,
+            &ai_dir::CancelFlag::new(),
+            chan().0,
         )
         .await
         .unwrap();
-        let v = match got { Handled::Value(v) => v, _ => panic!("形态") };
+        let v = match got {
+            Handled::Value(v) => v,
+            _ => panic!("形态"),
+        };
         assert_eq!(v["text"], "a\nB\nc\n", "不重要冲突从受惠侧采用");
         assert_eq!(v["hasConflicts"], false);
     }
@@ -3919,15 +4433,27 @@ mod p7_tests {
         let got = dispatch(
             "text/merge3/sections",
             Some(json!({"sessionId": "mw1", "offset": 0, "count": 10})),
-            &c, &ai_dir::CancelFlag::new(), chan().0,
+            &c,
+            &ai_dir::CancelFlag::new(),
+            chan().0,
         )
         .await
         .unwrap();
-        let v = match got { Handled::Value(v) => v, _ => panic!("形态") };
+        let v = match got {
+            Handled::Value(v) => v,
+            _ => panic!("形态"),
+        };
         let chunks = v["chunks"].as_array().unwrap();
-        let conflicts: Vec<_> = chunks.iter().filter(|x| x["origin"] == "conflict").collect();
+        let conflicts: Vec<_> = chunks
+            .iter()
+            .filter(|x| x["origin"] == "conflict")
+            .collect();
         assert_eq!(conflicts.len(), 1, "窗口合并: {v}");
-        assert_eq!(conflicts[0]["base"], json!({"start": 0, "end": 3}), "冲突块跨稳定间隔");
+        assert_eq!(
+            conflicts[0]["base"],
+            json!({"start": 0, "end": 3}),
+            "冲突块跨稳定间隔"
+        );
         assert_eq!(v["total"], 1, "整个文件合并为单一冲突块（无尾部稳定块）");
     }
 
@@ -3940,11 +4466,16 @@ mod p7_tests {
         let r = dispatch(
             "text/merge3/output",
             Some(json!({"sessionId": "m3", "mode": "marker", "markerStyle": "diff3"})),
-            &c, &ai_dir::CancelFlag::new(), chan().0,
+            &c,
+            &ai_dir::CancelFlag::new(),
+            chan().0,
         )
         .await
         .unwrap();
-        let v = match r { Handled::Value(v) => v, _ => panic!("形态") };
+        let v = match r {
+            Handled::Value(v) => v,
+            _ => panic!("形态"),
+        };
         let text = v["text"].as_str().unwrap();
         assert!(text.contains("<<<<<<<"), "{text}");
         assert!(text.contains("|||||||"), "diff3 风格含 base 段");
@@ -3953,11 +4484,16 @@ mod p7_tests {
         let r = dispatch(
             "text/merge3/output",
             Some(json!({"sessionId": "m3"})),
-            &c, &ai_dir::CancelFlag::new(), chan().0,
+            &c,
+            &ai_dir::CancelFlag::new(),
+            chan().0,
         )
         .await
         .unwrap();
-        let v = match r { Handled::Value(v) => v, _ => panic!("形态") };
+        let v = match r {
+            Handled::Value(v) => v,
+            _ => panic!("形态"),
+        };
         assert_eq!(v["text"], "h\nL1\nb\nL2\nt\nR3\n");
         assert_eq!(v["hasConflicts"], true, "plain 模式未决冲突仍列入清单");
     }
@@ -3986,7 +4522,11 @@ mod p9_tests {
         let l = dir.path().join("l.csv");
         let r = dir.path().join("r.csv");
         std::fs::write(&l, "id,name,qty\n1,Alpha,10\n2,Beta,20\n3,Gamma,30\n").unwrap();
-        std::fs::write(&r, "id,name,qty\n1,Alpha,10\n2,BETA,20\n3,Gamma,35\n4,Delta,40\n").unwrap();
+        std::fs::write(
+            &r,
+            "id,name,qty\n1,Alpha,10\n2,BETA,20\n3,Gamma,35\n4,Delta,40\n",
+        )
+        .unwrap();
         let (tx, _rx) = chan();
         let _ = dispatch(
             "table/open",
@@ -3994,7 +4534,9 @@ mod p9_tests {
                 "sessionId": id, "left": l.to_string_lossy(), "right": r.to_string_lossy(),
                 "options": {"keyColumns": [0]}
             })),
-            c, &ai_dir::CancelFlag::new(), tx,
+            c,
+            &ai_dir::CancelFlag::new(),
+            tx,
         )
         .await
         .unwrap();
@@ -4004,9 +4546,23 @@ mod p9_tests {
     async fn table_open_sections_and_capability() {
         let c = ctx();
         let (tx, _rx) = chan();
-        let init = dispatch("initialize", Some(json!({"clientInfo": {"name": "t"}, "protocolVersion": "1.0"})), &c, &ai_dir::CancelFlag::new(), tx).await.unwrap();
-        let v = match init { Handled::Value(v) => v, _ => panic!("形态") };
-        assert_eq!(v["capabilities"]["tableCompare"], true, "P9 能力位 tableCompare");
+        let init = dispatch(
+            "initialize",
+            Some(json!({"clientInfo": {"name": "t"}, "protocolVersion": "1.0"})),
+            &c,
+            &ai_dir::CancelFlag::new(),
+            tx,
+        )
+        .await
+        .unwrap();
+        let v = match init {
+            Handled::Value(v) => v,
+            _ => panic!("形态"),
+        };
+        assert_eq!(
+            v["capabilities"]["tableCompare"], true,
+            "P9 能力位 tableCompare"
+        );
         assert_eq!(v["capabilities"]["hexCompare"], true);
         assert_eq!(v["capabilities"]["patchApply"], true);
         assert_eq!(v["capabilities"]["dirExecute"], true);
@@ -4015,11 +4571,16 @@ mod p9_tests {
         let got = dispatch(
             "table/sections",
             Some(json!({"sessionId": "tb1", "offset": 0, "count": 10})),
-            &c, &ai_dir::CancelFlag::new(), chan().0,
+            &c,
+            &ai_dir::CancelFlag::new(),
+            chan().0,
         )
         .await
         .unwrap();
-        let v = match got { Handled::Value(v) => v, _ => panic!("形态") };
+        let v = match got {
+            Handled::Value(v) => v,
+            _ => panic!("形态"),
+        };
         assert_eq!(v["total"], 4, "same + changed×2 + added: {v}");
         let rows = v["rows"].as_array().unwrap();
         assert_eq!(rows[0]["kind"], "same");
@@ -4027,12 +4588,18 @@ mod p9_tests {
         assert_eq!(rows[1]["important"], true, "BETA 与 Beta 大小写默认重要");
         assert_eq!(rows[1]["cells"][1]["status"], "importantDiff");
         assert_eq!(rows[3]["kind"], "added");
-        assert_eq!(rows[3]["left"], serde_json::Value::Null, "Added 行省略 left");
+        assert_eq!(
+            rows[3]["left"],
+            serde_json::Value::Null,
+            "Added 行省略 left"
+        );
         // 会话不存在 -> 410
         let e = dispatch(
             "table/sections",
             Some(json!({"sessionId": "ghost", "offset": 0, "count": 1})),
-            &c, &ai_dir::CancelFlag::new(), chan().0,
+            &c,
+            &ai_dir::CancelFlag::new(),
+            chan().0,
         )
         .await
         .unwrap_err();
@@ -4054,18 +4621,25 @@ mod p9_tests {
                 "sessionId": "tb2", "left": l.to_string_lossy(), "right": r.to_string_lossy(),
                 "options": {"keyColumns": [0], "caseUnimportant": true, "whitespace": "ignoreAll"}
             })),
-            &c, &ai_dir::CancelFlag::new(), tx,
+            &c,
+            &ai_dir::CancelFlag::new(),
+            tx,
         )
         .await
         .unwrap();
         let got = dispatch(
             "table/sections",
             Some(json!({"sessionId": "tb2", "offset": 0, "count": 10})),
-            &c, &ai_dir::CancelFlag::new(), chan().0,
+            &c,
+            &ai_dir::CancelFlag::new(),
+            chan().0,
         )
         .await
         .unwrap();
-        let v = match got { Handled::Value(v) => v, _ => panic!("形态") };
+        let v = match got {
+            Handled::Value(v) => v,
+            _ => panic!("形态"),
+        };
         let rows = v["rows"].as_array().unwrap();
         assert_eq!(rows[0]["kind"], "changed");
         assert_eq!(rows[0]["important"], false, "仅不重要差异 -> 蓝点行: {v}");
@@ -4078,16 +4652,28 @@ mod p9_tests {
         let l = dir.path().join("l.bin");
         let r = dir.path().join("r.bin");
         std::fs::write(&l, [0x00, 0x01, 0x02, 0x03, 0xAA, 0xBB, 0xCC, 0xDD]).unwrap();
-        std::fs::write(&r, [0x00, 0x01, 0x02, 0x03, 0xAA, 0xBB, 0xEE, 0xFF, 0x11, 0x22]).unwrap();
+        std::fs::write(
+            &r,
+            [0x00, 0x01, 0x02, 0x03, 0xAA, 0xBB, 0xEE, 0xFF, 0x11, 0x22],
+        )
+        .unwrap();
         let (tx, _rx) = chan();
         let _ = dispatch(
             "hex/open",
-            Some(json!({"sessionId": id, "left": l.to_string_lossy(), "right": r.to_string_lossy()})),
-            c, &ai_dir::CancelFlag::new(), tx,
+            Some(
+                json!({"sessionId": id, "left": l.to_string_lossy(), "right": r.to_string_lossy()}),
+            ),
+            c,
+            &ai_dir::CancelFlag::new(),
+            tx,
         )
         .await
         .unwrap();
-        (dir, l.to_string_lossy().into_owned(), r.to_string_lossy().into_owned())
+        (
+            dir,
+            l.to_string_lossy().into_owned(),
+            r.to_string_lossy().into_owned(),
+        )
     }
 
     /// P14 语料：程序生成 PNG——左侧全黑 32x32，右侧右上角 16x16 涂白
@@ -4105,7 +4691,10 @@ mod p9_tests {
         }
         for (p, img) in [(&l, &black), (&r, &right)] {
             image::DynamicImage::ImageRgba8(img.clone())
-                .write_to(&mut std::io::Cursor::new(Vec::new()), image::ImageFormat::Png)
+                .write_to(
+                    &mut std::io::Cursor::new(Vec::new()),
+                    image::ImageFormat::Png,
+                )
                 .unwrap();
             // 直接写 PNG 字节
             let bytes = {
@@ -4121,12 +4710,20 @@ mod p9_tests {
         let (tx, _rx) = chan();
         let _ = dispatch(
             "picture/open",
-            Some(json!({"sessionId": id, "left": l.to_string_lossy(), "right": r.to_string_lossy()})),
-            c, &ai_dir::CancelFlag::new(), tx,
+            Some(
+                json!({"sessionId": id, "left": l.to_string_lossy(), "right": r.to_string_lossy()}),
+            ),
+            c,
+            &ai_dir::CancelFlag::new(),
+            tx,
         )
         .await
         .unwrap();
-        (dir, l.to_string_lossy().into_owned(), r.to_string_lossy().into_owned())
+        (
+            dir,
+            l.to_string_lossy().into_owned(),
+            r.to_string_lossy().into_owned(),
+        )
     }
 
     #[tokio::test]
@@ -4137,15 +4734,23 @@ mod p9_tests {
         let got = dispatch(
             "picture/open",
             Some(json!({"sessionId": "p2", "left": l, "right": r})),
-            &c, &ai_dir::CancelFlag::new(), chan().0,
+            &c,
+            &ai_dir::CancelFlag::new(),
+            chan().0,
         )
         .await
         .unwrap();
-        let v = match got { Handled::Value(v) => v, _ => panic!("形态") };
+        let v = match got {
+            Handled::Value(v) => v,
+            _ => panic!("形态"),
+        };
         println!("picture/open p2 响应: {v}");
         assert_eq!(v["width"], 32);
         assert_eq!(v["height"], 32);
-        assert_eq!(v["diffPixels"], 256, "右半上 16x16 涂白 = 256 差异像素: {v}");
+        assert_eq!(
+            v["diffPixels"], 256,
+            "右半上 16x16 涂白 = 256 差异像素: {v}"
+        );
         // 256 差异像素全部落在 block=32 的 (0,0) 块：256/1024 = 0.25 占比
         let blocks = v["blocks"].as_array().unwrap();
         assert_eq!(blocks.len(), 1, "单块聚合: {v}");
@@ -4159,7 +4764,9 @@ mod p9_tests {
         let err = dispatch(
             "picture/open",
             Some(json!({"sessionId": "p2", "left": l, "right": r})),
-            &c, &ai_dir::CancelFlag::new(), chan().0,
+            &c,
+            &ai_dir::CancelFlag::new(),
+            chan().0,
         )
         .await
         .unwrap_err();
@@ -4173,11 +4780,16 @@ mod p9_tests {
         let got = dispatch(
             "hex/bytes",
             Some(json!({"sessionId": "h1", "side": "left", "offset": 0, "length": 16})),
-            &c, &ai_dir::CancelFlag::new(), chan().0,
+            &c,
+            &ai_dir::CancelFlag::new(),
+            chan().0,
         )
         .await
         .unwrap();
-        let v = match got { Handled::Value(v) => v, _ => panic!("形态") };
+        let v = match got {
+            Handled::Value(v) => v,
+            _ => panic!("形态"),
+        };
         let lines = v["lines"].as_array().unwrap();
         assert_eq!(lines.len(), 1, "8 字节 -> 1 行: {v}");
         assert_eq!(lines[0]["addr"], 0);
@@ -4185,16 +4797,24 @@ mod p9_tests {
         assert_eq!(lines[0]["ascii"], "........", "全部字节均非可打印 ASCII");
         // Full 模式字节级 Myers 最优对齐：CC↔EE 变化（x），DD 删除（-），
         // FF/11/22 插入（+）——D=4 < 逐字节替换 D=6
-        assert_eq!(lines[0]["status"], "======x-", "左 8 字节：6 同 + 1 变化 + 1 删除");
+        assert_eq!(
+            lines[0]["status"], "======x-",
+            "左 8 字节：6 同 + 1 变化 + 1 删除"
+        );
         // 右侧：6 同 + 3 插入 + 1 变化（Myers 最优对齐的另一等价解）
         let got = dispatch(
             "hex/bytes",
             Some(json!({"sessionId": "h1", "side": "right", "offset": 0, "length": 16})),
-            &c, &ai_dir::CancelFlag::new(), chan().0,
+            &c,
+            &ai_dir::CancelFlag::new(),
+            chan().0,
         )
         .await
         .unwrap();
-        let v = match got { Handled::Value(v) => v, _ => panic!("形态") };
+        let v = match got {
+            Handled::Value(v) => v,
+            _ => panic!("形态"),
+        };
         let lines = v["lines"].as_array().unwrap();
         assert_eq!(lines[0]["status"], "======+++x", "{v}");
         assert_eq!(lines[0]["hex"], "00 01 02 03 aa bb ee ff 11 22");
@@ -4204,17 +4824,24 @@ mod p9_tests {
         let got = dispatch(
             "hex/bytes",
             Some(json!({"sessionId": "h1", "side": "left", "offset": 999, "length": 16})),
-            &c, &ai_dir::CancelFlag::new(), chan().0,
+            &c,
+            &ai_dir::CancelFlag::new(),
+            chan().0,
         )
         .await
         .unwrap();
-        let v = match got { Handled::Value(v) => v, _ => panic!("形态") };
+        let v = match got {
+            Handled::Value(v) => v,
+            _ => panic!("形态"),
+        };
         assert_eq!(v["lines"].as_array().unwrap().len(), 1, "钳制到最后行");
         // 会话不存在 -> 410
         let e = dispatch(
             "hex/bytes",
             Some(json!({"sessionId": "ghost", "side": "left", "offset": 0, "length": 16})),
-            &c, &ai_dir::CancelFlag::new(), chan().0,
+            &c,
+            &ai_dir::CancelFlag::new(),
+            chan().0,
         )
         .await
         .unwrap_err();
@@ -4234,37 +4861,59 @@ mod p9_tests {
         let got = dispatch(
             "text/patch/apply",
             Some(json!({"patch": patch, "root": root.to_string_lossy(), "dryRun": true})),
-            &c, &ai_dir::CancelFlag::new(), tx,
+            &c,
+            &ai_dir::CancelFlag::new(),
+            tx,
         )
         .await
         .unwrap();
-        let v = match got { Handled::Value(v) => v, _ => panic!("形态") };
+        let v = match got {
+            Handled::Value(v) => v,
+            _ => panic!("形态"),
+        };
         assert_eq!(v["dryRun"], true);
         assert_eq!(v["applied"], 1);
         assert_eq!(v["allApplied"], true);
-        assert_eq!(std::fs::read_to_string(root.join("t.txt")).unwrap(), "1\n2\n3\n", "dry run 未写盘");
+        assert_eq!(
+            std::fs::read_to_string(root.join("t.txt")).unwrap(),
+            "1\n2\n3\n",
+            "dry run 未写盘"
+        );
         // 实际应用
         let (tx, _rx) = chan();
         let got = dispatch(
             "text/patch/apply",
             Some(json!({"patch": patch, "root": root.to_string_lossy()})),
-            &c, &ai_dir::CancelFlag::new(), tx,
+            &c,
+            &ai_dir::CancelFlag::new(),
+            tx,
         )
         .await
         .unwrap();
-        let v = match got { Handled::Value(v) => v, _ => panic!("形态") };
+        let v = match got {
+            Handled::Value(v) => v,
+            _ => panic!("形态"),
+        };
         assert_eq!(v["applied"], 1);
-        assert_eq!(std::fs::read_to_string(root.join("t.txt")).unwrap(), "1\nTWO\n3\n");
+        assert_eq!(
+            std::fs::read_to_string(root.join("t.txt")).unwrap(),
+            "1\nTWO\n3\n"
+        );
         // 重放：已应用 -> failed（git apply 同语义）
         let (tx, _rx) = chan();
         let got = dispatch(
             "text/patch/apply",
             Some(json!({"patch": patch, "root": root.to_string_lossy()})),
-            &c, &ai_dir::CancelFlag::new(), tx,
+            &c,
+            &ai_dir::CancelFlag::new(),
+            tx,
         )
         .await
         .unwrap();
-        let v = match got { Handled::Value(v) => v, _ => panic!("形态") };
+        let v = match got {
+            Handled::Value(v) => v,
+            _ => panic!("形态"),
+        };
         assert_eq!(v["failed"], 1);
         assert_eq!(v["results"][0]["status"], "alreadyApplied");
     }
@@ -4280,11 +4929,16 @@ mod p9_tests {
         let got = dispatch(
             "text/patch/apply",
             Some(json!({"patch": patch, "root": root.to_string_lossy()})),
-            &c, &ai_dir::CancelFlag::new(), tx,
+            &c,
+            &ai_dir::CancelFlag::new(),
+            tx,
         )
         .await
         .unwrap();
-        let v = match got { Handled::Value(v) => v, _ => panic!("形态") };
+        let v = match got {
+            Handled::Value(v) => v,
+            _ => panic!("形态"),
+        };
         assert_eq!(v["results"][0]["status"], "skippedBinary");
         assert_eq!(v["failed"], 0, "二进制跳过不算失败");
     }
@@ -4311,11 +4965,17 @@ mod p9_tests {
                 "criteria": {"mtimeToleranceSec": 0, "contentCompare": "always"},
                 "lazyScan": true
             })),
-            c, &ai_dir::CancelFlag::new(), tx,
+            c,
+            &ai_dir::CancelFlag::new(),
+            tx,
         )
         .await
         .unwrap();
-        (dir, l.to_string_lossy().into_owned(), r.to_string_lossy().into_owned())
+        (
+            dir,
+            l.to_string_lossy().into_owned(),
+            r.to_string_lossy().into_owned(),
+        )
     }
 
     #[tokio::test]
@@ -4329,11 +4989,16 @@ mod p9_tests {
         let got = dispatch(
             "dir/filter",
             Some(json!({"sessionId": "drefresh", "nameFilter": {}})),
-            &c, &ai_dir::CancelFlag::new(), tx,
+            &c,
+            &ai_dir::CancelFlag::new(),
+            tx,
         )
         .await
         .unwrap();
-        let v = match got { Handled::Value(v) => v, _ => panic!("形态") };
+        let v = match got {
+            Handled::Value(v) => v,
+            _ => panic!("形态"),
+        };
         assert_eq!(v["stats"]["total"], 4, "未请求重扫不得改变行集: {v}");
         while let Ok(_m) = rx.try_recv() {}
 
@@ -4342,11 +5007,16 @@ mod p9_tests {
         let got = dispatch(
             "dir/filter",
             Some(json!({"sessionId": "drefresh", "nameFilter": {}, "rescan": true})),
-            &c, &ai_dir::CancelFlag::new(), tx,
+            &c,
+            &ai_dir::CancelFlag::new(),
+            tx,
         )
         .await
         .unwrap();
-        let v = match got { Handled::Value(v) => v, _ => panic!("形态") };
+        let v = match got {
+            Handled::Value(v) => v,
+            _ => panic!("形态"),
+        };
         assert_eq!(v["stats"]["total"], 5, "刷新后含外部新建文件: {v}");
         let mut saw_external = false;
         while let Ok(msg) = rx.try_recv() {
@@ -4379,7 +5049,9 @@ mod p9_tests {
                 ],
                 "dryRun": true
             })),
-            &c, &ai_dir::CancelFlag::new(), tx,
+            &c,
+            &ai_dir::CancelFlag::new(),
+            tx,
         )
         .await;
         // side:"both" 非法（DiffSide 只有 left/right）-> 参数错误
@@ -4399,17 +5071,25 @@ mod p9_tests {
                 ],
                 "dryRun": true
             })),
-            &c, &ai_dir::CancelFlag::new(), tx,
+            &c,
+            &ai_dir::CancelFlag::new(),
+            tx,
         )
         .await
         .unwrap();
-        let v = match got { Handled::Value(v) => v, _ => panic!("形态") };
+        let v = match got {
+            Handled::Value(v) => v,
+            _ => panic!("形态"),
+        };
         assert_eq!(v["dryRun"], true);
         assert_eq!(v["total"], 3);
         assert_eq!(v["succeeded"].as_array().unwrap().len(), 3);
         assert_eq!(v["failed"].as_array().unwrap().len(), 0);
         // 文件系统未变
-        assert!(!std::path::Path::new(&right).join("lonly.txt").exists(), "dry run 不落盘");
+        assert!(
+            !std::path::Path::new(&right).join("lonly.txt").exists(),
+            "dry run 不落盘"
+        );
         assert!(std::path::Path::new(&right).join("ronly.txt").exists());
 
         // 3. 实际执行：应答 + dir/delta 通知（rescan 推送）
@@ -4424,26 +5104,41 @@ mod p9_tests {
                 ],
                 "dryRun": false
             })),
-            &c, &ai_dir::CancelFlag::new(), tx,
+            &c,
+            &ai_dir::CancelFlag::new(),
+            tx,
         )
         .await
         .unwrap();
         let (response, notifications) = match got {
-            Handled::WithNotifications { response, notifications } => (response, notifications),
+            Handled::WithNotifications {
+                response,
+                notifications,
+            } => (response, notifications),
             _ => panic!("执行后应有 rescan delta 通知"),
         };
         assert_eq!(response["succeeded"].as_array().unwrap().len(), 2);
         assert_eq!(response["dryRun"], false);
         // 落盘验证
-        assert!(std::path::Path::new(&right).join("lonly.txt").exists(), "复制已落盘");
-        assert!(!std::path::Path::new(&right).join("ronly.txt").exists(), "删除已落盘");
+        assert!(
+            std::path::Path::new(&right).join("lonly.txt").exists(),
+            "复制已落盘"
+        );
+        assert!(
+            !std::path::Path::new(&right).join("ronly.txt").exists(),
+            "删除已落盘"
+        );
         // delta 通知：rescan 全量重建（removals + upserts）
         assert!(!notifications.is_empty(), "应推送 dir/delta");
         let mut saw_removals = false;
         let mut saw_upsert_lonly = false;
         for n in &notifications {
             let payload = &n.params;
-            if !payload["removals"].as_array().unwrap_or(&Vec::new()).is_empty() {
+            if !payload["removals"]
+                .as_array()
+                .unwrap_or(&Vec::new())
+                .is_empty()
+            {
                 saw_removals = true;
             }
             for row in payload["upserts"].as_array().unwrap_or(&Vec::new()) {
@@ -4453,7 +5148,10 @@ mod p9_tests {
             }
         }
         assert!(saw_removals, "rescan delta 含旧行 removals");
-        assert!(saw_upsert_lonly, "rescan delta 含复制后的 same 行: {notifications:?}");
+        assert!(
+            saw_upsert_lonly,
+            "rescan delta 含复制后的 same 行: {notifications:?}"
+        );
         // 通知已按序入队（本 handler 走 WithNotifications，server 会在应答后发送）
         while let Ok(_msg) = rx.try_recv() {}
 
@@ -4476,7 +5174,10 @@ mod p9_tests {
         .unwrap();
         let (v, _notes) = match got {
             Handled::Value(v) => (v, Vec::new()),
-            Handled::WithNotifications { response, notifications } => (response, notifications),
+            Handled::WithNotifications {
+                response,
+                notifications,
+            } => (response, notifications),
         };
         assert_eq!(v["failed"].as_array().unwrap().len(), 1, "ghost 失败: {v}");
         assert_eq!(v["succeeded"].as_array().unwrap().len(), 2, "部分成功语义");
@@ -4492,7 +5193,9 @@ mod p9_tests {
                 "ops": [{"kind": "rename", "path": "lonly.txt", "side": "right"}],
                 "dryRun": false
             })),
-            &c, &ai_dir::CancelFlag::new(), tx,
+            &c,
+            &ai_dir::CancelFlag::new(),
+            tx,
         )
         .await
         .unwrap_err();
@@ -4503,7 +5206,9 @@ mod p9_tests {
         let err = dispatch(
             "dir/execute",
             Some(json!({"sessionId": "no-such-session", "ops": [], "dryRun": true})),
-            &c, &ai_dir::CancelFlag::new(), tx,
+            &c,
+            &ai_dir::CancelFlag::new(),
+            tx,
         )
         .await
         .unwrap_err();
@@ -4529,7 +5234,9 @@ mod p9_tests {
                 "depth": 1,
                 "criteria": {"mtimeToleranceSec": 0, "contentCompare": "always"}
             })),
-            &c, &ai_dir::CancelFlag::new(), tx,
+            &c,
+            &ai_dir::CancelFlag::new(),
+            tx,
         )
         .await
         .unwrap();
@@ -4542,12 +5249,17 @@ mod p9_tests {
                 "ops": [{"kind": "mkdir", "path": "sub", "side": "left"}],
                 "dryRun": false
             })),
-            &c, &ai_dir::CancelFlag::new(), tx,
+            &c,
+            &ai_dir::CancelFlag::new(),
+            tx,
         )
         .await
         .unwrap();
         let (response, notifications) = match got {
-            Handled::WithNotifications { response, notifications } => (response, notifications),
+            Handled::WithNotifications {
+                response,
+                notifications,
+            } => (response, notifications),
             _ => panic!("同步会话执行后应推 rescan delta"),
         };
         assert_eq!(response["succeeded"].as_array().unwrap().len(), 1);
@@ -4604,10 +5316,18 @@ mod p10_tests {
         assert!(ids.contains(&"builtin-cpp") && ids.contains(&"builtin-python"));
         // 掩码与语法元素随定义返回
         let cpp = formats.iter().find(|f| f["id"] == "builtin-cpp").unwrap();
-        let masks: Vec<&str> = cpp["masks"].as_array().unwrap().iter().map(|m| m.as_str().unwrap()).collect();
+        let masks: Vec<&str> = cpp["masks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| m.as_str().unwrap())
+            .collect();
         assert!(masks.contains(&"*.cpp"));
         let grammar = cpp["grammar"].as_array().unwrap();
-        assert!(grammar.iter().any(|e| e["name"] == "注释"), "C 格式带注释元素");
+        assert!(
+            grammar.iter().any(|e| e["name"] == "注释"),
+            "C 格式带注释元素"
+        );
     }
 
     #[tokio::test]
@@ -4616,13 +5336,23 @@ mod p10_tests {
         let params = json!({"formats":[{"id":"fmt-team","enabled":true,"masks":["*.team"],"description":"团队格式","viewKind":"text","grammar":[{"name":"注释","items":[{"kind":"delimited","start":"#","toEol":true}]}]}]});
         let v = value_of(formats_save(Some(params), &c).await).await;
         assert_eq!(v["saved"], 1);
-        let ids: Vec<&str> = v["formats"].as_array().unwrap().iter().map(|f| f["id"].as_str().unwrap()).collect();
+        let ids: Vec<&str> = v["formats"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|f| f["id"].as_str().unwrap())
+            .collect();
         assert!(ids.contains(&"fmt-team"), "保存后列表含自定义格式");
         // 再存同 id = 覆盖（saved 仍计 1，列表不重复）
         let params2 = json!({"formats":[{"id":"fmt-team","enabled":true,"masks":["*.team2"],"description":"v2","viewKind":"text"}]});
         let v2 = value_of(formats_save(Some(params2), &c).await).await;
         assert_eq!(v2["saved"], 1);
-        let count = v2["formats"].as_array().unwrap().iter().filter(|f| f["id"] == "fmt-team").count();
+        let count = v2["formats"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|f| f["id"] == "fmt-team")
+            .count();
         assert_eq!(count, 1, "按 id 覆盖不重复");
     }
 
@@ -4639,7 +5369,12 @@ mod p10_tests {
         let params = json!({"path": pack_path.to_string_lossy()});
         let v = value_of(formats_load(Some(params), &c).await).await;
         assert_eq!(v["loaded"], 1);
-        let ids: Vec<&str> = v["formats"].as_array().unwrap().iter().map(|f| f["id"].as_str().unwrap()).collect();
+        let ids: Vec<&str> = v["formats"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|f| f["id"].as_str().unwrap())
+            .collect();
         assert!(ids.contains(&"fmt-loaded"));
 
         // 版本 > 1 拒绝
@@ -4662,16 +5397,34 @@ mod p10_tests {
         // kind 层覆盖 compare（整体覆盖语义）
         let k = json!({"scope":"kind","kind":"text-compare","layer":{"compare":{"caseUnimportant":false}}});
         let v = value_of(rules_set(Some(k), &c).await).await;
-        assert_eq!(v["effective"]["compare"]["caseUnimportant"], false, "kind 层覆盖全局");
-        assert_eq!(v["effective"]["unimportantElements"], json!(["注释"]), "元素集 None 回落全局");
+        assert_eq!(
+            v["effective"]["compare"]["caseUnimportant"], false,
+            "kind 层覆盖全局"
+        );
+        assert_eq!(
+            v["effective"]["unimportantElements"],
+            json!(["注释"]),
+            "元素集 None 回落全局"
+        );
         // session 层再覆盖元素集
         let s = json!({"scope":"session","sessionId":"sess-1","layer":{"unimportantElements":["字符串"]}});
         let _ = value_of(rules_set(Some(s), &c).await).await;
         let get = json!({"kind":"text-compare","sessionId":"sess-1"});
         let v = value_of(rules_get(Some(get), &c).await).await;
-        assert_eq!(v["session"]["unimportantElements"], json!(["字符串"]), "session 层回显");
-        assert_eq!(v["effective"]["unimportantElements"], json!(["字符串"]), "会话层覆盖");
-        assert_eq!(v["effective"]["compare"]["caseUnimportant"], false, "compare 来自 kind 层");
+        assert_eq!(
+            v["session"]["unimportantElements"],
+            json!(["字符串"]),
+            "session 层回显"
+        );
+        assert_eq!(
+            v["effective"]["unimportantElements"],
+            json!(["字符串"]),
+            "会话层覆盖"
+        );
+        assert_eq!(
+            v["effective"]["compare"]["caseUnimportant"], false,
+            "compare 来自 kind 层"
+        );
         // 不带 sessionId 的解析不含会话层
         let v2 = value_of(rules_get(Some(json!({"kind":"text-compare"})), &c).await).await;
         assert_eq!(v2["effective"]["unimportantElements"], json!(["注释"]));
@@ -4680,9 +5433,21 @@ mod p10_tests {
     #[tokio::test]
     async fn rules_set_target_validation() {
         let c = ctx();
-        assert!(rules_set(Some(json!({"scope":"kind","layer":{}})), &c).await.is_err(), "kind 缺 kind");
-        assert!(rules_set(Some(json!({"scope":"session","layer":{}})), &c).await.is_err(), "session 缺 sessionId");
-        assert!(rules_set(Some(json!({"scope":"global","layer":{}})), &c).await.is_ok());
+        assert!(
+            rules_set(Some(json!({"scope":"kind","layer":{}})), &c)
+                .await
+                .is_err(),
+            "kind 缺 kind"
+        );
+        assert!(
+            rules_set(Some(json!({"scope":"session","layer":{}})), &c)
+                .await
+                .is_err(),
+            "session 缺 sessionId"
+        );
+        assert!(rules_set(Some(json!({"scope":"global","layer":{}})), &c)
+            .await
+            .is_ok());
     }
 
     #[tokio::test]
@@ -4696,13 +5461,21 @@ mod p10_tests {
         let b2 = json!({"scope":"global","layer":{},"formatBindings":[{"formatId":"builtin-json","unimportantElements":["注释"]}],"clearFormatBindings":false});
         let _ = value_of(rules_set(Some(b2), &c).await).await;
         let v = value_of(rules_get(Some(json!({})), &c).await).await;
-        let ids: Vec<&str> = v["formatBindings"].as_array().unwrap().iter().map(|x| x["formatId"].as_str().unwrap()).collect();
+        let ids: Vec<&str> = v["formatBindings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|x| x["formatId"].as_str().unwrap())
+            .collect();
         assert_eq!(ids, vec!["builtin-json"], "绑定全量替换");
         // clear
         let b3 = json!({"scope":"global","layer":{},"clearFormatBindings":true});
         let _ = value_of(rules_set(Some(b3), &c).await).await;
         let v = value_of(rules_get(Some(json!({})), &c).await).await;
-        assert!(v.get("formatBindings").is_none(), "清空后绑定省略（skip empty）");
+        assert!(
+            v.get("formatBindings").is_none(),
+            "清空后绑定省略（skip empty）"
+        );
     }
 
     // ---- text/open 会话规则应用链 ----
@@ -4733,9 +5506,20 @@ mod p10_tests {
         let v = open_c_pair_with_rules(&c, json!({"unimportantElements":["注释"]})).await;
         assert_eq!(v["sectionCount"], 3, "骨架：Equal + Change + Equal");
         let (tx, _rx) = chan();
-        let v2 = value_of(text_sections(Some(json!({"sessionId":"t-rules","offset":0,"count":100})), &c, tx).await).await;
+        let v2 = value_of(
+            text_sections(
+                Some(json!({"sessionId":"t-rules","offset":0,"count":100})),
+                &c,
+                tx,
+            )
+            .await,
+        )
+        .await;
         let secs = v2["sections"].as_array().unwrap();
-        assert_eq!(secs[1]["important"], "unimportant", "注释行差异不重要（语法折叠）");
+        assert_eq!(
+            secs[1]["important"], "unimportant",
+            "注释行差异不重要（语法折叠）"
+        );
         // raw 骨架不受影响：中间段仍为 change
         assert_eq!(secs[1]["kind"], "change");
     }
@@ -4756,8 +5540,19 @@ mod p10_tests {
         });
         value_of(text_open(Some(params), &c).await).await;
         let (tx, _rx) = chan();
-        let v = value_of(text_sections(Some(json!({"sessionId":"t-case","offset":0,"count":100})), &c, tx).await).await;
-        assert_eq!(v["sections"][0]["important"], "unimportant", "大小写不重要经 rules 链生效");
+        let v = value_of(
+            text_sections(
+                Some(json!({"sessionId":"t-case","offset":0,"count":100})),
+                &c,
+                tx,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(
+            v["sections"][0]["important"], "unimportant",
+            "大小写不重要经 rules 链生效"
+        );
     }
 
     #[tokio::test]
@@ -4766,8 +5561,19 @@ mod p10_tests {
         let v = open_c_pair_with_rules(&c, json!({})).await;
         assert_eq!(v["sectionCount"], 3);
         let (tx, _rx) = chan();
-        let v2 = value_of(text_sections(Some(json!({"sessionId":"t-rules","offset":0,"count":100})), &c, tx).await).await;
-        assert_eq!(v2["sections"][1]["important"], "important", "无规则 = 注释差异重要（行为不变）");
+        let v2 = value_of(
+            text_sections(
+                Some(json!({"sessionId":"t-rules","offset":0,"count":100})),
+                &c,
+                tx,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(
+            v2["sections"][1]["important"], "important",
+            "无规则 = 注释差异重要（行为不变）"
+        );
     }
 
     // ---- dir/open formatAware ----
@@ -4783,20 +5589,34 @@ mod p10_tests {
         std::fs::write(r.join("code.txt"), b"hello\n").unwrap();
         std::fs::write(l.join("blob.bin"), b"abc\0def").unwrap();
         std::fs::write(r.join("blob.bin"), b"abc\0def").unwrap();
-        (dir, l.to_string_lossy().to_string(), r.to_string_lossy().to_string())
+        (
+            dir,
+            l.to_string_lossy().to_string(),
+            r.to_string_lossy().to_string(),
+        )
     }
 
-    async fn dir_open_collect(id: &str, l: &str, r: &str, format_aware: bool) -> (serde_json::Value, Vec<serde_json::Value>) {
+    async fn dir_open_collect(
+        id: &str,
+        l: &str,
+        r: &str,
+        format_aware: bool,
+    ) -> (serde_json::Value, Vec<serde_json::Value>) {
         let c = ctx();
         let (tx, mut rx) = chan();
         let mut params = json!({"sessionId": id, "left": l, "right": r});
         if format_aware {
             params["formatAware"] = json!(true);
         }
-        let handled = dir_open(Some(params), &c, &ai_dir::CancelFlag::new(), tx).await.unwrap();
+        let handled = dir_open(Some(params), &c, &ai_dir::CancelFlag::new(), tx)
+            .await
+            .unwrap();
         let (response, notifications) = match handled {
             Handled::Value(v) => (v, Vec::new()),
-            Handled::WithNotifications { response, notifications } => (response, notifications),
+            Handled::WithNotifications {
+                response,
+                notifications,
+            } => (response, notifications),
         };
         let mut deltas: Vec<serde_json::Value> = notifications
             .iter()
@@ -4823,7 +5643,12 @@ mod p10_tests {
         let upserts = deltas[0]["upserts"].as_array().unwrap();
         let kinds: std::collections::HashMap<String, &str> = upserts
             .iter()
-            .map(|u| (u["id"].as_str().unwrap().to_string(), u["fileKind"].as_str().unwrap()))
+            .map(|u| {
+                (
+                    u["id"].as_str().unwrap().to_string(),
+                    u["fileKind"].as_str().unwrap(),
+                )
+            })
             .collect();
         assert_eq!(kinds["code.txt"], "text");
         assert_eq!(kinds["blob.bin"], "binary", "NUL 字节判二进制");
@@ -4836,7 +5661,10 @@ mod p10_tests {
         assert_eq!(resp["rowCount"], 2);
         for d in &deltas {
             for u in d["upserts"].as_array().unwrap() {
-                assert!(u.get("fileKind").is_none(), "未开启 formatAware 时载荷无 fileKind（P9 字节兼容）");
+                assert!(
+                    u.get("fileKind").is_none(),
+                    "未开启 formatAware 时载荷无 fileKind（P9 字节兼容）"
+                );
             }
         }
     }
@@ -4853,7 +5681,9 @@ mod p10_tests {
             "lazyScan": true,
             "formatAware": true,
         });
-        let handled = dir_open(Some(params), &c, &ai_dir::CancelFlag::new(), tx).await.unwrap();
+        let handled = dir_open(Some(params), &c, &ai_dir::CancelFlag::new(), tx)
+            .await
+            .unwrap();
         assert!(matches!(handled, Handled::WithNotifications { .. }));
         let mut kinds = std::collections::HashMap::new();
         // 首批 delta 随应答通知返回（含注解）；后台 pump 增量经 tx
@@ -4955,18 +5785,28 @@ mod p11_report_tests {
                 "criteria": {"mtimeToleranceSec": 0, "contentCompare": "always"},
                 "lazyScan": true
             })),
-            c, &ai_dir::CancelFlag::new(), tx,
+            c,
+            &ai_dir::CancelFlag::new(),
+            tx,
         )
         .await;
-        (dir, l.to_string_lossy().into_owned(), r.to_string_lossy().into_owned())
+        (
+            dir,
+            l.to_string_lossy().into_owned(),
+            r.to_string_lossy().into_owned(),
+        )
     }
 
     async fn open_text_session(c: &HandlerCtx, id: &str, l: &std::path::Path, r: &std::path::Path) {
         let (tx, _rx) = chan();
         let _ = dispatch(
             "text/open",
-            Some(json!({"sessionId": id, "left": l.to_string_lossy(), "right": r.to_string_lossy()})),
-            c, &ai_dir::CancelFlag::new(), tx,
+            Some(
+                json!({"sessionId": id, "left": l.to_string_lossy(), "right": r.to_string_lossy()}),
+            ),
+            c,
+            &ai_dir::CancelFlag::new(),
+            tx,
         )
         .await
         .expect("text/open");
@@ -4985,18 +5825,29 @@ mod p11_report_tests {
             dispatch(
                 "report/generate",
                 Some(json!({"sessionId": "t1", "layout": "patch", "contextLines": 1})),
-                &c, &ai_dir::CancelFlag::new(), chan().0,
+                &c,
+                &ai_dir::CancelFlag::new(),
+                chan().0,
             )
             .await,
         )
         .await;
         let content = v["content"].as_str().unwrap();
-        assert!(content.starts_with("--- ") && content.contains("+++ "), "{content}");
-        assert!(content.contains("-beta\n+BETA\n gamma\n+delta\n"), "{content}");
+        assert!(
+            content.starts_with("--- ") && content.contains("+++ "),
+            "{content}"
+        );
+        assert!(
+            content.contains("-beta\n+BETA\n gamma\n+delta\n"),
+            "{content}"
+        );
         assert_eq!(v["layout"], "patch");
         assert_eq!(v["hasMore"], false);
         // 全文总长与 content 一致（未分块）
-        assert_eq!(v["totalChars"].as_u64().unwrap(), content.chars().count() as u64);
+        assert_eq!(
+            v["totalChars"].as_u64().unwrap(),
+            content.chars().count() as u64
+        );
     }
 
     #[tokio::test]
@@ -5033,13 +5884,18 @@ mod p11_report_tests {
         while off < total {
             let blk = fetch(off, 7).await;
             assembled.push_str(blk["content"].as_str().unwrap());
-            off = blk["offset"].as_u64().unwrap() + blk["content"].as_str().unwrap().chars().count() as u64;
+            off = blk["offset"].as_u64().unwrap()
+                + blk["content"].as_str().unwrap().chars().count() as u64;
             if !blk["hasMore"].as_bool().unwrap() {
                 break;
             }
         }
         let full = fetch(0, total).await;
-        assert_eq!(assembled, full["content"].as_str().unwrap(), "分块拼接 == 全量");
+        assert_eq!(
+            assembled,
+            full["content"].as_str().unwrap(),
+            "分块拼接 == 全量"
+        );
         assert!(assembled.contains("<report kind=\"text\""));
     }
 
@@ -5053,7 +5909,9 @@ mod p11_report_tests {
             let sessions = c.sessions.lock().await;
             if let Some(Session::Dir(data)) = sessions.get("d11") {
                 if let Some(model) = &data.model {
-                    let _ = model.wait_until_done(std::time::Duration::from_secs(5)).await;
+                    let _ = model
+                        .wait_until_done(std::time::Duration::from_secs(5))
+                        .await;
                 }
             }
         }
@@ -5061,20 +5919,27 @@ mod p11_report_tests {
             dispatch(
                 "report/generate",
                 Some(json!({"sessionId": "d11", "layout": "summary"})),
-                &c, &ai_dir::CancelFlag::new(), chan().0,
+                &c,
+                &ai_dir::CancelFlag::new(),
+                chan().0,
             )
             .await,
         )
         .await;
         let summary = v["content"].as_str().unwrap();
         assert!(summary.contains("差异清单"), "{summary}");
-        assert!(summary.contains("lonly.txt") && summary.contains("ronly.txt"), "{summary}");
+        assert!(
+            summary.contains("lonly.txt") && summary.contains("ronly.txt"),
+            "{summary}"
+        );
         // tree 布局 + 孤项过滤
         let v = value_of(
             dispatch(
                 "report/generate",
                 Some(json!({"sessionId": "d11", "layout": "tree", "dirDisplay": "orphans"})),
-                &c, &ai_dir::CancelFlag::new(), chan().0,
+                &c,
+                &ai_dir::CancelFlag::new(),
+                chan().0,
             )
             .await,
         )
@@ -5082,7 +5947,10 @@ mod p11_report_tests {
         let tree = v["content"].as_str().unwrap();
         assert!(tree.contains("[<] lonly.txt"), "{tree}");
         assert!(tree.contains("[>] ronly.txt"));
-        assert!(!tree.contains("same.txt"), "orphans 过滤后不含相同项: {tree}");
+        assert!(
+            !tree.contains("same.txt"),
+            "orphans 过滤后不含相同项: {tree}"
+        );
         let _ = (l, r);
     }
 
@@ -5106,13 +5974,18 @@ mod p11_report_tests {
             dispatch(
                 "report/generate",
                 Some(json!({"sessionId": "tb1", "layout": "csv", "delimiter": "tsv"})),
-                &c, &ai_dir::CancelFlag::new(), chan().0,
+                &c,
+                &ai_dir::CancelFlag::new(),
+                chan().0,
             )
             .await,
         )
         .await;
         let content = v["content"].as_str().unwrap();
-        assert!(content.contains('\t') && content.contains("added"), "{content}");
+        assert!(
+            content.contains('\t') && content.contains("added"),
+            "{content}"
+        );
 
         let lbin = dir.path().join("l.bin");
         let rbin = dir.path().join("r.bin");
@@ -5130,7 +6003,9 @@ mod p11_report_tests {
             dispatch(
                 "report/generate",
                 Some(json!({"sessionId": "hx1", "layout": "stats"})),
-                &c, &ai_dir::CancelFlag::new(), chan().0,
+                &c,
+                &ai_dir::CancelFlag::new(),
+                chan().0,
             )
             .await,
         )
@@ -5159,14 +6034,21 @@ mod p11_report_tests {
             dispatch(
                 "report/generate",
                 Some(json!({"sessionId": "m1", "layout": "xml"})),
-                &c, &ai_dir::CancelFlag::new(), chan().0,
+                &c,
+                &ai_dir::CancelFlag::new(),
+                chan().0,
             )
             .await,
         )
         .await;
         let content = v["content"].as_str().unwrap();
         assert!(content.contains("<report kind=\"merge\""), "{content}");
-        assert!(content.contains("origin=\"rightOnly\"") || content.contains("origin=\"leftOnly\"") || content.contains("origin=\"conflict\""), "{content}");
+        assert!(
+            content.contains("origin=\"rightOnly\"")
+                || content.contains("origin=\"leftOnly\"")
+                || content.contains("origin=\"conflict\""),
+            "{content}"
+        );
     }
 
     #[tokio::test]
@@ -5175,7 +6057,9 @@ mod p11_report_tests {
         let r = dispatch(
             "report/generate",
             Some(json!({"sessionId": "ghost", "layout": "summary"})),
-            &c, &ai_dir::CancelFlag::new(), chan().0,
+            &c,
+            &ai_dir::CancelFlag::new(),
+            chan().0,
         )
         .await;
         assert!(r.is_err(), "未知会话应报错");
@@ -5185,7 +6069,9 @@ mod p11_report_tests {
         let res = dispatch(
             "report/generate",
             Some(json!({"sessionId": "d12", "layout": "patch"})),
-            &c, &ai_dir::CancelFlag::new(), chan().0,
+            &c,
+            &ai_dir::CancelFlag::new(),
+            chan().0,
         )
         .await;
         assert!(res.is_err(), "目录会话 patch 布局应报不支持");
@@ -5279,8 +6165,14 @@ mod dir_merge_tests {
         // 三个方法都必须已注册（修复前 dispatch 无入口 -> -32601）
         let (_d, b, l, r) = make3();
         for (m, params) in [
-            ("dir/mergeScan", json!({"sessionId": "m0", "base": b, "left": l, "right": r})),
-            ("dir/mergePlan", json!({"sessionId": "m0", "target": "right", "decisions": {}})),
+            (
+                "dir/mergeScan",
+                json!({"sessionId": "m0", "base": b, "left": l, "right": r}),
+            ),
+            (
+                "dir/mergePlan",
+                json!({"sessionId": "m0", "target": "right", "decisions": {}}),
+            ),
             (
                 "dir/mergeExecute",
                 json!({"sessionId": "m0", "target": "right", "ops": []}),
@@ -5362,8 +6254,14 @@ mod dir_merge_tests {
         assert_eq!(plan["stats"]["copied"], 2);
 
         // 计划阶段不得落盘
-        assert!(!std::path::Path::new(&r).join("lonly.txt").exists(), "plan 只预览");
-        assert_eq!(std::fs::read(std::path::Path::new(&r).join("lchg.txt")).unwrap(), b"old");
+        assert!(
+            !std::path::Path::new(&r).join("lonly.txt").exists(),
+            "plan 只预览"
+        );
+        assert_eq!(
+            std::fs::read(std::path::Path::new(&r).join("lchg.txt")).unwrap(),
+            b"old"
+        );
 
         let exec = value_of(
             dispatch(
@@ -5381,14 +6279,27 @@ mod dir_merge_tests {
         assert_eq!(exec["failed"], 0);
         assert_eq!(exec["cancelled"], false);
         assert_eq!(exec["details"].as_array().unwrap().len(), 2);
-        assert!(exec["details"].as_array().unwrap().iter().all(|d| d["status"] == "copied"));
+        assert!(exec["details"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|d| d["status"] == "copied"));
         assert!(!exec["log"].as_array().unwrap().is_empty(), "日志面板行");
 
         // 真实落盘
-        assert_eq!(std::fs::read(std::path::Path::new(&r).join("lchg.txt")).unwrap(), b"new");
-        assert_eq!(std::fs::read(std::path::Path::new(&r).join("lonly.txt")).unwrap(), b"L");
+        assert_eq!(
+            std::fs::read(std::path::Path::new(&r).join("lchg.txt")).unwrap(),
+            b"new"
+        );
+        assert_eq!(
+            std::fs::read(std::path::Path::new(&r).join("lonly.txt")).unwrap(),
+            b"L"
+        );
         // 未决策的冲突保持原样
-        assert_eq!(std::fs::read(std::path::Path::new(&r).join("conf.txt")).unwrap(), b"r");
+        assert_eq!(
+            std::fs::read(std::path::Path::new(&r).join("conf.txt")).unwrap(),
+            b"r"
+        );
     }
 
     #[tokio::test]
@@ -5411,9 +6322,17 @@ mod dir_merge_tests {
         )
         .await;
         let ops = plan["ops"].as_array().unwrap();
-        let find = |p: &str| ops.iter().find(|o| o["path"] == p).unwrap_or_else(|| panic!("缺 {p}: {plan}"));
+        let find = |p: &str| {
+            ops.iter()
+                .find(|o| o["path"] == p)
+                .unwrap_or_else(|| panic!("缺 {p}: {plan}"))
+        };
         assert_eq!(find("conf.txt")["kind"], "takeLeft", "显式决策覆盖冲突默认");
-        assert_eq!(find("lonly.txt")["kind"], "keep", "skip 决策记 Keep 供预览解释");
+        assert_eq!(
+            find("lonly.txt")["kind"],
+            "keep",
+            "skip 决策记 Keep 供预览解释"
+        );
         assert_eq!(plan["stats"]["skipped"], 1);
 
         let exec = value_of(
@@ -5427,10 +6346,21 @@ mod dir_merge_tests {
             .await,
         )
         .await;
-        assert_eq!(std::fs::read(std::path::Path::new(&r).join("conf.txt")).unwrap(), b"l");
-        assert!(!std::path::Path::new(&r).join("lonly.txt").exists(), "skip 不落盘");
+        assert_eq!(
+            std::fs::read(std::path::Path::new(&r).join("conf.txt")).unwrap(),
+            b"l"
+        );
+        assert!(
+            !std::path::Path::new(&r).join("lonly.txt").exists(),
+            "skip 不落盘"
+        );
         // Keep 项记 planned（可追溯），不计 copied
-        let keep = exec["details"].as_array().unwrap().iter().find(|d| d["path"] == "lonly.txt").unwrap();
+        let keep = exec["details"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|d| d["path"] == "lonly.txt")
+            .unwrap();
         assert_eq!(keep["status"], "planned");
         assert_eq!(keep["kind"], "keep");
     }
@@ -5495,7 +6425,10 @@ mod dir_merge_tests {
         assert!(!out.join("conf.txt").exists(), "未决冲突不进输出");
         assert!(!out.join("del.txt").exists(), "右侧已删除项不进输出");
         // 左右两侧未被改动
-        assert_eq!(std::fs::read(std::path::Path::new(&r).join("lchg.txt")).unwrap(), b"old");
+        assert_eq!(
+            std::fs::read(std::path::Path::new(&r).join("lchg.txt")).unwrap(),
+            b"old"
+        );
         assert!(!std::path::Path::new(&r).join("lonly.txt").exists());
     }
 
@@ -5670,8 +6603,14 @@ mod dir_merge_tests {
             .iter()
             .find(|x| x["path"] == "lonly.txt")
             .expect("该项应有明细");
-        assert_eq!(lonly["status"], "failed", "符号链接项应失败而非成功: {exec}");
-        assert_eq!(exec["copied"], 3, "其余三项仍应成功（部分成功语义）: {exec}");
+        assert_eq!(
+            lonly["status"], "failed",
+            "符号链接项应失败而非成功: {exec}"
+        );
+        assert_eq!(
+            exec["copied"], 3,
+            "其余三项仍应成功（部分成功语义）: {exec}"
+        );
     }
 }
 
@@ -6899,7 +7838,8 @@ mod route_vfs_tests {
         std::fs::create_dir(&root).unwrap();
         std::fs::write(root.join("a.txt"), "A").unwrap();
 
-        let (tx, mut rx) = crate::outbound::OutboundTx::for_test(crate::outbound::OUTBOUND_CAPACITY);
+        let (tx, mut rx) =
+            crate::outbound::OutboundTx::for_test(crate::outbound::OUTBOUND_CAPACITY);
         let handled = dispatch(
             "dir/open",
             Some(json!({
@@ -7352,23 +8292,33 @@ mod text_encoding_tests {
 #[cfg(test)]
 mod r3_03_rpc_tests {
     use super::*;
+    use crate::outbound::{OutboundTx, OUTBOUND_CAPACITY};
     use crate::server::Outbound;
     use serde_json::json;
-    use crate::outbound::{OutboundTx, OUTBOUND_CAPACITY};
 
     fn ctx() -> HandlerCtx {
         HandlerCtx::new(512)
     }
 
-    fn chan() -> (
-        OutboundTx,
-        tokio::sync::mpsc::Receiver<Outbound>,
-    ) {
+    fn chan() -> (OutboundTx, tokio::sync::mpsc::Receiver<Outbound>) {
         OutboundTx::for_test(OUTBOUND_CAPACITY)
     }
 
-    async fn call(c: &HandlerCtx, method: &str, params: serde_json::Value, tx: &OutboundTx) -> serde_json::Value {
-        let handled = dispatch(method, Some(params), c, &ai_dir::CancelFlag::new(), tx.clone()).await.unwrap();
+    async fn call(
+        c: &HandlerCtx,
+        method: &str,
+        params: serde_json::Value,
+        tx: &OutboundTx,
+    ) -> serde_json::Value {
+        let handled = dispatch(
+            method,
+            Some(params),
+            c,
+            &ai_dir::CancelFlag::new(),
+            tx.clone(),
+        )
+        .await
+        .unwrap();
         match handled {
             Handled::Value(v) => v,
             Handled::WithNotifications { response, .. } => response,
@@ -7423,8 +8373,14 @@ mod r3_03_rpc_tests {
             let src = p["sourcePath"].as_str().expect("引擎必须解析出 sourcePath");
             let dst = p["targetPath"].as_str().expect("引擎必须解析出 targetPath");
             assert!(!row_id.contains('/'), "平铺行 id 不应含路径: {row_id}");
-            assert!(!src.contains('#') && src.contains('/'), "源必须是真实 rel: {src}");
-            assert!(!dst.contains('#') && dst.contains('/'), "目标必须是真实 rel: {dst}");
+            assert!(
+                !src.contains('#') && src.contains('/'),
+                "源必须是真实 rel: {src}"
+            );
+            assert!(
+                !dst.contains('#') && dst.contains('/'),
+                "目标必须是真实 rel: {dst}"
+            );
         }
 
         // 模拟 UI plannedToOp：执行载荷用真实路径，不重新拼接行 id
@@ -7458,7 +8414,11 @@ mod r3_03_rpc_tests {
         assert_eq!(std::fs::read(r.join("d2/x.txt")).unwrap(), b"L2");
         assert!(!r.join("x.txt").exists(), "不得按显示 id 在根目录建文件");
         assert!(!r.join("x.txt#1").exists(), "不得把消歧 id 当路径");
-        assert_eq!(std::fs::read(l.join("d1/x.txt")).unwrap(), b"L1", "源不应被改写");
+        assert_eq!(
+            std::fs::read(l.join("d1/x.txt")).unwrap(),
+            b"L1",
+            "源不应被改写"
+        );
     }
 
     /// 手动对齐左右异名的等价协议链路：dir/execute 必须能把 a.txt 复制到
@@ -7515,9 +8475,17 @@ mod r3_03_rpc_tests {
             0,
             "异名复制不得失败: {executed}"
         );
-        assert_eq!(std::fs::read(r.join("b.txt")).unwrap(), b"AAA", "应写进目标侧真实名字 b.txt");
+        assert_eq!(
+            std::fs::read(r.join("b.txt")).unwrap(),
+            b"AAA",
+            "应写进目标侧真实名字 b.txt"
+        );
         assert!(!r.join("a.txt").exists(), "不得按源名在右侧另建一份");
-        assert_eq!(std::fs::read(l.join("a.txt")).unwrap(), b"AAA", "源不应被改写");
+        assert_eq!(
+            std::fs::read(l.join("a.txt")).unwrap(),
+            b"AAA",
+            "源不应被改写"
+        );
     }
 
     /// 平铺 depth 语义回归：缺省=全递归（修复），显式 1=顶层（既有语义不变），
@@ -7622,10 +8590,13 @@ mod r3_03_rpc_tests {
             &tx2,
         )
         .await;
-        assert_eq!(executed["failed"].as_array().unwrap().len(), 1, "越界目标必须失败: {executed}");
+        assert_eq!(
+            executed["failed"].as_array().unwrap().len(),
+            1,
+            "越界目标必须失败: {executed}"
+        );
         assert!(!d.path().join("outside.txt").exists(), "根外不得产生文件");
     }
-
 }
 
 // ---------------------------------------------------------------------------
@@ -7634,8 +8605,8 @@ mod r3_03_rpc_tests {
 #[cfg(test)]
 mod r3_22_cancel_tests {
     use super::*;
-    use serde_json::json;
     use crate::outbound::{OutboundTx, OUTBOUND_CAPACITY};
+    use serde_json::json;
     use std::sync::atomic::Ordering;
 
     fn ctx() -> HandlerCtx {
@@ -7671,7 +8642,12 @@ mod r3_22_cancel_tests {
             })
     }
 
-    fn open_params(l: &std::path::Path, r: &std::path::Path, session: &str, lazy: bool) -> serde_json::Value {
+    fn open_params(
+        l: &std::path::Path,
+        r: &std::path::Path,
+        session: &str,
+        lazy: bool,
+    ) -> serde_json::Value {
         json!({
             "sessionId": session,
             "left": l.to_string_lossy(),
@@ -7700,7 +8676,11 @@ mod r3_22_cancel_tests {
             .iter()
             .map(|m| (*m).to_string())
             .collect();
-        assert_eq!(caps.cancel_methods, Some(expected.clone()), "清单必须来自唯一事实源");
+        assert_eq!(
+            caps.cancel_methods,
+            Some(expected.clone()),
+            "清单必须来自唯一事实源"
+        );
         assert_eq!(caps.session_cancel, Some(true));
         for m in [
             ai_protocol::method::TEXT_OPEN,
@@ -7708,7 +8688,10 @@ mod r3_22_cancel_tests {
             ai_protocol::method::REPORT_GENERATE,
             ai_protocol::method::DIR_FILTER,
         ] {
-            assert!(!expected.iter().any(|x| x == m), "{m} 未接 CancelFlag，不得声明");
+            assert!(
+                !expected.iter().any(|x| x == m),
+                "{m} 未接 CancelFlag，不得声明"
+            );
         }
     }
 
@@ -7720,10 +8703,19 @@ mod r3_22_cancel_tests {
         let cancelled = ai_dir::CancelFlag::new();
         cancelled.cancel();
 
-        let err = call(&c, ai_protocol::method::DIR_OPEN, open_params(&l, &r, "d-cancel", false), &cancelled)
-            .await
-            .unwrap_err();
-        assert_eq!(err.code, codes::REQUEST_CANCELLED, "dir/open 在表内必须响应取消: {err:?}");
+        let err = call(
+            &c,
+            ai_protocol::method::DIR_OPEN,
+            open_params(&l, &r, "d-cancel", false),
+            &cancelled,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(
+            err.code,
+            codes::REQUEST_CANCELLED,
+            "dir/open 在表内必须响应取消: {err:?}"
+        );
 
         // text/open 不在表内：同一个已置位旗标下仍应正常打开（证明能力表不是摆设）
         let lp = d.path().join("left.txt");
@@ -7745,9 +8737,14 @@ mod r3_22_cancel_tests {
     async fn dir_execute_consumes_request_cancel() {
         let (_d, l, r) = trees();
         let c = ctx();
-        call(&c, ai_protocol::method::DIR_OPEN, open_params(&l, &r, "d-exec", false), &ai_dir::CancelFlag::new())
-            .await
-            .unwrap();
+        call(
+            &c,
+            ai_protocol::method::DIR_OPEN,
+            open_params(&l, &r, "d-exec", false),
+            &ai_dir::CancelFlag::new(),
+        )
+        .await
+        .unwrap();
         let cancelled = ai_dir::CancelFlag::new();
         cancelled.cancel();
         let res = call(
@@ -7762,7 +8759,10 @@ mod r3_22_cancel_tests {
         )
         .await
         .unwrap();
-        assert_eq!(res["cancelled"], true, "取消后剩余操作必须记为 skipped: {res}");
+        assert_eq!(
+            res["cancelled"], true,
+            "取消后剩余操作必须记为 skipped: {res}"
+        );
         assert_eq!(res["skipped"].as_array().unwrap().len(), 1);
     }
 
@@ -7774,15 +8774,27 @@ mod r3_22_cancel_tests {
 
         let flag = ai_dir::CancelFlag::new();
         let observer = Arc::clone(&flag.0);
-        let opened = call(&c, ai_protocol::method::DIR_OPEN, open_params(&l, &r, "d1", true), &flag)
-            .await
-            .unwrap();
+        let opened = call(
+            &c,
+            ai_protocol::method::DIR_OPEN,
+            open_params(&l, &r, "d1", true),
+            &flag,
+        )
+        .await
+        .unwrap();
         assert!(opened["rowCount"].is_number(), "dir/open 应答: {opened}");
-        assert_eq!(c.cancels.session_len(), 1, "dir/open 必须绑定会话级取消旗标");
+        assert_eq!(
+            c.cancels.session_len(),
+            1,
+            "dir/open 必须绑定会话级取消旗标"
+        );
 
         // 模拟 server 在应答后注销 request 索引；会话索引必须仍可命中
         assert!(c.cancels.cancel_session("d1"), "应答后仍要能取消后台扫描");
-        assert!(observer.load(Ordering::SeqCst), "置位的必须是 DirModel 持有的同一旗标");
+        assert!(
+            observer.load(Ordering::SeqCst),
+            "置位的必须是 DirModel 持有的同一旗标"
+        );
 
         call(
             &c,
@@ -7796,11 +8808,22 @@ mod r3_22_cancel_tests {
 
         let fresh = ai_dir::CancelFlag::new();
         let fresh_observer = Arc::clone(&fresh.0);
-        let reopened = call(&c, ai_protocol::method::DIR_OPEN, open_params(&l, &r, "d1", true), &fresh).await;
+        let reopened = call(
+            &c,
+            ai_protocol::method::DIR_OPEN,
+            open_params(&l, &r, "d1", true),
+            &fresh,
+        )
+        .await;
         assert!(reopened.is_ok(), "取消后关闭再重开应成功: {reopened:?}");
         assert_eq!(c.cancels.session_len(), 1);
-        assert!(!fresh_observer.load(Ordering::SeqCst), "新会话不得继承旧取消状态");
-        assert!(!c.cancels.cancel_session("d1-no-such"), "未知会话取消是 no-op");
+        assert!(
+            !fresh_observer.load(Ordering::SeqCst),
+            "新会话不得继承旧取消状态"
+        );
+        assert!(
+            !c.cancels.cancel_session("d1-no-such"),
+            "未知会话取消是 no-op"
+        );
     }
 }
-

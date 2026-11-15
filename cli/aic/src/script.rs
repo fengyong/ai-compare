@@ -24,12 +24,12 @@ use std::process::ExitCode;
 use std::time::SystemTime;
 
 use ai_core::{
-    DirSnapshot, DirDisplayFilter, DisplayFilter, PatchStyle, ReportLayout, ReportNaming,
+    DirDisplayFilter, DirSnapshot, DisplayFilter, PatchStyle, ReportLayout, ReportNaming,
     ReportOptions, ReportSnapshot, TableSnapshot, TextSnapshot,
 };
 use ai_dir::{
-    CancelFlag, DirNode, DirScanOptions, NameFilter, OtherFilter, execute_ops, run_sync,
-    ExecuteOptions, FileOp, SyncRequest, SyncStrategy,
+    execute_ops, run_sync, CancelFlag, DirNode, DirScanOptions, ExecuteOptions, FileOp, NameFilter,
+    OtherFilter, SyncRequest, SyncStrategy,
 };
 use ai_protocol::{
     CompareCriteria, ContentCompareMethod, ContentCompareMode, DirEntryStatus, EntryKind,
@@ -109,7 +109,10 @@ fn logical_lines(src: &str) -> Vec<LogicalLine> {
                 }
             }
             None => {
-                cur = Some(LogicalLine { no: i + 1, text: piece });
+                cur = Some(LogicalLine {
+                    no: i + 1,
+                    text: piece,
+                });
             }
         }
         if !continued {
@@ -278,34 +281,116 @@ enum LogWord {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Cmd {
-    Load { left: String, right: Option<String>, create: Option<String> },
-    Select { masks: Vec<String> },
-    Filter { name: Option<String>, cutoff: Option<String>, size: Option<String>, attrib: Option<String>, ignored: Vec<String> },
-    Expand { all: bool, paths: Vec<String> },
-    Collapse { all: bool, paths: Vec<String> },
-    Compare { mode: Option<CompareWord> },
-    Criteria { tokens: Vec<String> },
-    Copy { dir: SideWord },
-    Move { dir: SideWord },
-    CopyTo { side: SideSel, path: String },
-    MoveTo { side: SideSel, path: String },
-    Delete { side: SideSel, recyclebin: Option<String> },
-    Mkdir { side: SideSel, path: String },
-    Rename { regexpr: Option<String>, pattern: String },
-    Touch { copy: Option<SideWord>, set: Option<(SideSel, String)> },
-    Attrib { set: bool, letters: String, paths: Vec<String> },
-    Sync { kind: SideWord, update: bool, all: bool, visible: bool, create_empty: bool },
-    Snapshot { side: SideSel, path: Option<String>, no_filters: bool, output: String },
-    FolderReport { spec: ReportSpec },
-    TextReport { spec: ReportSpec },
-    HexReport { spec: ReportSpec },
-    TableReport { spec: ReportSpec },
-    FileReport { spec: ReportSpec },
-    ViewReport { kind: &'static str, spec: ReportSpec },
-    Log { level: LogWord, file: Option<(bool, String)> },
-    Option { stop_on_error: Option<bool>, confirm: Option<String> },
+    Load {
+        left: String,
+        right: Option<String>,
+        create: Option<String>,
+    },
+    Select {
+        masks: Vec<String>,
+    },
+    Filter {
+        name: Option<String>,
+        cutoff: Option<String>,
+        size: Option<String>,
+        attrib: Option<String>,
+        ignored: Vec<String>,
+    },
+    Expand {
+        all: bool,
+        paths: Vec<String>,
+    },
+    Collapse {
+        all: bool,
+        paths: Vec<String>,
+    },
+    Compare {
+        mode: Option<CompareWord>,
+    },
+    Criteria {
+        tokens: Vec<String>,
+    },
+    Copy {
+        dir: SideWord,
+    },
+    Move {
+        dir: SideWord,
+    },
+    CopyTo {
+        side: SideSel,
+        path: String,
+    },
+    MoveTo {
+        side: SideSel,
+        path: String,
+    },
+    Delete {
+        side: SideSel,
+        recyclebin: Option<String>,
+    },
+    Mkdir {
+        side: SideSel,
+        path: String,
+    },
+    Rename {
+        regexpr: Option<String>,
+        pattern: String,
+    },
+    Touch {
+        copy: Option<SideWord>,
+        set: Option<(SideSel, String)>,
+    },
+    Attrib {
+        set: bool,
+        letters: String,
+        paths: Vec<String>,
+    },
+    Sync {
+        kind: SideWord,
+        update: bool,
+        all: bool,
+        visible: bool,
+        create_empty: bool,
+    },
+    Snapshot {
+        side: SideSel,
+        path: Option<String>,
+        no_filters: bool,
+        output: String,
+    },
+    FolderReport {
+        spec: ReportSpec,
+    },
+    TextReport {
+        spec: ReportSpec,
+    },
+    HexReport {
+        spec: ReportSpec,
+    },
+    TableReport {
+        spec: ReportSpec,
+    },
+    FileReport {
+        spec: ReportSpec,
+    },
+    ViewReport {
+        kind: &'static str,
+        spec: ReportSpec,
+    },
+    Log {
+        level: LogWord,
+        file: Option<(bool, String)>,
+    },
+    Option {
+        stop_on_error: Option<bool>,
+        confirm: Option<String>,
+    },
     Beep,
-    IfExists { path: String, negate: bool, rest: Vec<String> },
+    IfExists {
+        path: String,
+        negate: bool,
+        rest: Vec<String>,
+    },
 }
 
 /// 报告命令公共参数（FR-SCR-003）
@@ -477,10 +562,21 @@ fn parse_command(line: &LogicalLine) -> Result<Cmd, String> {
                 }
             }
             if paths.len() == 1 && paths[0].eq_ignore_ascii_case("default") {
-                return Ok(Cmd::Load { left: "default".into(), right: None, create });
+                return Ok(Cmd::Load {
+                    left: "default".into(),
+                    right: None,
+                    create,
+                });
             }
-            need(!paths.is_empty() && paths.len() <= 2, "load 需要 1~2 个路径参数（<左> [<右>]）")?;
-            Ok(Cmd::Load { left: paths[0].clone(), right: paths.get(1).cloned(), create })
+            need(
+                !paths.is_empty() && paths.len() <= 2,
+                "load 需要 1~2 个路径参数（<左> [<右>]）",
+            )?;
+            Ok(Cmd::Load {
+                left: paths[0].clone(),
+                right: paths.get(1).cloned(),
+                create,
+            })
         }
         "savecomparison" => {
             // 别名：savecomparison <file> —— 快照保存别名（SNAPSHOT 子集）
@@ -494,7 +590,9 @@ fn parse_command(line: &LogicalLine) -> Result<Cmd, String> {
         }
         "select" => {
             need(!rest.is_empty(), "select 需要至少一个掩码")?;
-            Ok(Cmd::Select { masks: rest.to_vec() })
+            Ok(Cmd::Select {
+                masks: rest.to_vec(),
+            })
         }
         "filter" => {
             let mut name = None;
@@ -514,7 +612,13 @@ fn parse_command(line: &LogicalLine) -> Result<Cmd, String> {
                     _ => name = Some(tok.clone()),
                 }
             }
-            Ok(Cmd::Filter { name, cutoff, size, attrib, ignored })
+            Ok(Cmd::Filter {
+                name,
+                cutoff,
+                size,
+                attrib,
+                ignored,
+            })
         }
         "expand" => {
             let (all, paths) = all_or_paths(rest);
@@ -527,23 +631,30 @@ fn parse_command(line: &LogicalLine) -> Result<Cmd, String> {
             Ok(Cmd::Collapse { all, paths })
         }
         "compare" => {
-            let mode = rest.first().map(|t| t.to_ascii_lowercase()).and_then(|t| match t.as_str() {
-                "crc" => Some(CompareWord::Crc),
-                "binary" => Some(CompareWord::Binary),
-                "rules-based" | "rules" => Some(CompareWord::RulesBased),
-                _ => None,
-            });
+            let mode =
+                rest.first()
+                    .map(|t| t.to_ascii_lowercase())
+                    .and_then(|t| match t.as_str() {
+                        "crc" => Some(CompareWord::Crc),
+                        "binary" => Some(CompareWord::Binary),
+                        "rules-based" | "rules" => Some(CompareWord::RulesBased),
+                        _ => None,
+                    });
             Ok(Cmd::Compare { mode })
         }
-        "criteria" => Ok(Cmd::Criteria { tokens: rest.to_vec() }),
+        "criteria" => Ok(Cmd::Criteria {
+            tokens: rest.to_vec(),
+        }),
         "copy" => {
             need(rest.len() == 1, "copy 需要 (left->right|right->left)")?;
-            let dir = parse_side_word(&rest[0]).ok_or_else(|| parse_err(line.no, "copy 方向不合法"))?;
+            let dir =
+                parse_side_word(&rest[0]).ok_or_else(|| parse_err(line.no, "copy 方向不合法"))?;
             Ok(Cmd::Copy { dir })
         }
         "move" => {
             need(rest.len() == 1, "move 需要 (left->right|right->left)")?;
-            let dir = parse_side_word(&rest[0]).ok_or_else(|| parse_err(line.no, "move 方向不合法"))?;
+            let dir =
+                parse_side_word(&rest[0]).ok_or_else(|| parse_err(line.no, "move 方向不合法"))?;
             Ok(Cmd::Move { dir })
         }
         "copyto" | "moveto" => {
@@ -552,7 +663,8 @@ fn parse_command(line: &LogicalLine) -> Result<Cmd, String> {
             for tok in rest {
                 match split_kv(tok) {
                     Some((k, val)) if k == "path" => path = Some(val),
-                    Some((k, _)) if k == "path-relative" || k == "path-base" || k == "path-none" => {}
+                    Some((k, _))
+                        if k == "path-relative" || k == "path-base" || k == "path-none" => {}
                     _ => {
                         if let Some(s) = parse_side_sel(tok) {
                             side = s;
@@ -585,7 +697,10 @@ fn parse_command(line: &LogicalLine) -> Result<Cmd, String> {
                 }
             }
             need(side.is_some(), "delete 需要 (left|right|all)")?;
-            Ok(Cmd::Delete { side: side.unwrap(), recyclebin })
+            Ok(Cmd::Delete {
+                side: side.unwrap(),
+                recyclebin,
+            })
         }
         "mkdir" => {
             let mut side = None;
@@ -597,8 +712,14 @@ fn parse_command(line: &LogicalLine) -> Result<Cmd, String> {
                     path = Some(tok.clone());
                 }
             }
-            need(side.is_some() && path.is_some(), "mkdir 需要 (left|right|all) <路径>")?;
-            Ok(Cmd::Mkdir { side: side.unwrap(), path: path.unwrap() })
+            need(
+                side.is_some() && path.is_some(),
+                "mkdir 需要 (left|right|all) <路径>",
+            )?;
+            Ok(Cmd::Mkdir {
+                side: side.unwrap(),
+                path: path.unwrap(),
+            })
         }
         "rename" => {
             let mut regexpr = None;
@@ -614,13 +735,19 @@ fn parse_command(line: &LogicalLine) -> Result<Cmd, String> {
                 }
             }
             need(pattern.is_some(), "rename 需要 <新掩码>")?;
-            Ok(Cmd::Rename { regexpr, pattern: pattern.unwrap() })
+            Ok(Cmd::Rename {
+                regexpr,
+                pattern: pattern.unwrap(),
+            })
         }
         "touch" => {
             // touch (left->right|right->left) | touch (left|right|all):(now|<时间戳>)
             if let Some(t0) = rest.first() {
                 if let Some(d) = parse_side_word(t0) {
-                    return Ok(Cmd::Touch { copy: Some(d), set: None });
+                    return Ok(Cmd::Touch {
+                        copy: Some(d),
+                        set: None,
+                    });
                 }
                 if let Some((k, val)) = split_kv(t0) {
                     if let Some(_side) = parse_side_sel(&k) {
@@ -631,7 +758,10 @@ fn parse_command(line: &LogicalLine) -> Result<Cmd, String> {
                     }
                 }
             }
-            Err(parse_err(line.no, "touch 需要 (left->right|right->left) 或 (left|right|all):(now|时间戳)"))
+            Err(parse_err(
+                line.no,
+                "touch 需要 (left->right|right->left) 或 (left|right|all):(now|时间戳)",
+            ))
         }
         "attrib" => {
             let Some(t0) = rest.first() else {
@@ -644,7 +774,11 @@ fn parse_command(line: &LogicalLine) -> Result<Cmd, String> {
             } else {
                 return Err(parse_err(line.no, "attrib 属性集须以 +/- 开头"));
             };
-            Ok(Cmd::Attrib { set, letters, paths: rest[1..].to_vec() })
+            Ok(Cmd::Attrib {
+                set,
+                letters,
+                paths: rest[1..].to_vec(),
+            })
         }
         "sync" => {
             let mut update = true;
@@ -661,14 +795,22 @@ fn parse_command(line: &LogicalLine) -> Result<Cmd, String> {
                         } else if val.eq_ignore_ascii_case("all") {
                             all = true;
                         } else {
-                            return Err(parse_err(line.no, "sync 方向不合法（left->right|right->left|all）"));
+                            return Err(parse_err(
+                                line.no,
+                                "sync 方向不合法（left->right|right->left|all）",
+                            ));
                         }
                     }
                     Some((k, val)) if k == "mirror" => {
                         update = false;
                         match parse_side_word(&val) {
                             Some(d) => kind = d,
-                            None => return Err(parse_err(line.no, "mirror 需要明确方向（left->right|right->left）")),
+                            None => {
+                                return Err(parse_err(
+                                    line.no,
+                                    "mirror 需要明确方向（left->right|right->left）",
+                                ))
+                            }
                         }
                     }
                     Some((k, _)) if k == "visible" => visible = true,
@@ -676,7 +818,13 @@ fn parse_command(line: &LogicalLine) -> Result<Cmd, String> {
                     _ => {}
                 }
             }
-            Ok(Cmd::Sync { kind, update, all, visible, create_empty })
+            Ok(Cmd::Sync {
+                kind,
+                update,
+                all,
+                visible,
+                create_empty,
+            })
         }
         "snapshot" => {
             let mut side = SideSel::Left;
@@ -685,7 +833,12 @@ fn parse_command(line: &LogicalLine) -> Result<Cmd, String> {
             let mut output = None;
             for tok in rest {
                 match split_kv(tok) {
-                    Some((k, _)) if k == "save-crc" || k == "save-version" || k == "expand-archives" || k == "follow-symlinks" || k == "include-empty" => {}
+                    Some((k, _))
+                        if k == "save-crc"
+                            || k == "save-version"
+                            || k == "expand-archives"
+                            || k == "follow-symlinks"
+                            || k == "include-empty" => {}
                     Some((k, ..)) if k == "no-filters" => no_filters = true,
                     Some((k, val)) if k == "output" => output = Some(val),
                     Some((k, val)) if k == "path" => path = Some(val),
@@ -699,19 +852,44 @@ fn parse_command(line: &LogicalLine) -> Result<Cmd, String> {
                 }
             }
             let output = output.ok_or_else(|| parse_err(line.no, "snapshot 需要 output:<目标>"))?;
-            Ok(Cmd::Snapshot { side, path, no_filters, output })
+            Ok(Cmd::Snapshot {
+                side,
+                path,
+                no_filters,
+                output,
+            })
         }
-        "folder-report" => Ok(Cmd::FolderReport { spec: parse_report_spec(line.no, "folder-report", rest)? }),
-        "text-report" => Ok(Cmd::TextReport { spec: parse_report_spec(line.no, "text-report", rest)? }),
-        "hex-report" => Ok(Cmd::HexReport { spec: parse_report_spec(line.no, "hex-report", rest)? }),
-        "table-report" | "data-report" => {
-            Ok(Cmd::TableReport { spec: parse_report_spec(line.no, "table-report", rest)? })
-        }
-        "file-report" => Ok(Cmd::FileReport { spec: parse_report_spec(line.no, "file-report", rest)? }),
-        "media-report" => Ok(Cmd::ViewReport { kind: "media", spec: parse_report_spec(line.no, "media-report", rest)? }),
-        "picture-report" => Ok(Cmd::ViewReport { kind: "picture", spec: parse_report_spec(line.no, "picture-report", rest)? }),
-        "registry-report" => Ok(Cmd::ViewReport { kind: "registry", spec: parse_report_spec(line.no, "registry-report", rest)? }),
-        "version-report" => Ok(Cmd::ViewReport { kind: "version", spec: parse_report_spec(line.no, "version-report", rest)? }),
+        "folder-report" => Ok(Cmd::FolderReport {
+            spec: parse_report_spec(line.no, "folder-report", rest)?,
+        }),
+        "text-report" => Ok(Cmd::TextReport {
+            spec: parse_report_spec(line.no, "text-report", rest)?,
+        }),
+        "hex-report" => Ok(Cmd::HexReport {
+            spec: parse_report_spec(line.no, "hex-report", rest)?,
+        }),
+        "table-report" | "data-report" => Ok(Cmd::TableReport {
+            spec: parse_report_spec(line.no, "table-report", rest)?,
+        }),
+        "file-report" => Ok(Cmd::FileReport {
+            spec: parse_report_spec(line.no, "file-report", rest)?,
+        }),
+        "media-report" => Ok(Cmd::ViewReport {
+            kind: "media",
+            spec: parse_report_spec(line.no, "media-report", rest)?,
+        }),
+        "picture-report" => Ok(Cmd::ViewReport {
+            kind: "picture",
+            spec: parse_report_spec(line.no, "picture-report", rest)?,
+        }),
+        "registry-report" => Ok(Cmd::ViewReport {
+            kind: "registry",
+            spec: parse_report_spec(line.no, "registry-report", rest)?,
+        }),
+        "version-report" => Ok(Cmd::ViewReport {
+            kind: "version",
+            spec: parse_report_spec(line.no, "version-report", rest)?,
+        }),
         "log" => {
             let mut level = LogWord::Normal;
             let mut file = None;
@@ -748,14 +926,21 @@ fn parse_command(line: &LogicalLine) -> Result<Cmd, String> {
                     stop_on_error = Some(true);
                 }
             }
-            Ok(Cmd::Option { stop_on_error, confirm })
+            Ok(Cmd::Option {
+                stop_on_error,
+                confirm,
+            })
         }
         "beep" => Ok(Cmd::Beep),
         "if-exists" | "if-not-exists" => {
             need(!rest.is_empty(), "if-exists 需要 <路径> [THEN] <命令>")?;
             let path = rest[0].clone();
             let mut idx = 1usize;
-            if rest.get(idx).map(|t| t.eq_ignore_ascii_case("then")).unwrap_or(false) {
+            if rest
+                .get(idx)
+                .map(|t| t.eq_ignore_ascii_case("then"))
+                .unwrap_or(false)
+            {
                 idx += 1;
             }
             Ok(Cmd::IfExists {
@@ -822,10 +1007,20 @@ struct SelectMask {
 fn parse_select_mask(tok: &str) -> Option<SelectMask> {
     let t = tok.to_ascii_lowercase();
     if t == "all" {
-        return Some(SelectMask { side: SelSide::All, cond: SelCond::All, ty: SelTy::All, empty_folders: false });
+        return Some(SelectMask {
+            side: SelSide::All,
+            cond: SelCond::All,
+            ty: SelTy::All,
+            empty_folders: false,
+        });
     }
     if t == "empty.folders" {
-        return Some(SelectMask { side: SelSide::All, cond: SelCond::All, ty: SelTy::Folders, empty_folders: true });
+        return Some(SelectMask {
+            side: SelSide::All,
+            cond: SelCond::All,
+            ty: SelTy::Folders,
+            empty_folders: true,
+        });
     }
     let mut side = SelSide::All;
     let mut cond = SelCond::All;
@@ -875,7 +1070,12 @@ fn parse_select_mask(tok: &str) -> Option<SelectMask> {
             _ => return None,
         }
     }
-    saw_any.then_some(SelectMask { side, cond, ty, empty_folders: false })
+    saw_any.then_some(SelectMask {
+        side,
+        cond,
+        ty,
+        empty_folders: false,
+    })
 }
 
 impl SelectMask {
@@ -908,7 +1108,10 @@ impl SelectMask {
             SelCond::Orphan => match self.side {
                 SelSide::Left => row.status == DirEntryStatus::LeftOnly,
                 SelSide::Right => row.status == DirEntryStatus::RightOnly,
-                SelSide::All => matches!(row.status, DirEntryStatus::LeftOnly | DirEntryStatus::RightOnly),
+                SelSide::All => matches!(
+                    row.status,
+                    DirEntryStatus::LeftOnly | DirEntryStatus::RightOnly
+                ),
             },
         };
         if !cond_ok {
@@ -1064,18 +1267,25 @@ impl ScriptState {
 
     fn dir_parts(&self) -> Option<(VfsPath, VfsPath, String, String)> {
         match &self.session {
-            Some(LoadedSession::Dir { left, right, left_s, right_s, .. }) => {
-                Some((left.clone(), right.clone(), left_s.clone(), right_s.clone()))
-            }
+            Some(LoadedSession::Dir {
+                left,
+                right,
+                left_s,
+                right_s,
+                ..
+            }) => Some((left.clone(), right.clone(), left_s.clone(), right_s.clone())),
             _ => None,
         }
     }
 
     fn files_parts(&self) -> Option<(VfsPath, VfsPath, String, String)> {
         match &self.session {
-            Some(LoadedSession::Files { left, right, left_s, right_s }) => {
-                Some((left.clone(), right.clone(), left_s.clone(), right_s.clone()))
-            }
+            Some(LoadedSession::Files {
+                left,
+                right,
+                left_s,
+                right_s,
+            }) => Some((left.clone(), right.clone(), left_s.clone(), right_s.clone())),
             _ => None,
         }
     }
@@ -1121,7 +1331,10 @@ pub async fn run_script_async(src: &str, args: &[String], opts: &ScriptOptions) 
             eprintln!("{status_line}");
         }
 
-        let cmd = match parse_command(&LogicalLine { no: line.no, text: substituted.clone() }) {
+        let cmd = match parse_command(&LogicalLine {
+            no: line.no,
+            text: substituted.clone(),
+        }) {
             Ok(c) => c,
             Err(e) => {
                 outcome.errors.push(format!("语法错误 {e}"));
@@ -1173,7 +1386,11 @@ pub async fn run_script_async(src: &str, args: &[String], opts: &ScriptOptions) 
                 body.push('\n');
             }
         }
-        if let Some(err) = write_log(&path, state.log_file.as_ref().map(|(a, _)| *a).unwrap_or(false), &body) {
+        if let Some(err) = write_log(
+            &path,
+            state.log_file.as_ref().map(|(a, _)| *a).unwrap_or(false),
+            &body,
+        ) {
             outcome.errors.push(format!("日志写入失败 {path}: {err}"));
             if outcome.exit_code == EXIT_SAME {
                 outcome.exit_code = EXIT_ERROR;
@@ -1187,7 +1404,10 @@ pub async fn run_script_async(src: &str, args: &[String], opts: &ScriptOptions) 
 fn write_log(path: &str, append: bool, body: &str) -> Option<String> {
     use std::io::Write as _;
     let opened = if append {
-        std::fs::OpenOptions::new().create(true).append(true).open(path)
+        std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
     } else {
         std::fs::File::create(path)
     };
@@ -1209,7 +1429,11 @@ async fn exec_cmd(
     outcome: &mut ScriptOutcome,
 ) -> Result<(), ScriptError> {
     match cmd {
-        Cmd::Load { left, right, create } => exec_load(state, &left, right.as_deref(), create.as_deref()).await,
+        Cmd::Load {
+            left,
+            right,
+            create,
+        } => exec_load(state, &left, right.as_deref(), create.as_deref()).await,
         Cmd::Select { masks } => {
             let mut parsed = Vec::new();
             for m in &masks {
@@ -1221,9 +1445,13 @@ async fn exec_cmd(
             state.select_masks = parsed;
             Ok(())
         }
-        Cmd::Filter { name, cutoff, size, attrib, ignored } => {
-            exec_filter(state, name, cutoff, size, attrib, ignored)
-        }
+        Cmd::Filter {
+            name,
+            cutoff,
+            size,
+            attrib,
+            ignored,
+        } => exec_filter(state, name, cutoff, size, attrib, ignored),
         Cmd::Expand { all, paths } => {
             exec_expand(state, all, &paths, true);
             Ok(())
@@ -1244,9 +1472,9 @@ async fn exec_cmd(
         Cmd::Delete { side, recyclebin } => {
             if let Some(rb) = recyclebin {
                 if rb.eq_ignore_ascii_case("yes") {
-                    outcome
-                        .errors
-                        .push("提示: recyclebin=yes 在当前平台近似为直接删除（回收站未接入）".into());
+                    outcome.errors.push(
+                        "提示: recyclebin=yes 在当前平台近似为直接删除（回收站未接入）".into(),
+                    );
                 }
             }
             exec_side_delete(state, side, outcome).await
@@ -1254,13 +1482,24 @@ async fn exec_cmd(
         Cmd::Mkdir { side, path } => exec_mkdir(state, side, &path, outcome).await,
         Cmd::Rename { regexpr, pattern } => exec_rename(state, regexpr, &pattern, outcome).await,
         Cmd::Touch { copy, set } => exec_touch(state, copy, set, outcome).await,
-        Cmd::Attrib { set, letters, paths } => exec_attrib(state, set, &letters, &paths, outcome).await,
-        Cmd::Sync { kind, update, all, visible, create_empty } => {
-            exec_sync(state, kind, update, all, visible, create_empty, outcome).await
-        }
-        Cmd::Snapshot { side, path, no_filters, output } => {
-            exec_snapshot(state, side, path, no_filters, &output, opts, outcome)
-        }
+        Cmd::Attrib {
+            set,
+            letters,
+            paths,
+        } => exec_attrib(state, set, &letters, &paths, outcome).await,
+        Cmd::Sync {
+            kind,
+            update,
+            all,
+            visible,
+            create_empty,
+        } => exec_sync(state, kind, update, all, visible, create_empty, outcome).await,
+        Cmd::Snapshot {
+            side,
+            path,
+            no_filters,
+            output,
+        } => exec_snapshot(state, side, path, no_filters, &output, opts, outcome),
         Cmd::FolderReport { spec } => exec_folder_report(state, spec, opts, outcome),
         Cmd::TextReport { spec } => exec_text_report(state, spec, opts, outcome).await,
         Cmd::HexReport { spec } => exec_hex_report(state, spec, opts, outcome).await,
@@ -1274,7 +1513,10 @@ async fn exec_cmd(
             state.log_file = file;
             Ok(())
         }
-        Cmd::Option { stop_on_error, confirm } => {
+        Cmd::Option {
+            stop_on_error,
+            confirm,
+        } => {
             if let Some(s) = stop_on_error {
                 state.stop_on_error = s;
             }
@@ -1303,7 +1545,10 @@ async fn exec_cmd(
                 return Ok(());
             }
             let sub = tokenize(&rest.join(" "));
-            let sub_line = LogicalLine { no: 0, text: sub.join(" ") };
+            let sub_line = LogicalLine {
+                no: 0,
+                text: sub.join(" "),
+            };
             let sub_cmd = parse_command(&sub_line).map_err(ScriptError::Syntax)?;
             Box::pin(exec_cmd(state, sub_cmd, opts, outcome)).await
         }
@@ -1332,10 +1577,20 @@ async fn exec_load(
             "load 需要两侧路径（命名会话/工作区暂未支持，P17 排期）".into(),
         ));
     };
-    let lp = VfsPath::parse(left).map_err(|e| ScriptError::LoadFail(format!("路径不合法 {left}: {e}")))?;
-    let rp = VfsPath::parse(right_s).map_err(|e| ScriptError::LoadFail(format!("路径不合法 {right_s}: {e}")))?;
-    let ls = state.vfs.stat(&lp).await.map_err(|e| ScriptError::LoadFail(format!("无法加载 {left}: {e}")))?;
-    let rs = state.vfs.stat(&rp).await.map_err(|e| ScriptError::LoadFail(format!("无法加载 {right_s}: {e}")))?;
+    let lp = VfsPath::parse(left)
+        .map_err(|e| ScriptError::LoadFail(format!("路径不合法 {left}: {e}")))?;
+    let rp = VfsPath::parse(right_s)
+        .map_err(|e| ScriptError::LoadFail(format!("路径不合法 {right_s}: {e}")))?;
+    let ls = state
+        .vfs
+        .stat(&lp)
+        .await
+        .map_err(|e| ScriptError::LoadFail(format!("无法加载 {left}: {e}")))?;
+    let rs = state
+        .vfs
+        .stat(&rp)
+        .await
+        .map_err(|e| ScriptError::LoadFail(format!("无法加载 {right_s}: {e}")))?;
 
     state.select_masks.clear();
     state.expanded = BTreeSet::from([String::new()]);
@@ -1450,7 +1705,9 @@ fn exec_filter(
             } else if let Some(l) = a.strip_prefix('-') {
                 (false, l.to_string())
             } else {
-                return Err(ScriptError::Syntax(format!("filter attrib 需以 +/- 开头: {a}")));
+                return Err(ScriptError::Syntax(format!(
+                    "filter attrib 需以 +/- 开头: {a}"
+                )));
             };
             if set {
                 spec.attrs_include = Some(letters);
@@ -1468,7 +1725,10 @@ fn parse_cutoff_to_ms(v: &str) -> Option<u64> {
     let v = v.trim();
     if let Some(stripped) = v.strip_suffix("days") {
         let n: u64 = stripped.trim().parse().ok()?;
-        let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).ok()?.as_millis() as u64;
+        let now = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .ok()?
+            .as_millis() as u64;
         return Some(now.saturating_sub(n * 86_400_000));
     }
     // 绝对时间戳：秒（10 位）或毫秒（13 位）
@@ -1526,7 +1786,8 @@ fn exec_criteria(state: &mut ScriptState, tokens: &[String]) -> Result<(), Scrip
                     }
                     continue;
                 }
-                "timezone" | "follow-symlinks" | "owner" | "group" | "permissions" | "version" | "attrib" => {
+                "timezone" | "follow-symlinks" | "owner" | "group" | "permissions" | "version"
+                | "attrib" => {
                     continue; // 接受并忽略（对应判据引擎侧未开放）
                 }
                 _ => {}
@@ -1639,7 +1900,9 @@ fn dir_roots(state: &ScriptState) -> (VfsPath, VfsPath) {
 /// 操作落盘后重扫目录会话（arena/stats 刷新；FR-SCR 不可见会话模型与
 /// 磁盘实态一致化——后续 SELECT/报告读到操作后的新状态）
 async fn rescan_dir(state: &mut ScriptState) {
-    let Some((lp, rp, ..)) = state.dir_parts() else { return };
+    let Some((lp, rp, ..)) = state.dir_parts() else {
+        return;
+    };
     let Ok(result) = ai_dir::scan(
         &state.vfs,
         &lp,
@@ -1699,7 +1962,11 @@ fn dir_right_path(state: &ScriptState, row: &DirNode) -> VfsPath {
 // 文件操作（COPY/MOVE/DELETE/MKDIR/RENAME/TOUCH/ATTRIB）
 // ---------------------------------------------------------------------------
 
-async fn run_ops(state: &mut ScriptState, ops: &[FileOp], outcome: &mut ScriptOutcome) -> Result<(), ScriptError> {
+async fn run_ops(
+    state: &mut ScriptState,
+    ops: &[FileOp],
+    outcome: &mut ScriptOutcome,
+) -> Result<(), ScriptError> {
     if ops.is_empty() {
         return Ok(());
     }
@@ -1719,15 +1986,24 @@ async fn run_ops(state: &mut ScriptState, ops: &[FileOp], outcome: &mut ScriptOu
         outcome.status.push(format!("OK {}", f.op.describe()));
     }
     for f in &report.skipped {
-        outcome.status.push(format!("SKIP {}（{}）", f.op.describe(), f.detail.clone().unwrap_or_default()));
+        outcome.status.push(format!(
+            "SKIP {}（{}）",
+            f.op.describe(),
+            f.detail.clone().unwrap_or_default()
+        ));
     }
     for f in &report.failed {
-        outcome
-            .errors
-            .push(format!("FAILED {}（{}）", f.op.describe(), f.detail.clone().unwrap_or_default()));
+        outcome.errors.push(format!(
+            "FAILED {}（{}）",
+            f.op.describe(),
+            f.detail.clone().unwrap_or_default()
+        ));
     }
     if !report.is_all_ok() {
-        Err(ScriptError::Runtime(format!("{} 项操作失败", report.failed.len())))
+        Err(ScriptError::Runtime(format!(
+            "{} 项操作失败",
+            report.failed.len()
+        )))
     } else {
         rescan_dir(state).await;
         Ok(())
@@ -1742,7 +2018,11 @@ async fn exec_cross_ops(
 ) -> Result<(), ScriptError> {
     let arena = match &state.session {
         Some(LoadedSession::Dir { arena, .. }) => arena.clone(),
-        _ => return Err(ScriptError::Runtime("COPY/MOVE 需要先 LOAD 文件夹对".into())),
+        _ => {
+            return Err(ScriptError::Runtime(
+                "COPY/MOVE 需要先 LOAD 文件夹对".into(),
+            ))
+        }
     };
     let (from, to) = match dir {
         SideWord::LeftToRight => (ai_dir::execute::Side::Left, ai_dir::execute::Side::Right),
@@ -1761,9 +2041,19 @@ async fn exec_cross_ops(
                 return None;
             }
             Some(if is_move {
-                FileOp::Move { path: row.rel_path.clone(), target_path: None, from, to }
+                FileOp::Move {
+                    path: row.rel_path.clone(),
+                    target_path: None,
+                    from,
+                    to,
+                }
             } else {
-                FileOp::Copy { path: row.rel_path.clone(), target_path: None, from, to }
+                FileOp::Copy {
+                    path: row.rel_path.clone(),
+                    target_path: None,
+                    from,
+                    to,
+                }
             })
         })
         .collect();
@@ -1779,11 +2069,16 @@ async fn exec_to_path(
 ) -> Result<(), ScriptError> {
     let arena = match &state.session {
         Some(LoadedSession::Dir { arena, .. }) => arena.clone(),
-        _ => return Err(ScriptError::Runtime("COPYTO/MOVETO 需要先 LOAD 文件夹对".into())),
+        _ => {
+            return Err(ScriptError::Runtime(
+                "COPYTO/MOVETO 需要先 LOAD 文件夹对".into(),
+            ))
+        }
     };
     let selected = selected_indices(state, &arena);
     let dst = PathBuf::from(path);
-    std::fs::create_dir_all(&dst).map_err(|e| ScriptError::Runtime(format!("创建目标目录失败 {path}: {e}")))?;
+    std::fs::create_dir_all(&dst)
+        .map_err(|e| ScriptError::Runtime(format!("创建目标目录失败 {path}: {e}")))?;
     let mut errors = 0usize;
     for &i in &selected {
         let row = &arena[i];
@@ -1827,20 +2122,27 @@ async fn exec_to_path(
                 errors += 1;
                 continue;
             }
-            outcome.status.push(format!("OK 复制到 {path}: {}", row.rel_path));
+            outcome
+                .status
+                .push(format!("OK 复制到 {path}: {}", row.rel_path));
             if is_move {
                 // MOVETO 语义：复制后删源
                 let del = execute_ops(
                     &state.vfs,
                     &dir_roots(state),
-                    &[FileOp::Delete { path: row.rel_path.clone(), side: s }],
+                    &[FileOp::Delete {
+                        path: row.rel_path.clone(),
+                        side: s,
+                    }],
                     &ExecuteOptions { dry_run: false },
                     None,
                     &CancelFlag::new(),
                 )
                 .await;
                 if del.failed.is_empty() {
-                    outcome.status.push(format!("OK 移动（源已删）: {}", row.rel_path));
+                    outcome
+                        .status
+                        .push(format!("OK 移动（源已删）: {}", row.rel_path));
                 }
             }
         }
@@ -1880,7 +2182,10 @@ async fn exec_side_delete(
                 ai_dir::execute::Side::Right => row.right.is_some(),
             };
             if has {
-                ops.push(FileOp::Delete { path: row.rel_path.clone(), side: *s });
+                ops.push(FileOp::Delete {
+                    path: row.rel_path.clone(),
+                    side: *s,
+                });
             }
         }
     }
@@ -1903,7 +2208,10 @@ async fn exec_mkdir(
     };
     let mut ops = Vec::new();
     for s in sides {
-        ops.push(FileOp::Mkdir { path: path.to_string(), side: s });
+        ops.push(FileOp::Mkdir {
+            path: path.to_string(),
+            side: s,
+        });
     }
     let _ = (lp, rp);
     run_ops(state, &ops, outcome).await
@@ -1932,7 +2240,11 @@ pub(crate) fn adapt_bc_template(template: &str) -> String {
             }
         }
         // 其他字符（含 `${n}`、`$$`）原样复制到下一个字符
-        let ch_len = template[i..].chars().next().map(|c| c.len_utf8()).unwrap_or(1);
+        let ch_len = template[i..]
+            .chars()
+            .next()
+            .map(|c| c.len_utf8())
+            .unwrap_or(1);
         out.push_str(&template[i..i + ch_len]);
         i += ch_len;
     }
@@ -1989,9 +2301,8 @@ async fn exec_rename(
         // 正则重命名（FR-DIR-064 regexpr 形态）：旧掩码 = 文件名正则（捕获组），
         // 新名模板 = regex crate 替换语法（$1/$2 组引用，与 BC $2$1.txt 一致）。
         // 不匹配的文件名跳过（保留原名，不计入操作）。
-        let re = regex::Regex::new(&rx_pat).map_err(|e| {
-            ScriptError::Runtime(format!("regexpr 非法（{rx_pat}）: {e}"))
-        })?;
+        let re = regex::Regex::new(&rx_pat)
+            .map_err(|e| ScriptError::Runtime(format!("regexpr 非法（{rx_pat}）: {e}")))?;
         // BC 模板适配：regex crate 把 `$2_` 解析为命名组 "2_"（下划线并入组名），
         // BC 语义是「组2 + 字面下划线」——把后跟组名字符的 $<数字> 转成 ${<数字>}
         let template = adapt_bc_template(pattern);
@@ -2017,7 +2328,11 @@ async fn exec_rename(
                 continue;
             }
             if let Some(new_name) = apply_dos_mask(pattern, &row.name) {
-                ops.push(FileOp::Rename { path: row.rel_path.clone(), side: s, new_name });
+                ops.push(FileOp::Rename {
+                    path: row.rel_path.clone(),
+                    side: s,
+                    new_name,
+                });
             }
         }
     }
@@ -2088,16 +2403,31 @@ async fn exec_touch(
         };
         for &i in &selected {
             let row = &arena[i];
-            if row.kind == EntryKind::File && row.left.is_some() && row.right.is_some() && !row.rel_path.is_empty() {
-                ops.push(FileOp::Touch { path: row.rel_path.clone(), target_path: None, side: target, mtime_ms: 0 });
+            if row.kind == EntryKind::File
+                && row.left.is_some()
+                && row.right.is_some()
+                && !row.rel_path.is_empty()
+            {
+                ops.push(FileOp::Touch {
+                    path: row.rel_path.clone(),
+                    target_path: None,
+                    side: target,
+                    mtime_ms: 0,
+                });
             }
         }
     } else if let Some((side, what)) = set {
         let mtime_ms = if what.eq_ignore_ascii_case("now") {
-            SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0)
         } else {
-            parse_touch_timestamp(&what)
-                .ok_or_else(|| ScriptError::Syntax(format!("touch 时间戳不合法（yyyy-mm-dd[ hh:mm[:ss]]）: {what}")))?
+            parse_touch_timestamp(&what).ok_or_else(|| {
+                ScriptError::Syntax(format!(
+                    "touch 时间戳不合法（yyyy-mm-dd[ hh:mm[:ss]]）: {what}"
+                ))
+            })?
         };
         let sides: Vec<ai_dir::execute::Side> = match side {
             SideSel::Left => vec![ai_dir::execute::Side::Left],
@@ -2115,7 +2445,12 @@ async fn exec_touch(
                     ai_dir::execute::Side::Right => row.right.is_some(),
                 };
                 if has {
-                    ops.push(FileOp::Touch { path: row.rel_path.clone(), target_path: None, side: *s, mtime_ms });
+                    ops.push(FileOp::Touch {
+                        path: row.rel_path.clone(),
+                        target_path: None,
+                        side: *s,
+                        mtime_ms,
+                    });
                 }
             }
         }
@@ -2191,7 +2526,9 @@ async fn exec_attrib(
                 continue;
             }
             let p = dir_left_path(state, row);
-            let Ok(Some(path_str)) = std::fs::metadata(p.as_str()).map(|_| Some(p.as_str().to_string())) else {
+            let Ok(Some(path_str)) =
+                std::fs::metadata(p.as_str()).map(|_| Some(p.as_str().to_string()))
+            else {
                 fail += 1;
                 continue;
             };
@@ -2214,7 +2551,9 @@ async fn exec_attrib(
                 fail += 1;
             }
         }
-        outcome.status.push(format!("OK attrib {letters}: {ok} 项（失败 {fail}）"));
+        outcome
+            .status
+            .push(format!("OK attrib {letters}: {ok} 项（失败 {fail}）"));
         if fail > 0 {
             return Err(ScriptError::Runtime(format!("attrib {fail} 项失败")));
         }
@@ -2223,7 +2562,9 @@ async fn exec_attrib(
     #[cfg(not(unix))]
     {
         let _ = (state, set, letters, outcome);
-        Err(ScriptError::Runtime("ATTRIB 仅在 Windows/Unix 只读位近似支持".into()))
+        Err(ScriptError::Runtime(
+            "ATTRIB 仅在 Windows/Unix 只读位近似支持".into(),
+        ))
     }
 }
 
@@ -2267,7 +2608,12 @@ async fn exec_sync(
     let selection: Option<Vec<String>> = if state.select_masks.is_empty() {
         None
     } else {
-        Some(selected_indices(state, arena).iter().map(|&i| arena[i].rel_path.clone()).collect())
+        Some(
+            selected_indices(state, arena)
+                .iter()
+                .map(|&i| arena[i].rel_path.clone())
+                .collect(),
+        )
     };
     let preset = match (update, all, kind) {
         (true, true, _) => Some(SyncPreset::UpdateBoth),
@@ -2276,7 +2622,10 @@ async fn exec_sync(
         (false, _, SideWord::LeftToRight) => Some(SyncPreset::MirrorLeftToRight),
         (false, _, SideWord::RightToLeft) => Some(SyncPreset::MirrorRightToLeft),
     };
-    let strategy = SyncStrategy { sync_empty_dirs: create_empty, ..SyncStrategy::default() };
+    let strategy = SyncStrategy {
+        sync_empty_dirs: create_empty,
+        ..SyncStrategy::default()
+    };
     let report = run_sync(
         &state.vfs,
         &(lp, rp),
@@ -2292,10 +2641,17 @@ async fn exec_sync(
         &CancelFlag::new(),
     )
     .await;
-    outcome.status.push(report.batch.summary_line(if update { "sync(update)" } else { "sync(mirror)" }));
+    outcome.status.push(report.batch.summary_line(if update {
+        "sync(update)"
+    } else {
+        "sync(mirror)"
+    }));
     let _ = kind;
     if report.batch.stats.failed > 0 {
-        return Err(ScriptError::Runtime(format!("SYNC {} 项失败", report.batch.stats.failed)));
+        return Err(ScriptError::Runtime(format!(
+            "SYNC {} 项失败",
+            report.batch.stats.failed
+        )));
     }
     rescan_dir(state).await;
     Ok(())
@@ -2315,7 +2671,9 @@ fn exec_snapshot(
         // path:<目录> 单侧快照（无需加载会话；递归列举）
         let root = Path::new(&single);
         if !root.is_dir() {
-            return Err(ScriptError::LoadFail(format!("快照 path 不存在或不是目录: {single}")));
+            return Err(ScriptError::LoadFail(format!(
+                "快照 path 不存在或不是目录: {single}"
+            )));
         }
         let mut rows: Vec<(String, String, u64, u64)> = Vec::new();
         walk_tree(root, root, &mut rows);
@@ -2335,7 +2693,9 @@ fn exec_snapshot(
         return Ok(());
     }
     let Some(LoadedSession::Dir { arena, .. }) = &state.session else {
-        return Err(ScriptError::Runtime("SNAPSHOT 需要先 LOAD 文件夹对（或用 path:）".into()));
+        return Err(ScriptError::Runtime(
+            "SNAPSHOT 需要先 LOAD 文件夹对（或用 path:）".into(),
+        ));
     };
     for i in selected_indices(state, arena) {
         let row = &arena[i];
@@ -2376,7 +2736,10 @@ fn resolve_snapshot_target(output: &str) -> String {
     let mut target = output.to_string();
     if target.ends_with('/') || Path::new(&target).is_dir() {
         let (y, mo, d, ..) = now_parts();
-        target = format!("{}/folder_{y:04}-{mo:02}-{d:02}.bcss", target.trim_end_matches('/'));
+        target = format!(
+            "{}/folder_{y:04}-{mo:02}-{d:02}.bcss",
+            target.trim_end_matches('/')
+        );
     }
     if Path::new(&target).extension().is_none() {
         target.push_str(".bcss");
@@ -2416,15 +2779,26 @@ fn walk_tree(root: &Path, dir: &Path, out: &mut Vec<(String, String, u64, u64)>)
 
 fn mtime_of(meta: &std::fs::Metadata) -> u64 {
     use std::time::UNIX_EPOCH;
-    meta.modified().ok().and_then(|m| m.duration_since(UNIX_EPOCH).ok()).map(|d| d.as_millis() as u64).unwrap_or(0)
+    meta.modified()
+        .ok()
+        .and_then(|m| m.duration_since(UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 // ---------------------------------------------------------------------------
 // 报告命令
 // ---------------------------------------------------------------------------
 
-fn report_output_target(spec: &ReportSpec, naming: &ReportNaming, default_ext: &str) -> (String, ReportTarget) {
-    let raw = spec.output_to.clone().unwrap_or_else(|| "printer".to_string());
+fn report_output_target(
+    spec: &ReportSpec,
+    naming: &ReportNaming,
+    default_ext: &str,
+) -> (String, ReportTarget) {
+    let raw = spec
+        .output_to
+        .clone()
+        .unwrap_or_else(|| "printer".to_string());
     match raw.to_ascii_lowercase().as_str() {
         "printer" => ("stdout".into(), ReportTarget::Stdout),
         "clipboard" => ("stdout".into(), ReportTarget::Stdout), // 无头环境：剪贴板近似为 stdout
@@ -2467,14 +2841,33 @@ fn emit_report(
 
 fn naming_for(state: &ScriptState, kind: &str) -> ReportNaming {
     let (l, r) = match state.session {
-        Some(LoadedSession::Dir { ref left_s, ref right_s, .. }) => (left_s.clone(), right_s.clone()),
-        Some(LoadedSession::Files { ref left_s, ref right_s, .. }) => (left_s.clone(), right_s.clone()),
+        Some(LoadedSession::Dir {
+            ref left_s,
+            ref right_s,
+            ..
+        }) => (left_s.clone(), right_s.clone()),
+        Some(LoadedSession::Files {
+            ref left_s,
+            ref right_s,
+            ..
+        }) => (left_s.clone(), right_s.clone()),
         None => (String::new(), String::new()),
     };
     ReportNaming {
-        now_ms: SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0),
-        left_name: Path::new(&l).file_name().and_then(|n| n.to_str()).unwrap_or("").to_string(),
-        right_name: Path::new(&r).file_name().and_then(|n| n.to_str()).unwrap_or("").to_string(),
+        now_ms: SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0),
+        left_name: Path::new(&l)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("")
+            .to_string(),
+        right_name: Path::new(&r)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("")
+            .to_string(),
         kind: kind.to_string(),
     }
 }
@@ -2495,10 +2888,24 @@ fn spec_to_options(spec: &ReportSpec, layout: ReportLayout) -> ReportOptions {
 }
 
 fn require_dir_snapshot(state: &ScriptState) -> Result<ReportSnapshot, ScriptError> {
-    let Some(LoadedSession::Dir { arena, stats, left_s, right_s, .. }) = &state.session else {
-        return Err(ScriptError::Runtime("FOLDER-REPORT 需要先 LOAD 文件夹对".into()));
+    let Some(LoadedSession::Dir {
+        arena,
+        stats,
+        left_s,
+        right_s,
+        ..
+    }) = &state.session
+    else {
+        return Err(ScriptError::Runtime(
+            "FOLDER-REPORT 需要先 LOAD 文件夹对".into(),
+        ));
     };
-    let rows = arena.iter().skip(1).filter(|r| state.row_shown(r)).map(crate::report_cmd::dir_node_to_report_row).collect();
+    let rows = arena
+        .iter()
+        .skip(1)
+        .filter(|r| state.row_shown(r))
+        .map(crate::report_cmd::dir_node_to_report_row)
+        .collect();
     Ok(ReportSnapshot::Dir(DirSnapshot {
         left_label: left_s.clone(),
         right_label: right_s.clone(),
@@ -2554,17 +2961,28 @@ async fn build_text_snap(
     right_label: String,
     ignore_unimportant: bool,
 ) -> Result<ReportSnapshot, ScriptError> {
-    let lt_text = vfs.read_file_text(lp).await.map_err(|e| ScriptError::Runtime(format!("读取失败 {lp}: {e}")))?;
-    let rt_text = vfs.read_file_text(rp).await.map_err(|e| ScriptError::Runtime(format!("读取失败 {rp}: {e}")))?;
+    let lt_text = vfs
+        .read_file_text(lp)
+        .await
+        .map_err(|e| ScriptError::Runtime(format!("读取失败 {lp}: {e}")))?;
+    let rt_text = vfs
+        .read_file_text(rp)
+        .await
+        .map_err(|e| ScriptError::Runtime(format!("读取失败 {rp}: {e}")))?;
     let lt = ai_core::LineTable::from_text(&lt_text);
     let rt = ai_core::LineTable::from_text(&rt_text);
     let mut config = ai_core::DiffConfig::default();
     if ignore_unimportant {
         config.importance = ignore_unimportant_model();
     }
-    let keyed = ai_core::diff_config(&lt, &rt, &config).map_err(|e| ScriptError::Runtime(e.to_string()))?;
+    let keyed =
+        ai_core::diff_config(&lt, &rt, &config).map_err(|e| ScriptError::Runtime(e.to_string()))?;
     Ok(ReportSnapshot::Text(TextSnapshot::from_tables(
-        left_label, right_label, &lt, &rt, keyed.output.sections,
+        left_label,
+        right_label,
+        &lt,
+        &rt,
+        keyed.output.sections,
     )))
 }
 
@@ -2593,8 +3011,16 @@ async fn exec_hex_report(
     let (lp, rp, ls, rs) = state
         .files_parts()
         .ok_or_else(|| ScriptError::Runtime("HEX-REPORT 需要先 LOAD 文件对".into()))?;
-    let lb = state.vfs.read_file_bytes(&lp).await.map_err(|e| ScriptError::Runtime(format!("读取失败 {lp}: {e}")))?;
-    let rb = state.vfs.read_file_bytes(&rp).await.map_err(|e| ScriptError::Runtime(format!("读取失败 {rp}: {e}")))?;
+    let lb = state
+        .vfs
+        .read_file_bytes(&lp)
+        .await
+        .map_err(|e| ScriptError::Runtime(format!("读取失败 {lp}: {e}")))?;
+    let rb = state
+        .vfs
+        .read_file_bytes(&rp)
+        .await
+        .map_err(|e| ScriptError::Runtime(format!("读取失败 {rp}: {e}")))?;
     let model = ai_core::hex::diff_bytes(&lb, &rb, &ai_core::hex::HexOptions::default());
     let (sl, sr) = ai_core::hex::status_maps(&model);
     let snap = ReportSnapshot::Hex(ai_core::HexSnapshot {
@@ -2629,8 +3055,16 @@ async fn exec_table_report(
     let (lp, rp, ls, rs) = state
         .files_parts()
         .ok_or_else(|| ScriptError::Runtime("TABLE-REPORT 需要先 LOAD 文件对".into()))?;
-    let lt_text = state.vfs.read_file_text(&lp).await.map_err(|e| ScriptError::Runtime(format!("读取失败 {lp}: {e}")))?;
-    let rt_text = state.vfs.read_file_text(&rp).await.map_err(|e| ScriptError::Runtime(format!("读取失败 {rp}: {e}")))?;
+    let lt_text = state
+        .vfs
+        .read_file_text(&lp)
+        .await
+        .map_err(|e| ScriptError::Runtime(format!("读取失败 {lp}: {e}")))?;
+    let rt_text = state
+        .vfs
+        .read_file_text(&rp)
+        .await
+        .map_err(|e| ScriptError::Runtime(format!("读取失败 {rp}: {e}")))?;
     let mut opts = ai_core::table::TableDiffOptions::default();
     let name = lp.file_name().unwrap_or_default().to_ascii_lowercase();
     if name.ends_with(".tsv") || name.ends_with(".tab") || spec.tsv {
@@ -2669,13 +3103,21 @@ async fn exec_file_report(
     let layout = spec.layout.unwrap_or(ReportLayout::Summary);
     for &i in &selected {
         let row = &arena[i];
-        if row.kind != EntryKind::File || !matches!(row.status, DirEntryStatus::ContentDiff | DirEntryStatus::QuickDiff) {
+        if row.kind != EntryKind::File
+            || !matches!(
+                row.status,
+                DirEntryStatus::ContentDiff | DirEntryStatus::QuickDiff
+            )
+        {
             continue;
         }
         let lp = dir_left_path(state, row);
         let rp = dir_right_path(state, row);
         let name = row.name.clone();
-        let (lt_text, rt_text) = match (state.vfs.read_file_text(&lp).await, state.vfs.read_file_text(&rp).await) {
+        let (lt_text, rt_text) = match (
+            state.vfs.read_file_text(&lp).await,
+            state.vfs.read_file_text(&rp).await,
+        ) {
             (Ok(l), Ok(r)) => (l, r),
             _ => {
                 outcome
@@ -2714,7 +3156,8 @@ async fn exec_file_report(
                 config.importance.trailing_ws_unimportant = true;
                 config.importance.case_unimportant = true;
             }
-            let keyed = ai_core::diff_config(&lt, &rt, &config).map_err(|e| ScriptError::Runtime(e.to_string()))?;
+            let keyed = ai_core::diff_config(&lt, &rt, &config)
+                .map_err(|e| ScriptError::Runtime(e.to_string()))?;
             ReportSnapshot::Text(TextSnapshot::from_tables(
                 lp.as_str(),
                 rp.as_str(),
@@ -2808,7 +3251,11 @@ pub fn run_cli_script(args: &[String]) -> ExitCode {
         }
     };
     let script_args = script_positional_args(&positional[1..]);
-    let opts = ScriptOptions { silent, vars, cwd: None };
+    let opts = ScriptOptions {
+        silent,
+        vars,
+        cwd: None,
+    };
     let outcome = run_script(&src, &script_args, &opts);
     for e in &outcome.errors {
         eprintln!("aic script: {e}");
@@ -2825,7 +3272,10 @@ mod tests {
     use super::*;
 
     fn vars(pairs: &[(&str, &str)]) -> HashMap<String, String> {
-        pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
     }
 
     // ---- 词法 ----
@@ -2844,14 +3294,25 @@ mod tests {
     #[test]
     fn tokenize_respects_quotes() {
         let t = tokenize("load \"my folder a\" b");
-        assert_eq!(t, vec!["load".to_string(), "my folder a".to_string(), "b".to_string()]);
+        assert_eq!(
+            t,
+            vec![
+                "load".to_string(),
+                "my folder a".to_string(),
+                "b".to_string()
+            ]
+        );
     }
 
     #[test]
     fn substitute_positional_env_and_dynamic() {
         let m = vars(&[("CUSTOM", "cx")]);
         std::env::set_var("AIC_SCRIPT_TEST_VAR", "envval");
-        let out = substitute_vars("copy %1 %2 %CUSTOM% %AIC_SCRIPT_TEST_VAR% %date% %%", &["L".into(), "R".into()], &m);
+        let out = substitute_vars(
+            "copy %1 %2 %CUSTOM% %AIC_SCRIPT_TEST_VAR% %date% %%",
+            &["L".into(), "R".into()],
+            &m,
+        );
         assert!(out.starts_with("copy L R cx envval "));
         assert!(out.ends_with(" %"), "{out}");
         // %fn_time% 文件名安全（无冒号）
@@ -2861,7 +3322,12 @@ mod tests {
 
     #[test]
     fn positional_args_skip_switches() {
-        let toks = vec!["a".to_string(), "-x".to_string(), "/q".to_string(), "b".to_string()];
+        let toks = vec![
+            "a".to_string(),
+            "-x".to_string(),
+            "/q".to_string(),
+            "b".to_string(),
+        ];
         // Unix：`-` 开头为开关；`/q` 为合法绝对路径保留（Windows 下 `/` 为开关前缀）
         #[cfg(not(windows))]
         assert_eq!(
@@ -2869,7 +3335,10 @@ mod tests {
             vec!["a".to_string(), "/q".to_string(), "b".to_string()]
         );
         #[cfg(windows)]
-        assert_eq!(script_positional_args(&toks), vec!["a".to_string(), "b".to_string()]);
+        assert_eq!(
+            script_positional_args(&toks),
+            vec!["a".to_string(), "b".to_string()]
+        );
     }
 
     // ---- 解析 ----
@@ -2884,25 +3353,81 @@ mod tests {
     fn parse_commands_matrix() {
         assert!(matches!(
             parse_one("LOAD create:all C:\\a D:\\b"),
-            Cmd::Load { create: Some(_), .. }
+            Cmd::Load {
+                create: Some(_),
+                ..
+            }
         ));
-        assert!(matches!(parse_one("select newer.files right.older.files"), Cmd::Select { .. }));
-        assert!(matches!(parse_one("FILTER \"*.txt;-sub\\\""), Cmd::Filter { .. }));
-        assert!(matches!(parse_one("EXPAND all"), Cmd::Expand { all: true, .. }));
-        assert!(matches!(parse_one("collapse sub"), Cmd::Collapse { all: false, .. }));
-        assert!(matches!(parse_one("COMPARE CRC"), Cmd::Compare { mode: Some(CompareWord::Crc) }));
+        assert!(matches!(
+            parse_one("select newer.files right.older.files"),
+            Cmd::Select { .. }
+        ));
+        assert!(matches!(
+            parse_one("FILTER \"*.txt;-sub\\\""),
+            Cmd::Filter { .. }
+        ));
+        assert!(matches!(
+            parse_one("EXPAND all"),
+            Cmd::Expand { all: true, .. }
+        ));
+        assert!(matches!(
+            parse_one("collapse sub"),
+            Cmd::Collapse { all: false, .. }
+        ));
+        assert!(matches!(
+            parse_one("COMPARE CRC"),
+            Cmd::Compare {
+                mode: Some(CompareWord::Crc)
+            }
+        ));
         assert!(matches!(parse_one("COPY left->right"), Cmd::Copy { .. }));
         assert!(matches!(parse_one("moveto right out/"), Cmd::MoveTo { .. }));
-        assert!(matches!(parse_one("delete recyclebin:no all"), Cmd::Delete { .. }));
-        assert!(matches!(parse_one("rename \"new_?.txt\""), Cmd::Rename { regexpr: None, .. }));
-        assert!(matches!(parse_one("touch left->right"), Cmd::Touch { copy: Some(_), set: None }));
-        assert!(matches!(parse_one("touch all:now"), Cmd::Touch { set: Some(_), .. }));
-        assert!(matches!(parse_one("attrib +h"), Cmd::Attrib { set: true, .. }));
-        assert!(matches!(parse_one("SYNC visible create-empty mirror:right->left"), Cmd::Sync { update: false, .. }));
+        assert!(matches!(
+            parse_one("delete recyclebin:no all"),
+            Cmd::Delete { .. }
+        ));
+        assert!(matches!(
+            parse_one("rename \"new_?.txt\""),
+            Cmd::Rename { regexpr: None, .. }
+        ));
+        assert!(matches!(
+            parse_one("touch left->right"),
+            Cmd::Touch {
+                copy: Some(_),
+                set: None
+            }
+        ));
+        assert!(matches!(
+            parse_one("touch all:now"),
+            Cmd::Touch { set: Some(_), .. }
+        ));
+        assert!(matches!(
+            parse_one("attrib +h"),
+            Cmd::Attrib { set: true, .. }
+        ));
+        assert!(matches!(
+            parse_one("SYNC visible create-empty mirror:right->left"),
+            Cmd::Sync { update: false, .. }
+        ));
         assert!(matches!(parse_one("beep"), Cmd::Beep));
-        assert!(matches!(parse_one("LOG none"), Cmd::Log { level: LogWord::None, .. }));
-        assert!(matches!(parse_one("option stop-on-error"), Cmd::Option { stop_on_error: Some(true), .. }));
-        assert!(matches!(parse_one("if-exists x.txt beep"), Cmd::IfExists { .. }));
+        assert!(matches!(
+            parse_one("LOG none"),
+            Cmd::Log {
+                level: LogWord::None,
+                ..
+            }
+        ));
+        assert!(matches!(
+            parse_one("option stop-on-error"),
+            Cmd::Option {
+                stop_on_error: Some(true),
+                ..
+            }
+        ));
+        assert!(matches!(
+            parse_one("if-exists x.txt beep"),
+            Cmd::IfExists { .. }
+        ));
         match parse_one("folder-report layout:side-by-side title:\"R\" output-to:out.html") {
             Cmd::FolderReport { spec } => {
                 assert_eq!(spec.layout, Some(ReportLayout::SideBySide));
@@ -2912,7 +3437,10 @@ mod tests {
             c => panic!("{c:?}"),
         }
         // 大小写不敏感 + data-report 别名
-        assert!(matches!(parse_one("DATA-REPORT layout:xml"), Cmd::TableReport { .. }));
+        assert!(matches!(
+            parse_one("DATA-REPORT layout:xml"),
+            Cmd::TableReport { .. }
+        ));
     }
 
     #[test]
@@ -2922,7 +3450,10 @@ mod tests {
         let lines = logical_lines("copy wrongdir");
         assert!(parse_command(&lines[0]).is_err());
         let lines = logical_lines("snapshot");
-        assert!(parse_command(&lines[0]).is_err(), "snapshot 缺 output 应报错");
+        assert!(
+            parse_command(&lines[0]).is_err(),
+            "snapshot 缺 output 应报错"
+        );
     }
 
     #[test]
@@ -2948,7 +3479,10 @@ mod tests {
         assert!(m.keeps(&left_only));
         assert!(!m.keeps(&diff));
         let m = parse_select_mask("newer.files").unwrap();
-        assert!(m.keeps(&diff), "左 mtime 300 > 右 200 -> 左较新 -> newer.files 保留");
+        assert!(
+            m.keeps(&diff),
+            "左 mtime 300 > 右 200 -> 左较新 -> newer.files 保留"
+        );
         // newer 是元数据条件：内容相同但 mtime 不同同样命中（BC 语义）
         assert!(m.keeps(&same));
         let m = parse_select_mask("all").unwrap();
@@ -2957,17 +3491,32 @@ mod tests {
 
     #[test]
     fn dos_mask_rename() {
-        assert_eq!(apply_dos_mask("new_?.txt", "old.txt"), Some("new_o.txt".into()));
-        assert_eq!(apply_dos_mask("*_bak.*", "report.txt"), Some("report_bak.txt".into()));
+        assert_eq!(
+            apply_dos_mask("new_?.txt", "old.txt"),
+            Some("new_o.txt".into())
+        );
+        assert_eq!(
+            apply_dos_mask("*_bak.*", "report.txt"),
+            Some("report_bak.txt".into())
+        );
         assert_eq!(apply_dos_mask("a?c", ""), None, "? 源耗尽 -> None");
-        assert_eq!(apply_dos_mask("fixed", "anything.txt"), Some("fixed".into()));
+        assert_eq!(
+            apply_dos_mask("fixed", "anything.txt"),
+            Some("fixed".into())
+        );
     }
 
     #[test]
     fn touch_timestamp_parse() {
         // 2026-01-02 03:04:05 UTC = epoch 1767323045
-        assert_eq!(parse_touch_timestamp("2026-01-02 03:04:05"), Some(1_767_323_045_000));
-        assert_eq!(parse_touch_timestamp("2026/01/02 3:4"), Some(1_767_323_040_000));
+        assert_eq!(
+            parse_touch_timestamp("2026-01-02 03:04:05"),
+            Some(1_767_323_045_000)
+        );
+        assert_eq!(
+            parse_touch_timestamp("2026/01/02 3:4"),
+            Some(1_767_323_040_000)
+        );
         assert_eq!(parse_touch_timestamp("bad"), None);
     }
 
@@ -2995,7 +3544,18 @@ mod tests {
     }
 
     fn run(src: &str, vars: &[(&str, &str)]) -> ScriptOutcome {
-        run_script(src, &[], &ScriptOptions { silent: true, vars: vars.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(), cwd: None })
+        run_script(
+            src,
+            &[],
+            &ScriptOptions {
+                silent: true,
+                vars: vars
+                    .iter()
+                    .map(|(k, v)| (k.to_string(), v.to_string()))
+                    .collect(),
+                cwd: None,
+            },
+        )
     }
 
     #[test]
@@ -3015,7 +3575,10 @@ mod tests {
         // 报告为"显示"口径（filter 生效；select 只作用于操作）——孤项全部列出
         assert!(report.contains("rightOnly\tronly.txt"), "{report}");
         assert!(report.contains("leftOnly\tlonly.txt"));
-        assert!(report.contains("contentDiff\tdiff.txt"), "脚本默认内容判据下 diff.txt 判异: {report}");
+        assert!(
+            report.contains("contentDiff\tdiff.txt"),
+            "脚本默认内容判据下 diff.txt 判异: {report}"
+        );
     }
 
     #[test]
@@ -3037,12 +3600,25 @@ mod tests {
         let _ = std::fs::remove_file("diff.patch");
         assert!(patch.contains("-b") && patch.contains("+B"), "{patch}");
         // copy left->right 后右侧 diff.txt 应与左侧一致（diff 条件 = 内容差异；孤项不含）
-        assert_eq!(std::fs::read_to_string(format!("{r}/diff.txt")).unwrap(), "a\nb\n");
-        assert!(!std::path::Path::new(&format!("{r}/lonly.txt")).exists(), "left.diff 不含孤项");
+        assert_eq!(
+            std::fs::read_to_string(format!("{r}/diff.txt")).unwrap(),
+            "a\nb\n"
+        );
+        assert!(
+            !std::path::Path::new(&format!("{r}/lonly.txt")).exists(),
+            "left.diff 不含孤项"
+        );
         // 孤项复制：left.orphan.files
-        let out = run(&format!("load {l} {r}\nselect left.orphan.files\ncopy left->right\n"), &[]);
+        let out = run(
+            &format!("load {l} {r}\nselect left.orphan.files\ncopy left->right\n"),
+            &[],
+        );
         assert_eq!(out.exit_code, EXIT_SAME, "{out:?}");
-        assert_eq!(std::fs::read_to_string(format!("{r}/lonly.txt")).unwrap(), "L\n", "孤项复制落盘");
+        assert_eq!(
+            std::fs::read_to_string(format!("{r}/lonly.txt")).unwrap(),
+            "L\n",
+            "孤项复制落盘"
+        );
     }
 
     #[test]
@@ -3062,7 +3638,10 @@ mod tests {
             &[],
         );
         assert_eq!(out.exit_code, EXIT_SAME, "{out:?}");
-        assert!(!Path::new(&format!("{r}/ronly.txt")).exists(), "delete all 删除右侧孤项");
+        assert!(
+            !Path::new(&format!("{r}/ronly.txt")).exists(),
+            "delete all 删除右侧孤项"
+        );
         assert!(Path::new("snap.bcss").exists(), "快照落盘");
         let snap = std::fs::read_to_string("snap.bcss").unwrap();
         let _ = std::fs::remove_file("snap.bcss");
@@ -3087,7 +3666,10 @@ mod tests {
         let tr = std::fs::read_to_string("t-report.csv").unwrap();
         assert!(tr.contains("changed,0,0"), "{tr}");
         let fr = std::fs::read_to_string("files-report.txt").unwrap();
-        let _ = (std::fs::remove_file("t-report.csv"), std::fs::remove_file("files-report.txt"));
+        let _ = (
+            std::fs::remove_file("t-report.csv"),
+            std::fs::remove_file("files-report.txt"),
+        );
         assert!(fr.contains("t.csv"), "file-report 含逐文件段: {fr}");
     }
 
@@ -3131,7 +3713,10 @@ mod tests {
     #[test]
     fn e2e_log_written() {
         let (_d, l, r) = corpus();
-        let out = run(&format!("LOG verbose script-test.log\nload {l} {r}\nselect all\n"), &[]);
+        let out = run(
+            &format!("LOG verbose script-test.log\nload {l} {r}\nselect all\n"),
+            &[],
+        );
         assert_eq!(out.exit_code, EXIT_SAME, "{out:?}");
         let log = std::fs::read_to_string("script-test.log").unwrap();
         let _ = std::fs::remove_file("script-test.log");
@@ -3149,7 +3734,10 @@ mod tests {
             &format!("LOG normal {}\nbeep\n", bad.to_string_lossy()),
             &[],
         );
-        assert_eq!(out.exit_code, EXIT_ERROR, "日志写失败应报错而非静默成功: {out:?}");
+        assert_eq!(
+            out.exit_code, EXIT_ERROR,
+            "日志写失败应报错而非静默成功: {out:?}"
+        );
         assert!(
             out.errors.iter().any(|e| e.contains("日志写入失败")),
             "错误信息应指明日志写入失败: {out:?}"
@@ -3165,9 +3753,15 @@ mod tests {
         std::fs::create_dir_all(r.join("sub")).unwrap();
         std::fs::write(l.join("sub").join("deep.txt"), "1\n").unwrap();
         std::fs::write(r.join("sub").join("deep.txt"), "2\n").unwrap();
-        let (l, r) = (l.to_string_lossy().into_owned(), r.to_string_lossy().into_owned());
+        let (l, r) = (
+            l.to_string_lossy().into_owned(),
+            r.to_string_lossy().into_owned(),
+        );
         // 未展开：子行不可见 -> 报告为空差异
-        let out = run(&format!("load {l} {r}\nfolder-report layout:list output-to:r1.txt\n"), &[]);
+        let out = run(
+            &format!("load {l} {r}\nfolder-report layout:list output-to:r1.txt\n"),
+            &[],
+        );
         assert_eq!(out.exit_code, EXIT_SAME);
         let rep = std::fs::read_to_string("r1.txt").unwrap();
         let _ = std::fs::remove_file("r1.txt");
@@ -3195,7 +3789,10 @@ mod tests {
         assert_eq!(out.exit_code, EXIT_SAME, "{out:?}");
         let s = std::fs::read_to_string("s.txt").unwrap();
         let _ = std::fs::remove_file("s.txt");
-        assert!(s.contains("contentDiff=2"), "diff.txt 与 t.csv 均内容判异: {s}");
+        assert!(
+            s.contains("contentDiff=2"),
+            "diff.txt 与 t.csv 均内容判异: {s}"
+        );
     }
 
     #[test]
@@ -3220,7 +3817,10 @@ mod tests {
         let rb = dir.path().join("r.bin");
         std::fs::write(&lb, b"AAAABBBB").unwrap();
         std::fs::write(&rb, b"AAAAXXBB").unwrap();
-        let (ls, rs) = (lb.to_string_lossy().into_owned(), rb.to_string_lossy().into_owned());
+        let (ls, rs) = (
+            lb.to_string_lossy().into_owned(),
+            rb.to_string_lossy().into_owned(),
+        );
         let out = run(
             &format!("load {ls} {rs}\nhex-report layout:stats output-to:h.txt\n"),
             &[],
@@ -3257,14 +3857,18 @@ mod tests {
             std::fs::write(base.join("nested").join("deep.txt"), "precious\n").unwrap();
             std::fs::write(base.join("top.txt"), "top\n").unwrap();
         }
-        let (ls, rs) = (l.to_string_lossy().into_owned(), r.to_string_lossy().into_owned());
+        let (ls, rs) = (
+            l.to_string_lossy().into_owned(),
+            r.to_string_lossy().into_owned(),
+        );
         let out = run(
             &format!("load {ls} {rs}\nselect all.files\ncopy left->right\ndelete all\n"),
             &[],
         );
         assert_eq!(out.exit_code, EXIT_SAME, "{out:?}");
         assert!(
-            l.join("nested").join("deep.txt").exists() && r.join("nested").join("deep.txt").exists(),
+            l.join("nested").join("deep.txt").exists()
+                && r.join("nested").join("deep.txt").exists(),
             "未 EXPAND 的嵌套文件必须存活（COPY 不得扩大 DELETE 作用域）"
         );
         assert!(!l.join("top.txt").exists(), "顶层可见文件应被删除");
@@ -3281,7 +3885,10 @@ mod tests {
         std::fs::create_dir_all(&r).unwrap();
         std::fs::write(l.join("a.txt"), "a\n").unwrap();
         std::fs::write(r.join("a.txt"), "a\n").unwrap();
-        let (ls, rs) = (l.to_string_lossy().into_owned(), r.to_string_lossy().into_owned());
+        let (ls, rs) = (
+            l.to_string_lossy().into_owned(),
+            r.to_string_lossy().into_owned(),
+        );
         let out = run(
             &format!("load {ls} {rs}\nmkdir all sub\nmkdir all sub/inner\nselect all.files\nfolder-report layout:list output-to:n.txt\n"),
             &[],
@@ -3289,6 +3896,9 @@ mod tests {
         assert_eq!(out.exit_code, EXIT_SAME, "{out:?}");
         let rep = std::fs::read_to_string("n.txt").unwrap();
         let _ = std::fs::remove_file("n.txt");
-        assert!(rep.contains("sub/inner"), "新建嵌套目录应自动展开可见: {rep}");
+        assert!(
+            rep.contains("sub/inner"),
+            "新建嵌套目录应自动展开可见: {rep}"
+        );
     }
 }

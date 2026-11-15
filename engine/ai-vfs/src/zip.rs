@@ -22,7 +22,9 @@ use std::sync::{Arc, RwLock};
 use async_trait::async_trait;
 
 use crate::crc32::crc32;
-use crate::{EntryKind, StatInfo, VfsCaps, VfsDirEntry, VfsError, VfsPath, VfsProvider, unix_type_letter};
+use crate::{
+    unix_type_letter, EntryKind, StatInfo, VfsCaps, VfsDirEntry, VfsError, VfsPath, VfsProvider,
+};
 
 /// 单个归档条目（中心目录记录；只读视图）
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -75,7 +77,11 @@ fn dos_to_epoch_ms(dos_time: u16, dos_date: u16) -> u64 {
     let y = i64::from(if month <= 2 { year - 1 } else { year });
     let era = y.div_euclid(400);
     let yoe = y - era * 400; // [0, 399]
-    let mp = if month > 2 { i64::from(month) - 3 } else { i64::from(month) + 9 }; // [0, 11]
+    let mp = if month > 2 {
+        i64::from(month) - 3
+    } else {
+        i64::from(month) + 9
+    }; // [0, 11]
     let doy = (153 * mp + 2) / 5 + i64::from(day) - 1; // [0, 365]
     let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy; // [0, 146096]
     let days = era * 146_097 + doe - 719_468;
@@ -178,7 +184,8 @@ fn parse_cd_records(data: &[u8]) -> Result<Vec<CdRecord>, VfsError> {
         }
         i -= 1;
     }
-    let eocd = eocd_off.ok_or_else(|| VfsError::InvalidPath("不是 zip 归档（未找到 EOCD）".into()))?;
+    let eocd =
+        eocd_off.ok_or_else(|| VfsError::InvalidPath("不是 zip 归档（未找到 EOCD）".into()))?;
     let total_entries = usize::from(rd_u16(data, eocd + 10));
     let cd_size = rd_u32(data, eocd + 12) as usize;
     let cd_offset = rd_u32(data, eocd + 16) as usize;
@@ -190,7 +197,9 @@ fn parse_cd_records(data: &[u8]) -> Result<Vec<CdRecord>, VfsError> {
     let mut p = cd_offset;
     for _ in 0..total_entries {
         if p + CD_LEN > data.len() || rd_u32(data, p) != SIG_CD {
-            return Err(VfsError::InvalidPath(format!("中心目录条目损坏（偏移 {p}）")));
+            return Err(VfsError::InvalidPath(format!(
+                "中心目录条目损坏（偏移 {p}）"
+            )));
         }
         let dos_time = rd_u16(data, p + 12);
         let dos_date = rd_u16(data, p + 14);
@@ -208,13 +217,18 @@ fn parse_cd_records(data: &[u8]) -> Result<Vec<CdRecord>, VfsError> {
         if name_start + name_len > data.len() {
             return Err(VfsError::InvalidPath("条目名越界".into()));
         }
-        let raw_name = String::from_utf8_lossy(&data[name_start..name_start + name_len]).into_owned();
+        let raw_name =
+            String::from_utf8_lossy(&data[name_start..name_start + name_len]).into_owned();
         p = name_start + name_len + extra_len + comment_len;
 
         let unix_mode_raw = (ext_attrs >> 16) & 0xFFFF;
-        let unix_mode = if unix_mode_raw != 0 { Some(unix_mode_raw) } else { None };
-        let is_dir = raw_name.ends_with('/')
-            || matches!(unix_mode, Some(m) if m & 0o170000 == 0o040000);
+        let unix_mode = if unix_mode_raw != 0 {
+            Some(unix_mode_raw)
+        } else {
+            None
+        };
+        let is_dir =
+            raw_name.ends_with('/') || matches!(unix_mode, Some(m) if m & 0o170000 == 0o040000);
         let name = raw_name.trim_end_matches('/').to_string();
         if name.is_empty() {
             continue;
@@ -240,7 +254,10 @@ fn parse_cd_records(data: &[u8]) -> Result<Vec<CdRecord>, VfsError> {
 /// 解析整个归档字节流的中心目录。返回按中心目录顺序的条目列表
 /// （目录条目带 `is_dir`，名字已剥除尾部 '/'）。
 pub fn parse_central_directory(data: &[u8]) -> Result<Vec<ZipEntry>, VfsError> {
-    Ok(parse_cd_records(data)?.into_iter().map(|r| r.entry).collect())
+    Ok(parse_cd_records(data)?
+        .into_iter()
+        .map(|r| r.entry)
+        .collect())
 }
 
 /// 基于 zip 中心目录的只读 Provider（P2 元数据/CRC 预计算；P12 起内容可读）。
@@ -291,7 +308,11 @@ impl ZipFs {
     fn stat_of(&self, name: &str) -> Option<StatInfo> {
         if let Some(&idx) = self.entries.get(name) {
             let e = &self.records[idx].entry;
-            let kind = if e.is_dir { EntryKind::Dir } else { EntryKind::File };
+            let kind = if e.is_dir {
+                EntryKind::Dir
+            } else {
+                EntryKind::File
+            };
             return Some(StatInfo {
                 size: e.size,
                 mtime_ms: e.mtime_ms,
@@ -314,7 +335,9 @@ impl ZipFs {
 }
 
 fn not_found(path: &VfsPath) -> VfsError {
-    VfsError::NotFound { path: path.as_str().to_string() }
+    VfsError::NotFound {
+        path: path.as_str().to_string(),
+    }
 }
 
 #[async_trait]
@@ -337,7 +360,11 @@ impl VfsProvider for ZipFs {
         if !self.dirs.contains_key(&dir) {
             return Err(not_found(path));
         }
-        let prefix = if dir.is_empty() { String::new() } else { format!("{dir}/") };
+        let prefix = if dir.is_empty() {
+            String::new()
+        } else {
+            format!("{dir}/")
+        };
         let mut out = Vec::new();
         // BTreeMap 顺序即字典序；同一目录的直接子项（首段）去重
         let mut seen: Option<String> = None;
@@ -355,10 +382,17 @@ impl VfsProvider for ZipFs {
             }
             seen = Some(first.to_string());
             let child = format!("{prefix}{first}");
-            let stat = self
-                .stat_of(&child)
-                .unwrap_or_else(|| StatInfo::minimal(self.records[idx].entry.size, self.records[idx].entry.mtime_ms, EntryKind::File));
-            out.push(VfsDirEntry { name: first.to_string(), stat });
+            let stat = self.stat_of(&child).unwrap_or_else(|| {
+                StatInfo::minimal(
+                    self.records[idx].entry.size,
+                    self.records[idx].entry.mtime_ms,
+                    EntryKind::File,
+                )
+            });
+            out.push(VfsDirEntry {
+                name: first.to_string(),
+                stat,
+            });
         }
         // 纯目录条目（如空目录）单独收集
         for (d, _) in self.dirs.range(prefix.clone()..) {
@@ -375,7 +409,10 @@ impl VfsProvider for ZipFs {
             }
             let child = format!("{prefix}{first}");
             if let Some(stat) = self.stat_of(&child) {
-                out.push(VfsDirEntry { name: first.to_string(), stat });
+                out.push(VfsDirEntry {
+                    name: first.to_string(),
+                    stat,
+                });
             }
         }
         Ok(out)
@@ -383,16 +420,16 @@ impl VfsProvider for ZipFs {
 
     async fn read_file_bytes(&self, path: &VfsPath) -> Result<Vec<u8>, VfsError> {
         let name = Self::normalize(path);
-        let &idx = self
-            .entries
-            .get(&name)
-            .ok_or_else(|| not_found(path))?;
+        let &idx = self.entries.get(&name).ok_or_else(|| not_found(path))?;
         inflate_entry(&self.raw, &self.records[idx])
     }
 
     async fn stored_crc32(&self, path: &VfsPath) -> Result<Option<u32>, VfsError> {
         let name = Self::normalize(path);
-        Ok(self.entries.get(&name).map(|&idx| self.records[idx].entry.crc32))
+        Ok(self
+            .entries
+            .get(&name)
+            .map(|&idx| self.records[idx].entry.crc32))
     }
 }
 
@@ -415,7 +452,10 @@ struct DirMeta {
 
 impl Default for DirMeta {
     fn default() -> Self {
-        DirMeta { mtime_ms: 0, unix_mode: Some(0o040755) }
+        DirMeta {
+            mtime_ms: 0,
+            unix_mode: Some(0o040755),
+        }
     }
 }
 
@@ -449,7 +489,9 @@ impl ZipState {
         if s.is_empty() {
             return Err(VfsError::InvalidPath("根路径不可作条目名".into()));
         }
-        if s.split('/').any(|seg| seg.is_empty() || seg == ".." || seg == ".") {
+        if s.split('/')
+            .any(|seg| seg.is_empty() || seg == ".." || seg == ".")
+        {
             return Err(VfsError::InvalidPath(format!("条目路径含空段/相对段: {s}")));
         }
         Ok(s.to_string())
@@ -478,7 +520,12 @@ impl ZipState {
         while let Some(idx) = cur.rfind('/') {
             cur.truncate(idx);
             let prefix = format!("{cur}/");
-            let has_child = self.entries.keys().filter(|k| k.starts_with(&prefix)).count() > 0
+            let has_child = self
+                .entries
+                .keys()
+                .filter(|k| k.starts_with(&prefix))
+                .count()
+                > 0
                 || self.dirs.keys().filter(|k| k.starts_with(&prefix)).count() > 0;
             if has_child {
                 break;
@@ -570,7 +617,8 @@ impl ZipState {
                 .collect();
             for (k, v) in moved_entries {
                 self.entries.remove(&k);
-                self.entries.insert(format!("{dst}/{}", &k[src.len() + 1..]), v);
+                self.entries
+                    .insert(format!("{dst}/{}", &k[src.len() + 1..]), v);
             }
             let moved_dirs: Vec<(String, DirMeta)> = self
                 .dirs
@@ -580,7 +628,8 @@ impl ZipState {
                 .collect();
             for (k, v) in moved_dirs {
                 self.dirs.remove(&k);
-                self.dirs.insert(format!("{dst}/{}", &k[src.len() + 1..]), v);
+                self.dirs
+                    .insert(format!("{dst}/{}", &k[src.len() + 1..]), v);
             }
             self.dirs.insert(dst.clone(), d);
             self.prune_parent_chain(&src);
@@ -599,15 +648,31 @@ impl ZipState {
         }
         if self.dirs.contains_key(&name) {
             let prefix = format!("{name}/");
-            let entry_children = self.entries.keys().filter(|k| k.starts_with(&prefix)).count();
+            let entry_children = self
+                .entries
+                .keys()
+                .filter(|k| k.starts_with(&prefix))
+                .count();
             if entry_children > 0 && !recursive {
-                return Err(VfsError::InvalidPath(format!("目录非空（需 recursive）: {name}")));
+                return Err(VfsError::InvalidPath(format!(
+                    "目录非空（需 recursive）: {name}"
+                )));
             }
-            let keys: Vec<String> = self.entries.keys().filter(|k| k.starts_with(&prefix)).cloned().collect();
+            let keys: Vec<String> = self
+                .entries
+                .keys()
+                .filter(|k| k.starts_with(&prefix))
+                .cloned()
+                .collect();
             for k in keys {
                 self.entries.remove(&k);
             }
-            let dkeys: Vec<String> = self.dirs.keys().filter(|k| k.starts_with(&prefix)).cloned().collect();
+            let dkeys: Vec<String> = self
+                .dirs
+                .keys()
+                .filter(|k| k.starts_with(&prefix))
+                .cloned()
+                .collect();
             for k in dkeys {
                 self.dirs.remove(&k);
             }
@@ -660,7 +725,8 @@ impl ZipState {
         let mut cd = Vec::new();
         let mut offsets = Vec::new();
         // 统一写出：文件条目 + 显式目录条目（字典序；名字带 '/'）
-        let mut out_names: Vec<(String, bool)> = self.entries.keys().map(|n| (n.clone(), false)).collect();
+        let mut out_names: Vec<(String, bool)> =
+            self.entries.keys().map(|n| (n.clone(), false)).collect();
         for d in self.dirs.keys() {
             if !d.is_empty() && !self.entries.contains_key(d) {
                 out_names.push((d.clone(), true));
@@ -682,7 +748,11 @@ impl ZipState {
                 (self.entries[name].mtime_ms, self.entries[name].unix_mode)
             };
             let (dos_time, dos_date) = epoch_ms_to_dos(mtime_ms);
-            let stored_name = if *is_dir { format!("{name}/") } else { name.clone() };
+            let stored_name = if *is_dir {
+                format!("{name}/")
+            } else {
+                name.clone()
+            };
             offsets.push(body.len() as u32);
             body.extend_from_slice(&SIG_LFH.to_le_bytes());
             body.extend_from_slice(&20u16.to_le_bytes()); // version needed
@@ -726,7 +796,11 @@ impl ZipState {
                 None if *is_dir => 0o040755u32 << 16,
                 None => 0o100644u32 << 16,
             };
-            let stored_name = if *is_dir { format!("{name}/") } else { name.clone() };
+            let stored_name = if *is_dir {
+                format!("{name}/")
+            } else {
+                name.clone()
+            };
             cd.extend_from_slice(&SIG_CD.to_le_bytes());
             cd.extend_from_slice(&20u16.to_le_bytes()); // version made by
             cd.extend_from_slice(&20u16.to_le_bytes()); // version needed
@@ -912,7 +986,11 @@ impl VfsProvider for ZipFsMut {
         if !st.dirs.contains_key(&dir) {
             return Err(not_found(path));
         }
-        let prefix = if dir.is_empty() { String::new() } else { format!("{dir}/") };
+        let prefix = if dir.is_empty() {
+            String::new()
+        } else {
+            format!("{dir}/")
+        };
         let mut out: Vec<VfsDirEntry> = Vec::new();
         let mut seen: Option<String> = None;
         for (name, _) in st.entries.range(prefix.clone()..) {
@@ -930,7 +1008,10 @@ impl VfsProvider for ZipFsMut {
             seen = Some(first.to_string());
             let child = format!("{prefix}{first}");
             if let Some(stat) = st.stat_of(&child) {
-                out.push(VfsDirEntry { name: first.to_string(), stat });
+                out.push(VfsDirEntry {
+                    name: first.to_string(),
+                    stat,
+                });
             }
         }
         for (d, meta) in st.dirs.range(prefix.clone()..) {
@@ -981,13 +1062,19 @@ impl VfsProvider for ZipFsMut {
     }
 
     async fn mkdir(&self, path: &VfsPath) -> Result<(), VfsError> {
-        self.state.write().expect("zip 状态锁中毒").create_dir(path)?;
+        self.state
+            .write()
+            .expect("zip 状态锁中毒")
+            .create_dir(path)?;
         self.persist()?;
         Ok(())
     }
 
     async fn rename(&self, from: &VfsPath, to: &VfsPath) -> Result<(), VfsError> {
-        self.state.write().expect("zip 状态锁中毒").rename(from, to)?;
+        self.state
+            .write()
+            .expect("zip 状态锁中毒")
+            .rename(from, to)?;
         self.persist()?;
         Ok(())
     }
@@ -1002,7 +1089,10 @@ impl VfsProvider for ZipFsMut {
     }
 
     async fn copy_file(&self, from: &VfsPath, to: &VfsPath) -> Result<(), VfsError> {
-        self.state.write().expect("zip 状态锁中毒").copy_file(from, to)?;
+        self.state
+            .write()
+            .expect("zip 状态锁中毒")
+            .copy_file(from, to)?;
         self.persist()?;
         Ok(())
     }
@@ -1019,7 +1109,11 @@ impl VfsProvider for ZipFsMut {
 
 /// 便捷：条目 Unix 类型字母（unix_types 过滤用）
 pub fn entry_unix_type(e: &ZipEntry) -> char {
-    let kind = if e.is_dir { EntryKind::Dir } else { EntryKind::File };
+    let kind = if e.is_dir {
+        EntryKind::Dir
+    } else {
+        EntryKind::File
+    };
     unix_type_letter(kind, e.unix_mode)
 }
 
@@ -1154,9 +1248,15 @@ mod tests {
         let hello_path = VfsPath::parse("/hello.txt").unwrap();
         let st = fs.stat(&hello_path).await.unwrap();
         assert_eq!(st.size, 11);
-        assert_eq!(fs.stored_crc32(&hello_path).await.unwrap(), Some(crc32(b"hello world")));
+        assert_eq!(
+            fs.stored_crc32(&hello_path).await.unwrap(),
+            Some(crc32(b"hello world"))
+        );
         let inner = VfsPath::parse("/sub/app.log").unwrap();
-        assert_eq!(fs.stored_crc32(&inner).await.unwrap(), Some(crc32(b"log line\n")));
+        assert_eq!(
+            fs.stored_crc32(&inner).await.unwrap(),
+            Some(crc32(b"log line\n"))
+        );
         assert_eq!(entry_unix_type(app), 'r');
         // P12：只读 ZipFs 内容可读（stored 切片）
         let content = fs.read_file_bytes(&hello_path).await.unwrap();
@@ -1193,14 +1293,32 @@ mod tests {
         }
         let p = VfsPath::parse("/a.txt").unwrap();
         let q = VfsPath::parse("/b.txt").unwrap();
-        assert!(matches!(fs.write_file_bytes(&p, b"x").await, Err(VfsError::Unsupported(_))));
+        assert!(matches!(
+            fs.write_file_bytes(&p, b"x").await,
+            Err(VfsError::Unsupported(_))
+        ));
         assert!(matches!(fs.mkdir(&q).await, Err(VfsError::Unsupported(_))));
-        assert!(matches!(fs.rename(&p, &q).await, Err(VfsError::Unsupported(_))));
-        assert!(matches!(fs.remove(&p, true).await, Err(VfsError::Unsupported(_))));
-        assert!(matches!(fs.copy_file(&p, &q).await, Err(VfsError::Unsupported(_))));
-        assert!(matches!(fs.set_mtime(&p, 0).await, Err(VfsError::Unsupported(_))));
+        assert!(matches!(
+            fs.rename(&p, &q).await,
+            Err(VfsError::Unsupported(_))
+        ));
+        assert!(matches!(
+            fs.remove(&p, true).await,
+            Err(VfsError::Unsupported(_))
+        ));
+        assert!(matches!(
+            fs.copy_file(&p, &q).await,
+            Err(VfsError::Unsupported(_))
+        ));
+        assert!(matches!(
+            fs.set_mtime(&p, 0).await,
+            Err(VfsError::Unsupported(_))
+        ));
         // mkdir_all 走 stat 路径：能力协商在执行层判断，这里只验默认 mkdir 已拦
-        assert!(matches!(fs.mkdir_all(&q).await, Err(VfsError::Unsupported(_))));
+        assert!(matches!(
+            fs.mkdir_all(&q).await,
+            Err(VfsError::Unsupported(_))
+        ));
     }
 
     // ---------------- P12：ZipFsMut 可写 ----------------
@@ -1216,9 +1334,15 @@ mod tests {
         // 回读：条目集合一致、内容一致（deflate 压缩体由只读 ZipFs 按需解压验证）
         let reparsed = ZipFs::from_bytes(&out).unwrap();
         let hello = VfsPath::parse("/hello.txt").unwrap();
-        assert_eq!(reparsed.read_file_bytes(&hello).await.unwrap(), b"hello world");
+        assert_eq!(
+            reparsed.read_file_bytes(&hello).await.unwrap(),
+            b"hello world"
+        );
         let x = VfsPath::parse("/sub/deep/x.bin").unwrap();
-        assert_eq!(reparsed.read_file_bytes(&x).await.unwrap(), &[1, 2, 3, 4, 5]);
+        assert_eq!(
+            reparsed.read_file_bytes(&x).await.unwrap(),
+            &[1, 2, 3, 4, 5]
+        );
         // ZipFsMut 自身读取面
         assert_eq!(fs.read_file_bytes(&hello).await.unwrap(), b"hello world");
     }
@@ -1227,9 +1351,17 @@ mod tests {
     async fn mut_write_new_and_replace_updates_crc_size() {
         let src = build_zip(&[("a.txt", b"old")]);
         let fs = ZipFsMut::from_bytes_writable(&src).unwrap();
-        let orig_mtime = fs.stat(&VfsPath::parse("/a.txt").unwrap()).await.unwrap().mtime_ms;
-        fs.write_file_bytes(&VfsPath::parse("/new.txt").unwrap(), b"brand new content").await.unwrap();
-        fs.write_file_bytes(&VfsPath::parse("/a.txt").unwrap(), b"newer").await.unwrap();
+        let orig_mtime = fs
+            .stat(&VfsPath::parse("/a.txt").unwrap())
+            .await
+            .unwrap()
+            .mtime_ms;
+        fs.write_file_bytes(&VfsPath::parse("/new.txt").unwrap(), b"brand new content")
+            .await
+            .unwrap();
+        fs.write_file_bytes(&VfsPath::parse("/a.txt").unwrap(), b"newer")
+            .await
+            .unwrap();
         let out = fs.to_bytes();
         let re = parse_central_directory(&out).unwrap();
         let a = re.iter().find(|e| e.name == "a.txt").unwrap();
@@ -1240,19 +1372,31 @@ mod tests {
         assert_eq!(n.size, 17);
         assert_eq!(n.crc32, crc32(b"brand new content"));
         // trait 读取面
-        assert_eq!(fs.read_file_bytes(&VfsPath::parse("/new.txt").unwrap()).await.unwrap(), b"brand new content");
+        assert_eq!(
+            fs.read_file_bytes(&VfsPath::parse("/new.txt").unwrap())
+                .await
+                .unwrap(),
+            b"brand new content"
+        );
     }
 
     #[tokio::test]
     async fn mut_mkdir_and_empty_dir_entry() {
         let fs = ZipFsMut::empty();
-        fs.mkdir(&VfsPath::parse("/docs/notes").unwrap()).await.unwrap();
-        fs.write_file_bytes(&VfsPath::parse("/docs/notes/a.md").unwrap(), b"# t").await.unwrap();
+        fs.mkdir(&VfsPath::parse("/docs/notes").unwrap())
+            .await
+            .unwrap();
+        fs.write_file_bytes(&VfsPath::parse("/docs/notes/a.md").unwrap(), b"# t")
+            .await
+            .unwrap();
         fs.mkdir(&VfsPath::parse("/empty").unwrap()).await.unwrap();
         let out = fs.to_bytes();
         let re = parse_central_directory(&out).unwrap();
         assert!(re.iter().any(|e| e.name == "docs/notes/a.md"));
-        let empty = re.iter().find(|e| e.name == "empty").expect("空目录条目应写出");
+        let empty = re
+            .iter()
+            .find(|e| e.name == "empty")
+            .expect("空目录条目应写出");
         assert!(empty.is_dir);
         assert_eq!(empty.size, 0);
     }
@@ -1286,17 +1430,49 @@ mod tests {
 
     #[tokio::test]
     async fn mut_rename_file_and_dir_subtree() {
-        let src = build_zip(&[("a.txt", b"A"), ("dir/b.txt", b"B"), ("dir/sub/c.txt", b"C")]);
+        let src = build_zip(&[
+            ("a.txt", b"A"),
+            ("dir/b.txt", b"B"),
+            ("dir/sub/c.txt", b"C"),
+        ]);
         let fs = ZipFsMut::from_bytes_writable(&src).unwrap();
         // 文件改名
-        fs.rename(&VfsPath::parse("/a.txt").unwrap(), &VfsPath::parse("/z.txt").unwrap()).await.unwrap();
+        fs.rename(
+            &VfsPath::parse("/a.txt").unwrap(),
+            &VfsPath::parse("/z.txt").unwrap(),
+        )
+        .await
+        .unwrap();
         assert!(fs.stat(&VfsPath::parse("/a.txt").unwrap()).await.is_err());
-        assert_eq!(fs.stat(&VfsPath::parse("/z.txt").unwrap()).await.unwrap().size, 1);
+        assert_eq!(
+            fs.stat(&VfsPath::parse("/z.txt").unwrap())
+                .await
+                .unwrap()
+                .size,
+            1
+        );
         // 目录子树移动
-        fs.rename(&VfsPath::parse("/dir").unwrap(), &VfsPath::parse("/top").unwrap()).await.unwrap();
+        fs.rename(
+            &VfsPath::parse("/dir").unwrap(),
+            &VfsPath::parse("/top").unwrap(),
+        )
+        .await
+        .unwrap();
         assert!(fs.stat(&VfsPath::parse("/dir").unwrap()).await.is_err());
-        assert_eq!(fs.stat(&VfsPath::parse("/top/b.txt").unwrap()).await.unwrap().size, 1);
-        assert_eq!(fs.stat(&VfsPath::parse("/top/sub/c.txt").unwrap()).await.unwrap().size, 1);
+        assert_eq!(
+            fs.stat(&VfsPath::parse("/top/b.txt").unwrap())
+                .await
+                .unwrap()
+                .size,
+            1
+        );
+        assert_eq!(
+            fs.stat(&VfsPath::parse("/top/sub/c.txt").unwrap())
+                .await
+                .unwrap()
+                .size,
+            1
+        );
         // 回写后一致
         let out = fs.to_bytes();
         let re = parse_central_directory(&out).unwrap();
@@ -1304,17 +1480,29 @@ mod tests {
         assert!(!re.iter().any(|e| e.name.starts_with("dir/")));
         // 目标已存在
         assert!(matches!(
-            fs.rename(&VfsPath::parse("/z.txt").unwrap(), &VfsPath::parse("/top").unwrap()).await,
+            fs.rename(
+                &VfsPath::parse("/z.txt").unwrap(),
+                &VfsPath::parse("/top").unwrap()
+            )
+            .await,
             Err(VfsError::AlreadyExists { .. })
         ));
         // 源不存在
         assert!(matches!(
-            fs.rename(&VfsPath::parse("/nope").unwrap(), &VfsPath::parse("/x").unwrap()).await,
+            fs.rename(
+                &VfsPath::parse("/nope").unwrap(),
+                &VfsPath::parse("/x").unwrap()
+            )
+            .await,
             Err(VfsError::NotFound { .. })
         ));
         // 目标在源子树内
         assert!(matches!(
-            fs.rename(&VfsPath::parse("/top").unwrap(), &VfsPath::parse("/top/inner").unwrap()).await,
+            fs.rename(
+                &VfsPath::parse("/top").unwrap(),
+                &VfsPath::parse("/top/inner").unwrap()
+            )
+            .await,
             Err(VfsError::InvalidPath(_))
         ));
     }
@@ -1328,11 +1516,15 @@ mod tests {
             fs.remove(&VfsPath::parse("/d").unwrap(), false).await,
             Err(VfsError::InvalidPath(_))
         ));
-        fs.remove(&VfsPath::parse("/d").unwrap(), true).await.unwrap();
+        fs.remove(&VfsPath::parse("/d").unwrap(), true)
+            .await
+            .unwrap();
         assert!(fs.stat(&VfsPath::parse("/d").unwrap()).await.is_err());
         assert!(fs.stat(&VfsPath::parse("/d/b.txt").unwrap()).await.is_err());
         assert!(fs.stat(&VfsPath::parse("/d/c.txt").unwrap()).await.is_err());
-        fs.remove(&VfsPath::parse("/a.txt").unwrap(), false).await.unwrap();
+        fs.remove(&VfsPath::parse("/a.txt").unwrap(), false)
+            .await
+            .unwrap();
         assert!(fs.stat(&VfsPath::parse("/a.txt").unwrap()).await.is_err());
         // 不存在
         assert!(matches!(
@@ -1348,7 +1540,11 @@ mod tests {
     async fn mut_copy_and_set_mtime() {
         let src = build_zip(&[("src.txt", b"payload")]);
         let fs = ZipFsMut::from_bytes_writable(&src).unwrap();
-        let orig_mtime = fs.stat(&VfsPath::parse("/src.txt").unwrap()).await.unwrap().mtime_ms;
+        let orig_mtime = fs
+            .stat(&VfsPath::parse("/src.txt").unwrap())
+            .await
+            .unwrap()
+            .mtime_ms;
         fs.copy_file(
             &VfsPath::parse("/src.txt").unwrap(),
             &VfsPath::parse("/dst/deep.txt").unwrap(),
@@ -1356,13 +1552,29 @@ mod tests {
         .await
         .unwrap();
         // 保留源 mtime + 父链自动建立
-        assert_eq!(fs.stat(&VfsPath::parse("/dst/deep.txt").unwrap()).await.unwrap().mtime_ms, orig_mtime);
         assert_eq!(
-            fs.read_file_bytes(&VfsPath::parse("/dst/deep.txt").unwrap()).await.unwrap(),
+            fs.stat(&VfsPath::parse("/dst/deep.txt").unwrap())
+                .await
+                .unwrap()
+                .mtime_ms,
+            orig_mtime
+        );
+        assert_eq!(
+            fs.read_file_bytes(&VfsPath::parse("/dst/deep.txt").unwrap())
+                .await
+                .unwrap(),
             b"payload"
         );
-        fs.set_mtime(&VfsPath::parse("/src.txt").unwrap(), 1_709_210_096_000).await.unwrap();
-        assert_eq!(fs.stat(&VfsPath::parse("/src.txt").unwrap()).await.unwrap().mtime_ms, 1_709_210_096_000);
+        fs.set_mtime(&VfsPath::parse("/src.txt").unwrap(), 1_709_210_096_000)
+            .await
+            .unwrap();
+        assert_eq!(
+            fs.stat(&VfsPath::parse("/src.txt").unwrap())
+                .await
+                .unwrap()
+                .mtime_ms,
+            1_709_210_096_000
+        );
         // set_mtime 到不存在路径
         assert!(matches!(
             fs.set_mtime(&VfsPath::parse("/nope").unwrap(), 0).await,
@@ -1455,8 +1667,13 @@ mod tests {
     #[tokio::test]
     async fn mut_trait_write_path_end_to_end() {
         let fs = ZipFsMut::empty();
-        fs.write_file_bytes(&VfsPath::parse("/x/y.txt").unwrap(), b"trait path").await.unwrap();
-        assert_eq!(fs.capabilities(), VfsCaps::READ.union(VfsCaps::all_writes()));
+        fs.write_file_bytes(&VfsPath::parse("/x/y.txt").unwrap(), b"trait path")
+            .await
+            .unwrap();
+        assert_eq!(
+            fs.capabilities(),
+            VfsCaps::READ.union(VfsCaps::all_writes())
+        );
         let st = fs.stat(&VfsPath::parse("/x/y.txt").unwrap()).await.unwrap();
         assert_eq!(st.size, 10);
         // to_bytes 与写入面一致

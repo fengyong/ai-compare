@@ -42,7 +42,12 @@ impl CancelRegistry {
 
     /// 是否命中一个在途请求（未命中说明请求已应答或 id 不合法）。
     pub fn cancel_request(&self, key: &str) -> bool {
-        let Some(flag) = self.requests.lock().expect("取消注册表锁").get(key).cloned()
+        let Some(flag) = self
+            .requests
+            .lock()
+            .expect("取消注册表锁")
+            .get(key)
+            .cloned()
         else {
             return false;
         };
@@ -150,7 +155,10 @@ mod tests {
         assert!(!reg.cancel_request("n:2"), "应答后按旧请求 id 取消应无效");
         assert!(!flag.load(Ordering::SeqCst));
         assert!(reg.cancel_session("d1"));
-        assert!(flag.load(Ordering::SeqCst), "会话级取消必须置位后台扫描旗标");
+        assert!(
+            flag.load(Ordering::SeqCst),
+            "会话级取消必须置位后台扫描旗标"
+        );
         reg.unregister_session("d1");
         assert!(reg.is_empty());
         assert!(!reg.cancel_session("d1"));

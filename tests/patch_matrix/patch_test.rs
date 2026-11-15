@@ -46,7 +46,12 @@ enum GitExpect {
 }
 
 fn default_opts() -> PatchApplyOptions {
-    PatchApplyOptions { dry_run: false, fuzz: FUZZ, crlf_tolerant: true, ignore_whitespace: false }
+    PatchApplyOptions {
+        dry_run: false,
+        fuzz: FUZZ,
+        crlf_tolerant: true,
+        ignore_whitespace: false,
+    }
 }
 
 const CORPORA: &[Corpus] = &[
@@ -205,11 +210,18 @@ fn read_tree(root: &Path) -> Vec<(String, String)> {
         for entry in std::fs::read_dir(dir).unwrap() {
             let entry = entry.unwrap();
             let path = entry.path();
-            let rel = path.strip_prefix(root).unwrap().to_string_lossy().into_owned();
+            let rel = path
+                .strip_prefix(root)
+                .unwrap()
+                .to_string_lossy()
+                .into_owned();
             if path.is_dir() {
                 walk(root, &path, out);
             } else {
-                out.push((rel, String::from_utf8_lossy(&std::fs::read(&path).unwrap()).into_owned()));
+                out.push((
+                    rel,
+                    String::from_utf8_lossy(&std::fs::read(&path).unwrap()).into_owned(),
+                ));
             }
         }
     }
@@ -269,14 +281,19 @@ fn crosscheck_with_git_apply_check() {
             (Some(expected), Ok(report)) => {
                 // 全部应用成功（SkippedBinary/NoOp 不算失败——二进制跳过是设计语义）
                 assert!(
-                    report.results.iter().all(|r| !matches!(r.status,
-                        ai_core::patch::FileApplyStatus::Failed | ai_core::patch::FileApplyStatus::AlreadyApplied)),
+                    report.results.iter().all(|r| !matches!(
+                        r.status,
+                        ai_core::patch::FileApplyStatus::Failed
+                            | ai_core::patch::FileApplyStatus::AlreadyApplied
+                    )),
                     "语料 {}: 期望无失败项，报告: {report:?}",
                     c.name
                 );
                 let actual = read_tree(ours_dir.path());
-                let mut expected_sorted: Vec<(String, String)> =
-                    expected.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+                let mut expected_sorted: Vec<(String, String)> = expected
+                    .iter()
+                    .map(|(k, v)| (k.to_string(), v.to_string()))
+                    .collect();
                 expected_sorted.sort();
                 assert_eq!(actual, expected_sorted, "语料 {}: 应用结果不符", c.name);
                 true
@@ -296,7 +313,10 @@ fn crosscheck_with_git_apply_check() {
         // ---- git 侧 ----
         match c.git {
             GitExpect::Skip => {
-                classified.push((c.name, "git 拒绝无数据 binary patch（设计差异：我们跳过并报告）"));
+                classified.push((
+                    c.name,
+                    "git 拒绝无数据 binary patch（设计差异：我们跳过并报告）",
+                ));
                 continue;
             }
             GitExpect::KnownDiff => {
@@ -306,7 +326,11 @@ fn crosscheck_with_git_apply_check() {
                 std::fs::write(&patch_file, c.patch).unwrap();
                 let (code, _stderr) = git_apply_check(tree.path(), &patch_file);
                 assert_ne!(code, 0, "语料 {}: 已知设计差异要求 git 拒绝", c.name);
-                assert!(our_ok, "语料 {}: 已知设计差异要求我们接受（CRLF 容忍）", c.name);
+                assert!(
+                    our_ok,
+                    "语料 {}: 已知设计差异要求我们接受（CRLF 容忍）",
+                    c.name
+                );
                 classified.push((c.name, "CRLF 容忍：git 逐字节拒绝、我们按特性接受"));
                 continue;
             }
@@ -327,7 +351,12 @@ fn crosscheck_with_git_apply_check() {
         }
     }
     // 一致性摘要（对拍报告数据源）
-    eprintln!("patch_matrix: git apply --check 对拍一致 {}/{}（另有 {} 条设计差异归类）", consistent, CORPORA.len() - classified.len(), classified.len());
+    eprintln!(
+        "patch_matrix: git apply --check 对拍一致 {}/{}（另有 {} 条设计差异归类）",
+        consistent,
+        CORPORA.len() - classified.len(),
+        classified.len()
+    );
     // 16 条语料：11 条与 git apply 结论完全一致；3 条已知设计差异（CRLF 容忍/
     // 无上下文漂移搜索/模糊上下文——均为任务书要求的特性语义）；2 条不对拍
     // （binary 无数据 / rename 语义属文件操作层）
@@ -383,7 +412,12 @@ fn aic_diff_output_roundtrips_through_patch_apply() {
         ])
         .output()
         .unwrap();
-    assert_eq!(out.status.code(), Some(0), "aic patch apply 退出 0: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "aic patch apply 退出 0: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let applied = std::fs::read_to_string(&out_path).unwrap();
     assert_eq!(applied, right, "自产补丁应用还原右侧");
 }
@@ -402,7 +436,9 @@ fn aic_diff_roundtrip_git_apply_check_consistent() {
         .unwrap();
     let patch_text = String::from_utf8_lossy(&out.stdout).into_owned();
     // 标签重写为 git 风格路径（aic diff 原样回显命令行标签）
-    let git_patch = patch_text.replace("--- l.txt", "--- a/l.txt").replace("+++ r.txt", "+++ b/l.txt");
+    let git_patch = patch_text
+        .replace("--- l.txt", "--- a/l.txt")
+        .replace("+++ r.txt", "+++ b/l.txt");
     let tree = tempfile::tempdir().unwrap();
     std::fs::write(tree.path().join("l.txt"), left).unwrap();
     let patch_file = tree.path().join("p.patch");
@@ -412,7 +448,13 @@ fn aic_diff_roundtrip_git_apply_check_consistent() {
 
     // 同一补丁经我们应用（--input 左侧 -> stdout == 右侧）
     let out = Command::new(aic())
-        .args(["patch", "apply", patch_file.to_str().unwrap(), "--input", tree.path().join("l.txt").to_str().unwrap()])
+        .args([
+            "patch",
+            "apply",
+            patch_file.to_str().unwrap(),
+            "--input",
+            tree.path().join("l.txt").to_str().unwrap(),
+        ])
         .output()
         .unwrap();
     assert_eq!(out.status.code(), Some(0));
@@ -441,7 +483,10 @@ fn parser_tolerance_goldens() {
     assert!(p.files[0].binary && p.files[0].hunks.is_empty());
 
     // 空 patch -> Empty
-    assert!(matches!(parse_patch("not a patch\n"), Err(PatchError::Empty)));
+    assert!(matches!(
+        parse_patch("not a patch\n"),
+        Err(PatchError::Empty)
+    ));
 
     // 已应用检测（AlreadyApplied -> git apply --check 亦拒绝：roundtrip 二次应用失败）
     let patch = "--- a\n+++ b\n@@ -1,3 +1,3 @@\n a\n-b\n+B\n c\n";

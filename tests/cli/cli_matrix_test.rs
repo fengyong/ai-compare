@@ -17,10 +17,7 @@ fn aicc() -> std::path::PathBuf {
 
 /// 运行 CLI（stderr 合并进 stdout 便于断言错误信息）
 fn run(bin: &std::path::Path, args: &[&str]) -> Output {
-    Command::new(bin)
-        .args(args)
-        .output()
-        .expect("CLI 进程启动")
+    Command::new(bin).args(args).output().expect("CLI 进程启动")
 }
 
 fn exit_code(out: &Output) -> i32 {
@@ -103,7 +100,10 @@ fn diff_exit_matrix() {
     let out = run(&aic(), &["diff", &s(&f.text_diff_l), &s(&f.text_diff_r)]);
     assert_eq!(exit_code(&out), 1, "不同文件 diff -> 1");
     let text = stdout(&out);
-    assert!(text.contains("-beta") && text.contains("+OMEGA"), "输出含删/增行: {text}");
+    assert!(
+        text.contains("-beta") && text.contains("+OMEGA"),
+        "输出含删/增行: {text}"
+    );
     assert!(text.starts_with("--- "), "unified 文件头");
     // 错误（文件不存在）-> 2
     let out = run(&aic(), &["diff", "/nonexistent/aic/x1", &s(&f.same_r)]);
@@ -121,13 +121,40 @@ fn diff_exit_matrix() {
 fn quick_exit_matrix_binary_modes() {
     let f = fixtures();
     // size 模式：同尺寸不同内容不比对内容 -> 0（size 语义）
-    let out = run(&aic(), &["quick", &s(&f.bin_diff_l), &s(&f.bin_diff_r), "--mode", "size"]);
+    let out = run(
+        &aic(),
+        &[
+            "quick",
+            &s(&f.bin_diff_l),
+            &s(&f.bin_diff_r),
+            "--mode",
+            "size",
+        ],
+    );
     assert_eq!(exit_code(&out), 0, "size 模式同尺寸 -> 0（不比内容）");
     // crc/binary 模式：内容差异 -> 11（二进制差异细分）
     for mode in ["crc", "binary"] {
-        let out = run(&aic(), &["quick", &s(&f.bin_same_l), &s(&f.bin_same_r), "--mode", mode]);
+        let out = run(
+            &aic(),
+            &[
+                "quick",
+                &s(&f.bin_same_l),
+                &s(&f.bin_same_r),
+                "--mode",
+                mode,
+            ],
+        );
         assert_eq!(exit_code(&out), 0, "{mode} 模式相同 -> 0");
-        let out = run(&aic(), &["quick", &s(&f.bin_diff_l), &s(&f.bin_diff_r), "--mode", mode]);
+        let out = run(
+            &aic(),
+            &[
+                "quick",
+                &s(&f.bin_diff_l),
+                &s(&f.bin_diff_r),
+                "--mode",
+                mode,
+            ],
+        );
         assert_eq!(exit_code(&out), 11, "{mode} 模式差异 -> 11（二进制差异）");
     }
 }
@@ -136,33 +163,105 @@ fn quick_exit_matrix_binary_modes() {
 fn quick_exit_matrix_rules_mode() {
     let f = fixtures();
     // 规则相同 -> 0
-    let out = run(&aic(), &["quick", &s(&f.same_l), &s(&f.same_r), "--mode", "rules"]);
+    let out = run(
+        &aic(),
+        &["quick", &s(&f.same_l), &s(&f.same_r), "--mode", "rules"],
+    );
     assert_eq!(exit_code(&out), 0);
     // 重要差异 -> 13（默认重要性模型：内容差异均重要）
-    let out = run(&aic(), &["quick", &s(&f.text_diff_l), &s(&f.text_diff_r), "--mode", "rules"]);
+    let out = run(
+        &aic(),
+        &[
+            "quick",
+            &s(&f.text_diff_l),
+            &s(&f.text_diff_r),
+            "--mode",
+            "rules",
+        ],
+    );
     assert_eq!(exit_code(&out), 13, "规则差异 -> 13");
     // 二进制文件回退二进制判等：差异 -> 11
-    let out = run(&aic(), &["quick", &s(&f.bin_diff_l), &s(&f.bin_diff_r), "--mode", "rules"]);
+    let out = run(
+        &aic(),
+        &[
+            "quick",
+            &s(&f.bin_diff_l),
+            &s(&f.bin_diff_r),
+            "--mode",
+            "rules",
+        ],
+    );
     assert_eq!(exit_code(&out), 11, "非文本差异回退二进制 -> 11");
-    let out = run(&aic(), &["quick", &s(&f.bin_same_l), &s(&f.bin_same_r), "--mode", "rules"]);
+    let out = run(
+        &aic(),
+        &[
+            "quick",
+            &s(&f.bin_same_l),
+            &s(&f.bin_same_r),
+            "--mode",
+            "rules",
+        ],
+    );
     assert_eq!(exit_code(&out), 0, "非文本相同 -> 0");
     // 仅不重要差异（尾随空白 + --ignore-whitespace）-> 12（相似）
     let out = run(
         &aic(),
-        &["quick", &s(&f.trailing_l), &s(&f.trailing_r), "--mode", "rules", "--ignore-whitespace"],
+        &[
+            "quick",
+            &s(&f.trailing_l),
+            &s(&f.trailing_r),
+            "--mode",
+            "rules",
+            "--ignore-whitespace",
+        ],
     );
     assert_eq!(exit_code(&out), 12, "仅尾随空白差异（不重要） -> 12 相似");
     // 同语料不加开关：尾随空白重要 -> 13
-    let out = run(&aic(), &["quick", &s(&f.trailing_l), &s(&f.trailing_r), "--mode", "rules"]);
+    let out = run(
+        &aic(),
+        &[
+            "quick",
+            &s(&f.trailing_l),
+            &s(&f.trailing_r),
+            "--mode",
+            "rules",
+        ],
+    );
     assert_eq!(exit_code(&out), 13);
     // 仅大小写差异 + --ignore-case（大小写不重要） -> 12
-    let out = run(&aic(), &["quick", &s(&f.case_l), &s(&f.case_r), "--mode", "rules", "--ignore-case"]);
-    assert_eq!(exit_code(&out), 12, "仅大小写差异（--ignore-case 后不重要） -> 12");
+    let out = run(
+        &aic(),
+        &[
+            "quick",
+            &s(&f.case_l),
+            &s(&f.case_r),
+            "--mode",
+            "rules",
+            "--ignore-case",
+        ],
+    );
+    assert_eq!(
+        exit_code(&out),
+        12,
+        "仅大小写差异（--ignore-case 后不重要） -> 12"
+    );
     // 不加开关：大小写重要 -> 13
-    let out = run(&aic(), &["quick", &s(&f.case_l), &s(&f.case_r), "--mode", "rules"]);
+    let out = run(
+        &aic(),
+        &["quick", &s(&f.case_l), &s(&f.case_r), "--mode", "rules"],
+    );
     assert_eq!(exit_code(&out), 13);
     // 错误 -> 2
-    let out = run(&aic(), &["quick", "/nonexistent/aic/y1", &s(&f.same_r), "--mode", "rules"]);
+    let out = run(
+        &aic(),
+        &[
+            "quick",
+            "/nonexistent/aic/y1",
+            &s(&f.same_r),
+            "--mode",
+            "rules",
+        ],
+    );
     assert_eq!(exit_code(&out), 2);
 }
 
@@ -178,8 +277,23 @@ fn quick_rules_directory_aggregation() {
     std::fs::write(dl.join("sub").join("trail.txt"), "keep\n").unwrap();
     std::fs::write(dr.join("sub").join("trail.txt"), "keep   \n").unwrap();
     let s = |p: &std::path::Path| p.to_string_lossy().into_owned();
-    let out = run(&aic(), &["quick", &s(&dl), &s(&dr), "--mode", "rules", "--ignore-whitespace"]);
-    assert_eq!(exit_code(&out), 12, "目录仅不重要差异 -> 12 相似: {}", stdout(&out));
+    let out = run(
+        &aic(),
+        &[
+            "quick",
+            &s(&dl),
+            &s(&dr),
+            "--mode",
+            "rules",
+            "--ignore-whitespace",
+        ],
+    );
+    assert_eq!(
+        exit_code(&out),
+        12,
+        "目录仅不重要差异 -> 12 相似: {}",
+        stdout(&out)
+    );
     // 默认模型（尾随空白重要）-> 13
     let out = run(&aic(), &["quick", &s(&dl), &s(&dr), "--mode", "rules"]);
     assert_eq!(exit_code(&out), 13, "目录重要差异 -> 13");
@@ -200,7 +314,10 @@ fn quick_defaults_and_error_paths() {
     // 无参数 -> 2 + 用法提示
     let out = run(&aic(), &["quick"]);
     assert_eq!(exit_code(&out), 2);
-    assert!(String::from_utf8_lossy(&out.stderr).contains("用法"), "错误时打印用法");
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("用法"),
+        "错误时打印用法"
+    );
     // help -> 0
     let out = run(&aic(), &["--help"]);
     assert_eq!(exit_code(&out), 0);
@@ -215,7 +332,16 @@ fn diff_algo_switches_change_or_keep_semantics() {
     let f = fixtures();
     // 四种算法对简单替换语料都产出差异（退出码 1），输出 hunk 数一致
     for algo in ["standard", "myers", "patience", "histogram"] {
-        let out = run(&aic(), &["diff", "--algo", algo, &s(&f.text_diff_l), &s(&f.text_diff_r)]);
+        let out = run(
+            &aic(),
+            &[
+                "diff",
+                "--algo",
+                algo,
+                &s(&f.text_diff_l),
+                &s(&f.text_diff_r),
+            ],
+        );
         assert_eq!(exit_code(&out), 1, "--algo {algo} 差异 -> 1");
         let text = stdout(&out);
         assert_eq!(text.matches("@@ -").count(), 1, "--algo {algo} 单 hunk");
@@ -224,16 +350,30 @@ fn diff_algo_switches_change_or_keep_semantics() {
     let out = run(&aic(), &["diff", "--algo", "nope", "a", "b"]);
     assert_eq!(exit_code(&out), 2);
     // --ignore-whitespace：空白差异判同 -> 0
-    let out = run(&aic(), &["diff", "--ignore-whitespace", &s(&f.trailing_l), &s(&f.trailing_r)]);
+    let out = run(
+        &aic(),
+        &[
+            "diff",
+            "--ignore-whitespace",
+            &s(&f.trailing_l),
+            &s(&f.trailing_r),
+        ],
+    );
     assert_eq!(exit_code(&out), 0, "--ignore-whitespace 下空白差异 -> 0");
     // 同语料不加开关 -> 1
     let out = run(&aic(), &["diff", &s(&f.trailing_l), &s(&f.trailing_r)]);
     assert_eq!(exit_code(&out), 1);
     // --ignore-case：大小写差异判同 -> 0
-    let out = run(&aic(), &["diff", "--ignore-case", &s(&f.case_l), &s(&f.case_r)]);
+    let out = run(
+        &aic(),
+        &["diff", "--ignore-case", &s(&f.case_l), &s(&f.case_r)],
+    );
     assert_eq!(exit_code(&out), 0, "--ignore-case 下大小写差异 -> 0");
     // -w 短选项等价
-    let out = run(&aic(), &["diff", "-w", &s(&f.trailing_l), &s(&f.trailing_r)]);
+    let out = run(
+        &aic(),
+        &["diff", "-w", &s(&f.trailing_l), &s(&f.trailing_r)],
+    );
     assert_eq!(exit_code(&out), 0);
 }
 
@@ -251,9 +391,21 @@ fn aicc_wraps_and_propagates_exit_codes() {
     let out = run(&aicc(), &[&s(&f.text_diff_l), &s(&f.text_diff_r)]);
     assert_eq!(exit_code(&out), 1, "aicc 裸双路径不同 -> 1（透传）");
     let text = stdout(&out);
-    assert!(text.contains("-beta") && text.contains("+OMEGA"), "aicc 输出 diff: {text}");
+    assert!(
+        text.contains("-beta") && text.contains("+OMEGA"),
+        "aicc 输出 diff: {text}"
+    );
     // 透传细分码：quick 语义 + 11
-    let out = run(&aicc(), &["quick", &s(&f.bin_diff_l), &s(&f.bin_diff_r), "--mode", "binary"]);
+    let out = run(
+        &aicc(),
+        &[
+            "quick",
+            &s(&f.bin_diff_l),
+            &s(&f.bin_diff_r),
+            "--mode",
+            "binary",
+        ],
+    );
     assert_eq!(exit_code(&out), 11, "aicc 透传 quick 细分码 11");
     // 错误透传 -> 2
     let out = run(&aicc(), &["diff", "/nonexistent/aic/z1", &s(&f.same_r)]);
@@ -286,11 +438,23 @@ fn aicc_mergetool_four_path_convention() {
     // （三向合并视图属 P7；此处验证调用约定与退出码语义）
     let out = run(
         &aicc(),
-        &[&s(&f.same_l), &s(&f.text_diff_l), &s(&f.text_diff_r), &s(&f.same_r)],
+        &[
+            &s(&f.same_l),
+            &s(&f.text_diff_l),
+            &s(&f.text_diff_r),
+            &s(&f.same_r),
+        ],
     );
-    assert_eq!(exit_code(&out), 1, "mergetool 四路径 -> diff(LOCAL, REMOTE) -> 1");
+    assert_eq!(
+        exit_code(&out),
+        1,
+        "mergetool 四路径 -> diff(LOCAL, REMOTE) -> 1"
+    );
     let text = stdout(&out);
-    assert!(text.contains("-beta") && text.contains("+OMEGA"), "输出应为 LOCAL/REMOTE 的 diff: {text}");
+    assert!(
+        text.contains("-beta") && text.contains("+OMEGA"),
+        "输出应为 LOCAL/REMOTE 的 diff: {text}"
+    );
     assert!(!text.contains(&s(&f.same_l)), "BASE 不参与比较");
 }
 
@@ -298,7 +462,10 @@ fn aicc_mergetool_four_path_convention() {
 fn aicc_no_args_prints_usage_and_errors() {
     let out = run(&aicc(), &[]);
     assert_eq!(exit_code(&out), 2);
-    assert!(String::from_utf8_lossy(&out.stderr).contains("用法"), "打印用法");
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("用法"),
+        "打印用法"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -312,7 +479,13 @@ fn conflict_code_reserved_constant_documented() {
     let f = fixtures();
     let cases: Vec<Vec<String>> = vec![
         vec!["diff".into(), s(&f.text_diff_l)],
-        vec!["quick".into(), s(&f.bin_diff_l), s(&f.bin_diff_r), "--mode".into(), "rules".into()],
+        vec![
+            "quick".into(),
+            s(&f.bin_diff_l),
+            s(&f.bin_diff_r),
+            "--mode".into(),
+            "rules".into(),
+        ],
         vec!["quick".into(), s(&f.bin_diff_l), s(&f.bin_diff_r)],
     ];
     for args in cases {
@@ -377,18 +550,39 @@ fn merge_conflict_exit_code_rejects_reserved_codes() {
     for reserved in ["0", "2", "11", "12", "13"] {
         let out = run(
             &aic(),
-            &["merge", &s(&f.base), &s(&f.left), &s(&f.right), "--conflict-exit-code", reserved],
+            &[
+                "merge",
+                &s(&f.base),
+                &s(&f.left),
+                &s(&f.right),
+                "--conflict-exit-code",
+                reserved,
+            ],
         );
         assert_eq!(exit_code(&out), 2, "保留码 {reserved} 应被拒绝");
         let err = String::from_utf8_lossy(&out.stderr);
-        assert!(err.contains("--conflict-exit-code"), "应说明拒绝原因: {err}");
+        assert!(
+            err.contains("--conflict-exit-code"),
+            "应说明拒绝原因: {err}"
+        );
     }
     for allowed in ["1", "14", "3", "200"] {
         let out = run(
             &aic(),
-            &["merge", &s(&f.base), &s(&f.left), &s(&f.right), "--conflict-exit-code", allowed],
+            &[
+                "merge",
+                &s(&f.base),
+                &s(&f.left),
+                &s(&f.right),
+                "--conflict-exit-code",
+                allowed,
+            ],
         );
-        assert_eq!(exit_code(&out), allowed.parse::<i32>().unwrap(), "非保留码 {allowed} 应生效");
+        assert_eq!(
+            exit_code(&out),
+            allowed.parse::<i32>().unwrap(),
+            "非保留码 {allowed} 应生效"
+        );
     }
 }
 
@@ -396,42 +590,89 @@ fn merge_conflict_exit_code_rejects_reserved_codes() {
 fn merge_exit_matrix() {
     let f = merge_fixtures();
     // 干净合并 -> 0，输出含两侧变化
-    let out = run(&aic(), &["merge", &s(&f.clean_base), &s(&f.clean_left), &s(&f.clean_right)]);
+    let out = run(
+        &aic(),
+        &[
+            "merge",
+            &s(&f.clean_base),
+            &s(&f.clean_left),
+            &s(&f.clean_right),
+        ],
+    );
     assert_eq!(exit_code(&out), 0, "无冲突自动合成 -> 0");
     assert_eq!(stdout(&out), "K1\n2\n3\n4\nK5\n");
     // 两侧同改 -> 0（不算冲突，FR-TMRG-003）
-    let out = run(&aic(), &["merge", &s(&f.same_base), &s(&f.same_left), &s(&f.same_right)]);
+    let out = run(
+        &aic(),
+        &[
+            "merge",
+            &s(&f.same_base),
+            &s(&f.same_left),
+            &s(&f.same_right),
+        ],
+    );
     assert_eq!(exit_code(&out), 0, "两侧相同变化不算冲突");
     assert_eq!(stdout(&out), "a\nX\nc\n");
     // 冲突 -> 1（默认冲突码），marker 模式输出
     let out = run(&aic(), &["merge", &s(&f.base), &s(&f.left), &s(&f.right)]);
     assert_eq!(exit_code(&out), 1, "有未决冲突 -> 1");
     let text = stdout(&out);
-    assert!(text.contains("<<<<<<<") && text.contains("=======") && text.contains(">>>>>>>"), "marker 模式: {text}");
+    assert!(
+        text.contains("<<<<<<<") && text.contains("=======") && text.contains(">>>>>>>"),
+        "marker 模式: {text}"
+    );
     assert!(text.contains("L1") && text.contains("R1"));
     // --conflict-exit-code 14（FR-CLI-004 对齐）
     let out = run(
         &aic(),
-        &["merge", &s(&f.base), &s(&f.left), &s(&f.right), "--conflict-exit-code", "14"],
+        &[
+            "merge",
+            &s(&f.base),
+            &s(&f.left),
+            &s(&f.right),
+            "--conflict-exit-code",
+            "14",
+        ],
     );
     assert_eq!(exit_code(&out), 14, "--conflict-exit-code 14 生效");
     // --auto：未决冲突按默认策略（left）解析为纯文本，退出码仍为 1
-    let out = run(&aic(), &["merge", &s(&f.base), &s(&f.left), &s(&f.right), "--auto"]);
+    let out = run(
+        &aic(),
+        &["merge", &s(&f.base), &s(&f.left), &s(&f.right), "--auto"],
+    );
     assert_eq!(exit_code(&out), 1, "auto 模式有未决冲突仍 -> 1");
-    assert_eq!(stdout(&out), "h\nL1\nb\nL2\nt\n", "auto 模式输出合成文本（默认取左）");
+    assert_eq!(
+        stdout(&out),
+        "h\nL1\nb\nL2\nt\n",
+        "auto 模式输出合成文本（默认取左）"
+    );
     // --auto --on-conflict base
     let out = run(
         &aic(),
-        &["merge", &s(&f.base), &s(&f.left), &s(&f.right), "--auto", "--on-conflict", "base"],
+        &[
+            "merge",
+            &s(&f.base),
+            &s(&f.left),
+            &s(&f.right),
+            "--auto",
+            "--on-conflict",
+            "base",
+        ],
     );
     assert_eq!(exit_code(&out), 1);
     assert_eq!(stdout(&out), "h\na\nb\nc\nt\n", "on-conflict base = 还原基");
     // 错误 -> 2（文件不存在 / 参数不足 / 未知参数）
-    let out = run(&aic(), &["merge", "/nonexistent/aic/z1", &s(&f.left), &s(&f.right)]);
+    let out = run(
+        &aic(),
+        &["merge", "/nonexistent/aic/z1", &s(&f.left), &s(&f.right)],
+    );
     assert_eq!(exit_code(&out), 2);
     let out = run(&aic(), &["merge", &s(&f.base), &s(&f.left)]);
     assert_eq!(exit_code(&out), 2, "参数不足 -> 2");
-    let out = run(&aic(), &["merge", "--nope", &s(&f.base), &s(&f.left), &s(&f.right)]);
+    let out = run(
+        &aic(),
+        &["merge", "--nope", &s(&f.base), &s(&f.left), &s(&f.right)],
+    );
     assert_eq!(exit_code(&out), 2);
 }
 
@@ -443,7 +684,10 @@ fn merge_marker_styles_and_output_file() {
     let text = stdout(&out);
     assert!(!text.contains("|||||||"), "默认 marker 无 base 段: {text}");
     // --diff3：含 base 段（GNU diff3 -m / git merge-file --diff3 同形）
-    let out = run(&aic(), &["merge", &s(&f.base), &s(&f.left), &s(&f.right), "--diff3"]);
+    let out = run(
+        &aic(),
+        &["merge", &s(&f.base), &s(&f.left), &s(&f.right), "--diff3"],
+    );
     let text = stdout(&out);
     assert!(text.contains("|||||||"), "--diff3 含 base 段: {text}");
     let base_name = f.base.file_name().unwrap().to_string_lossy().into_owned();
@@ -452,11 +696,21 @@ fn merge_marker_styles_and_output_file() {
     let out_path = f._dir.path().join("merged.out");
     let out = run(
         &aic(),
-        &["merge", &s(&f.clean_base), &s(&f.clean_left), &s(&f.clean_right), "-o", &s(&out_path)],
+        &[
+            "merge",
+            &s(&f.clean_base),
+            &s(&f.clean_left),
+            &s(&f.clean_right),
+            "-o",
+            &s(&out_path),
+        ],
     );
     assert_eq!(exit_code(&out), 0);
     assert_eq!(stdout(&out), "", "-o 模式不写 stdout");
-    assert_eq!(std::fs::read_to_string(&out_path).unwrap(), "K1\n2\n3\n4\nK5\n");
+    assert_eq!(
+        std::fs::read_to_string(&out_path).unwrap(),
+        "K1\n2\n3\n4\nK5\n"
+    );
 }
 
 #[test]
@@ -476,7 +730,11 @@ fn merge_importance_and_window_flags() {
         &aic(),
         &["merge", &s(&b), &s(&l), &s(&r), "-iu", "--favor-right"],
     );
-    assert_eq!(exit_code(&out), 0, "-iu + favorRight 不重要冲突自动采用 -> 0");
+    assert_eq!(
+        exit_code(&out),
+        0,
+        "-iu + favorRight 不重要冲突自动采用 -> 0"
+    );
     assert_eq!(stdout(&out), "a\nB\nc\n");
     // 冲突窗口：默认无冲突的两处接近变化，窗口 1 合并为冲突
     let b = dir.join("g_base.l");
@@ -487,7 +745,10 @@ fn merge_importance_and_window_flags() {
     std::fs::write(&r, "a\nmid\nC\n").unwrap();
     let out = run(&aic(), &["merge", &s(&b), &s(&l), &s(&r)]);
     assert_eq!(exit_code(&out), 0, "默认（仅更改不同的行）无冲突");
-    let out = run(&aic(), &["merge", &s(&b), &s(&l), &s(&r), "--conflict-window", "1"]);
+    let out = run(
+        &aic(),
+        &["merge", &s(&b), &s(&l), &s(&r), "--conflict-window", "1"],
+    );
     assert_eq!(exit_code(&out), 1, "窗口 1：接近变化标记为冲突供审查");
     assert!(stdout(&out).contains("<<<<<<<"), "窗口冲突写 marker");
 }
@@ -496,7 +757,12 @@ fn merge_importance_and_window_flags() {
 fn aicc_merge_subcommand_passthrough() {
     // aicc（等待型包装）对 merge 子命令原样透传（FR-CLI-001 双形态）
     let f = merge_fixtures();
-    let args = ["merge", &s(&f.clean_base), &s(&f.clean_left), &s(&f.clean_right)];
+    let args = [
+        "merge",
+        &s(&f.clean_base),
+        &s(&f.clean_left),
+        &s(&f.clean_right),
+    ];
     let out = run(&aicc(), &args);
     assert_eq!(exit_code(&out), 0, "aicc merge 干净合并 -> 0");
     assert_eq!(stdout(&out), "K1\n2\n3\n4\nK5\n");
@@ -524,25 +790,58 @@ fn patch_apply_exit_matrix() {
     std::fs::write(tree.join("bin.dat"), [0xff, 0xfe, 0x00, b'x']).unwrap();
 
     let good = root.join("good.patch");
-    std::fs::write(&good, "--- a/f.txt\n+++ b/f.txt\n@@ -1,3 +1,3 @@\n a\n-b\n+B\n c\n").unwrap();
+    std::fs::write(
+        &good,
+        "--- a/f.txt\n+++ b/f.txt\n@@ -1,3 +1,3 @@\n a\n-b\n+B\n c\n",
+    )
+    .unwrap();
     let bad = root.join("bad.patch");
-    std::fs::write(&bad, "--- a/f.txt\n+++ b/f.txt\n@@ -1,3 +1,3 @@\n a\n-XX\n+YY\n c\n").unwrap();
+    std::fs::write(
+        &bad,
+        "--- a/f.txt\n+++ b/f.txt\n@@ -1,3 +1,3 @@\n a\n-XX\n+YY\n c\n",
+    )
+    .unwrap();
     let binp = root.join("bin.patch");
-    std::fs::write(&binp, "--- a/bin.dat\n+++ b/bin.dat\n@@ -1,1 +1,1 @@\n-x\n+y\n").unwrap();
+    std::fs::write(
+        &binp,
+        "--- a/bin.dat\n+++ b/bin.dat\n@@ -1,1 +1,1 @@\n-x\n+y\n",
+    )
+    .unwrap();
     let out_file = root.join("out.txt");
 
     // 单文件：上下文不匹配 → 2（不是 1）
     let out = run(
         &aic(),
-        &["patch", "apply", &s(&bad), "--input", &s(&target), "-o", &s(&out_file)],
+        &[
+            "patch",
+            "apply",
+            &s(&bad),
+            "--input",
+            &s(&target),
+            "-o",
+            &s(&out_file),
+        ],
     );
-    assert_eq!(exit_code(&out), 2, "应用失败必须是错误(2)，实际: {}", stdout(&out));
+    assert_eq!(
+        exit_code(&out),
+        2,
+        "应用失败必须是错误(2)，实际: {}",
+        stdout(&out)
+    );
     assert!(!out_file.exists(), "失败不得产出输出文件");
 
     // 单文件：成功 → 0
     let out = run(
         &aic(),
-        &["patch", "apply", &s(&good), "--input", &s(&target), "-o", &s(&out_file)],
+        &[
+            "patch",
+            "apply",
+            &s(&good),
+            "--input",
+            &s(&target),
+            "-o",
+            &s(&out_file),
+        ],
     );
     assert_eq!(exit_code(&out), 0, "应用成功应退 0，实际: {}", stdout(&out));
     assert_eq!(std::fs::read_to_string(&out_file).unwrap(), "a\nB\nc\n");
@@ -550,25 +849,56 @@ fn patch_apply_exit_matrix() {
     // --dir：首次应用 → 0
     let out = run(&aic(), &["patch", "apply", &s(&good), "--dir", &s(&tree)]);
     assert_eq!(exit_code(&out), 0, "首次应用应退 0，实际: {}", stdout(&out));
-    assert!(stdout(&out).starts_with("applied\tf.txt"), "实际: {}", stdout(&out));
+    assert!(
+        stdout(&out).starts_with("applied\tf.txt"),
+        "实际: {}",
+        stdout(&out)
+    );
 
     // --dir：重复应用 → alreadyApplied 属拒绝 → 2（旧实现误判为差异 1）
     let out = run(&aic(), &["patch", "apply", &s(&good), "--dir", &s(&tree)]);
-    assert_eq!(exit_code(&out), 2, "alreadyApplied 应退 2，实际: {}", stdout(&out));
-    assert!(stdout(&out).starts_with("alreadyApplied\tf.txt"), "实际: {}", stdout(&out));
+    assert_eq!(
+        exit_code(&out),
+        2,
+        "alreadyApplied 应退 2，实际: {}",
+        stdout(&out)
+    );
+    assert!(
+        stdout(&out).starts_with("alreadyApplied\tf.txt"),
+        "实际: {}",
+        stdout(&out)
+    );
 
     // --dir：仅二进制跳过 → 0（设计语义，不是错误也不是差异）
     let out = run(&aic(), &["patch", "apply", &s(&binp), "--dir", &s(&tree)]);
-    assert_eq!(exit_code(&out), 0, "skippedBinary 应退 0，实际: {}", stdout(&out));
-    assert!(stdout(&out).starts_with("skippedBinary\tbin.dat"), "实际: {}", stdout(&out));
+    assert_eq!(
+        exit_code(&out),
+        0,
+        "skippedBinary 应退 0，实际: {}",
+        stdout(&out)
+    );
+    assert!(
+        stdout(&out).starts_with("skippedBinary\tbin.dat"),
+        "实际: {}",
+        stdout(&out)
+    );
 
     // --dir：文本失败 + 二进制跳过混合 → 有失败即 2
     let mixed = root.join("mixed.patch");
     std::fs::write(
         &mixed,
-        format!("{}{}", std::fs::read_to_string(&bad).unwrap(), std::fs::read_to_string(&binp).unwrap()),
+        format!(
+            "{}{}",
+            std::fs::read_to_string(&bad).unwrap(),
+            std::fs::read_to_string(&binp).unwrap()
+        ),
     )
     .unwrap();
     let out = run(&aic(), &["patch", "apply", &s(&mixed), "--dir", &s(&tree)]);
-    assert_eq!(exit_code(&out), 2, "任一文件失败即错误(2)，实际: {}", stdout(&out));
+    assert_eq!(
+        exit_code(&out),
+        2,
+        "任一文件失败即错误(2)，实际: {}",
+        stdout(&out)
+    );
 }

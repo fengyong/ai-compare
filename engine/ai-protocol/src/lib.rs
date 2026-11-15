@@ -122,12 +122,8 @@ pub mod method {
     ///
     /// 引擎侧 `handlers::dispatch` 中把 `cancel` 传入 handler 的分支必须与
     /// 本表一一对应（有 `dispatch_cancel_methods_are_wired` 回归锁定）。
-    pub const CANCELLABLE_METHODS: &[&str] = &[
-        DIR_OPEN,
-        DIR_EXECUTE,
-        DIR_MERGE_SCAN,
-        DIR_MERGE_EXECUTE,
-    ];
+    pub const CANCELLABLE_METHODS: &[&str] =
+        &[DIR_OPEN, DIR_EXECUTE, DIR_MERGE_SCAN, DIR_MERGE_EXECUTE];
 
     pub fn is_cancellable(method: &str) -> bool {
         CANCELLABLE_METHODS.contains(&method)

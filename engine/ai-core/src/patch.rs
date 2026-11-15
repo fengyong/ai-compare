@@ -51,9 +51,12 @@ impl PatchFile {
 
     /// 补丁内标签（报告用）
     pub fn label(&self) -> String {
-        self.target_path()
-            .map(str::to_string)
-            .unwrap_or_else(|| self.old_path.clone().or(self.new_path.clone()).unwrap_or_default())
+        self.target_path().map(str::to_string).unwrap_or_else(|| {
+            self.old_path
+                .clone()
+                .or(self.new_path.clone())
+                .unwrap_or_default()
+        })
     }
 }
 
@@ -198,7 +201,9 @@ pub fn parse_patch(text: &str) -> Result<ParsedPatch, PatchError> {
             cur.old_path = old_path;
             i += 1;
             // 期望 +++ 头
-            let plus = lines.get(i).ok_or(PatchError::MissingPlusHeader { line: i })?;
+            let plus = lines
+                .get(i)
+                .ok_or(PatchError::MissingPlusHeader { line: i })?;
             let Some(new_raw) = plus.strip_prefix("+++ ") else {
                 return Err(PatchError::MissingPlusHeader { line: i + 1 });
             };
@@ -207,7 +212,10 @@ pub fn parse_patch(text: &str) -> Result<ParsedPatch, PatchError> {
             // 读取 hunks 直到下一个文件头 / 文件尾
             while i < lines.len() {
                 let l = lines[i];
-                if l.starts_with("diff --git ") || l.starts_with("--- ") || l.starts_with("Binary files") {
+                if l.starts_with("diff --git ")
+                    || l.starts_with("--- ")
+                    || l.starts_with("Binary files")
+                {
                     break;
                 }
                 if l.starts_with("@@ ") {
@@ -245,7 +253,11 @@ pub fn parse_patch(text: &str) -> Result<ParsedPatch, PatchError> {
         i += 1;
     }
     // 尾部残余（只有 git 头没有 hunk 的 mode-only 变更）
-    if cur_has_git_header && (cur.is_new || cur.is_delete || cur.old_path.is_some()) && cur.hunks.is_empty() && !cur.binary {
+    if cur_has_git_header
+        && (cur.is_new || cur.is_delete || cur.old_path.is_some())
+        && cur.hunks.is_empty()
+        && !cur.binary
+    {
         files.push(cur);
     }
     let any_hunks = files.iter().any(|f| !f.hunks.is_empty() || f.binary);
@@ -269,7 +281,9 @@ fn parse_binary_paths(line: &str) -> Option<(String, String)> {
     let rest = line.strip_prefix("Binary files ")?;
     let pos = rest.find(" and ")?;
     let old = rest[..pos].strip_prefix("a/")?;
-    let new = rest[pos + 5..].strip_prefix("b/")?.strip_suffix(" differ")?;
+    let new = rest[pos + 5..]
+        .strip_prefix("b/")?
+        .strip_suffix(" differ")?;
     Some((unquote_path(old), unquote_path(new)))
 }
 
@@ -296,7 +310,10 @@ fn parse_patch_path(raw: &str) -> Option<String> {
 /// `hb` 以 hunk 头行为首行；返回 (hunk, 消费的行数含头行)。
 fn parse_hunk(hb: &[&str], cr: &[bool], abs_line: usize) -> Result<(PatchHunk, usize), PatchError> {
     let header = hb[0];
-    let err = || PatchError::InvalidHunkHeader { line: abs_line, text: header.to_string() };
+    let err = || PatchError::InvalidHunkHeader {
+        line: abs_line,
+        text: header.to_string(),
+    };
     let body = header.strip_prefix("@@ ").ok_or_else(err)?;
     let (ranges, _title) = body.split_once(" @@").ok_or_else(err)?;
     let mut parts = ranges.split_whitespace();
@@ -330,7 +347,11 @@ fn parse_hunk(hb: &[&str], cr: &[bool], abs_line: usize) -> Result<(PatchHunk, u
         // 空 hunk 体行（尾随空上下行被工具剥掉前导空格）：按空上下文容忍
         if l.is_empty() {
             if old_left > 0 {
-                hunk.lines.push(PatchLine { kind: PatchLineKind::Context, text: String::new(), had_cr: cr[i] });
+                hunk.lines.push(PatchLine {
+                    kind: PatchLineKind::Context,
+                    text: String::new(),
+                    had_cr: cr[i],
+                });
                 old_left -= 1;
                 new_left = new_left.saturating_sub(1);
             }
@@ -340,19 +361,28 @@ fn parse_hunk(hb: &[&str], cr: &[bool], abs_line: usize) -> Result<(PatchHunk, u
         let (kind, text) = match l.as_bytes().first() {
             Some(b' ') => {
                 if old_left == 0 {
-                    return Err(PatchError::InvalidHunkBody { line: at, text: l.to_string() });
+                    return Err(PatchError::InvalidHunkBody {
+                        line: at,
+                        text: l.to_string(),
+                    });
                 }
                 (PatchLineKind::Context, &l[1..])
             }
             Some(b'-') => {
                 if old_left == 0 {
-                    return Err(PatchError::InvalidHunkBody { line: at, text: l.to_string() });
+                    return Err(PatchError::InvalidHunkBody {
+                        line: at,
+                        text: l.to_string(),
+                    });
                 }
                 (PatchLineKind::Delete, &l[1..])
             }
             Some(b'+') => {
                 if new_left == 0 {
-                    return Err(PatchError::InvalidHunkBody { line: at, text: l.to_string() });
+                    return Err(PatchError::InvalidHunkBody {
+                        line: at,
+                        text: l.to_string(),
+                    });
                 }
                 (PatchLineKind::Add, &l[1..])
             }
@@ -362,16 +392,28 @@ fn parse_hunk(hb: &[&str], cr: &[bool], abs_line: usize) -> Result<(PatchHunk, u
                     hunk.new_no_newline = true;
                 } else {
                     hunk.old_no_newline = true;
-                    if matches!(hunk.lines.last().map(|x| x.kind), Some(PatchLineKind::Context)) {
+                    if matches!(
+                        hunk.lines.last().map(|x| x.kind),
+                        Some(PatchLineKind::Context)
+                    ) {
                         hunk.new_no_newline = true;
                     }
                 }
                 i += 1;
                 continue;
             }
-            _ => return Err(PatchError::InvalidHunkBody { line: at, text: l.to_string() }),
+            _ => {
+                return Err(PatchError::InvalidHunkBody {
+                    line: at,
+                    text: l.to_string(),
+                })
+            }
         };
-        hunk.lines.push(PatchLine { kind, text: text.to_string(), had_cr: cr[i] });
+        hunk.lines.push(PatchLine {
+            kind,
+            text: text.to_string(),
+            had_cr: cr[i],
+        });
         match kind {
             PatchLineKind::Context => {
                 old_left -= 1;
@@ -388,7 +430,10 @@ fn parse_hunk(hb: &[&str], cr: &[bool], abs_line: usize) -> Result<(PatchHunk, u
             hunk.new_no_newline = true;
         } else {
             hunk.old_no_newline = true;
-            if matches!(hunk.lines.last().map(|x| x.kind), Some(PatchLineKind::Context)) {
+            if matches!(
+                hunk.lines.last().map(|x| x.kind),
+                Some(PatchLineKind::Context)
+            ) {
                 hunk.new_no_newline = true;
             }
         }
@@ -416,7 +461,12 @@ pub struct PatchApplyOptions {
 
 impl Default for PatchApplyOptions {
     fn default() -> Self {
-        PatchApplyOptions { dry_run: false, fuzz: 3, crlf_tolerant: true, ignore_whitespace: false }
+        PatchApplyOptions {
+            dry_run: false,
+            fuzz: 3,
+            crlf_tolerant: true,
+            ignore_whitespace: false,
+        }
     }
 }
 
@@ -463,7 +513,11 @@ fn join_lines(lines: &[(String, &'static str)]) -> String {
 
 /// 行内容比较键（CRLF 容忍 / 空白折叠）
 fn match_key(content: &str, opts: &PatchApplyOptions) -> String {
-    let stripped = if opts.crlf_tolerant { content.trim_end_matches('\r') } else { content };
+    let stripped = if opts.crlf_tolerant {
+        content.trim_end_matches('\r')
+    } else {
+        content
+    };
     if opts.ignore_whitespace {
         stripped.split_whitespace().collect::<Vec<_>>().join(" ")
     } else {
@@ -475,7 +529,11 @@ fn match_key(content: &str, opts: &PatchApplyOptions) -> String {
 ///
 /// 返回 (应用后文本, 使用的模糊层数, 累计行偏移)。补丁已应用时返回
 /// [`ApplyOutcome::AlreadyApplied`]（git apply --check 同语义的拒绝）。
-pub fn apply_file(orig: &str, file: &PatchFile, opts: &PatchApplyOptions) -> Result<ApplyOutcome, String> {
+pub fn apply_file(
+    orig: &str,
+    file: &PatchFile,
+    opts: &PatchApplyOptions,
+) -> Result<ApplyOutcome, String> {
     if file.hunks.is_empty() {
         return Ok(ApplyOutcome::NoOp);
     }
@@ -494,7 +552,11 @@ pub fn apply_file(orig: &str, file: &PatchFile, opts: &PatchApplyOptions) -> Res
                 last.1 = "";
             }
         }
-        return Ok(ApplyOutcome::Applied { text: join_lines(&lines), fuzz_used: 0, offset: 0 });
+        return Ok(ApplyOutcome::Applied {
+            text: join_lines(&lines),
+            fuzz_used: 0,
+            offset: 0,
+        });
     }
 
     let mut lines = split_lines_raw(orig);
@@ -540,9 +602,20 @@ pub fn apply_file(orig: &str, file: &PatchFile, opts: &PatchApplyOptions) -> Res
         // 含 Add 行的 hunk 检测保留（新内容含新增行，未应用文件不会命中）。
         let has_add = h.lines.iter().any(|l| l.kind == PatchLineKind::Add);
         if has_add
-            && find_match_window(&lines, base_pos, &new_expected_texts, opts, 0, &new_expected_cr).is_some()
+            && find_match_window(
+                &lines,
+                base_pos,
+                &new_expected_texts,
+                opts,
+                0,
+                &new_expected_cr,
+            )
+            .is_some()
         {
-            return Err(format!("hunk #{} 已应用（目标内容与补丁结果一致）", hidx + 1));
+            return Err(format!(
+                "hunk #{} 已应用（目标内容与补丁结果一致）",
+                hidx + 1
+            ));
         }
 
         // 位置漂移搜索（全文件）；失败后逐层模糊（丢弃首/尾 fuzz 行上下文重试）
@@ -552,7 +625,9 @@ pub fn apply_file(orig: &str, file: &PatchFile, opts: &PatchApplyOptions) -> Res
             let slice = &expected[fuzz as usize..expected.len() - fuzz as usize];
             let window: Vec<String> = slice.iter().map(|(t, _)| t.clone()).collect();
             let window_cr: Vec<bool> = slice.iter().map(|(_, c)| *c).collect();
-            if let Some(p) = find_match_window(&lines, base_pos, &window, opts, usize::MAX, &window_cr) {
+            if let Some(p) =
+                find_match_window(&lines, base_pos, &window, opts, usize::MAX, &window_cr)
+            {
                 // 完整 hunk 落点须在文件内（前 fuzz 行上下文在 p 之前）
                 if p >= fuzz as usize && p - fuzz as usize + expected.len() <= lines.len() {
                     found = Some((p, fuzz));
@@ -624,19 +699,30 @@ pub fn apply_file(orig: &str, file: &PatchFile, opts: &PatchApplyOptions) -> Res
         } else if last_hunk.old_no_newline && !orig_trailing_nl {
             // 旧末行无换行、新内容应有换行
             last.1 = dominant_eol;
-        } else if last.1.is_empty() && orig_trailing_nl && file.hunks.iter().any(|h| !h.lines.is_empty()) {
+        } else if last.1.is_empty()
+            && orig_trailing_nl
+            && file.hunks.iter().any(|h| !h.lines.is_empty())
+        {
             // 原有行尾被替换丢失 -> 补 dominant（保持"文件原本有行尾"的事实）
             last.1 = dominant_eol;
         }
     }
 
-    Ok(ApplyOutcome::Applied { text: join_lines(&lines), fuzz_used, offset: first_drift.unwrap_or(0) })
+    Ok(ApplyOutcome::Applied {
+        text: join_lines(&lines),
+        fuzz_used,
+        offset: first_drift.unwrap_or(0),
+    })
 }
 
 /// 应用结果
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ApplyOutcome {
-    Applied { text: String, fuzz_used: u32, offset: i64 },
+    Applied {
+        text: String,
+        fuzz_used: u32,
+        offset: i64,
+    },
     /// 空 hunk（纯 mode 变更等）：无操作
     NoOp,
 }
@@ -681,8 +767,11 @@ fn find_match_window(
         }
         // 严格模式：补丁行的 CRLF 标记须与目标行行尾风格一致
         if !opts.crlf_tolerant {
-            let ok = (0..expected.len())
-                .all(|j| want_cr.get(j).is_none_or(|w| lines[p + j].1.contains('\r') == *w));
+            let ok = (0..expected.len()).all(|j| {
+                want_cr
+                    .get(j)
+                    .is_none_or(|w| lines[p + j].1.contains('\r') == *w)
+            });
             if !ok {
                 continue;
             }
@@ -741,7 +830,9 @@ pub struct PatchApplyReport {
 
 impl PatchApplyReport {
     pub fn all_applied(&self) -> bool {
-        self.results.iter().all(|r| matches!(r.status, FileApplyStatus::Applied | FileApplyStatus::NoOp))
+        self.results
+            .iter()
+            .all(|r| matches!(r.status, FileApplyStatus::Applied | FileApplyStatus::NoOp))
     }
 }
 
@@ -778,7 +869,9 @@ impl PatchFs for StdFs {
         std::fs::remove_file(path)
     }
     fn is_symlink(&self, path: &Path) -> bool {
-        std::fs::symlink_metadata(path).map(|m| m.file_type().is_symlink()).unwrap_or(false)
+        std::fs::symlink_metadata(path)
+            .map(|m| m.file_type().is_symlink())
+            .unwrap_or(false)
     }
 }
 
@@ -822,7 +915,11 @@ pub fn apply_patch(
     opts: &PatchApplyOptions,
 ) -> Result<PatchApplyReport, PatchError> {
     let parsed = parse_patch(patch_text)?;
-    let mut report = PatchApplyReport { total: parsed.files.len(), dry_run: opts.dry_run, results: Vec::new() };
+    let mut report = PatchApplyReport {
+        total: parsed.files.len(),
+        dry_run: opts.dry_run,
+        results: Vec::new(),
+    };
     for f in &parsed.files {
         let result = apply_one_file(fs, root, f, opts);
         report.results.push(result);
@@ -830,18 +927,29 @@ pub fn apply_patch(
     Ok(report)
 }
 
-fn apply_one_file(fs: &dyn PatchFs, root: &Path, f: &PatchFile, opts: &PatchApplyOptions) -> FileApplyResult {
+fn apply_one_file(
+    fs: &dyn PatchFs,
+    root: &Path,
+    f: &PatchFile,
+    opts: &PatchApplyOptions,
+) -> FileApplyResult {
     let label = f.label();
-    let mk = |status: FileApplyStatus, fuzz: u32, off: i64, detail: Option<String>| FileApplyResult {
-        path: label.clone(),
-        status,
-        fuzz_used: fuzz,
-        offset_applied: off,
-        detail,
-    };
+    let mk =
+        |status: FileApplyStatus, fuzz: u32, off: i64, detail: Option<String>| FileApplyResult {
+            path: label.clone(),
+            status,
+            fuzz_used: fuzz,
+            offset_applied: off,
+            detail,
+        };
 
     let Some(rel) = f.target_path() else {
-        return mk(FileApplyStatus::Failed, 0, 0, Some("补丁缺少文件路径".into()));
+        return mk(
+            FileApplyStatus::Failed,
+            0,
+            0,
+            Some("补丁缺少文件路径".into()),
+        );
     };
     let path = match sanitize_patch_path(rel) {
         Ok(p) => root.join(p),
@@ -854,43 +962,83 @@ fn apply_one_file(fs: &dyn PatchFs, root: &Path, f: &PatchFile, opts: &PatchAppl
             FileApplyStatus::Failed,
             0,
             0,
-            Some(format!("拒绝符号链接路径（{rel}）：{} 会越过补丁根", link.display())),
+            Some(format!(
+                "拒绝符号链接路径（{rel}）：{} 会越过补丁根",
+                link.display()
+            )),
         );
     }
 
     // 二进制跳过（FR-PATCH-011：二进制文件报告不应用）
     if f.binary {
-        return mk(FileApplyStatus::SkippedBinary, 0, 0, Some("二进制文件（补丁标注 Binary/GIT binary patch）".into()));
+        return mk(
+            FileApplyStatus::SkippedBinary,
+            0,
+            0,
+            Some("二进制文件（补丁标注 Binary/GIT binary patch）".into()),
+        );
     }
     if f.hunks.is_empty() {
-        return mk(FileApplyStatus::NoOp, 0, 0, Some("无内容 hunk（纯元数据变更）".into()));
+        return mk(
+            FileApplyStatus::NoOp,
+            0,
+            0,
+            Some("无内容 hunk（纯元数据变更）".into()),
+        );
     }
 
     // 新文件
     if f.is_new || f.old_path.is_none() {
         if fs.exists(&path) {
-            return mk(FileApplyStatus::Failed, 0, 0, Some(format!("目标已存在: {rel}")));
+            return mk(
+                FileApplyStatus::Failed,
+                0,
+                0,
+                Some(format!("目标已存在: {rel}")),
+            );
         }
         match apply_file("", f, opts) {
             Ok(ApplyOutcome::Applied { text, .. }) => {
                 if !opts.dry_run && fs.write(&path, text.as_bytes()).is_err() {
-                    return mk(FileApplyStatus::Failed, 0, 0, Some(format!("写入失败: {rel}")));
+                    return mk(
+                        FileApplyStatus::Failed,
+                        0,
+                        0,
+                        Some(format!("写入失败: {rel}")),
+                    );
                 }
                 mk(FileApplyStatus::Applied, 0, 0, None)
             }
-            _ => mk(FileApplyStatus::Failed, 0, 0, Some("新文件内容构造失败".into())),
+            _ => mk(
+                FileApplyStatus::Failed,
+                0,
+                0,
+                Some("新文件内容构造失败".into()),
+            ),
         }
         .tap()
     } else {
         // 修改 / 删除：读目标
         let bytes = match fs.read(&path) {
             Ok(b) => b,
-            Err(_) => return mk(FileApplyStatus::Failed, 0, 0, Some(format!("目标不存在或不可读: {rel}"))),
+            Err(_) => {
+                return mk(
+                    FileApplyStatus::Failed,
+                    0,
+                    0,
+                    Some(format!("目标不存在或不可读: {rel}")),
+                )
+            }
         };
         let orig = match String::from_utf8(bytes) {
             Ok(s) => s,
             Err(_) => {
-                return mk(FileApplyStatus::SkippedBinary, 0, 0, Some("目标内容非 UTF-8 文本（按二进制跳过）".into()));
+                return mk(
+                    FileApplyStatus::SkippedBinary,
+                    0,
+                    0,
+                    Some("目标内容非 UTF-8 文本（按二进制跳过）".into()),
+                );
             }
         };
         if f.is_delete {
@@ -908,23 +1056,46 @@ fn apply_one_file(fs: &dyn PatchFs, root: &Path, f: &PatchFile, opts: &PatchAppl
                 .collect();
             let exp_norm: Vec<String> = expected.iter().map(|e| match_key(e, opts)).collect();
             if orig_norm != exp_norm {
-                return mk(FileApplyStatus::Failed, 0, 0, Some(format!("删除校验失败：文件内容与补丁不符: {rel}")));
+                return mk(
+                    FileApplyStatus::Failed,
+                    0,
+                    0,
+                    Some(format!("删除校验失败：文件内容与补丁不符: {rel}")),
+                );
             }
             if !opts.dry_run && fs.remove(&path).is_err() {
-                return mk(FileApplyStatus::Failed, 0, 0, Some(format!("删除失败: {rel}")));
+                return mk(
+                    FileApplyStatus::Failed,
+                    0,
+                    0,
+                    Some(format!("删除失败: {rel}")),
+                );
             }
             return mk(FileApplyStatus::Applied, 0, 0, None);
         }
         match apply_file(&orig, f, opts) {
-            Ok(ApplyOutcome::Applied { text, fuzz_used, offset }) => {
+            Ok(ApplyOutcome::Applied {
+                text,
+                fuzz_used,
+                offset,
+            }) => {
                 if !opts.dry_run && fs.write(&path, text.as_bytes()).is_err() {
-                    return mk(FileApplyStatus::Failed, fuzz_used, offset, Some(format!("写入失败: {rel}")));
+                    return mk(
+                        FileApplyStatus::Failed,
+                        fuzz_used,
+                        offset,
+                        Some(format!("写入失败: {rel}")),
+                    );
                 }
                 mk(FileApplyStatus::Applied, fuzz_used, offset, None)
             }
             Ok(ApplyOutcome::NoOp) => mk(FileApplyStatus::NoOp, 0, 0, None),
             Err(msg) => {
-                let status = if msg.contains("已应用") { FileApplyStatus::AlreadyApplied } else { FileApplyStatus::Failed };
+                let status = if msg.contains("已应用") {
+                    FileApplyStatus::AlreadyApplied
+                } else {
+                    FileApplyStatus::Failed
+                };
                 mk(status, 0, 0, Some(msg))
             }
         }
@@ -978,7 +1149,8 @@ mod tests {
 
     #[test]
     fn parse_plain_unified() {
-        let patch = "--- a.txt\t2026-01-01\n+++ b.txt\t2026-01-01\n@@ -1,3 +1,3 @@\n a\n-b\n+B\n c\n";
+        let patch =
+            "--- a.txt\t2026-01-01\n+++ b.txt\t2026-01-01\n@@ -1,3 +1,3 @@\n a\n-b\n+B\n c\n";
         let p = parse_patch(patch).unwrap();
         assert_eq!(p.files.len(), 1);
         let f = &p.files[0];
@@ -986,7 +1158,10 @@ mod tests {
         assert_eq!(f.new_path.as_deref(), Some("b.txt"));
         assert_eq!(f.hunks.len(), 1);
         let h = &f.hunks[0];
-        assert_eq!((h.old_start, h.old_count, h.new_start, h.new_count), (1, 3, 1, 3));
+        assert_eq!(
+            (h.old_start, h.old_count, h.new_start, h.new_count),
+            (1, 3, 1, 3)
+        );
         assert_eq!(h.lines.len(), 4);
     }
 
@@ -1070,18 +1245,25 @@ index bbbb..0000000\n\
         // -1 +1 省略 ,1
         let p = parse_patch("--- a\n+++ b\n@@ -2 +2 @@\n-x\n+y\n").unwrap();
         let h = &p.files[0].hunks[0];
-        assert_eq!((h.old_start, h.old_count, h.new_start, h.new_count), (2, 1, 2, 1));
+        assert_eq!(
+            (h.old_start, h.old_count, h.new_start, h.new_count),
+            (2, 1, 2, 1)
+        );
     }
 
     #[test]
     fn parse_empty_patch_is_error() {
-        assert!(matches!(parse_patch("hello\nworld\n"), Err(PatchError::Empty)));
+        assert!(matches!(
+            parse_patch("hello\nworld\n"),
+            Err(PatchError::Empty)
+        ));
         assert!(matches!(parse_patch(""), Err(PatchError::Empty)));
     }
 
     #[test]
     fn parse_section_heading_tolerated() {
-        let p = parse_patch("--- a.c\n+++ b.c\n@@ -1,2 +1,2 @@ fn main() {\n a\n-b\n+B\n c\n").unwrap();
+        let p =
+            parse_patch("--- a.c\n+++ b.c\n@@ -1,2 +1,2 @@ fn main() {\n a\n-b\n+B\n c\n").unwrap();
         assert_eq!(p.files[0].hunks.len(), 1);
     }
 
@@ -1100,7 +1282,11 @@ index bbbb..0000000\n\
         let f = &parse_patch(patch).unwrap().files[0];
         let out = apply_file("a\nb\nc\n", f, &OPTS).unwrap();
         match out {
-            ApplyOutcome::Applied { text, fuzz_used, offset } => {
+            ApplyOutcome::Applied {
+                text,
+                fuzz_used,
+                offset,
+            } => {
                 assert_eq!(text, "a\nB\nc\n");
                 assert_eq!((fuzz_used, offset), (0, 0));
             }
@@ -1130,7 +1316,9 @@ index bbbb..0000000\n\
         let f = &parse_patch(patch).unwrap().files[0];
         let orig = "CHANGED-top\nmiddle\nctx-bottom\n";
         match apply_file(orig, f, &OPTS).unwrap() {
-            ApplyOutcome::Applied { text, fuzz_used, .. } => {
+            ApplyOutcome::Applied {
+                text, fuzz_used, ..
+            } => {
                 assert_eq!(text, "CHANGED-top\nMIDDLE\nctx-bottom\n");
                 assert_eq!(fuzz_used, 1);
             }
@@ -1145,7 +1333,10 @@ index bbbb..0000000\n\
         let orig = "zzz\nnothing\nmatches\n";
         assert!(apply_file(orig, f, &OPTS).is_err());
         // fuzz=0：即使差一行上下文也拒绝
-        let strict = PatchApplyOptions { fuzz: 0, ..OPTS.clone() };
+        let strict = PatchApplyOptions {
+            fuzz: 0,
+            ..OPTS.clone()
+        };
         assert!(apply_file("CHANGED-top\nmiddle\nctx-bottom\n", f, &strict).is_err());
     }
 
@@ -1161,7 +1352,10 @@ index bbbb..0000000\n\
             _ => panic!("应成功"),
         }
         // strict 模式：CRLF 与补丁 LF 不匹配 -> 拒绝
-        let strict = PatchApplyOptions { crlf_tolerant: false, ..OPTS.clone() };
+        let strict = PatchApplyOptions {
+            crlf_tolerant: false,
+            ..OPTS.clone()
+        };
         assert!(apply_file(orig, f, &strict).is_err());
     }
 
@@ -1247,17 +1441,39 @@ diff --git a/img.png b/img.png\n\
 index aaa..bbb 100644\n\
 Binary files a/img.png and b/img.png differ\n";
         // dry run：不落盘
-        let report = apply_patch(&StdFs, root, patch, &PatchApplyOptions { dry_run: true, ..OPTS.clone() }).unwrap();
+        let report = apply_patch(
+            &StdFs,
+            root,
+            patch,
+            &PatchApplyOptions {
+                dry_run: true,
+                ..OPTS.clone()
+            },
+        )
+        .unwrap();
         assert_eq!(report.total, 2);
         assert_eq!(report.results[0].status, FileApplyStatus::Applied);
         assert_eq!(report.results[1].status, FileApplyStatus::SkippedBinary);
-        assert_eq!(std::fs::read_to_string(root.join("t.txt")).unwrap(), "1\n2\n3\n", "dry run 未写盘");
+        assert_eq!(
+            std::fs::read_to_string(root.join("t.txt")).unwrap(),
+            "1\n2\n3\n",
+            "dry run 未写盘"
+        );
 
         let report = apply_patch(&StdFs, root, patch, &OPTS).unwrap();
         assert!(!report.all_applied(), "二进制跳过 → 不是全部应用");
-        assert!(report.results.iter().all(|r| !matches!(r.status, FileApplyStatus::Failed)), "二进制跳过不算失败");
+        assert!(
+            report
+                .results
+                .iter()
+                .all(|r| !matches!(r.status, FileApplyStatus::Failed)),
+            "二进制跳过不算失败"
+        );
         assert_eq!(report.results[0].status, FileApplyStatus::Applied);
-        assert_eq!(std::fs::read_to_string(root.join("t.txt")).unwrap(), "1\nTWO\n3\n");
+        assert_eq!(
+            std::fs::read_to_string(root.join("t.txt")).unwrap(),
+            "1\nTWO\n3\n"
+        );
         assert_eq!(report.results[1].status, FileApplyStatus::SkippedBinary);
     }
 
@@ -1277,10 +1493,18 @@ Binary files a/img.png and b/img.png differ\n";
         symlink(&victim, root.join("sub").join("link.txt")).unwrap();
         let patch = "--- a/sub/link.txt\n+++ b/sub/link.txt\n@@ -1,1 +1,1 @@\n-old\n+PATCHED\n";
         let report = apply_patch(&StdFs, &root, patch, &OPTS).unwrap();
-        assert_eq!(report.results[0].status, FileApplyStatus::Failed, "不得穿过符号链接写根外: {report:?}");
+        assert_eq!(
+            report.results[0].status,
+            FileApplyStatus::Failed,
+            "不得穿过符号链接写根外: {report:?}"
+        );
         let detail = report.results[0].detail.as_deref().unwrap_or("");
         assert!(detail.contains("符号链接"), "失败明细须说明原因: {detail}");
-        assert_eq!(std::fs::read_to_string(&victim).unwrap(), "old\n", "根外文件必须完好");
+        assert_eq!(
+            std::fs::read_to_string(&victim).unwrap(),
+            "old\n",
+            "根外文件必须完好"
+        );
     }
 
     /// R3-02 变体：祖先分量是符号链接（`root/sub` → 根外目录），
@@ -1299,8 +1523,16 @@ Binary files a/img.png and b/img.png differ\n";
         symlink(&outside, root.join("sub")).unwrap();
         let patch = "--- a/sub/f.txt\n+++ b/sub/f.txt\n@@ -1,1 +1,1 @@\n-old\n+PATCHED\n";
         let report = apply_patch(&StdFs, &root, patch, &OPTS).unwrap();
-        assert_eq!(report.results[0].status, FileApplyStatus::Failed, "不得穿过符号链接父目录写根外: {report:?}");
-        assert_eq!(std::fs::read_to_string(&victim).unwrap(), "old\n", "根外文件必须完好");
+        assert_eq!(
+            report.results[0].status,
+            FileApplyStatus::Failed,
+            "不得穿过符号链接父目录写根外: {report:?}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&victim).unwrap(),
+            "old\n",
+            "根外文件必须完好"
+        );
     }
 
     #[test]
@@ -1324,7 +1556,10 @@ deleted file mode 100644\n\
         let report = apply_patch(&StdFs, root, patch, &OPTS).unwrap();
         assert_eq!(report.results[0].status, FileApplyStatus::Applied);
         assert_eq!(report.results[1].status, FileApplyStatus::Applied);
-        assert_eq!(std::fs::read_to_string(root.join("made.txt")).unwrap(), "made\n");
+        assert_eq!(
+            std::fs::read_to_string(root.join("made.txt")).unwrap(),
+            "made\n"
+        );
         assert!(!root.join("victim.txt").exists());
         // 已删除后重放：新建失败（目标已存在）、删除失败（目标不存在）
         let report2 = apply_patch(&StdFs, root, patch, &OPTS).unwrap();
@@ -1343,17 +1578,39 @@ deleted file mode 100644\n\
     // ---- roundtrip：ai_core diff -> unified patch -> 应用还原 ----
 
     /// 最小 unified 渲染（测试自产补丁；真实端到端见 tests/patch_matrix 用 aic diff）
-    fn render_unified_min(left_label: &str, right_label: &str, out: &crate::sections::DiffOutput, l: &crate::LineTable, r: &crate::LineTable) -> String {
+    fn render_unified_min(
+        left_label: &str,
+        right_label: &str,
+        out: &crate::sections::DiffOutput,
+        l: &crate::LineTable,
+        r: &crate::LineTable,
+    ) -> String {
         use crate::sections::SectionKind;
         let mut text = format!("--- {left_label}\n+++ {right_label}\n");
         for s in &out.sections {
             if s.kind == SectionKind::Equal {
                 continue;
             }
-            let (Some(lsec), Some(rsec)) = (s.left, s.right) else { continue };
-            let ls = if !lsec.is_empty() { lsec.start + 1 } else { lsec.start };
-            let rs = if !rsec.is_empty() { rsec.start + 1 } else { rsec.start };
-            text.push_str(&format!("@@ -{},{} +{},{} @@\n", ls, lsec.len(), rs, rsec.len()));
+            let (Some(lsec), Some(rsec)) = (s.left, s.right) else {
+                continue;
+            };
+            let ls = if !lsec.is_empty() {
+                lsec.start + 1
+            } else {
+                lsec.start
+            };
+            let rs = if !rsec.is_empty() {
+                rsec.start + 1
+            } else {
+                rsec.start
+            };
+            text.push_str(&format!(
+                "@@ -{},{} +{},{} @@\n",
+                ls,
+                lsec.len(),
+                rs,
+                rsec.len()
+            ));
             let mut li = lsec.start;
             let mut ri = rsec.start;
             while li < lsec.end || ri < rsec.end {
@@ -1392,7 +1649,10 @@ deleted file mode 100644\n\
         let l = crate::LineTable::from_text(t);
         let out = crate::diff_text(&l, &l, &crate::options::TextDiffOptions::default()).unwrap();
         let patch = render_unified_min("a", "b", &out, &l, &l);
-        assert!(parse_patch(&patch).is_err(), "无差异 -> 空 patch -> Empty 错误");
+        assert!(
+            parse_patch(&patch).is_err(),
+            "无差异 -> 空 patch -> Empty 错误"
+        );
     }
 
     #[test]

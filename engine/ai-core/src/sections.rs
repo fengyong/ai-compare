@@ -70,9 +70,15 @@ pub enum InlineState {
 pub enum SectionEvent {
     Append(Section),
     /// 编辑后局部重算（P1，imara-diff 历史驱动）
-    Replace { span: (SectionId, SectionId), with: Vec<Section> },
+    Replace {
+        span: (SectionId, SectionId),
+        with: Vec<Section>,
+    },
     /// 重要性规则变更后重判（不重跑 diff）
-    ImportanceUpdate { ids: Vec<SectionId>, important: Importance },
+    ImportanceUpdate {
+        ids: Vec<SectionId>,
+        important: Importance,
+    },
     Done(DiffSummary),
 }
 
@@ -283,7 +289,12 @@ mod tests {
 
     #[test]
     fn delete_plus_insert_becomes_change() {
-        let out = build_sections(&[RawOp::Equal(2), RawOp::Delete(3), RawOp::Insert(5), RawOp::Equal(1)]);
+        let out = build_sections(&[
+            RawOp::Equal(2),
+            RawOp::Delete(3),
+            RawOp::Insert(5),
+            RawOp::Equal(1),
+        ]);
         assert_eq!(out.sections.len(), 3);
         assert_eq!(out.sections[0].kind, SectionKind::Equal);
         assert_eq!(out.sections[1].kind, SectionKind::Change);

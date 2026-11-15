@@ -8,7 +8,7 @@ use ai_protocol::{self, error::codes, RpcResponse};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::{mpsc, watch, Mutex};
 
-use crate::handlers::{dispatch, HandlerCtx, Handled};
+use crate::handlers::{dispatch, Handled, HandlerCtx};
 use crate::log;
 use crate::outbound::{OutboundTx, Shutdown, OUTBOUND_CAPACITY};
 use crate::ServerOptions;
@@ -286,7 +286,8 @@ pub async fn run_stdio(opts: ServerOptions) -> std::io::Result<()> {
                         id,
                         ai_protocol::error_object(codes::INVALID_PARAMS, msg.clone()),
                     )),
-                ).await;
+                )
+                .await;
             }
             log::warn(msg);
             continue;
@@ -308,9 +309,13 @@ pub async fn run_stdio(opts: ServerOptions) -> std::io::Result<()> {
                         &tx,
                         Outbound::Response(RpcResponse::failure(
                             id,
-                            ai_protocol::error_object(codes::INVALID_REQUEST, format!("请求信封不合法: {e}")),
+                            ai_protocol::error_object(
+                                codes::INVALID_REQUEST,
+                                format!("请求信封不合法: {e}"),
+                            ),
                         )),
-                    ).await;
+                    )
+                    .await;
                     continue;
                 }
             };
@@ -325,7 +330,8 @@ pub async fn run_stdio(opts: ServerOptions) -> std::io::Result<()> {
                             format!("jsonrpc 版本必须为 \"2.0\"，收到 {:?}", req.jsonrpc),
                         ),
                     )),
-                ).await;
+                )
+                .await;
                 continue;
             }
             if req.method == ai_protocol::method::SHUTDOWN {
@@ -338,14 +344,24 @@ pub async fn run_stdio(opts: ServerOptions) -> std::io::Result<()> {
                     if let Some(p) = prev {
                         let _ = p.await;
                     }
-                    send_outbound(&tx2, Outbound::Response(RpcResponse::success(id, serde_json::Value::Null))).await;
+                    send_outbound(
+                        &tx2,
+                        Outbound::Response(RpcResponse::success(id, serde_json::Value::Null)),
+                    )
+                    .await;
                 }));
                 break;
             }
             let id = req.id.clone();
             let key = id.cancel_key();
             let cancel_flag = cancels.register_request(&key);
-            let fut = process_request(req, clone_ctx(&ctx), Arc::clone(&cancels), cancel_flag, tx.clone());
+            let fut = process_request(
+                req,
+                clone_ctx(&ctx),
+                Arc::clone(&cancels),
+                cancel_flag,
+                tx.clone(),
+            );
             let prev = chain_prev.take();
             chain_prev = Some(tokio::spawn(async move {
                 if let Some(p) = prev {
@@ -482,7 +498,10 @@ async fn process_request(
         Ok(r) => r,
         Err(join_err) => {
             if join_err.is_panic() {
-                log::warn(format!("{} {} handler panic，已转为 InternalError", method, id));
+                log::warn(format!(
+                    "{} {} handler panic，已转为 InternalError",
+                    method, id
+                ));
                 Err(ai_protocol::error_object(
                     codes::INTERNAL_ERROR,
                     format!("handler panic: {method}"),
@@ -499,7 +518,10 @@ async fn process_request(
         Ok(Handled::Value(v)) => {
             send_outbound(&tx, Outbound::Response(RpcResponse::success(id, v))).await;
         }
-        Ok(Handled::WithNotifications { response, notifications }) => {
+        Ok(Handled::WithNotifications {
+            response,
+            notifications,
+        }) => {
             // 响应先于通知入同一 FIFO：不丢、不重排。满载时逐条等待读者消费。
             send_outbound(&tx, Outbound::Response(RpcResponse::success(id, response))).await;
             for n in notifications {
@@ -507,7 +529,10 @@ async fn process_request(
             }
         }
         Err(err) => {
-            log::warn(format!("{} {} 失败: code={} {}", method, id, err.code, err.message));
+            log::warn(format!(
+                "{} {} 失败: code={} {}",
+                method, id, err.code, err.message
+            ));
             send_outbound(&tx, Outbound::Response(RpcResponse::failure(id, err))).await;
         }
     }
@@ -524,14 +549,8 @@ async fn writer_task(
     while let Some(msg) = rx.recv().await {
         // 录制点：录制文件顺序 == stdout 写出顺序
         let (value, line) = match &msg {
-            Outbound::Response(r) => (
-                serde_json::to_value(r),
-                serde_json::to_string(r),
-            ),
-            Outbound::Notification(n) => (
-                serde_json::to_value(n),
-                serde_json::to_string(n),
-            ),
+            Outbound::Response(r) => (serde_json::to_value(r), serde_json::to_string(r)),
+            Outbound::Notification(n) => (serde_json::to_value(n), serde_json::to_string(n)),
         };
         match line {
             Ok(mut s) => {
@@ -699,7 +718,10 @@ mod tests {
         assert_eq!(v["id"], 7, "必须回显原请求 id");
         assert_eq!(v["error"]["code"], codes::INTERNAL_ERROR);
         assert!(v.get("result").is_none(), "error 与 result 不得并存");
-        assert!(cancels.is_empty(), "panic 路径也必须注销取消旗标（否则注册表泄漏）");
+        assert!(
+            cancels.is_empty(),
+            "panic 路径也必须注销取消旗标（否则注册表泄漏）"
+        );
     }
 
     #[tokio::test]

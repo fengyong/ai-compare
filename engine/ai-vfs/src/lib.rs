@@ -21,11 +21,11 @@ pub mod local;
 pub mod route;
 pub mod zip;
 
+pub use crc32::INITIAL as CRC32_INITIAL;
 pub use crc32::{crc32, crc32_update};
 pub use encoding::{decode as decode_text, encode as encode_text, Bom, DecodedText};
-pub use crc32::INITIAL as CRC32_INITIAL;
-pub use local::LocalFs;
 pub use ftp::{split_ftp_uri, FtpConfig, FtpFs};
+pub use local::LocalFs;
 pub use route::{provider_for_session, RouteFs};
 pub use zip::{ZipEntry, ZipFs, ZipFsMut};
 
@@ -145,7 +145,15 @@ pub struct StatInfo {
 impl StatInfo {
     /// 最小构造（size/mtime/kind；元数据置空）
     pub fn minimal(size: u64, mtime_ms: u64, kind: EntryKind) -> Self {
-        StatInfo { size, mtime_ms, kind, unix_mode: None, uid: None, gid: None, dos_attrs: 0 }
+        StatInfo {
+            size,
+            mtime_ms,
+            kind,
+            unix_mode: None,
+            uid: None,
+            gid: None,
+            dos_attrs: 0,
+        }
     }
 }
 
@@ -187,7 +195,14 @@ impl VfsCaps {
     }
     /// 全部写能力（本地文件系统满配）
     pub const fn all_writes() -> VfsCaps {
-        VfsCaps(Self::WRITE.0 | Self::MKDIR.0 | Self::DELETE.0 | Self::MOVE.0 | Self::COPY.0 | Self::TOUCH.0)
+        VfsCaps(
+            Self::WRITE.0
+                | Self::MKDIR.0
+                | Self::DELETE.0
+                | Self::MOVE.0
+                | Self::COPY.0
+                | Self::TOUCH.0,
+        )
     }
 }
 
@@ -225,7 +240,8 @@ impl VfsPath {
     /// 规范化路径主体（无 scheme 前缀；`.`/`..` 解析、空段去重、盘符保留）
     fn normalize_rest(raw: &str) -> Result<String, VfsError> {
         let is_abs = raw.starts_with('/');
-        let has_drive = raw.len() >= 2 && raw.as_bytes()[1] == b':' && raw.as_bytes()[0].is_ascii_alphabetic();
+        let has_drive =
+            raw.len() >= 2 && raw.as_bytes()[1] == b':' && raw.as_bytes()[0].is_ascii_alphabetic();
         if raw.trim().is_empty() {
             return Err(VfsError::InvalidPath("空路径".into()));
         }
@@ -278,12 +294,18 @@ impl VfsPath {
         // 父路径 + 规范化的子段（子段按单段解析）
         let child = name.replace('\\', "/");
         let child = child.trim_matches('/');
-        VfsPath { inner: format!("{}/{}", self.inner.trim_end_matches('/'), child) }
+        VfsPath {
+            inner: format!("{}/{}", self.inner.trim_end_matches('/'), child),
+        }
     }
 
     /// 文件名段（最后一段）
     pub fn file_name(&self) -> Option<&str> {
-        self.inner.trim_end_matches('/').rsplit('/').next().filter(|s| !s.is_empty())
+        self.inner
+            .trim_end_matches('/')
+            .rsplit('/')
+            .next()
+            .filter(|s| !s.is_empty())
     }
 }
 
@@ -295,7 +317,9 @@ impl fmt::Display for VfsPath {
 
 impl From<&str> for VfsPath {
     fn from(s: &str) -> Self {
-        VfsPath::parse(s).unwrap_or_else(|_| VfsPath { inner: s.to_string() })
+        VfsPath::parse(s).unwrap_or_else(|_| VfsPath {
+            inner: s.to_string(),
+        })
     }
 }
 
@@ -331,7 +355,12 @@ pub trait VfsProvider: Send + Sync {
 
     /// 读取文件 [offset, offset+len) 字节；EOF 处允许短读。
     /// 默认实现委托全量读（内存换兼容）；本地实现用 seek（大文件友好）。
-    async fn read_range(&self, path: &VfsPath, offset: u64, len: usize) -> Result<Vec<u8>, VfsError> {
+    async fn read_range(
+        &self,
+        path: &VfsPath,
+        offset: u64,
+        len: usize,
+    ) -> Result<Vec<u8>, VfsError> {
         let all = self.read_file_bytes(path).await?;
         let start = offset.min(all.len() as u64) as usize;
         let end = start.saturating_add(len).min(all.len());
@@ -391,14 +420,18 @@ pub trait VfsProvider: Send + Sync {
     /// 创建目录（父目录必须已存在；[`VfsCaps::MKDIR`]）
     async fn mkdir(&self, path: &VfsPath) -> Result<(), VfsError> {
         let _ = path;
-        Err(VfsError::Unsupported(format!("{}: 创建目录", self.scheme())))
+        Err(VfsError::Unsupported(format!(
+            "{}: 创建目录",
+            self.scheme()
+        )))
     }
 
     /// 逐级创建目录链（`mkdir -p` 语义：幂等，已存在的目录/目录符号链接跳过；
     /// [`VfsCaps::MKDIR`]）。中间路径含同名文件时报 AlreadyExists。
     async fn mkdir_all(&self, path: &VfsPath) -> Result<(), VfsError> {
         let s = path.as_str();
-        let has_drive = s.len() >= 2 && s.as_bytes()[1] == b':' && s.as_bytes()[0].is_ascii_alphabetic();
+        let has_drive =
+            s.len() >= 2 && s.as_bytes()[1] == b':' && s.as_bytes()[0].is_ascii_alphabetic();
         let mut segments: Vec<&str> = s.split('/').filter(|seg| !seg.is_empty()).collect();
         let mut cur = if path.is_absolute() {
             VfsPath::parse("/").expect("/ 可解析")
@@ -418,7 +451,9 @@ pub trait VfsProvider: Send + Sync {
                 Err(VfsError::Io(e)) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
                 // 父路径被同名文件占据（POSIX ENOTDIR）：归类为 AlreadyExists 冲突
                 Err(VfsError::Io(e)) if e.raw_os_error() == Some(ENOTDIR) => {
-                    return Err(VfsError::AlreadyExists { path: cur.as_str().to_string() })
+                    return Err(VfsError::AlreadyExists {
+                        path: cur.as_str().to_string(),
+                    })
                 }
                 Err(e) => return Err(e),
             }
@@ -427,14 +462,19 @@ pub trait VfsProvider: Send + Sync {
         match self.stat(&cur).await? {
             st if st.kind == EntryKind::Dir => Ok(()),
             st if st.kind == EntryKind::Symlink => Ok(()),
-            _ => Err(VfsError::AlreadyExists { path: cur.as_str().to_string() }),
+            _ => Err(VfsError::AlreadyExists {
+                path: cur.as_str().to_string(),
+            }),
         }
     }
 
     /// 同 Provider 内改名/移动（原子尽力；目标已存在时覆盖；[`VfsCaps::MOVE`]）
     async fn rename(&self, from: &VfsPath, to: &VfsPath) -> Result<(), VfsError> {
         let _ = (from, to);
-        Err(VfsError::Unsupported(format!("{}: 改名/移动", self.scheme())))
+        Err(VfsError::Unsupported(format!(
+            "{}: 改名/移动",
+            self.scheme()
+        )))
     }
 
     /// 删除文件或目录（`recursive=true` 删目录树；符号链接只删链接本身；
@@ -447,13 +487,19 @@ pub trait VfsProvider: Send + Sync {
     /// 复制单个文件（覆盖语义；[`VfsCaps::COPY`]）
     async fn copy_file(&self, from: &VfsPath, to: &VfsPath) -> Result<(), VfsError> {
         let _ = (from, to);
-        Err(VfsError::Unsupported(format!("{}: 复制文件", self.scheme())))
+        Err(VfsError::Unsupported(format!(
+            "{}: 复制文件",
+            self.scheme()
+        )))
     }
 
     /// 修改时间戳（epoch 毫秒；FR-DIR-065 touch；[`VfsCaps::TOUCH`]）
     async fn set_mtime(&self, path: &VfsPath, _mtime_ms: u64) -> Result<(), VfsError> {
         let _ = path;
-        Err(VfsError::Unsupported(format!("{}: 修改时间戳", self.scheme())))
+        Err(VfsError::Unsupported(format!(
+            "{}: 修改时间戳",
+            self.scheme()
+        )))
     }
 }
 
@@ -467,7 +513,9 @@ pub fn strip_bom(bytes: &[u8]) -> &[u8] {
 }
 
 fn system_time_to_ms(t: std::io::Result<SystemTime>) -> u64 {
-    t.ok().and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map_or(0, |d| d.as_millis() as u64)
+    t.ok()
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map_or(0, |d| d.as_millis() as u64)
 }
 
 pub(crate) fn stat_from_metadata(meta: &std::fs::Metadata) -> StatInfo {
@@ -535,7 +583,10 @@ mod tests {
         let p = VfsPath::parse("/base").unwrap();
         assert_eq!(p.join("child").as_str(), "/base/child");
         assert_eq!(p.join("child").file_name(), Some("child"));
-        assert_eq!(VfsPath::parse("/base/x.txt").unwrap().file_name(), Some("x.txt"));
+        assert_eq!(
+            VfsPath::parse("/base/x.txt").unwrap().file_name(),
+            Some("x.txt")
+        );
     }
 
     #[test]

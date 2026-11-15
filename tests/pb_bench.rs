@@ -39,7 +39,10 @@ fn pb03_scan_throughput_100k() {
         t0.elapsed()
     );
 
-    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
     let vfs = LocalFs::new();
     let left = VfsPath::parse(corpus.left.to_str().unwrap()).unwrap();
     let right = VfsPath::parse(corpus.right.to_str().unwrap()).unwrap();
@@ -54,11 +57,28 @@ fn pb03_scan_throughput_100k() {
     };
 
     // 预热一次（page cache），计时第二次
-    let warm = rt.block_on(ai_dir::scan(&vfs, &left, &right, &opts, &ByNameAligner, &CancelFlag::new()));
-    eprintln!("[PB-03] 预热扫描完成：{} 行", warm.map(|r| r.stats.total).unwrap_or(0));
+    let warm = rt.block_on(ai_dir::scan(
+        &vfs,
+        &left,
+        &right,
+        &opts,
+        &ByNameAligner,
+        &CancelFlag::new(),
+    ));
+    eprintln!(
+        "[PB-03] 预热扫描完成：{} 行",
+        warm.map(|r| r.stats.total).unwrap_or(0)
+    );
     let t1 = Instant::now();
     let result = rt
-        .block_on(ai_dir::scan(&vfs, &left, &right, &opts, &ByNameAligner, &CancelFlag::new()))
+        .block_on(ai_dir::scan(
+            &vfs,
+            &left,
+            &right,
+            &opts,
+            &ByNameAligner,
+            &CancelFlag::new(),
+        ))
         .expect("基准扫描成功");
     let elapsed = t1.elapsed();
     let total = result.stats.total as f64;
@@ -71,7 +91,11 @@ fn pb03_scan_throughput_100k() {
     );
     eprintln!(
         "[PB-03] 目标 ≤2s（起步值，不强制达标）：{}",
-        if elapsed.as_secs_f64() <= 2.0 { "达标" } else { "未达标（记录实测值）" }
+        if elapsed.as_secs_f64() <= 2.0 {
+            "达标"
+        } else {
+            "未达标（记录实测值）"
+        }
     );
 }
 
@@ -94,8 +118,14 @@ fn pb10_delta_serialization_100k() {
             id: format!("d{}/m{}/f{:06}.bin", i % 48, (i / 48) % 32, i),
             name: format!("f{:06}.bin", i),
             kind: ai_protocol::EntryKind::File,
-            left: Some(ai_protocol::SideInfo::base(rng.below(4096), rng.next_u64() / 2)),
-            right: Some(ai_protocol::SideInfo::base(rng.below(4096), rng.next_u64() / 2)),
+            left: Some(ai_protocol::SideInfo::base(
+                rng.below(4096),
+                rng.next_u64() / 2,
+            )),
+            right: Some(ai_protocol::SideInfo::base(
+                rng.below(4096),
+                rng.next_u64() / 2,
+            )),
             status: statuses[(rng.below(5)) as usize],
             has_children: false,
             hidden: false,
@@ -120,7 +150,10 @@ fn pb10_delta_serialization_100k() {
                 scanned: (idx * BATCH) as u32,
                 total: Some(n as u32),
             }),
-            batch: ai_protocol::BatchInfo { index: idx as u32, has_more: true },
+            batch: ai_protocol::BatchInfo {
+                index: idx as u32,
+                has_more: true,
+            },
             scan_errors: Vec::new(),
         };
         let s = serde_json::to_string(&delta).expect("序列化");

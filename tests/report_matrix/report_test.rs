@@ -13,7 +13,7 @@
 
 use ai_compare_tests as harness;
 use ai_core::{
-    diff_config, DirReportStats, DirSnapshot, DiffConfig, HexSnapshot, LineTable, ReportEntryKind,
+    diff_config, DiffConfig, DirReportStats, DirSnapshot, HexSnapshot, LineTable, ReportEntryKind,
     ReportEntryStatus, ReportLayout, ReportOptions, ReportSideInfo, ReportSnapshot, TableSnapshot,
     TextDiffOptions, TextSnapshot,
 };
@@ -33,10 +33,22 @@ fn text_corpora() -> Vec<(&'static str, &'static str, &'static str)> {
         ("content_vs_empty", "only\nleft\n", ""),
         ("crlf_vs_lf_content", "alpha\r\nbeta\r\n", "alpha\ngamma\n"),
         ("unicode", "中文第一行\n第二行\n", "中文第一行\n第二行改\n"),
-        ("long_lines", "aaaa bbbb cccc dddd eeee\nnext\n", "AAAA BBBB CCCC DDDD EEEE\nnext\n"),
+        (
+            "long_lines",
+            "aaaa bbbb cccc dddd eeee\nnext\n",
+            "AAAA BBBB CCCC DDDD EEEE\nnext\n",
+        ),
         ("no_trailing_newline", "x\ny", "x\ny\nz"),
-        ("moves_blocks", "1\n2\n3\n4\n5\n6\n7\n8\n9\n", "3\n4\n1\n2\n5\n6\n7\n8\n9\n"),
-        ("whitespace_only_diff", "int a;\nint  b;\n", "int a;\nint b;\n"),
+        (
+            "moves_blocks",
+            "1\n2\n3\n4\n5\n6\n7\n8\n9\n",
+            "3\n4\n1\n2\n5\n6\n7\n8\n9\n",
+        ),
+        (
+            "whitespace_only_diff",
+            "int a;\nint  b;\n",
+            "int a;\nint b;\n",
+        ),
         ("interleaved_edits", "a\nb\nc\n", "a\nB\nc\nd\ne\n"),
     ]
 }
@@ -45,14 +57,26 @@ fn text_snapshot(label: &str, a: &str, b: &str) -> TextSnapshot {
     let lt = LineTable::from_text(a);
     let rt = LineTable::from_text(b);
     let out = diff_config(&lt, &rt, &DiffConfig::default()).unwrap();
-    TextSnapshot::from_tables(format!("{label}.left"), format!("{label}.right"), &lt, &rt, out.output.sections)
+    TextSnapshot::from_tables(
+        format!("{label}.left"),
+        format!("{label}.right"),
+        &lt,
+        &rt,
+        out.output.sections,
+    )
 }
 
 // ---------------------------------------------------------------------------
 // 文件夹语料（3 个确定性快照：无 IO——直接构造 arena 等价行）
 // ---------------------------------------------------------------------------
 
-fn dir_row(rel: &str, kind: ReportEntryKind, status: ReportEntryStatus, ls: Option<(u64, u64)>, rs: Option<(u64, u64)>) -> ai_core::DirReportRow {
+fn dir_row(
+    rel: &str,
+    kind: ReportEntryKind,
+    status: ReportEntryStatus,
+    ls: Option<(u64, u64)>,
+    rs: Option<(u64, u64)>,
+) -> ai_core::DirReportRow {
     ai_core::DirReportRow {
         rel_path: rel.into(),
         name: rel.rsplit('/').next().unwrap_or(rel).into(),
@@ -71,12 +95,48 @@ fn dir_snapshots() -> Vec<(&'static str, DirSnapshot)> {
                 left_label: "L".into(),
                 right_label: "R".into(),
                 rows: vec![
-                    dir_row("changed.txt", ReportEntryKind::File, ReportEntryStatus::ContentDiff, Some((20, 1000)), Some((24, 2000))),
-                    dir_row("only_l.txt", ReportEntryKind::File, ReportEntryStatus::LeftOnly, Some((5, 1500)), None),
-                    dir_row("only_r.txt", ReportEntryKind::File, ReportEntryStatus::RightOnly, None, Some((7, 1600))),
-                    dir_row("same.txt", ReportEntryKind::File, ReportEntryStatus::Same, Some((10, 999)), Some((10, 999))),
-                    dir_row("sub", ReportEntryKind::Dir, ReportEntryStatus::DirDiff, Some((0, 0)), Some((0, 0))),
-                    dir_row("sub/inner.txt", ReportEntryKind::File, ReportEntryStatus::ContentDiff, Some((9, 99)), Some((10, 100))),
+                    dir_row(
+                        "changed.txt",
+                        ReportEntryKind::File,
+                        ReportEntryStatus::ContentDiff,
+                        Some((20, 1000)),
+                        Some((24, 2000)),
+                    ),
+                    dir_row(
+                        "only_l.txt",
+                        ReportEntryKind::File,
+                        ReportEntryStatus::LeftOnly,
+                        Some((5, 1500)),
+                        None,
+                    ),
+                    dir_row(
+                        "only_r.txt",
+                        ReportEntryKind::File,
+                        ReportEntryStatus::RightOnly,
+                        None,
+                        Some((7, 1600)),
+                    ),
+                    dir_row(
+                        "same.txt",
+                        ReportEntryKind::File,
+                        ReportEntryStatus::Same,
+                        Some((10, 999)),
+                        Some((10, 999)),
+                    ),
+                    dir_row(
+                        "sub",
+                        ReportEntryKind::Dir,
+                        ReportEntryStatus::DirDiff,
+                        Some((0, 0)),
+                        Some((0, 0)),
+                    ),
+                    dir_row(
+                        "sub/inner.txt",
+                        ReportEntryKind::File,
+                        ReportEntryStatus::ContentDiff,
+                        Some((9, 99)),
+                        Some((10, 100)),
+                    ),
                 ],
                 stats: DirReportStats {
                     total: 6,
@@ -101,7 +161,11 @@ fn dir_snapshots() -> Vec<(&'static str, DirSnapshot)> {
                     Some((1, 1)),
                     Some((1, 1)),
                 )],
-                stats: DirReportStats { total: 1, same: 1, ..Default::default() },
+                stats: DirReportStats {
+                    total: 1,
+                    same: 1,
+                    ..Default::default()
+                },
             },
         ),
         (
@@ -110,10 +174,27 @@ fn dir_snapshots() -> Vec<(&'static str, DirSnapshot)> {
                 left_label: "L".into(),
                 right_label: "R".into(),
                 rows: vec![
-                    dir_row("l_orphan", ReportEntryKind::Dir, ReportEntryStatus::LeftOnly, Some((0, 5)), None),
-                    dir_row("r_orphan.bin", ReportEntryKind::File, ReportEntryStatus::RightOnly, None, Some((8, 6))),
+                    dir_row(
+                        "l_orphan",
+                        ReportEntryKind::Dir,
+                        ReportEntryStatus::LeftOnly,
+                        Some((0, 5)),
+                        None,
+                    ),
+                    dir_row(
+                        "r_orphan.bin",
+                        ReportEntryKind::File,
+                        ReportEntryStatus::RightOnly,
+                        None,
+                        Some((8, 6)),
+                    ),
                 ],
-                stats: DirReportStats { total: 2, left_only: 1, right_only: 1, ..Default::default() },
+                stats: DirReportStats {
+                    total: 2,
+                    left_only: 1,
+                    right_only: 1,
+                    ..Default::default()
+                },
             },
         ),
     ]
@@ -141,7 +222,10 @@ fn report_golden_matrix() {
         let snap = ReportSnapshot::Text(text_snapshot(name, a, b));
         for layout in ALL_LAYOUTS {
             // tree 布局为目录专用：文本快照必须报不支持（布局×会话矩阵语义）
-            let opts = ReportOptions { layout, ..Default::default() };
+            let opts = ReportOptions {
+                layout,
+                ..Default::default()
+            };
             let r = ai_core::render_report(&snap, &opts);
             if layout == ReportLayout::Tree {
                 assert!(r.is_err(), "{name}/{layout:?}: 文本快照 tree 应不支持");
@@ -158,8 +242,16 @@ fn report_golden_matrix() {
                 }
             }
             // golden 快照：关键布局 × 语料（抽查 summary/patch/html/stats）
-            if matches!(layout, ReportLayout::Summary | ReportLayout::Patch | ReportLayout::Html | ReportLayout::Stats) {
-                let file = harness::snapshots_dir().join("report").join(format!("{name}_{}.golden.txt", layout.as_str()));
+            if matches!(
+                layout,
+                ReportLayout::Summary
+                    | ReportLayout::Patch
+                    | ReportLayout::Html
+                    | ReportLayout::Stats
+            ) {
+                let file = harness::snapshots_dir()
+                    .join("report")
+                    .join(format!("{name}_{}.golden.txt", layout.as_str()));
                 harness::assert_matches_snapshot(
                     &format!("{name}_{}", layout.as_str()),
                     &file,
@@ -173,7 +265,10 @@ fn report_golden_matrix() {
             }
         }
     }
-    assert!(blessed_files >= 12 * 4, "golden 快照数量不足: {blessed_files}");
+    assert!(
+        blessed_files >= 12 * 4,
+        "golden 快照数量不足: {blessed_files}"
+    );
 }
 
 #[test]
@@ -181,16 +276,30 @@ fn dir_report_golden_matrix() {
     for (name, snap) in dir_snapshots() {
         let snap = ReportSnapshot::Dir(snap);
         for layout in ALL_LAYOUTS {
-            let opts = ReportOptions { layout, ..Default::default() };
+            let opts = ReportOptions {
+                layout,
+                ..Default::default()
+            };
             // patch/interleaved 为文本专用；文本簇外布局对目录快照报不支持
             if matches!(layout, ReportLayout::Patch) {
-                assert!(ai_core::render_report(&snap, &opts).is_err(), "{name} dir patch 应不支持");
+                assert!(
+                    ai_core::render_report(&snap, &opts).is_err(),
+                    "{name} dir patch 应不支持"
+                );
                 continue;
             }
-            let text = ai_core::render_report(&snap, &opts).unwrap_or_else(|e| panic!("{name}/{layout:?}: {e}"));
-            assert_eq!(text, ai_core::render_report(&snap, &opts).unwrap(), "{name}/{layout:?} 不确定");
-            let file = harness::snapshots_dir().join("report").join(format!("{name}_{}.golden.txt", layout.as_str()));
-            harness::assert_matches_snapshot(&format!("{name}_{}", layout.as_str()), &file, &text).unwrap_or_else(|e| panic!("{e}"));
+            let text = ai_core::render_report(&snap, &opts)
+                .unwrap_or_else(|e| panic!("{name}/{layout:?}: {e}"));
+            assert_eq!(
+                text,
+                ai_core::render_report(&snap, &opts).unwrap(),
+                "{name}/{layout:?} 不确定"
+            );
+            let file = harness::snapshots_dir()
+                .join("report")
+                .join(format!("{name}_{}.golden.txt", layout.as_str()));
+            harness::assert_matches_snapshot(&format!("{name}_{}", layout.as_str()), &file, &text)
+                .unwrap_or_else(|e| panic!("{e}"));
         }
     }
 }
@@ -217,21 +326,44 @@ fn table_hex_merge_layout_smoke() {
         has_header: true,
     });
     for layout in ALL_LAYOUTS {
-        let opts = ReportOptions { layout, ..Default::default() };
-        if matches!(layout, ReportLayout::Tree | ReportLayout::Patch | ReportLayout::SideBySide | ReportLayout::Interleaved) {
-            assert!(ai_core::render_report(&table, &opts).is_err(), "table {layout:?} 应不支持");
+        let opts = ReportOptions {
+            layout,
+            ..Default::default()
+        };
+        if matches!(
+            layout,
+            ReportLayout::Tree
+                | ReportLayout::Patch
+                | ReportLayout::SideBySide
+                | ReportLayout::Interleaved
+        ) {
+            assert!(
+                ai_core::render_report(&table, &opts).is_err(),
+                "table {layout:?} 应不支持"
+            );
             continue;
         }
         let out = ai_core::render_report(&table, &opts).unwrap();
         assert!(!out.is_empty(), "table {layout:?} 输出为空");
     }
     // CSV 抽查：差异行 + 新增行
-    let out = ai_core::render_report(&table, &ReportOptions { layout: ReportLayout::Csv, ..Default::default() }).unwrap();
+    let out = ai_core::render_report(
+        &table,
+        &ReportOptions {
+            layout: ReportLayout::Csv,
+            ..Default::default()
+        },
+    )
+    .unwrap();
     assert!(out.contains("changed"), "{out}");
     assert!(out.contains("added"), "{out}");
 
     // 十六进制
-    let hex_model = ai_core::hex::diff_bytes(b"AAAABBBBCCCC", b"AAAAXXBBCCCCZZ", &ai_core::hex::HexOptions::default());
+    let hex_model = ai_core::hex::diff_bytes(
+        b"AAAABBBBCCCC",
+        b"AAAAXXBBCCCCZZ",
+        &ai_core::hex::HexOptions::default(),
+    );
     let (sl, sr) = ai_core::hex::status_maps(&hex_model);
     let hex = ReportSnapshot::Hex(HexSnapshot {
         left_label: "l.bin".into(),
@@ -243,12 +375,27 @@ fn table_hex_merge_layout_smoke() {
         status_right: sr,
     });
     for layout in ALL_LAYOUTS {
-        let opts = ReportOptions { layout, ..Default::default() };
-        if matches!(layout, ReportLayout::Tree | ReportLayout::Patch | ReportLayout::SideBySide | ReportLayout::Interleaved) {
-            assert!(ai_core::render_report(&hex, &opts).is_err(), "hex {layout:?} 应不支持");
+        let opts = ReportOptions {
+            layout,
+            ..Default::default()
+        };
+        if matches!(
+            layout,
+            ReportLayout::Tree
+                | ReportLayout::Patch
+                | ReportLayout::SideBySide
+                | ReportLayout::Interleaved
+        ) {
+            assert!(
+                ai_core::render_report(&hex, &opts).is_err(),
+                "hex {layout:?} 应不支持"
+            );
             continue;
         }
-        assert!(!ai_core::render_report(&hex, &opts).unwrap().is_empty(), "hex {layout:?} 输出为空");
+        assert!(
+            !ai_core::render_report(&hex, &opts).unwrap().is_empty(),
+            "hex {layout:?} 输出为空"
+        );
     }
 
     // 合并
@@ -264,12 +411,27 @@ fn table_hex_merge_layout_smoke() {
         unresolved: Vec::new(),
     });
     for layout in ALL_LAYOUTS {
-        let opts = ReportOptions { layout, ..Default::default() };
-        if matches!(layout, ReportLayout::Tree | ReportLayout::Patch | ReportLayout::SideBySide | ReportLayout::Interleaved) {
-            assert!(ai_core::render_report(&merge, &opts).is_err(), "merge {layout:?} 应不支持");
+        let opts = ReportOptions {
+            layout,
+            ..Default::default()
+        };
+        if matches!(
+            layout,
+            ReportLayout::Tree
+                | ReportLayout::Patch
+                | ReportLayout::SideBySide
+                | ReportLayout::Interleaved
+        ) {
+            assert!(
+                ai_core::render_report(&merge, &opts).is_err(),
+                "merge {layout:?} 应不支持"
+            );
             continue;
         }
-        assert!(!ai_core::render_report(&merge, &opts).unwrap().is_empty(), "merge {layout:?} 输出为空");
+        assert!(
+            !ai_core::render_report(&merge, &opts).unwrap().is_empty(),
+            "merge {layout:?} 输出为空"
+        );
     }
 }
 
@@ -291,10 +453,17 @@ fn assert_html_balanced(html: &str) {
             let name = name.trim().to_ascii_lowercase();
             let top = stack.pop().unwrap_or_else(|| panic!("多余闭合 </{name}>"));
             assert_eq!(top, name, "标签错配: 期望 </{top}> 实际 </{name}>");
-        } else if inner.starts_with('!') || inner.ends_with('/') || void.contains(&inner.split_whitespace().next().unwrap_or("")) {
+        } else if inner.starts_with('!')
+            || inner.ends_with('/')
+            || void.contains(&inner.split_whitespace().next().unwrap_or(""))
+        {
             // doctype / 自闭合 / void
         } else {
-            let name = inner.split_whitespace().next().unwrap_or("").to_ascii_lowercase();
+            let name = inner
+                .split_whitespace()
+                .next()
+                .unwrap_or("")
+                .to_ascii_lowercase();
             stack.push(name);
         }
         rest = &after[gt + 1..];
@@ -306,22 +475,50 @@ fn assert_html_balanced(html: &str) {
 fn html_structure_and_escaping() {
     for (name, a, b) in text_corpora() {
         let snap = ReportSnapshot::Text(text_snapshot(name, a, b));
-        let html = ai_core::render_report(&snap, &ReportOptions { layout: ReportLayout::Html, ..Default::default() }).unwrap();
+        let html = ai_core::render_report(
+            &snap,
+            &ReportOptions {
+                layout: ReportLayout::Html,
+                ..Default::default()
+            },
+        )
+        .unwrap();
         assert_html_balanced(&html);
         assert!(html.starts_with("<!DOCTYPE html>"));
         assert!(html.contains("<style>"), "样式必须内联（自包含）");
         assert!(!html.contains("<style src"), "不得引用外部样式表");
     }
     // 显式转义用例
-    let snap = ReportSnapshot::Text(text_snapshot("esc", "<b>&\"q\"</b>\n<script>x</script>\n", "safe\n<script>y</script>\n"));
-    let html = ai_core::render_report(&snap, &ReportOptions { layout: ReportLayout::Html, ..Default::default() }).unwrap();
-    assert!(html.contains("&lt;b&gt;&amp;&quot;q&quot;&lt;/b&gt;"), "内容须转义:\n{html}");
-    assert!(html.contains("&lt;script&gt;"), "script 标签须转义（防注入）");
+    let snap = ReportSnapshot::Text(text_snapshot(
+        "esc",
+        "<b>&\"q\"</b>\n<script>x</script>\n",
+        "safe\n<script>y</script>\n",
+    ));
+    let html = ai_core::render_report(
+        &snap,
+        &ReportOptions {
+            layout: ReportLayout::Html,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert!(
+        html.contains("&lt;b&gt;&amp;&quot;q&quot;&lt;/b&gt;"),
+        "内容须转义:\n{html}"
+    );
+    assert!(
+        html.contains("&lt;script&gt;"),
+        "script 标签须转义（防注入）"
+    );
     assert_html_balanced(&html);
     // mono 模式
     let html = ai_core::render_report(
         &snap,
-        &ReportOptions { layout: ReportLayout::Html, color: ai_core::ColorMode::Mono, ..Default::default() },
+        &ReportOptions {
+            layout: ReportLayout::Html,
+            color: ai_core::ColorMode::Mono,
+            ..Default::default()
+        },
     )
     .unwrap();
     assert_html_balanced(&html);
@@ -329,7 +526,11 @@ fn html_structure_and_escaping() {
     // word wrap
     let html = ai_core::render_report(
         &snap,
-        &ReportOptions { layout: ReportLayout::Html, wrap: ai_core::WrapMode::Word, ..Default::default() },
+        &ReportOptions {
+            layout: ReportLayout::Html,
+            wrap: ai_core::WrapMode::Word,
+            ..Default::default()
+        },
     )
     .unwrap();
     assert!(html.contains("pre-wrap"));
@@ -339,9 +540,20 @@ fn html_structure_and_escaping() {
 fn xml_structure_and_escaping() {
     for (name, a, b) in text_corpora() {
         let snap = ReportSnapshot::Text(text_snapshot(name, a, b));
-        let xml = ai_core::render_report(&snap, &ReportOptions { layout: ReportLayout::Xml, ..Default::default() }).unwrap();
+        let xml = ai_core::render_report(
+            &snap,
+            &ReportOptions {
+                layout: ReportLayout::Xml,
+                ..Default::default()
+            },
+        )
+        .unwrap();
         assert!(xml.starts_with("<?xml version=\"1.0\" encoding=\"UTF-8\"?>"));
-        assert_eq!(xml.matches("<section ").count(), xml.matches("</section>").count(), "{name}");
+        assert_eq!(
+            xml.matches("<section ").count(),
+            xml.matches("</section>").count(),
+            "{name}"
+        );
         if a.contains('<') || a.contains('&') || b.contains('<') {
             assert!(!xml.contains("<b>"), "原始标签不得直出: {name}");
         }
@@ -350,7 +562,10 @@ fn xml_structure_and_escaping() {
     for (name, snap) in dir_snapshots() {
         let xml = ai_core::render_report(
             &ReportSnapshot::Dir(snap),
-            &ReportOptions { layout: ReportLayout::Xml, ..Default::default() },
+            &ReportOptions {
+                layout: ReportLayout::Xml,
+                ..Default::default()
+            },
         )
         .unwrap();
         assert!(xml.contains("<rows>") && xml.contains("</rows>"), "{name}");
@@ -371,14 +586,35 @@ fn xml_report_strips_illegal_control_chars() {
         ("legal_kept", "tab\tlf\n", "cr\r\n"),
     ] {
         let snap = ReportSnapshot::Text(text_snapshot(label, a, b));
-        let xml = ai_core::render_report(&snap, &ReportOptions { layout: ReportLayout::Xml, ..Default::default() }).unwrap();
-        let illegal: Vec<String> = xml.chars().filter(|c| !legal_xml_char(*c)).map(|c| format!("U+{:04X}", c as u32)).collect();
+        let xml = ai_core::render_report(
+            &snap,
+            &ReportOptions {
+                layout: ReportLayout::Xml,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let illegal: Vec<String> = xml
+            .chars()
+            .filter(|c| !legal_xml_char(*c))
+            .map(|c| format!("U+{:04X}", c as u32))
+            .collect();
         assert!(illegal.is_empty(), "{label}: XML 含非法码点 {illegal:?}");
-        assert!(!xml.contains('\u{1}') && !xml.contains('\u{2}'), "{label}: 控制字符必须剔除而非直出");
+        assert!(
+            !xml.contains('\u{1}') && !xml.contains('\u{2}'),
+            "{label}: 控制字符必须剔除而非直出"
+        );
     }
     // 合法空白（TAB/LF/CR）不得被误删
     let snap = ReportSnapshot::Text(text_snapshot("ws", "a\tb\n", "a\tc\r\n"));
-    let xml = ai_core::render_report(&snap, &ReportOptions { layout: ReportLayout::Xml, ..Default::default() }).unwrap();
+    let xml = ai_core::render_report(
+        &snap,
+        &ReportOptions {
+            layout: ReportLayout::Xml,
+            ..Default::default()
+        },
+    )
+    .unwrap();
     assert!(xml.contains('\t'), "合法 TAB 应保留");
 }
 
@@ -391,15 +627,29 @@ fn patch_layout_roundtrip_with_aic_diff_and_apply() {
     for (name, a, b) in text_corpora() {
         // 1. patch 布局渲染（标签同 aic diff 的 argv 形态）
         let snap = text_snapshot(name, a, b);
-        let opts = ReportOptions { layout: ReportLayout::Patch, context_lines: 3, ..Default::default() };
+        let opts = ReportOptions {
+            layout: ReportLayout::Patch,
+            context_lines: 3,
+            ..Default::default()
+        };
         let patch_text = ai_core::render_report(&ReportSnapshot::Text(snap), &opts).unwrap();
 
         // 2. 与 aic diff 输出逐字节等价（同一 unified 算法契约，FR-PATCH-010）
         let lt = LineTable::from_text(a);
         let rt = LineTable::from_text(b);
         let diff_out = diff_config(&lt, &rt, &DiffConfig::default()).unwrap();
-        let aic_style = aic_style_unified(&format!("{name}.left"), &format!("{name}.right"), &diff_out.output, &lt, &rt, 3);
-        assert_eq!(patch_text, aic_style, "{name}: patch 布局应与 aic diff 输出逐字节一致");
+        let aic_style = aic_style_unified(
+            &format!("{name}.left"),
+            &format!("{name}.right"),
+            &diff_out.output,
+            &lt,
+            &rt,
+            3,
+        );
+        assert_eq!(
+            patch_text, aic_style,
+            "{name}: patch 布局应与 aic diff 输出逐字节一致"
+        );
 
         if patch_text.is_empty() {
             // 无差异语料：patch 为空，原文还原
@@ -409,10 +659,15 @@ fn patch_layout_roundtrip_with_aic_diff_and_apply() {
         // 3. ai-core patch 解析 + 应用 -> 还原右侧文本（roundtrip 闭环）
         //    补丁引擎保留原文行尾风格（CRLF 容忍语义，patch.rs 头注）：行尾差异
         //    语料（crlf_vs_lf_content）按行内容归一化比对。
-        let parsed = ai_core::patch::parse_patch(&patch_text).unwrap_or_else(|e| panic!("{name}: {e}"));
+        let parsed =
+            ai_core::patch::parse_patch(&patch_text).unwrap_or_else(|e| panic!("{name}: {e}"));
         assert_eq!(parsed.files.len(), 1, "{name}");
-        let applied = ai_core::patch::apply_file(a, &parsed.files[0], &ai_core::patch::PatchApplyOptions::default())
-            .unwrap_or_else(|e| panic!("{name}: {e}"));
+        let applied = ai_core::patch::apply_file(
+            a,
+            &parsed.files[0],
+            &ai_core::patch::PatchApplyOptions::default(),
+        )
+        .unwrap_or_else(|e| panic!("{name}: {e}"));
         let norm = |t: &str| t.replace("\r\n", "\n");
         match applied {
             ai_core::patch::ApplyOutcome::Applied { text, .. } => {
@@ -489,7 +744,9 @@ fn aic_style_unified(
     }
     let mut text = String::new();
     text.push_str(&format!("--- {left_label}\n+++ {right_label}\n"));
-    let no_nl = |t: &LineTable| !t.is_empty() && t.line(t.len() - 1).ending == ai_core::lines::LineEnding::None;
+    let no_nl = |t: &LineTable| {
+        !t.is_empty() && t.line(t.len() - 1).ending == ai_core::lines::LineEnding::None
+    };
     let left_no_nl = no_nl(left);
     let right_no_nl = no_nl(right);
     let last_left = left.len().saturating_sub(1) as u32;
@@ -526,7 +783,11 @@ fn aic_style_unified(
                 format!("{sign}{start},{count}")
             }
         };
-        text.push_str(&format!("@@ {} {} @@\n", head(lb, lc, '-'), head(rb, rc, '+')));
+        text.push_str(&format!(
+            "@@ {} {} @@\n",
+            head(lb, lc, '-'),
+            head(rb, rc, '+')
+        ));
         for e in &script[*hs..*he] {
             match e {
                 Entry::Same(i) => {
@@ -575,15 +836,26 @@ fn aic_diff_binary_matches_patch_layout() {
     let snap = text_snap_with_labels(&lt_text, &rt_text, l.to_str().unwrap(), r.to_str().unwrap());
     let patch = ai_core::render_report(
         &ReportSnapshot::Text(snap),
-        &ReportOptions { layout: ReportLayout::Patch, context_lines: 3, ..Default::default() },
+        &ReportOptions {
+            layout: ReportLayout::Patch,
+            context_lines: 3,
+            ..Default::default()
+        },
     )
     .unwrap();
     assert_eq!(aic_text, patch, "aic diff 输出 ≡ patch 布局报告（逐字节）");
 
     // 还原闭环：patch apply -> b.txt 原文
     let parsed = ai_core::patch::parse_patch(&patch).unwrap();
-    let applied = ai_core::patch::apply_file(&lt_text, &parsed.files[0], &ai_core::patch::PatchApplyOptions::default()).unwrap();
-    assert!(matches!(applied, ai_core::patch::ApplyOutcome::Applied { ref text, .. } if text == &rt_text));
+    let applied = ai_core::patch::apply_file(
+        &lt_text,
+        &parsed.files[0],
+        &ai_core::patch::PatchApplyOptions::default(),
+    )
+    .unwrap();
+    assert!(
+        matches!(applied, ai_core::patch::ApplyOutcome::Applied { ref text, .. } if text == &rt_text)
+    );
 }
 
 fn text_snap_with_labels(a: &str, b: &str, la: &str, lb: &str) -> TextSnapshot {
@@ -627,27 +899,91 @@ fn report_generate_rpc_e2e() {
     std::fs::write(rd.join("ronly.txt"), "R").unwrap();
 
     let inputs = vec![
-        harness::req(1, "initialize", serde_json::json!({"clientInfo": {"name": "rpt", "version": "0"}, "protocolVersion": "1.0"})),
-        harness::req(2, "text/open", serde_json::json!({"sessionId": "t", "left": l.to_string_lossy(), "right": r.to_string_lossy()})),
-        harness::req(3, "report/generate", serde_json::json!({"sessionId": "t", "layout": "patch"})),
-        harness::req(4, "report/generate", serde_json::json!({"sessionId": "t", "layout": "html", "title": "T", "lineNumbers": true})),
-        harness::req(5, "report/generate", serde_json::json!({"sessionId": "t", "layout": "stats"})),
+        harness::req(
+            1,
+            "initialize",
+            serde_json::json!({"clientInfo": {"name": "rpt", "version": "0"}, "protocolVersion": "1.0"}),
+        ),
+        harness::req(
+            2,
+            "text/open",
+            serde_json::json!({"sessionId": "t", "left": l.to_string_lossy(), "right": r.to_string_lossy()}),
+        ),
+        harness::req(
+            3,
+            "report/generate",
+            serde_json::json!({"sessionId": "t", "layout": "patch"}),
+        ),
+        harness::req(
+            4,
+            "report/generate",
+            serde_json::json!({"sessionId": "t", "layout": "html", "title": "T", "lineNumbers": true}),
+        ),
+        harness::req(
+            5,
+            "report/generate",
+            serde_json::json!({"sessionId": "t", "layout": "stats"}),
+        ),
         // 分块流：offset/limit 切片 + hasMore
-        harness::req(6, "report/generate", serde_json::json!({"sessionId": "t", "layout": "xml", "offset": 0, "limit": 16})),
-        harness::req(7, "report/generate", serde_json::json!({"sessionId": "t", "layout": "xml", "offset": 16, "limit": 16})),
+        harness::req(
+            6,
+            "report/generate",
+            serde_json::json!({"sessionId": "t", "layout": "xml", "offset": 0, "limit": 16}),
+        ),
+        harness::req(
+            7,
+            "report/generate",
+            serde_json::json!({"sessionId": "t", "layout": "xml", "offset": 16, "limit": 16}),
+        ),
         // dir 会话（同步扫描路径；确定性）
-        harness::req(8, "dir/open", serde_json::json!({
-            "sessionId": "d", "left": ld.to_string_lossy(), "right": rd.to_string_lossy(),
-            "depth": 1, "criteria": {"mtimeToleranceSec": 0, "contentCompare": "always"}
-        })),
-        harness::req(9, "report/generate", serde_json::json!({"sessionId": "d", "layout": "summary"})),
-        harness::req(10, "report/generate", serde_json::json!({"sessionId": "d", "layout": "tree", "dirDisplay": "orphans"})),
-        harness::req(11, "table/open", serde_json::json!({"sessionId": "tb", "left": lcsv.to_string_lossy(), "right": rcsv.to_string_lossy()})),
-        harness::req(12, "report/generate", serde_json::json!({"sessionId": "tb", "layout": "csv", "delimiter": "tsv"})),
-        harness::req(13, "hex/open", serde_json::json!({"sessionId": "hx", "left": lb.to_string_lossy(), "right": rb.to_string_lossy()})),
-        harness::req(14, "report/generate", serde_json::json!({"sessionId": "hx", "layout": "stats"})),
-        harness::req(15, "report/generate", serde_json::json!({"sessionId": "t", "layout": "xml"})),
-        harness::req(16, "report/generate", serde_json::json!({"sessionId": "ghost", "layout": "summary"})),
+        harness::req(
+            8,
+            "dir/open",
+            serde_json::json!({
+                "sessionId": "d", "left": ld.to_string_lossy(), "right": rd.to_string_lossy(),
+                "depth": 1, "criteria": {"mtimeToleranceSec": 0, "contentCompare": "always"}
+            }),
+        ),
+        harness::req(
+            9,
+            "report/generate",
+            serde_json::json!({"sessionId": "d", "layout": "summary"}),
+        ),
+        harness::req(
+            10,
+            "report/generate",
+            serde_json::json!({"sessionId": "d", "layout": "tree", "dirDisplay": "orphans"}),
+        ),
+        harness::req(
+            11,
+            "table/open",
+            serde_json::json!({"sessionId": "tb", "left": lcsv.to_string_lossy(), "right": rcsv.to_string_lossy()}),
+        ),
+        harness::req(
+            12,
+            "report/generate",
+            serde_json::json!({"sessionId": "tb", "layout": "csv", "delimiter": "tsv"}),
+        ),
+        harness::req(
+            13,
+            "hex/open",
+            serde_json::json!({"sessionId": "hx", "left": lb.to_string_lossy(), "right": rb.to_string_lossy()}),
+        ),
+        harness::req(
+            14,
+            "report/generate",
+            serde_json::json!({"sessionId": "hx", "layout": "stats"}),
+        ),
+        harness::req(
+            15,
+            "report/generate",
+            serde_json::json!({"sessionId": "t", "layout": "xml"}),
+        ),
+        harness::req(
+            16,
+            "report/generate",
+            serde_json::json!({"sessionId": "ghost", "layout": "summary"}),
+        ),
         harness::req(17, "shutdown", serde_json::json!({})),
     ];
     let outputs = harness::run_engine(&inputs, None);
@@ -666,7 +1002,10 @@ fn report_generate_rpc_e2e() {
     // text patch
     let p = by_id(3);
     let content = p["result"]["content"].as_str().unwrap();
-    assert!(content.starts_with("--- ") && content.contains("-two\n+TWO\n"), "{content}");
+    assert!(
+        content.starts_with("--- ") && content.contains("-two\n+TWO\n"),
+        "{content}"
+    );
     assert_eq!(p["result"]["hasMore"], false);
 
     // html + 行号
@@ -677,7 +1016,10 @@ fn report_generate_rpc_e2e() {
     // stats
     let resp_s = by_id(5);
     let s = resp_s["result"]["content"].as_str().unwrap();
-    assert!(s.contains("insertedLines=2") && s.contains("deletedLines=1"), "{s}");
+    assert!(
+        s.contains("insertedLines=2") && s.contains("deletedLines=1"),
+        "{s}"
+    );
 
     // 分块流：两块拼接 == 全量
     let resp_full = by_id(3);
@@ -699,7 +1041,10 @@ fn report_generate_rpc_e2e() {
     assert!(ds.contains("差异清单") && ds.contains("lonly.txt"), "{ds}");
     let resp_dt = by_id(10);
     let dt = resp_dt["result"]["content"].as_str().unwrap();
-    assert!(dt.contains("[<] lonly.txt") && dt.contains("[>] ronly.txt"), "{dt}");
+    assert!(
+        dt.contains("[<] lonly.txt") && dt.contains("[>] ronly.txt"),
+        "{dt}"
+    );
     assert!(!dt.contains("same.txt"), "orphans 过滤: {dt}");
 
     // table tsv

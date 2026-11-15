@@ -76,7 +76,8 @@ impl NameAligner for ByNameAligner {
     }
     fn align(&self, left: &[VfsDirEntry], right: &[VfsDirEntry]) -> Vec<AlignedPair> {
         debug_assert!(
-            left.windows(2).all(|w| w[0].name <= w[1].name) && right.windows(2).all(|w| w[0].name <= w[1].name),
+            left.windows(2).all(|w| w[0].name <= w[1].name)
+                && right.windows(2).all(|w| w[0].name <= w[1].name),
             "输入必须已排序",
         );
         build_pairs(left, right, |e| e.name.clone(), |e| e.name.clone())
@@ -216,7 +217,11 @@ impl NameAligner for PatternAligner {
             let li = left.iter().enumerate().position(|(i, e)| {
                 !l_used.contains(&(i as u32))
                     && e.stat.kind != ai_vfs::EntryKind::Dir
-                    && crate::filter::wildcard_match(&rule.left_mask, &e.name, !rule.case_insensitive)
+                    && crate::filter::wildcard_match(
+                        &rule.left_mask,
+                        &e.name,
+                        !rule.case_insensitive,
+                    )
             });
             let li = match li {
                 Some(i) => i as u32,
@@ -225,12 +230,20 @@ impl NameAligner for PatternAligner {
             let ri = right.iter().enumerate().position(|(i, e)| {
                 !r_used.contains(&(i as u32))
                     && e.stat.kind != ai_vfs::EntryKind::Dir
-                    && crate::filter::wildcard_match(&rule.right_mask, &e.name, !rule.case_insensitive)
+                    && crate::filter::wildcard_match(
+                        &rule.right_mask,
+                        &e.name,
+                        !rule.case_insensitive,
+                    )
             });
             if let Some(ri) = ri.map(|i| i as u32) {
                 l_used.insert(li);
                 r_used.insert(ri);
-                pattern_pairs.push(AlignedPair { left: Some(li), right: Some(ri), name: left[li as usize].name.clone() });
+                pattern_pairs.push(AlignedPair {
+                    left: Some(li),
+                    right: Some(ri),
+                    name: left[li as usize].name.clone(),
+                });
             }
         }
         // 3. 重组：被模式对占用的名字对拆散为剩余侧孤儿；两侧都被占用则丢弃
@@ -255,7 +268,11 @@ impl NameAligner for PatternAligner {
             if nl.is_none() && nr.is_none() {
                 continue;
             }
-            out.push(AlignedPair { left: nl, right: nr, name });
+            out.push(AlignedPair {
+                left: nl,
+                right: nr,
+                name,
+            });
         }
         out.extend(pattern_pairs);
         out.sort_by(|a, b| a.name.cmp(&b.name));
@@ -281,7 +298,10 @@ mod tests {
     }
 
     fn names(pairs: &[AlignedPair]) -> Vec<(String, Option<u32>, Option<u32>)> {
-        pairs.iter().map(|p| (p.name.clone(), p.left, p.right)).collect()
+        pairs
+            .iter()
+            .map(|p| (p.name.clone(), p.left, p.right))
+            .collect()
     }
 
     #[allow(unused)]
@@ -296,7 +316,12 @@ mod tests {
         let pairs = ByNameAligner.align(&left, &right);
         assert_eq!(
             names(&pairs),
-            vec![(nm("a"), Some(0), None), (nm("b"), Some(1), Some(0)), (nm("c"), None, Some(1)), (nm("d"), Some(2), Some(2))]
+            vec![
+                (nm("a"), Some(0), None),
+                (nm("b"), Some(1), Some(0)),
+                (nm("c"), None, Some(1)),
+                (nm("d"), Some(2), Some(2))
+            ]
         );
     }
 
@@ -304,8 +329,13 @@ mod tests {
     fn case_insensitive_aligner_pairs_case_variants() {
         let left = vec![e("Readme.TXT", false)];
         let right = vec![e("readme.txt", false)];
-        let pairs = CaseFoldAligner { options: AlignKeyOptions { case_insensitive: true, ..Default::default() } }
-            .align(&left, &right);
+        let pairs = CaseFoldAligner {
+            options: AlignKeyOptions {
+                case_insensitive: true,
+                ..Default::default()
+            },
+        }
+        .align(&left, &right);
         assert_eq!(pairs.len(), 1);
         assert!(pairs[0].left.is_some() && pairs[0].right.is_some());
     }
@@ -314,8 +344,13 @@ mod tests {
     fn different_extension_alignment() {
         let left = vec![e("report.docx", false)];
         let right = vec![e("report.pdf", false)];
-        let pairs = CaseFoldAligner { options: AlignKeyOptions { ignore_extension: true, ..Default::default() } }
-            .align(&left, &right);
+        let pairs = CaseFoldAligner {
+            options: AlignKeyOptions {
+                ignore_extension: true,
+                ..Default::default()
+            },
+        }
+        .align(&left, &right);
         assert_eq!(pairs.len(), 1);
         assert!(pairs[0].left.is_some() && pairs[0].right.is_some());
     }
@@ -324,8 +359,13 @@ mod tests {
     fn unicode_accent_fold() {
         let left = vec![e("café.txt", false)];
         let right = vec![e("cafe.txt", false)];
-        let pairs = CaseFoldAligner { options: AlignKeyOptions { unicode_fold: true, ..Default::default() } }
-            .align(&left, &right);
+        let pairs = CaseFoldAligner {
+            options: AlignKeyOptions {
+                unicode_fold: true,
+                ..Default::default()
+            },
+        }
+        .align(&left, &right);
         assert_eq!(pairs.len(), 1);
         assert!(pairs[0].left.is_some() && pairs[0].right.is_some());
     }

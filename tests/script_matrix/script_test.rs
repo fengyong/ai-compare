@@ -59,12 +59,19 @@ impl Sandbox {
 }
 
 /// 运行脚本文本（写入临时脚本文件后经 `aic script run` 执行；cwd 沙箱化到 box_cwd）
-fn run_script(box_cwd: &Path, script_src: &str, args: &[String], extra: &[&str]) -> (i32, String, String) {
+fn run_script(
+    box_cwd: &Path,
+    script_src: &str,
+    args: &[String],
+    extra: &[&str],
+) -> (i32, String, String) {
     let script_path = box_cwd.join("case.aicscript");
     std::fs::write(&script_path, script_src).unwrap();
     let mut cmd = Command::new(harness::cli_bin("aic"));
     cmd.current_dir(box_cwd);
-    cmd.arg("script").arg("run").arg(script_path.to_str().unwrap());
+    cmd.arg("script")
+        .arg("run")
+        .arg(script_path.to_str().unwrap());
     for a in args {
         cmd.arg(a);
     }
@@ -80,7 +87,12 @@ fn run_script(box_cwd: &Path, script_src: &str, args: &[String], extra: &[&str])
 }
 
 /// `aiscript <file> [args]` 独立入口形态
-fn run_aiscript(box_cwd: &Path, script_src: &str, args: &[String], extra: &[&str]) -> (i32, String, String) {
+fn run_aiscript(
+    box_cwd: &Path,
+    script_src: &str,
+    args: &[String],
+    extra: &[&str],
+) -> (i32, String, String) {
     let script_path = box_cwd.join("case.aicscript");
     std::fs::write(&script_path, script_src).unwrap();
     let mut cmd = Command::new(harness::cli_bin("aiscript"));
@@ -178,11 +190,21 @@ fn script_03_text_report_patch_roundtrip() {
     let (code, _o, err) = run_script(&boxd, &src, &[], &[]);
     assert_eq!(code, 0, "{err}");
     let patch = std::fs::read_to_string(boxd.join("t.patch")).unwrap();
-    assert!(patch.contains("-beta") && patch.contains("+BETA"), "{patch}");
+    assert!(
+        patch.contains("-beta") && patch.contains("+BETA"),
+        "{patch}"
+    );
     // ai-core patch apply 还原右侧
     let parsed = ai_core::patch::parse_patch(&patch).unwrap();
-    let applied = ai_core::patch::apply_file("alpha\nbeta\ngamma\n", &parsed.files[0], &ai_core::patch::PatchApplyOptions::default()).unwrap();
-    assert!(matches!(applied, ai_core::patch::ApplyOutcome::Applied { ref text, .. } if text == "alpha\nBETA\ngamma\n"));
+    let applied = ai_core::patch::apply_file(
+        "alpha\nbeta\ngamma\n",
+        &parsed.files[0],
+        &ai_core::patch::PatchApplyOptions::default(),
+    )
+    .unwrap();
+    assert!(
+        matches!(applied, ai_core::patch::ApplyOutcome::Applied { ref text, .. } if text == "alpha\nBETA\ngamma\n")
+    );
     let _ = std::fs::remove_dir_all(&boxd);
 }
 
@@ -200,7 +222,10 @@ fn script_04_table_report_csv() {
     let (code, _o, err) = run_script(&boxd, &src, &[], &[]);
     assert_eq!(code, 0, "{err}");
     let report = std::fs::read_to_string(boxd.join("t.csv.txt")).unwrap();
-    assert!(report.contains("changed") && report.contains("added"), "{report}");
+    assert!(
+        report.contains("changed") && report.contains("added"),
+        "{report}"
+    );
     let _ = std::fs::remove_dir_all(&boxd);
 }
 
@@ -284,7 +309,10 @@ fn script_08_move_and_moveto() {
     assert!(!sb.exists('l', "m.txt"), "move 删源");
     // moveto = 复制到外部目录 + 从会话侧移除（BC 语义）
     assert!(!sb.exists('r', "m.txt"), "moveto 后会话侧移除");
-    assert!(boxd.join("out").join("m.txt").exists(), "moveto 复制到外部目录");
+    assert!(
+        boxd.join("out").join("m.txt").exists(),
+        "moveto 复制到外部目录"
+    );
     let _ = std::fs::remove_dir_all(&boxd);
 }
 
@@ -309,7 +337,10 @@ fn script_09_mkdir_rename_touch() {
     assert_eq!(code, 0, "{err}");
     assert!(sb.exists('l', "newdir"), "mkdir 落盘");
     assert!(sb.exists('r', "newdir"));
-    assert!(sb.exists('l', "renamed_o.txt"), "DOS 掩码改名（? 取源名首字符）: {err}");
+    assert!(
+        sb.exists('l', "renamed_o.txt"),
+        "DOS 掩码改名（? 取源名首字符）: {err}"
+    );
     let _ = std::fs::remove_dir_all(&boxd);
 }
 
@@ -357,9 +388,13 @@ fn script_10_attrib_readonly() {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let mode = std::fs::metadata(sb.l.join("ro.txt")).unwrap().permissions().mode();
+        let mode = std::fs::metadata(sb.l.join("ro.txt"))
+            .unwrap()
+            .permissions()
+            .mode();
         assert_eq!(mode & 0o222, 0, "+r 后应无写位");
-        let _ = std::fs::set_permissions(sb.l.join("ro.txt"), std::fs::Permissions::from_mode(0o644));
+        let _ =
+            std::fs::set_permissions(sb.l.join("ro.txt"), std::fs::Permissions::from_mode(0o644));
     }
     let _ = std::fs::remove_dir_all(&boxd);
 }
@@ -433,7 +468,10 @@ fn script_13_criteria_compare_expand() {
     let (code, _o, err) = run_script(&boxd, &src, &[], &[]);
     assert_eq!(code, 0, "{err}");
     let stats = std::fs::read_to_string(boxd.join("c.stats")).unwrap();
-    assert!(stats.contains("contentDiff=1"), "EXPAND 后子项进入比较/统计: {stats}");
+    assert!(
+        stats.contains("contentDiff=1"),
+        "EXPAND 后子项进入比较/统计: {stats}"
+    );
     let _ = std::fs::remove_dir_all(&boxd);
 }
 
@@ -451,7 +489,10 @@ fn script_14_variables_and_conditionals() {
     assert_eq!(code, 0, "{err}");
     assert!(boxd.join("cond.stats").exists(), "if-not-exists 分支执行");
     assert!(!boxd.join("wrong.stats").exists(), "假分支不应执行");
-    assert!(boxd.join("vars.log").exists(), "if-exists 真分支执行（LOG）");
+    assert!(
+        boxd.join("vars.log").exists(),
+        "if-exists 真分支执行（LOG）"
+    );
     let _ = std::fs::remove_dir_all(&boxd);
 }
 
@@ -466,7 +507,8 @@ fn script_15_env_var_and_positional_via_aiscript() {
     assert!(boxd.join("out-named.txt").exists(), "%3 模板展开");
     // --var 注入 %VAR%（优先于环境变量）
     let src2 = "load %1 %2\nfolder-report layout:stats output-to:out-%AICTest%.txt\n";
-    let (code2, _o2, err2) = run_aiscript(&boxd, src2, &[sb.ls(), sb.rs()], &["--var", "AICTest=envx"]);
+    let (code2, _o2, err2) =
+        run_aiscript(&boxd, src2, &[sb.ls(), sb.rs()], &["--var", "AICTest=envx"]);
     assert_eq!(code2, 0, "{err2}");
     assert!(boxd.join("out-envx.txt").exists(), "--var 注入 %VAR%");
     let _ = std::fs::remove_dir_all(&boxd);
@@ -480,7 +522,12 @@ fn script_16_exit_codes_and_stop_on_error() {
     let (code, _o, err) = run_script(&boxd, "totally-bogus-cmd\n", &[], &[]);
     assert_eq!(code, 106, "语法错误 106: {err}");
     // 107 加载失败
-    let (code, _o, err) = run_script(&boxd, &format!("load {}/missing {}/missing2\n", sb.ls(), sb.rs()), &[], &[]);
+    let (code, _o, err) = run_script(
+        &boxd,
+        &format!("load {}/missing {}/missing2\n", sb.ls(), sb.rs()),
+        &[],
+        &[],
+    );
     assert_eq!(code, 107, "加载失败 107: {err}");
     // 105 脚本读取失败（aiscript 独立入口）
     let mut cmd = Command::new(harness::cli_bin("aiscript"));
@@ -498,7 +545,11 @@ fn script_16_exit_codes_and_stop_on_error() {
     assert_eq!(code, 2, "stop-on-error 运行期失败退出 2: {err}");
     assert!(err.contains("media"), "{err}");
     // 无 stop-on-error：继续执行，退出 0
-    let src = format!("load {l} {r}\nmedia-report output-to:x.txt\nbeep\n", l = sb.ls(), r = sb.rs());
+    let src = format!(
+        "load {l} {r}\nmedia-report output-to:x.txt\nbeep\n",
+        l = sb.ls(),
+        r = sb.rs()
+    );
     let (code, _o, _e) = run_script(&boxd, &src, &[], &[]);
     assert_eq!(code, 0, "容错模式继续执行");
     let _ = std::fs::remove_dir_all(&boxd);
@@ -531,7 +582,11 @@ fn script_18_at_positional_form_and_silent() {
     let script_path = boxd.join("at.aicscript");
     std::fs::write(
         &script_path,
-        format!("load {l} {r}\nfolder-report layout:stats output-to:at.stats\n", l = sb.ls(), r = sb.rs()),
+        format!(
+            "load {l} {r}\nfolder-report layout:stats output-to:at.stats\n",
+            l = sb.ls(),
+            r = sb.rs()
+        ),
     )
     .unwrap();
     // FR-CLI-002：aic @script 位置参数形态
@@ -540,7 +595,12 @@ fn script_18_at_positional_form_and_silent() {
     cmd.arg(format!("@{}", script_path.to_str().unwrap()));
     cmd.arg("--silent");
     let out = cmd.output().unwrap();
-    assert_eq!(out.status.code(), Some(0), "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert!(boxd.join("at.stats").exists(), "@script 形态执行");
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(!stderr.contains("[1/2]"), "--silent 抑制状态行: {stderr}");
@@ -579,7 +639,10 @@ fn script_20_identical_session_zero_exit() {
     let (code, _o, err) = run_script(&boxd, &src, &[], &[]);
     assert_eq!(code, 0, "{err}");
     let report = std::fs::read_to_string(boxd.join("clean.txt")).unwrap();
-    assert!(report.contains("相同=1") || report.contains("same=1"), "{report}");
+    assert!(
+        report.contains("相同=1") || report.contains("same=1"),
+        "{report}"
+    );
     let _ = std::fs::remove_dir_all(&boxd);
 }
 

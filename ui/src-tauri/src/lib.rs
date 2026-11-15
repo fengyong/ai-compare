@@ -55,7 +55,12 @@ fn dev_engine_path() -> PathBuf {
     } else {
         ENGINE_NAME.to_string()
     };
-    manifest_dir.join("..").join("..").join("target").join("debug").join(exe)
+    manifest_dir
+        .join("..")
+        .join("..")
+        .join("target")
+        .join("debug")
+        .join(exe)
 }
 
 fn resolve_engine_path() -> Result<PathBuf, String> {
@@ -137,7 +142,10 @@ fn engine_start(
             }
             Err(e) => {
                 // 探活失败（罕见）：按已死处理，避免僵尸条目永久驻留
-                eprintln!("[engine] 探活引擎进程失败（pid={}）: {e}，清理后重新启动", p.pid);
+                eprintln!(
+                    "[engine] 探活引擎进程失败（pid={}）: {e}，清理后重新启动",
+                    p.pid
+                );
                 guard.take();
             }
         }
@@ -380,9 +388,10 @@ fn settings_read_inner(path: String) -> Result<SettingsReadResult, String> {
             found: true,
             contents: Some(contents),
         }),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            Ok(SettingsReadResult { found: false, contents: None })
-        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(SettingsReadResult {
+            found: false,
+            contents: None,
+        }),
         Err(e) => Err(format!("读取设置文件失败（{path}）: {e}")),
     }
 }
@@ -743,9 +752,15 @@ mod tests {
     fn settings_write_bytes_writes_exact_non_utf8_bytes() {
         let dir = tempfile::tempdir().unwrap();
         let p = dir.path().join("nested/img.png");
-        let bytes: Vec<u8> = vec![0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0xFF, 0x00, 0xFE];
+        let bytes: Vec<u8> = vec![
+            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0xFF, 0x00, 0xFE,
+        ];
         settings_write_bytes_inner(p.display().to_string(), bytes.clone()).unwrap();
-        assert_eq!(std::fs::read(&p).unwrap(), bytes, "字节被改写（疑似走了 UTF-8 字符串路径）");
+        assert_eq!(
+            std::fs::read(&p).unwrap(),
+            bytes,
+            "字节被改写（疑似走了 UTF-8 字符串路径）"
+        );
         assert_eq!(entries(p.parent().unwrap()), vec!["img.png"]);
     }
 
@@ -757,7 +772,10 @@ mod tests {
         settings_write_bytes_inner(p.display().to_string(), vec![0x00, 0x01, 0x02]).unwrap();
         settings_write_bytes_inner(p.display().to_string(), vec![0x03, 0x04]).unwrap();
         assert_eq!(std::fs::read(&p).unwrap(), vec![0x03, 0x04]);
-        assert_eq!(std::fs::read(p.with_extension("dat.bak")).unwrap(), vec![0x00, 0x01, 0x02]);
+        assert_eq!(
+            std::fs::read(p.with_extension("dat.bak")).unwrap(),
+            vec![0x00, 0x01, 0x02]
+        );
         assert_eq!(entries(dir.path()), vec!["blob.dat", "blob.dat.bak"]);
     }
 

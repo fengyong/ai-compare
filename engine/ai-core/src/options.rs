@@ -182,7 +182,11 @@ impl ManualAlignOptions {
     }
 
     /// 校验锚点：等长、单调、不重叠、在行数范围内。返回 Err(说明) 表示无效。
-    pub fn validate(&self, left_len: u32, right_len: u32) -> Result<(), crate::sections::DiffError> {
+    pub fn validate(
+        &self,
+        left_len: u32,
+        right_len: u32,
+    ) -> Result<(), crate::sections::DiffError> {
         let mut prev_l = 0u32;
         let mut prev_r = 0u32;
         for a in &self.align_anchors {

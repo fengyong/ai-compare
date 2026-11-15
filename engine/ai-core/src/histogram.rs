@@ -80,7 +80,11 @@ mod tests {
         for op in ops {
             match op {
                 RawOp::Equal(k) => {
-                    assert_eq!(&a[ia..ia + *k as usize], &b[ib..ib + *k as usize], "Equal 段必须真等");
+                    assert_eq!(
+                        &a[ia..ia + *k as usize],
+                        &b[ib..ib + *k as usize],
+                        "Equal 段必须真等"
+                    );
                     ia += *k as usize;
                     ib += *k as usize;
                 }
@@ -111,7 +115,15 @@ mod tests {
         let b = strs(&["one", "TWO", "three"]);
         let ops = diff_keys(&a, &b);
         replay_ok(&ops, &a, &b);
-        assert_eq!(ops, vec![RawOp::Equal(1), RawOp::Delete(1), RawOp::Insert(1), RawOp::Equal(1)]);
+        assert_eq!(
+            ops,
+            vec![
+                RawOp::Equal(1),
+                RawOp::Delete(1),
+                RawOp::Insert(1),
+                RawOp::Equal(1)
+            ]
+        );
     }
 
     #[test]
@@ -125,8 +137,12 @@ mod tests {
     #[test]
     fn highly_repeated_tokens_terminate() {
         // 高重复 token（直方图回退路径）：必须终止且重放正确
-        let a: Vec<&str> = (0..2000).map(|i| if i % 3 == 0 { "x" } else { "y" }).collect();
-        let b: Vec<&str> = (0..2100).map(|i| if i % 5 == 0 { "x" } else { "y" }).collect();
+        let a: Vec<&str> = (0..2000)
+            .map(|i| if i % 3 == 0 { "x" } else { "y" })
+            .collect();
+        let b: Vec<&str> = (0..2100)
+            .map(|i| if i % 5 == 0 { "x" } else { "y" })
+            .collect();
         let ops = diff_keys(&a, &b);
         replay_ok(&ops, &a, &b);
     }

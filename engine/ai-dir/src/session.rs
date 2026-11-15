@@ -28,9 +28,11 @@ use ai_protocol::{
     DirEntryStatus, DirRow, DirStats, DisplayFilterSpec, EntryKind, NameFilterSpec,
     OtherFilterSpec, ProgressPhase, ScanProgress, SideInfo,
 };
-use ai_vfs::{dos_attr, EntryKind as VfsEntryKind, StatInfo as VfsStat, VfsDirEntry, VfsPath, VfsProvider};
+use ai_vfs::{
+    dos_attr, EntryKind as VfsEntryKind, StatInfo as VfsStat, VfsDirEntry, VfsPath, VfsProvider,
+};
 
-use crate::align::{NameAligner, AlignedPair};
+use crate::align::{AlignedPair, NameAligner};
 use crate::cache::HashCache;
 use crate::filter::{NameFilter, OtherFilter};
 use crate::quick::{QuickDiffReason, QuickOutcome, QuickTest};
@@ -38,7 +40,9 @@ use crate::{aggregate_children, DirNode, DirScanError, NodeId};
 
 /// 后台扫描 worker 并发上限（ADR-004：本地默认 min(32, cpus*4)）
 pub fn default_workers() -> usize {
-    let cpus = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
+    let cpus = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4);
     (cpus * 4).clamp(1, 32)
 }
 
@@ -194,10 +198,18 @@ impl DirModel {
         opts: DirSessionOptions,
         cancel: crate::CancelFlag,
     ) -> Result<(Arc<DirModel>, DirDeltaData), DirScanError> {
-        let ls = vfs.stat(left).await.map_err(|e| crate::map_root_err("left", left, e))?;
-        let rs = vfs.stat(right).await.map_err(|e| crate::map_root_err("right", right, e))?;
+        let ls = vfs
+            .stat(left)
+            .await
+            .map_err(|e| crate::map_root_err("left", left, e))?;
+        let rs = vfs
+            .stat(right)
+            .await
+            .map_err(|e| crate::map_root_err("right", right, e))?;
         if ls.kind != VfsEntryKind::Dir || rs.kind != VfsEntryKind::Dir {
-            return Err(DirScanError::Vfs(ai_vfs::VfsError::NotADirectory { path: format!("{left} / {right}") }));
+            return Err(DirScanError::Vfs(ai_vfs::VfsError::NotADirectory {
+                path: format!("{left} / {right}"),
+            }));
         }
 
         let arena = vec![DirNode {
@@ -256,7 +268,9 @@ impl DirModel {
         for (l, r) in &pairs {
             let _ = model.align(l, r).await;
         }
-        let done_now = opts.target_depth.is_some_and(|d| d <= opts.visible_depth.max(1));
+        let done_now = opts
+            .target_depth
+            .is_some_and(|d| d <= opts.visible_depth.max(1));
         if done_now && model.phase.load(Ordering::SeqCst) == PHASE_RUNNING {
             model.finish_locked();
         } else if !done_now {
@@ -289,7 +303,11 @@ impl DirModel {
             .enumerate()
             .filter(|(_, n)| n.is_paired_dir() && !n.expanded)
             .map(|(i, n)| {
-                let level = if n.rel_path.is_empty() { 0 } else { n.rel_path.split('/').count() as u32 };
+                let level = if n.rel_path.is_empty() {
+                    0
+                } else {
+                    n.rel_path.split('/').count() as u32
+                };
                 (i as NodeId, n.rel_path.clone(), level)
             })
             .collect();
@@ -300,7 +318,14 @@ impl DirModel {
             }
             let lp = self.roots.0.join(&rel);
             let rp = self.roots.1.join(&rel);
-            st.bg.push_back(WorkItem { dir_id: id, lp, rp, level, prio: Prio::Background, gen });
+            st.bg.push_back(WorkItem {
+                dir_id: id,
+                lp,
+                rp,
+                level,
+                prio: Prio::Background,
+                gen,
+            });
             st.pending += 1;
         }
         self.recompute_est(&mut st);
@@ -321,7 +346,11 @@ impl DirModel {
         }
         let workers = {
             let opts = self.opts.lock().expect("选项锁");
-            if opts.workers == 0 { default_workers() } else { opts.workers }
+            if opts.workers == 0 {
+                default_workers()
+            } else {
+                opts.workers
+            }
         };
         let handles: Vec<tokio::task::JoinHandle<()>> = (0..workers)
             .map(|_| {
@@ -338,7 +367,10 @@ impl DirModel {
         let mut st = self.state.lock().expect("模型锁");
         loop {
             let item = st.fg.pop_front().or_else(|| st.bg.pop_front())?;
-            if st.gen != item.gen || st.arena[item.dir_id as usize].expanded || st.in_flight.contains(&item.dir_id) {
+            if st.gen != item.gen
+                || st.arena[item.dir_id as usize].expanded
+                || st.in_flight.contains(&item.dir_id)
+            {
                 st.pending = st.pending.saturating_sub(1);
                 continue;
             }
@@ -411,7 +443,11 @@ impl DirModel {
             return;
         }
         let opts = self.opts.lock().expect("选项锁").clone();
-        let name_filter = NameFilter::from_spec(opts.name_filter.as_ref().unwrap_or(&NameFilterSpec::default()));
+        let name_filter = NameFilter::from_spec(
+            opts.name_filter
+                .as_ref()
+                .unwrap_or(&NameFilterSpec::default()),
+        );
         let parent_rel = {
             let st = self.state.lock().expect("模型锁");
             st.arena[item.dir_id as usize].rel_path.clone()
@@ -423,7 +459,10 @@ impl DirModel {
             return;
         }
 
-        let (mut le, mut re) = match (self.vfs.list_dir(&item.lp).await, self.vfs.list_dir(&item.rp).await) {
+        let (mut le, mut re) = match (
+            self.vfs.list_dir(&item.lp).await,
+            self.vfs.list_dir(&item.rp).await,
+        ) {
             (Ok(l), Ok(r)) => (l, r),
             (Err(e), _) | (_, Err(e)) => {
                 let mut st = self.state.lock().expect("模型锁");
@@ -454,7 +493,10 @@ impl DirModel {
         re.sort_by(|a, b| a.name.cmp(&b.name));
         let pairs = opts.aligner.align(&le, &re);
 
-        let dctx = DecideCtx { opts: &opts, name_filter: &name_filter };
+        let dctx = DecideCtx {
+            opts: &opts,
+            name_filter: &name_filter,
+        };
         let mut decided: Vec<DecidedChild> = Vec::with_capacity(pairs.len());
         for pair in &pairs {
             if self.cancel.is_cancelled() {
@@ -489,12 +531,20 @@ impl DirModel {
     ) -> Option<DecidedChild> {
         let opts = ctx.opts;
         let name_filter = ctx.name_filter;
-        let rel = if parent_rel.is_empty() { pair.name.clone() } else { format!("{parent_rel}/{}", pair.name) };
+        let rel = if parent_rel.is_empty() {
+            pair.name.clone()
+        } else {
+            format!("{parent_rel}/{}", pair.name)
+        };
         let segments: Vec<&str> = rel.split('/').filter(|s| !s.is_empty()).collect();
         let lkind = pair.left.map(|i| le[i as usize].stat.kind);
         let rkind = pair.right.map(|i| re[i as usize].stat.kind);
         let is_dir = lkind == Some(VfsEntryKind::Dir) || rkind == Some(VfsEntryKind::Dir);
-        let target_kind = if is_dir { VfsEntryKind::Dir } else { VfsEntryKind::File };
+        let target_kind = if is_dir {
+            VfsEntryKind::Dir
+        } else {
+            VfsEntryKind::File
+        };
 
         // 名称过滤（目录递归语义：排除目录剪枝 / include 父链自动包含）
         if is_dir {
@@ -510,10 +560,22 @@ impl DirModel {
             if let Some(spec) = &opts.other_filter {
                 let of = OtherFilter::from_spec(spec.clone());
                 let ok = match pair.left {
-                    Some(li) => of.allows(self.vfs.as_ref(), &self.roots.0.join(&rel), &le[li as usize].stat).await,
-                    None => of
-                        .allows(self.vfs.as_ref(), &self.roots.1.join(&rel), &re[pair.right.expect("对齐必有单侧") as usize].stat)
-                        .await,
+                    Some(li) => {
+                        of.allows(
+                            self.vfs.as_ref(),
+                            &self.roots.0.join(&rel),
+                            &le[li as usize].stat,
+                        )
+                        .await
+                    }
+                    None => {
+                        of.allows(
+                            self.vfs.as_ref(),
+                            &self.roots.1.join(&rel),
+                            &re[pair.right.expect("对齐必有单侧") as usize].stat,
+                        )
+                        .await
+                    }
                 };
                 if !ok {
                     return None;
@@ -521,8 +583,12 @@ impl DirModel {
             }
         }
 
-        let left = pair.left.map(|i| proto_side(&le[i as usize].stat, &opts.criteria));
-        let right = pair.right.map(|i| proto_side(&re[i as usize].stat, &opts.criteria));
+        let left = pair
+            .left
+            .map(|i| proto_side(&le[i as usize].stat, &opts.criteria));
+        let right = pair
+            .right
+            .map(|i| proto_side(&re[i as usize].stat, &opts.criteria));
         let status = match (pair.left, pair.right) {
             (Some(li), Some(ri)) => {
                 if is_dir {
@@ -601,13 +667,24 @@ impl DirModel {
     }
 
     /// 提交子项到 arena（持锁调用）：建节点、连父子、入队子目录、聚合上推
-    fn commit_children(&self, st: &mut ModelState, _opts: &DirSessionOptions, dir_id: NodeId, level: u32, decided: Vec<DecidedChild>) {
+    fn commit_children(
+        &self,
+        st: &mut ModelState,
+        _opts: &DirSessionOptions,
+        dir_id: NodeId,
+        level: u32,
+        decided: Vec<DecidedChild>,
+    ) {
         let target = self.target_depth().unwrap_or(u32::MAX);
         let fanout = decided.len() as u32;
         let gen = st.gen;
         for d in decided {
             let id = st.arena.len() as NodeId;
-            let kind = if d.target_kind == VfsEntryKind::Dir { EntryKind::Dir } else { EntryKind::File };
+            let kind = if d.target_kind == VfsEntryKind::Dir {
+                EntryKind::Dir
+            } else {
+                EntryKind::File
+            };
             let has_both_sides = d.left.is_some() && d.right.is_some();
             let rel = d.rel.clone();
             st.arena.push(DirNode {
@@ -657,7 +734,8 @@ impl DirModel {
         // 运行平均扇出（估算用）
         if fanout > 0 {
             let prev = self.avg_fanout.load(Ordering::Relaxed);
-            self.avg_fanout.store((prev + fanout) / 2, Ordering::Relaxed);
+            self.avg_fanout
+                .store((prev + fanout) / 2, Ordering::Relaxed);
         }
         st.flat_dirty = true;
     }
@@ -689,7 +767,8 @@ impl DirModel {
     fn recompute_est(&self, st: &mut ModelState) {
         let queued = st.fg.len() + st.bg.len() + st.in_flight.len();
         let avg = self.avg_fanout.load(Ordering::Relaxed).max(1);
-        self.est_extra.store((queued as u32).saturating_mul(avg), Ordering::Relaxed);
+        self.est_extra
+            .store((queued as u32).saturating_mul(avg), Ordering::Relaxed);
     }
 
     // ------------------------------------------------------------------
@@ -719,7 +798,9 @@ impl DirModel {
                     .children
                     .iter()
                     .copied()
-                    .filter(|&c| st.arena[c as usize].is_paired_dir() && !st.arena[c as usize].expanded)
+                    .filter(|&c| {
+                        st.arena[c as usize].is_paired_dir() && !st.arena[c as usize].expanded
+                    })
                     .collect()
             };
             for c in children {
@@ -735,12 +816,27 @@ impl DirModel {
             let rel = st.arena[dir_id as usize].rel_path.clone();
             let gen = st.gen;
             (
-                if dir_id == 0 { self.roots.0.clone() } else { self.roots.0.join(&rel) },
-                if dir_id == 0 { self.roots.1.clone() } else { self.roots.1.join(&rel) },
+                if dir_id == 0 {
+                    self.roots.0.clone()
+                } else {
+                    self.roots.0.join(&rel)
+                },
+                if dir_id == 0 {
+                    self.roots.1.clone()
+                } else {
+                    self.roots.1.join(&rel)
+                },
                 gen,
             )
         };
-        let item = WorkItem { dir_id, lp, rp, level, prio: Prio::Foreground, gen };
+        let item = WorkItem {
+            dir_id,
+            lp,
+            rp,
+            level,
+            prio: Prio::Foreground,
+            gen,
+        };
         self.process_item(item).await;
         let mut st = self.state.lock().expect("模型锁");
         st.in_flight.remove(&dir_id);
@@ -751,7 +847,9 @@ impl DirModel {
         let target_id = {
             let st = self.state.lock().expect("模型锁");
             st.index.get(path).copied().ok_or_else(|| {
-                DirScanError::Vfs(ai_vfs::VfsError::NotFound { path: path.to_string() })
+                DirScanError::Vfs(ai_vfs::VfsError::NotFound {
+                    path: path.to_string(),
+                })
             })?
         };
         let kind = {
@@ -759,10 +857,16 @@ impl DirModel {
             st.arena[target_id as usize].kind
         };
         if kind != EntryKind::Dir {
-            return Err(DirScanError::Vfs(ai_vfs::VfsError::NotADirectory { path: path.to_string() }));
+            return Err(DirScanError::Vfs(ai_vfs::VfsError::NotADirectory {
+                path: path.to_string(),
+            }));
         }
         let before = self.row_estimate();
-        let level = if path.is_empty() { 0 } else { path.split('/').count() as u32 };
+        let level = if path.is_empty() {
+            0
+        } else {
+            path.split('/').count() as u32
+        };
         // 前台处理本层 + 深层（expand_sync 幂等；已入后台的目录等待其完成）
         {
             let mut st = self.state.lock().expect("模型锁");
@@ -770,7 +874,14 @@ impl DirModel {
                 let gen = st.gen;
                 st.in_flight.insert(target_id);
                 let (lp, rp) = (self.roots.0.join(path), self.roots.1.join(path));
-                st.fg.push_back(WorkItem { dir_id: target_id, lp, rp, level, prio: Prio::Foreground, gen });
+                st.fg.push_back(WorkItem {
+                    dir_id: target_id,
+                    lp,
+                    rp,
+                    level,
+                    prio: Prio::Foreground,
+                    gen,
+                });
                 st.pending += 1;
                 st.flat_dirty = true;
             }
@@ -830,7 +941,11 @@ impl DirModel {
         let plan = {
             let st = self.state.lock().expect("模型锁");
             if flat {
-                if st.flat_dirty { Plan::Flat } else { Plan::None }
+                if st.flat_dirty {
+                    Plan::Flat
+                } else {
+                    Plan::None
+                }
             } else if st.dirty.is_empty() && st.removals.is_empty() {
                 Plan::None
             } else {
@@ -863,7 +978,14 @@ impl DirModel {
         // progress() 内部需要 state 锁：先释放本锁再取（同线程重入会死锁）
         drop(st);
         let progress = self.progress();
-        Some(DirDeltaData { rev, upserts, removals, stats, progress, scan_errors })
+        Some(DirDeltaData {
+            rev,
+            upserts,
+            removals,
+            stats,
+            progress,
+            scan_errors,
+        })
     }
 
     /// 平铺视图里需要跨路径重判的配对（rel 左, rel 右, 名键）
@@ -871,19 +993,25 @@ impl DirModel {
         // 收集全部文件节点（按 key 分组）—— 与 flat_rows 相同的分组逻辑，
         // 此处只挑出"两侧 rel 不同"的配对供异步重判。
         let opts = self.opts.lock().expect("选项锁").clone();
-        let name_filter = NameFilter::from_spec(opts.name_filter.as_ref().unwrap_or(&NameFilterSpec::default()));
+        let name_filter = NameFilter::from_spec(
+            opts.name_filter
+                .as_ref()
+                .unwrap_or(&NameFilterSpec::default()),
+        );
         #[derive(Clone)]
         struct Occ {
             rel: String,
         }
-        let mut groups: std::collections::BTreeMap<String, (Vec<Occ>, Vec<Occ>)> = Default::default();
+        let mut groups: std::collections::BTreeMap<String, (Vec<Occ>, Vec<Occ>)> =
+            Default::default();
         {
             let st = self.state.lock().expect("模型锁");
             for node in st.arena.iter().skip(1) {
                 if node.kind != EntryKind::File {
                     continue;
                 }
-                let segments: Vec<&str> = node.rel_path.split('/').filter(|s| !s.is_empty()).collect();
+                let segments: Vec<&str> =
+                    node.rel_path.split('/').filter(|s| !s.is_empty()).collect();
                 if !name_filter.file_allowed(&segments) {
                     continue;
                 }
@@ -892,15 +1020,22 @@ impl DirModel {
                 } else {
                     crate::align::align_key(
                         &node.name,
-                        crate::align::AlignKeyOptions { case_insensitive: true, ..Default::default() },
+                        crate::align::AlignKeyOptions {
+                            case_insensitive: true,
+                            ..Default::default()
+                        },
                     )
                 };
                 let g = groups.entry(key).or_default();
                 if node.left.is_some() {
-                    g.0.push(Occ { rel: node.rel_path.clone() });
+                    g.0.push(Occ {
+                        rel: node.rel_path.clone(),
+                    });
                 }
                 if node.right.is_some() {
-                    g.1.push(Occ { rel: node.rel_path.clone() });
+                    g.1.push(Occ {
+                        rel: node.rel_path.clone(),
+                    });
                 }
             }
         }
@@ -920,7 +1055,11 @@ impl DirModel {
 
     /// 树视图行（dirty 集；显示过滤器 + 名称过滤目录可见性 -> hidden/suppressed）
     fn tree_rows(&self, st: &mut ModelState, opts: &DirSessionOptions) -> Vec<DirRow> {
-        let name_filter = NameFilter::from_spec(opts.name_filter.as_ref().unwrap_or(&NameFilterSpec::default()));
+        let name_filter = NameFilter::from_spec(
+            opts.name_filter
+                .as_ref()
+                .unwrap_or(&NameFilterSpec::default()),
+        );
         let mut rows = Vec::with_capacity(st.dirty.len());
         for &id in &st.dirty {
             if id == 0 {
@@ -928,11 +1067,17 @@ impl DirModel {
             }
             let node = &st.arena[id as usize];
             let segments: Vec<&str> = node.rel_path.split('/').filter(|s| !s.is_empty()).collect();
-            let mut display_hidden = !display_visible(node.status, node.left.clone(), node.right.clone(), &opts.display_filter);
+            let mut display_hidden = !display_visible(
+                node.status,
+                node.left.clone(),
+                node.right.clone(),
+                &opts.display_filter,
+            );
             if node.kind == EntryKind::Dir && name_filter.has_includes() {
                 // FR-DIR-034 默认语义：仅当目录包含可见文件（自身命中 include 或
                 // 后代存在被包含项）时出现
-                let visible = name_filter.dir_visible(&segments) || dir_has_included_descendant(&st.arena, id, &name_filter);
+                let visible = name_filter.dir_visible(&segments)
+                    || dir_has_included_descendant(&st.arena, id, &name_filter);
                 if !visible {
                     display_hidden = true;
                 }
@@ -956,8 +1101,17 @@ impl DirModel {
 
     /// 平铺视图行（FR-DIR-021）：跨目录按名对齐；差分输出变更行。
     /// `flat_cross` 携带跨路径配对的重判状态。
-    fn flat_rows(&self, st: &mut ModelState, opts: &DirSessionOptions, flat_cross: &[(String, String, String)]) -> Vec<DirRow> {
-        let name_filter = NameFilter::from_spec(opts.name_filter.as_ref().unwrap_or(&NameFilterSpec::default()));
+    fn flat_rows(
+        &self,
+        st: &mut ModelState,
+        opts: &DirSessionOptions,
+        flat_cross: &[(String, String, String)],
+    ) -> Vec<DirRow> {
+        let name_filter = NameFilter::from_spec(
+            opts.name_filter
+                .as_ref()
+                .unwrap_or(&NameFilterSpec::default()),
+        );
         // 跨路径配对的重判使用轻量判定：size+mtime 快速判定（与 file_status
         // 相同的快速部分；内容复核在平铺视图降级为 QuickDiff 未证实标记）。
         #[derive(Clone)]
@@ -966,7 +1120,8 @@ impl DirModel {
             left: Option<SideInfo>,
             right: Option<SideInfo>,
         }
-        let mut groups: std::collections::BTreeMap<String, (Vec<Occ>, Vec<Occ>)> = Default::default();
+        let mut groups: std::collections::BTreeMap<String, (Vec<Occ>, Vec<Occ>)> =
+            Default::default();
         for node in st.arena.iter().skip(1) {
             if node.kind != EntryKind::File {
                 continue;
@@ -980,23 +1135,40 @@ impl DirModel {
             } else {
                 crate::align::align_key(
                     &node.name,
-                    crate::align::AlignKeyOptions { case_insensitive: true, ..Default::default() },
+                    crate::align::AlignKeyOptions {
+                        case_insensitive: true,
+                        ..Default::default()
+                    },
                 )
             };
             let g = groups.entry(key).or_default();
             if node.left.is_some() {
-                g.0.push(Occ { rel: node.rel_path.clone(), left: node.left.clone(), right: node.right.clone() });
+                g.0.push(Occ {
+                    rel: node.rel_path.clone(),
+                    left: node.left.clone(),
+                    right: node.right.clone(),
+                });
             }
             if node.right.is_some() {
-                g.1.push(Occ { rel: node.rel_path.clone(), left: node.left.clone(), right: node.right.clone() });
+                g.1.push(Occ {
+                    rel: node.rel_path.clone(),
+                    left: node.left.clone(),
+                    right: node.right.clone(),
+                });
             }
         }
         // 跨路径重判状态（rel 对 -> status）
         let mut cross_status: HashMap<(String, String), DirEntryStatus> = HashMap::new();
         for (lrel, rrel, key) in flat_cross {
             let tester = QuickTest::new(&opts.criteria);
-            let l = st.index.get(lrel).and_then(|i| st.arena[*i as usize].left.clone());
-            let r = st.index.get(rrel).and_then(|i| st.arena[*i as usize].right.clone());
+            let l = st
+                .index
+                .get(lrel)
+                .and_then(|i| st.arena[*i as usize].left.clone());
+            let r = st
+                .index
+                .get(rrel)
+                .and_then(|i| st.arena[*i as usize].right.clone());
             let status = match (l, r) {
                 (Some(l), Some(r)) => {
                     let lstat = VfsStat::minimal(l.size, l.mtime_ms, VfsEntryKind::File);
@@ -1021,15 +1193,25 @@ impl DirModel {
                 let name = ls
                     .get(i)
                     .map(|o| o.rel.rsplit('/').next().unwrap_or(key).to_string())
-                    .or_else(|| rs.get(i).map(|o| o.rel.rsplit('/').next().unwrap_or(key).to_string()))
+                    .or_else(|| {
+                        rs.get(i)
+                            .map(|o| o.rel.rsplit('/').next().unwrap_or(key).to_string())
+                    })
                     .unwrap_or_else(|| key.clone());
-                let id = if single { key.clone() } else { format!("{key}#{i}") };
+                let id = if single {
+                    key.clone()
+                } else {
+                    format!("{key}#{i}")
+                };
                 let (lside, rside) = (ls.get(i), rs.get(i));
                 let status = match (lside, rside) {
                     (Some(l), Some(r)) => {
                         if l.rel == r.rel {
                             // 树内同名对：复用节点状态
-                            st.index.get(&l.rel).map(|nid| st.arena[*nid as usize].status).unwrap_or(DirEntryStatus::Unknown)
+                            st.index
+                                .get(&l.rel)
+                                .map(|nid| st.arena[*nid as usize].status)
+                                .unwrap_or(DirEntryStatus::Unknown)
                         } else {
                             cross_status
                                 .get(&(l.rel.clone(), r.rel.clone()))
@@ -1060,7 +1242,12 @@ impl DirModel {
         }
         // 显示过滤器（平铺行同样遵守；FR-DIR-033）
         for row in &mut new_rows {
-            let display_hidden = !display_visible(row.status, row.left.clone(), row.right.clone(), &opts.display_filter);
+            let display_hidden = !display_visible(
+                row.status,
+                row.left.clone(),
+                row.right.clone(),
+                &opts.display_filter,
+            );
             row.hidden = display_hidden && !opts.suppress;
             row.suppressed = display_hidden && opts.suppress;
         }
@@ -1146,7 +1333,11 @@ impl DirModel {
             let mut changed = false;
             if let Some(nf) = name_filter {
                 // 全空 spec 与「无过滤器」语义等价，归一为 None 以便判等
-                let nf = if nf == NameFilterSpec::default() { None } else { Some(nf) };
+                let nf = if nf == NameFilterSpec::default() {
+                    None
+                } else {
+                    Some(nf)
+                };
                 if nf != opts.name_filter {
                     opts.name_filter = nf;
                     changed = true;
@@ -1172,7 +1363,12 @@ impl DirModel {
     }
 
     /// 更新显示过滤器 / 抑制 / 平铺（只影响显示，不重扫：FR-DIR-033/035/021）
-    pub fn set_display(&self, display_filter: Option<DisplayFilterSpec>, suppress: Option<bool>, flat: Option<bool>) {
+    pub fn set_display(
+        &self,
+        display_filter: Option<DisplayFilterSpec>,
+        suppress: Option<bool>,
+        flat: Option<bool>,
+    ) {
         {
             let mut opts = self.opts.lock().expect("选项锁");
             if let Some(df) = display_filter {
@@ -1213,7 +1409,12 @@ impl DirModel {
         {
             let mut st = self.state.lock().expect("模型锁");
             st.gen += 1;
-            st.removals = st.arena.iter().skip(1).map(|n| n.rel_path.clone()).collect();
+            st.removals = st
+                .arena
+                .iter()
+                .skip(1)
+                .map(|n| n.rel_path.clone())
+                .collect();
             st.arena = vec![DirNode {
                 rel_path: String::new(),
                 name: String::new(),
@@ -1250,7 +1451,9 @@ impl DirModel {
         for (l, r) in &pairs {
             let _ = self.align(l, r).await;
         }
-        let done_now = opts_new.target_depth.is_some_and(|d| d <= visible_depth.max(1));
+        let done_now = opts_new
+            .target_depth
+            .is_some_and(|d| d <= visible_depth.max(1));
         if done_now {
             self.finish_locked();
         } else {
@@ -1275,7 +1478,9 @@ impl DirModel {
         let (lid, rid) = match (lid, rid) {
             (Some(l), Some(r)) => (l, r),
             _ => {
-                return Err(DirScanError::Vfs(ai_vfs::VfsError::NotFound { path: format!("{left} | {right}") }));
+                return Err(DirScanError::Vfs(ai_vfs::VfsError::NotFound {
+                    path: format!("{left} | {right}"),
+                }));
             }
         };
         {
@@ -1288,7 +1493,9 @@ impl DirModel {
                     "手动对齐要求父文件夹并排（同父）".into(),
                 )));
             }
-            if st.arena[lid as usize].kind != EntryKind::File || st.arena[rid as usize].kind != EntryKind::File {
+            if st.arena[lid as usize].kind != EntryKind::File
+                || st.arena[rid as usize].kind != EntryKind::File
+            {
                 return Err(DirScanError::Vfs(ai_vfs::VfsError::InvalidPath(
                     "P2 手动对齐仅支持文件项（目录保持树形对齐）".into(),
                 )));
@@ -1420,9 +1627,23 @@ impl DirModel {
         let status = if aligned {
             // 合并两侧元数据（以 a 的 left 有值优先确定左右）
             let (lrel, rrel, ls, rs, lname, rname) = if aleft.is_some() {
-                (arel.clone(), brel.clone(), aleft, bright, aname.clone(), bname.clone())
+                (
+                    arel.clone(),
+                    brel.clone(),
+                    aleft,
+                    bright,
+                    aname.clone(),
+                    bname.clone(),
+                )
             } else {
-                (brel.clone(), arel.clone(), bleft, aright, bname.clone(), aname.clone())
+                (
+                    brel.clone(),
+                    arel.clone(),
+                    bleft,
+                    aright,
+                    bname.clone(),
+                    aname.clone(),
+                )
             };
             match (ls, rs) {
                 (Some(l), Some(r)) => {
@@ -1430,10 +1651,16 @@ impl DirModel {
                     let rstat = VfsStat::minimal(r.size, r.mtime_ms, VfsEntryKind::File);
                     self.file_status(
                         &opts,
-                        &SidePaths { left: self.roots.0.join(&lrel), right: self.roots.1.join(&rrel) },
+                        &SidePaths {
+                            left: self.roots.0.join(&lrel),
+                            right: self.roots.1.join(&rrel),
+                        },
                         &lstat,
                         &rstat,
-                        &SideNames { left: lname, right: rname },
+                        &SideNames {
+                            left: lname,
+                            right: rname,
+                        },
                     )
                     .await
                 }
@@ -1478,7 +1705,10 @@ impl DirModel {
     async fn rejudge_solo(&self, id: NodeId) -> bool {
         let (left, right) = {
             let st = self.state.lock().expect("模型锁");
-            (st.arena[id as usize].left.clone(), st.arena[id as usize].right.clone())
+            (
+                st.arena[id as usize].left.clone(),
+                st.arena[id as usize].right.clone(),
+            )
         };
         let status = match (left, right) {
             (Some(_), Some(_)) => DirEntryStatus::Same,
@@ -1523,14 +1753,25 @@ impl DirModel {
         let opts = self.opts.lock().expect("选项锁").clone();
         if !opts.flat {
             let st = self.state.lock().expect("模型锁");
-            let name_filter = NameFilter::from_spec(opts.name_filter.as_ref().unwrap_or(&NameFilterSpec::default()));
+            let name_filter = NameFilter::from_spec(
+                opts.name_filter
+                    .as_ref()
+                    .unwrap_or(&NameFilterSpec::default()),
+            );
             let mut rows = Vec::with_capacity(st.arena.len());
             for (idx, node) in st.arena.iter().enumerate().skip(1) {
                 let id = idx as NodeId;
-                let segments: Vec<&str> = node.rel_path.split('/').filter(|s| !s.is_empty()).collect();
-                let mut display_hidden = !display_visible(node.status, node.left.clone(), node.right.clone(), &opts.display_filter);
+                let segments: Vec<&str> =
+                    node.rel_path.split('/').filter(|s| !s.is_empty()).collect();
+                let mut display_hidden = !display_visible(
+                    node.status,
+                    node.left.clone(),
+                    node.right.clone(),
+                    &opts.display_filter,
+                );
                 if node.kind == EntryKind::Dir && name_filter.has_includes() {
-                    let visible = name_filter.dir_visible(&segments) || dir_has_included_descendant(&st.arena, id, &name_filter);
+                    let visible = name_filter.dir_visible(&segments)
+                        || dir_has_included_descendant(&st.arena, id, &name_filter);
                     if !visible {
                         display_hidden = true;
                     }
@@ -1609,7 +1850,11 @@ fn dir_has_included_descendant(arena: &[DirNode], dir_id: NodeId, filter: &NameF
     let node = &arena[dir_id as usize];
     for &c in &node.children {
         let child = &arena[c as usize];
-        let segments: Vec<&str> = child.rel_path.split('/').filter(|s| !s.is_empty()).collect();
+        let segments: Vec<&str> = child
+            .rel_path
+            .split('/')
+            .filter(|s| !s.is_empty())
+            .collect();
         match child.kind {
             EntryKind::File => {
                 if filter.file_allowed(&segments) {
@@ -1680,7 +1925,12 @@ pub(crate) fn proto_side(stat: &VfsStat, criteria: &CompareCriteria) -> SideInfo
 }
 
 /// 显示过滤器可见性（FR-DIR-033：状态 -> 类别；QuickDiff 按 mtime 分左右较新）
-pub fn display_visible(status: DirEntryStatus, left: Option<SideInfo>, right: Option<SideInfo>, df: &DisplayFilterSpec) -> bool {
+pub fn display_visible(
+    status: DirEntryStatus,
+    left: Option<SideInfo>,
+    right: Option<SideInfo>,
+    df: &DisplayFilterSpec,
+) -> bool {
     match status {
         DirEntryStatus::Same | DirEntryStatus::DirSame => df.show_same,
         DirEntryStatus::ContentDiff | DirEntryStatus::Similar => df.show_content_diff,

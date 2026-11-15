@@ -94,11 +94,7 @@ impl OutboundTx {
     }
 
     /// 带会话级取消旗标的发送（pump 用）：旗标置位后不再无限等待慢读者。
-    pub async fn send_with_cancel(
-        &self,
-        msg: Outbound,
-        cancel: Option<&AtomicBool>,
-    ) -> bool {
+    pub async fn send_with_cancel(&self, msg: Outbound, cancel: Option<&AtomicBool>) -> bool {
         // watch 新订阅者的初值就是当前状态，`changed()` 只报告之后的变化；
         // 因此先显式检查一次，避免"已关闭后新发起的 send"要多等一个轮询周期。
         if self.shutdown.is_fired() {
@@ -151,7 +147,10 @@ mod tests {
     use std::sync::atomic::AtomicBool;
 
     fn msg(n: i64) -> Outbound {
-        Outbound::Response(RpcResponse::success(ai_protocol::RequestId::Number(n), json!({})))
+        Outbound::Response(RpcResponse::success(
+            ai_protocol::RequestId::Number(n),
+            json!({}),
+        ))
     }
 
     fn drained(rx: &mut mpsc::Receiver<Outbound>) -> usize {
@@ -207,7 +206,11 @@ mod tests {
         let ids = reader.await.unwrap();
         assert_eq!(ids.len(), 12, "一条都不能丢");
         for (i, id) in ids.iter().enumerate() {
-            assert_eq!(*id, ai_protocol::RequestId::Number(i as i64 + 1), "响应顺序不得重排");
+            assert_eq!(
+                *id,
+                ai_protocol::RequestId::Number(i as i64 + 1),
+                "响应顺序不得重排"
+            );
         }
     }
 

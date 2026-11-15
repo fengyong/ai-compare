@@ -56,17 +56,34 @@ pub struct ProgressiveDiffer<'a> {
 
 impl<'a> ProgressiveDiffer<'a> {
     /// 构造：裁剪 + 锚点分块 + 粗粒度计划（不 diff 任何块）。
-    pub fn new(left: &'a LineTable, right: &'a LineTable, cfg: &DiffConfig) -> Result<Self, DiffError> {
+    pub fn new(
+        left: &'a LineTable,
+        right: &'a LineTable,
+        cfg: &DiffConfig,
+    ) -> Result<Self, DiffError> {
         cfg.manual.validate(left.len() as u32, right.len() as u32)?;
         let opts = cfg.base.clone();
         // 全量键（含隔离哨兵：隔离行永不成为锚点、永不匹配）
-        let iso_l = pipeline::clip_ranges(&cfg.manual.isolate, DiffSide::Left, (0, left.len() as u32));
-        let iso_r = pipeline::clip_ranges(&cfg.manual.isolate, DiffSide::Right, (0, right.len() as u32));
-        let a_keys = pipeline::keys_for_range(left, (0, left.len() as u32), &opts, &iso_l, DiffSide::Left);
-        let b_keys = pipeline::keys_for_range(right, (0, right.len() as u32), &opts, &iso_r, DiffSide::Right);
+        let iso_l =
+            pipeline::clip_ranges(&cfg.manual.isolate, DiffSide::Left, (0, left.len() as u32));
+        let iso_r = pipeline::clip_ranges(
+            &cfg.manual.isolate,
+            DiffSide::Right,
+            (0, right.len() as u32),
+        );
+        let a_keys =
+            pipeline::keys_for_range(left, (0, left.len() as u32), &opts, &iso_l, DiffSide::Left);
+        let b_keys = pipeline::keys_for_range(
+            right,
+            (0, right.len() as u32),
+            &opts,
+            &iso_r,
+            DiffSide::Right,
+        );
 
         // 手动锚点分段（全量坐标，局部 == 全量）
-        let anchors = pipeline::window_anchors(&cfg.manual, (0, left.len() as u32), (0, right.len() as u32))?;
+        let anchors =
+            pipeline::window_anchors(&cfg.manual, (0, left.len() as u32), (0, right.len() as u32))?;
 
         let mut plan: Vec<PlanItem> = Vec::new();
         let mut blocks: Vec<(LineRange, LineRange)> = Vec::new();
@@ -77,7 +94,10 @@ impl<'a> ProgressiveDiffer<'a> {
                 &mut plan,
                 &mut blocks,
                 (&a_keys, &b_keys),
-                Segment { a: (pa, al.start), b: (pb, ar.start) },
+                Segment {
+                    a: (pa, al.start),
+                    b: (pb, ar.start),
+                },
             );
             plan.push(PlanItem::Anchor(*al, *ar));
             pa = al.end;
@@ -88,7 +108,10 @@ impl<'a> ProgressiveDiffer<'a> {
             &mut plan,
             &mut blocks,
             (&a_keys, &b_keys),
-            Segment { a: (pa, la_len), b: (pb, lb_len) },
+            Segment {
+                a: (pa, la_len),
+                b: (pb, lb_len),
+            },
         );
 
         let mut differ = ProgressiveDiffer {
@@ -173,7 +196,10 @@ impl<'a> ProgressiveDiffer<'a> {
             return Vec::new();
         }
         self.coarse_emitted = true;
-        self.sections.iter().map(|s| SectionEvent::Append(*s)).collect()
+        self.sections
+            .iter()
+            .map(|s| SectionEvent::Append(*s))
+            .collect()
     }
 
     /// 精化下一块；返回 `Replace` 事件（精化结果与占位相同时为空事件序列）。
@@ -210,8 +236,14 @@ impl<'a> ProgressiveDiffer<'a> {
                 }
             }
             // 块内重要性重判 + 从不对齐 + 块内合并（与一次性管线一致）
-            let classification =
-                keys::classify_sections(&refined, self.left, self.right, &self.opts, &self.importance, &self.manual);
+            let classification = keys::classify_sections(
+                &refined,
+                self.left,
+                self.right,
+                &self.opts,
+                &self.importance,
+                &self.manual,
+            );
             for (sec, imp) in refined.iter_mut().zip(classification) {
                 sec.important = imp;
             }
@@ -232,9 +264,15 @@ impl<'a> ProgressiveDiffer<'a> {
                 }
                 let prev = self.sections[prev_idx];
                 let first = *refined.first().expect("已检查");
-                let (pl, fl) = (prev.left.expect("Equal 必有左区间"), first.left.expect("Equal 必有左区间"));
+                let (pl, fl) = (
+                    prev.left.expect("Equal 必有左区间"),
+                    first.left.expect("Equal 必有左区间"),
+                );
                 debug_assert_eq!(pl.end, fl.start);
-                let (pr, fr) = (prev.right.expect("Equal 必有右区间"), first.right.expect("Equal 必有右区间"));
+                let (pr, fr) = (
+                    prev.right.expect("Equal 必有右区间"),
+                    first.right.expect("Equal 必有右区间"),
+                );
                 debug_assert_eq!(pr.end, fr.start);
                 self.sections[prev_idx].left = Some(LineRange::new(pl.start, fl.end));
                 self.sections[prev_idx].right = Some(LineRange::new(pr.start, fr.end));
@@ -250,9 +288,15 @@ impl<'a> ProgressiveDiffer<'a> {
                 }
                 let next = self.sections[next_idx];
                 let last = *refined.last().expect("已检查");
-                let (ll, nl) = (last.left.expect("Equal 必有左区间"), next.left.expect("Equal 必有左区间"));
+                let (ll, nl) = (
+                    last.left.expect("Equal 必有左区间"),
+                    next.left.expect("Equal 必有左区间"),
+                );
                 debug_assert_eq!(ll.end, nl.start);
-                let (lr2, nr) = (last.right.expect("Equal 必有右区间"), next.right.expect("Equal 必有右区间"));
+                let (lr2, nr) = (
+                    last.right.expect("Equal 必有右区间"),
+                    next.right.expect("Equal 必有右区间"),
+                );
                 debug_assert_eq!(lr2.end, nr.start);
                 self.sections[next_idx].left = Some(LineRange::new(ll.start, nl.end));
                 self.sections[next_idx].right = Some(LineRange::new(lr2.start, nr.end));
@@ -273,7 +317,8 @@ impl<'a> ProgressiveDiffer<'a> {
             // 拼装：替换 1 个占位 section；后续计划项下标平移
             let delta = refined.len() as isize - 1;
             let old_len = self.sections.len();
-            self.sections.splice(sec_idx..sec_idx + 1, refined.iter().cloned());
+            self.sections
+                .splice(sec_idx..sec_idx + 1, refined.iter().cloned());
             renumber(&mut self.sections);
             for idx in self.item_sec_idx.iter_mut().skip(plan_pos + 1) {
                 *idx = (*idx as isize + delta) as usize;
@@ -288,7 +333,10 @@ impl<'a> ProgressiveDiffer<'a> {
                 self.plan.remove(plan_pos);
                 self.item_sec_idx.remove(plan_pos);
             }
-            return Some(vec![SectionEvent::Replace { span: (head_id, head_id), with }]);
+            return Some(vec![SectionEvent::Replace {
+                span: (head_id, head_id),
+                with,
+            }]);
         }
         None
     }
@@ -304,7 +352,11 @@ impl<'a> ProgressiveDiffer<'a> {
     }
 
     /// 同步跑完全部精化（等价于一次性 Standard diff）。
-    pub fn run_to_end(left: &'a LineTable, right: &'a LineTable, cfg: &DiffConfig) -> KeyedDiffOutput {
+    pub fn run_to_end(
+        left: &'a LineTable,
+        right: &'a LineTable,
+        cfg: &DiffConfig,
+    ) -> KeyedDiffOutput {
         let mut differ = match ProgressiveDiffer::new(left, right, cfg) {
             Ok(d) => d,
             Err(e) => unreachable!("run_to_end 的锚点已由调用方校验：{e}"),
@@ -313,7 +365,10 @@ impl<'a> ProgressiveDiffer<'a> {
         while differ.poll().is_some() {}
         let summary = renumber(&mut differ.sections);
         keys::build_keyed_output(
-            crate::sections::DiffOutput { sections: differ.sections, summary },
+            crate::sections::DiffOutput {
+                sections: differ.sections,
+                summary,
+            },
             left,
             right,
             &differ.opts,
@@ -369,7 +424,10 @@ fn push_segment_items(
                 l.end = ai + 1;
                 r.end = bj + 1;
             }
-            _ => plan.push(PlanItem::Run(LineRange::new(ai, ai + 1), LineRange::new(bj, bj + 1))),
+            _ => plan.push(PlanItem::Run(
+                LineRange::new(ai, ai + 1),
+                LineRange::new(bj, bj + 1),
+            )),
         }
         prev_a = ai + 1;
         prev_b = bj + 1;
@@ -407,8 +465,14 @@ mod tests {
         assert!(matches!(&coarse[1], SectionEvent::Append(s) if s.kind == SectionKind::Change));
         assert_eq!(d.sections().len(), 3);
         // 粗粒度状态即可消费（占位范围正确）
-        assert_eq!(d.sections()[1].left, Some(crate::sections::LineRange::new(1, 3)));
-        assert_eq!(d.sections()[1].right, Some(crate::sections::LineRange::new(1, 2)));
+        assert_eq!(
+            d.sections()[1].left,
+            Some(crate::sections::LineRange::new(1, 3))
+        );
+        assert_eq!(
+            d.sections()[1].right,
+            Some(crate::sections::LineRange::new(1, 2))
+        );
 
         let mut events = Vec::new();
         while let Some(ev) = d.poll() {
@@ -418,7 +482,11 @@ mod tests {
         match &events[0] {
             SectionEvent::Replace { span, with } => {
                 assert_eq!(span.0, span.1, "替换单个占位");
-                assert_eq!(with.len(), 1, "块内 Equal 被头部吸收，Replace 只余 Delete: {with:?}");
+                assert_eq!(
+                    with.len(),
+                    1,
+                    "块内 Equal 被头部吸收，Replace 只余 Delete: {with:?}"
+                );
                 assert_eq!(with[0].kind, SectionKind::Delete);
             }
             other => panic!("应为 Replace 事件: {other:?}"),
@@ -428,7 +496,10 @@ mod tests {
         // 终态：Equal(h,x) + Delete(x) + Equal(t)（头部吸收后 3 个 section）
         assert_eq!(d.sections().len(), 3);
         assert_eq!(d.sections()[0].kind, SectionKind::Equal);
-        assert_eq!(d.sections()[0].left, Some(crate::sections::LineRange::new(0, 2)));
+        assert_eq!(
+            d.sections()[0].left,
+            Some(crate::sections::LineRange::new(0, 2))
+        );
         assert_eq!(d.sections()[1].kind, SectionKind::Delete);
         assert_eq!(d.sections()[2].kind, SectionKind::Equal);
     }
@@ -463,8 +534,14 @@ mod tests {
             match e {
                 SectionEvent::Append(s) => rebuilt.push(*s),
                 SectionEvent::Replace { span, with } => {
-                    let start = rebuilt.iter().position(|s| s.id == span.0).expect("span 起点存在");
-                    let end = rebuilt.iter().position(|s| s.id == span.1).expect("span 终点存在");
+                    let start = rebuilt
+                        .iter()
+                        .position(|s| s.id == span.0)
+                        .expect("span 起点存在");
+                    let end = rebuilt
+                        .iter()
+                        .position(|s| s.id == span.1)
+                        .expect("span 终点存在");
                     rebuilt.splice(start..=end, with.iter().cloned());
                     renumber(&mut rebuilt);
                 }
@@ -472,7 +549,10 @@ mod tests {
                 SectionEvent::Done(_) => {}
             }
         }
-        assert_eq!(rebuilt, one_shot.output.sections, "事件流重放 == 一次性结果");
+        assert_eq!(
+            rebuilt, one_shot.output.sections,
+            "事件流重放 == 一次性结果"
+        );
     }
 
     #[test]

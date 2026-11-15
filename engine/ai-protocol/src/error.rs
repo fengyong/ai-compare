@@ -83,7 +83,11 @@ mod tests {
 
     #[test]
     fn error_object_with_data_roundtrip() {
-        let e = error_object_with_data(codes::SESSION_NOT_FOUND, "gone", serde_json::json!({"sessionId": "s1"}));
+        let e = error_object_with_data(
+            codes::SESSION_NOT_FOUND,
+            "gone",
+            serde_json::json!({"sessionId": "s1"}),
+        );
         let v = serde_json::to_value(&e).unwrap();
         assert_eq!(v["data"]["sessionId"], "s1");
         let back: RpcErrorObject = serde_json::from_value(v).unwrap();

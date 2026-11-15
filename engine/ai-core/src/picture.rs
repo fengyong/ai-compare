@@ -11,7 +11,6 @@
 //! 视图消费：差异块列表即闪烁/并排视图的高亮框数据源；UI 渲染属
 //! P14 视图批次（本模块保持 headless 可全量单测）。
 
-
 /// 图片比较选项（FR-PIC 可配项；对齐 BC Picture Compare 设置子集）
 #[derive(Debug, Clone)]
 pub struct PictureDiffOptions {
@@ -194,10 +193,14 @@ mod tests {
         let r = diff_rgba(&solid(64, 64, [10, 20, 30, 255]), &right, &opts);
         assert_eq!(r.diff_pixels, 0, "容差内噪声不算差异");
         // 容差 0 则全部差异
-        let r0 = diff_rgba(&solid(64, 64, [10, 20, 30, 255]), &right, &PictureDiffOptions {
-            tolerance: 0,
-            ..Default::default()
-        });
+        let r0 = diff_rgba(
+            &solid(64, 64, [10, 20, 30, 255]),
+            &right,
+            &PictureDiffOptions {
+                tolerance: 0,
+                ..Default::default()
+            },
+        );
         assert_eq!(r0.diff_pixels, 64 * 64);
     }
 
@@ -257,8 +260,12 @@ mod tests {
                 right.put_pixel(x, y, Rgba([0, 255, 0, 255])); // 同区域换色
             }
         }
-        let r = diff_bytes(&png_bytes(&left), &png_bytes(&right), &PictureDiffOptions::default())
-            .unwrap();
+        let r = diff_bytes(
+            &png_bytes(&left),
+            &png_bytes(&right),
+            &PictureDiffOptions::default(),
+        )
+        .unwrap();
         assert_eq!(r.diff_pixels, 64);
         assert!(!r.blocks.is_empty());
     }

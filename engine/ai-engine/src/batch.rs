@@ -19,7 +19,11 @@ pub fn batch_rows(rows: Vec<DirRow>, max: usize) -> Vec<Batch> {
     let mut out = Vec::new();
     let total = rows.len();
     if total == 0 {
-        out.push(Batch { index: 0, has_more: false, upserts: Vec::new() });
+        out.push(Batch {
+            index: 0,
+            has_more: false,
+            upserts: Vec::new(),
+        });
         return out;
     }
     let max = if max == 0 { usize::MAX } else { max };
@@ -28,7 +32,11 @@ pub fn batch_rows(rows: Vec<DirRow>, max: usize) -> Vec<Batch> {
     while start < total {
         let end = (start + max).min(total);
         let has_more = end < total;
-        out.push(Batch { index, has_more, upserts: rows[start..end].to_vec() });
+        out.push(Batch {
+            index,
+            has_more,
+            upserts: rows[start..end].to_vec(),
+        });
         index += 1;
         start = end;
     }
@@ -36,12 +44,7 @@ pub fn batch_rows(rows: Vec<DirRow>, max: usize) -> Vec<Batch> {
 }
 
 /// 组装 dir/delta 通知载荷
-pub fn make_delta(
-    session_id: &str,
-    rev: u64,
-    batch: &Batch,
-    stats: DirStats,
-) -> DirDelta {
+pub fn make_delta(session_id: &str, rev: u64, batch: &Batch, stats: DirStats) -> DirDelta {
     make_delta_with_progress(session_id, rev, batch, stats, None, Vec::new())
 }
 
@@ -49,7 +52,10 @@ pub fn make_delta(
 pub fn scan_issues(errors: &[(String, String)]) -> Vec<ai_protocol::DirScanIssue> {
     errors
         .iter()
-        .map(|(path, message)| ai_protocol::DirScanIssue { path: path.clone(), message: message.clone() })
+        .map(|(path, message)| ai_protocol::DirScanIssue {
+            path: path.clone(),
+            message: message.clone(),
+        })
         .collect()
 }
 
@@ -69,7 +75,10 @@ pub fn make_delta_with_progress(
         removals,
         stats,
         progress,
-        batch: BatchInfo { index: batch.index, has_more: batch.has_more },
+        batch: BatchInfo {
+            index: batch.index,
+            has_more: batch.has_more,
+        },
         scan_errors: Vec::new(),
     }
 }

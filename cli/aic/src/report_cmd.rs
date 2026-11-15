@@ -287,7 +287,11 @@ async fn run_report(
         build_table_snapshot(&vfs, &left_path, &right_path, left_s, right_s, flags).await?
     } else if kind_is("hex") {
         build_hex_snapshot(&vfs, &left_path, &right_path, left_s, right_s).await?
-    } else if kind_is("dir") || (kind_is("auto") && ls.kind == ai_vfs::EntryKind::Dir && rs.kind == ai_vfs::EntryKind::Dir) {
+    } else if kind_is("dir")
+        || (kind_is("auto")
+            && ls.kind == ai_vfs::EntryKind::Dir
+            && rs.kind == ai_vfs::EntryKind::Dir)
+    {
         build_dir_snapshot(&vfs, &left_path, &right_path, left_s, right_s, flags).await?
     } else {
         build_text_snapshot(&vfs, &left_path, &right_path, left_s, right_s, flags).await?
@@ -380,13 +384,17 @@ async fn build_text_snapshot(
     // P10 规则/格式集（与 aic diff 同语义：加载即生效）
     let mut registry = ai_core::FormatRegistry::builtin();
     if let Some(pack_path) = &flags.format_pack_path {
-        let text = std::fs::read_to_string(pack_path).map_err(|e| format!("格式集读取失败 {pack_path}: {e}"))?;
-        let pack = ai_core::FormatPack::from_json(&text).map_err(|e| format!("格式集解析失败: {e}"))?;
+        let text = std::fs::read_to_string(pack_path)
+            .map_err(|e| format!("格式集读取失败 {pack_path}: {e}"))?;
+        let pack =
+            ai_core::FormatPack::from_json(&text).map_err(|e| format!("格式集解析失败: {e}"))?;
         registry.merge_pack(&pack);
     }
     if let Some(rules_path) = &flags.rules_path {
-        let text = std::fs::read_to_string(rules_path).map_err(|e| format!("规则文档读取失败 {rules_path}: {e}"))?;
-        let doc = ai_core::RulesDocument::from_json(&text).map_err(|e| format!("规则文档解析失败: {e}"))?;
+        let text = std::fs::read_to_string(rules_path)
+            .map_err(|e| format!("规则文档读取失败 {rules_path}: {e}"))?;
+        let doc = ai_core::RulesDocument::from_json(&text)
+            .map_err(|e| format!("规则文档解析失败: {e}"))?;
         let set = ai_core::RuleSet::from_document(&doc);
         let fname = base_name(left_s);
         let head = vfs.read_range(left, 0, 8192).await.unwrap_or_default();
@@ -531,7 +539,10 @@ async fn build_hex_snapshot(
     right_s: &str,
 ) -> Result<ReportSnapshot, String> {
     let lb = vfs.read_file_bytes(left).await.map_err(|e| e.to_string())?;
-    let rb = vfs.read_file_bytes(right).await.map_err(|e| e.to_string())?;
+    let rb = vfs
+        .read_file_bytes(right)
+        .await
+        .map_err(|e| e.to_string())?;
     let model = ai_core::hex::diff_bytes(&lb, &rb, &ai_core::hex::HexOptions::default());
     let (sl, sr) = ai_core::hex::status_maps(&model);
     Ok(ReportSnapshot::Hex(HexSnapshot {

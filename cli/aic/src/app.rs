@@ -26,7 +26,10 @@ use crate::{
     aggregate_verdicts, render_dir_diff, render_unified, rules_classify_file, verdict_exit_code,
     verdict_label, Palette, QuickVerdict, ANSI, PLAIN,
 };
-use ai_core::merge::{ConflictDefault, FavorSide, MarkerOptions, MarkerStyle, MergeOptions, SynthesizeOptions, UnresolvedPolicy};
+use ai_core::merge::{
+    ConflictDefault, FavorSide, MarkerOptions, MarkerStyle, MergeOptions, SynthesizeOptions,
+    UnresolvedPolicy,
+};
 use ai_core::options::{ImportanceOptions, LineAlignAlgo, TextDiffOptions, WhitespaceMode};
 use ai_core::LineTable;
 use ai_protocol::CompareCriteria;
@@ -170,12 +173,10 @@ pub fn parse_diff_flags(args: &[String]) -> Result<(Vec<&String>, DiffFlags), St
                     None => return Err("--algo 仅支持 standard|myers|patience|histogram".into()),
                 }
             }
-            _ if a.starts_with("--algo=") => {
-                match parse_algo(&a["--algo=".len()..]) {
-                    Some(algo) => flags.opts.algo = algo,
-                    None => return Err("--algo 仅支持 standard|myers|patience|histogram".into()),
-                }
-            }
+            _ if a.starts_with("--algo=") => match parse_algo(&a["--algo=".len()..]) {
+                Some(algo) => flags.opts.algo = algo,
+                None => return Err("--algo 仅支持 standard|myers|patience|histogram".into()),
+            },
             "-w" | "--ignore-whitespace" => flags.opts.whitespace = WhitespaceMode::IgnoreAll,
             "--ignore-whitespace-amount" => flags.opts.whitespace = WhitespaceMode::IgnoreAmount,
             "--ignore-case" | "-i" => flags.opts.ignore_case = true,
@@ -268,8 +269,14 @@ async fn run_diff(
 
     // 目录递归输出（P2：aic diff 对接目录引擎，diff -r 风格摘要）
     {
-        let ls = vfs.stat(&left_path).await.map_err(|e| DiffOutcome::Error(e.to_string()))?;
-        let rs = vfs.stat(&right_path).await.map_err(|e| DiffOutcome::Error(e.to_string()))?;
+        let ls = vfs
+            .stat(&left_path)
+            .await
+            .map_err(|e| DiffOutcome::Error(e.to_string()))?;
+        let rs = vfs
+            .stat(&right_path)
+            .await
+            .map_err(|e| DiffOutcome::Error(e.to_string()))?;
         if ls.kind == ai_vfs::EntryKind::Dir && rs.kind == ai_vfs::EntryKind::Dir {
             return run_dir_diff(&vfs, &left_path, &right_path, left_s, right_s).await;
         }
@@ -300,7 +307,10 @@ async fn run_diff(
             .map_err(|e| DiffOutcome::Error(format!("格式集解析失败: {e}")))?;
         registry.merge_pack(&pack);
     }
-    let mut config = ai_core::DiffConfig { base: flags.opts.clone(), ..ai_core::DiffConfig::default() };
+    let mut config = ai_core::DiffConfig {
+        base: flags.opts.clone(),
+        ..ai_core::DiffConfig::default()
+    };
     if let Some(rules_path) = &flags.rules_path {
         let text = std::fs::read_to_string(rules_path)
             .map_err(|e| DiffOutcome::Error(format!("规则文档读取失败 {rules_path}: {e}")))?;
@@ -311,18 +321,25 @@ async fn run_diff(
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or(left_s);
-        let head = vfs.read_range(&left_path, 0, 8192).await.unwrap_or_default();
+        let head = vfs
+            .read_range(&left_path, 0, 8192)
+            .await
+            .unwrap_or_default();
         let fmt = registry.detect(fname, &head);
         let effective = set.resolve(None, None, fmt.map(|f| f.id.as_str()));
         config.importance = effective.to_importance_options();
         config.base.rules = ai_core::RulesOptions::resolve(&effective, fmt);
     }
 
-    let keyed = ai_core::diff_config(&lt, &rt, &config)
-        .map_err(|e| DiffOutcome::Error(e.to_string()))?;
+    let keyed =
+        ai_core::diff_config(&lt, &rt, &config).map_err(|e| DiffOutcome::Error(e.to_string()))?;
     let out = keyed.output;
 
-    if out.sections.iter().all(|s| s.kind == ai_core::SectionKind::Equal) {
+    if out
+        .sections
+        .iter()
+        .all(|s| s.kind == ai_core::SectionKind::Equal)
+    {
         return Ok(()); // 相同：无输出，退出码 0
     }
     let text = render_unified(left_s, right_s, &out, &lt, &rt, context, palette);
@@ -510,9 +527,18 @@ async fn run_merge(
         VfsPath::parse(left_s).map_err(|e| MergeOutcome::Error(e.to_string()))?,
         VfsPath::parse(right_s).map_err(|e| MergeOutcome::Error(e.to_string()))?,
     );
-    let base_text = vfs.read_file_text(&base_p).await.map_err(|e| MergeOutcome::Error(e.to_string()))?;
-    let left_text = vfs.read_file_text(&left_p).await.map_err(|e| MergeOutcome::Error(e.to_string()))?;
-    let right_text = vfs.read_file_text(&right_p).await.map_err(|e| MergeOutcome::Error(e.to_string()))?;
+    let base_text = vfs
+        .read_file_text(&base_p)
+        .await
+        .map_err(|e| MergeOutcome::Error(e.to_string()))?;
+    let left_text = vfs
+        .read_file_text(&left_p)
+        .await
+        .map_err(|e| MergeOutcome::Error(e.to_string()))?;
+    let right_text = vfs
+        .read_file_text(&right_p)
+        .await
+        .map_err(|e| MergeOutcome::Error(e.to_string()))?;
 
     let base = LineTable::from_text(&base_text);
     let left = LineTable::from_text(&left_text);
@@ -536,7 +562,14 @@ async fn run_merge(
             unresolved: opts.conflict_default.clone().to_policy(None),
         },
     };
-    let out = ai_core::synthesize(&model, &base, &left, &right, &std::collections::HashMap::new(), &syn);
+    let out = ai_core::synthesize(
+        &model,
+        &base,
+        &left,
+        &right,
+        &std::collections::HashMap::new(),
+        &syn,
+    );
 
     match out_path {
         Some(p) => {
@@ -556,7 +589,11 @@ async fn run_merge(
         eprintln!(
             "aic merge: {} 个未决冲突块（{}）",
             unresolved.len(),
-            unresolved.iter().map(|id| id.to_string()).collect::<Vec<_>>().join(",")
+            unresolved
+                .iter()
+                .map(|id| id.to_string())
+                .collect::<Vec<_>>()
+                .join(",")
         );
         Err(MergeOutcome::Conflicts)
     }
@@ -815,18 +852,20 @@ pub fn cmd_table(args: &[String]) -> ExitCode {
                 Some(c) => opts.parse.delimiter = c,
                 None => return arg_error("--delimiter 需要单字符参数"),
             },
-            _ if a.starts_with("--delimiter=") => {
-                match a["--delimiter=".len()..].chars().next() {
-                    Some(c) => opts.parse.delimiter = c,
-                    None => return arg_error("--delimiter 需要单字符参数"),
-                }
-            }
+            _ if a.starts_with("--delimiter=") => match a["--delimiter=".len()..].chars().next() {
+                Some(c) => opts.parse.delimiter = c,
+                None => return arg_error("--delimiter 需要单字符参数"),
+            },
             "--tab" | "--tsv" => opts.parse.delimiter = '\t',
             "--no-header" => opts.parse.has_header = false,
             "--align" => match next(&mut i).as_deref() {
                 Some("none") => opts.column_align = ai_core::table::ColumnAlign::None,
-                Some("names-left" | "left") => opts.column_align = ai_core::table::ColumnAlign::ByLeftName,
-                Some("names-right" | "right") => opts.column_align = ai_core::table::ColumnAlign::ByRightName,
+                Some("names-left" | "left") => {
+                    opts.column_align = ai_core::table::ColumnAlign::ByLeftName
+                }
+                Some("names-right" | "right") => {
+                    opts.column_align = ai_core::table::ColumnAlign::ByRightName
+                }
                 _ => return arg_error("--align 仅支持 none|names-left|names-right"),
             },
             "--rows" => match next(&mut i).as_deref() {
@@ -843,7 +882,9 @@ pub fn cmd_table(args: &[String]) -> ExitCode {
                 opts.importance.case_unimportant = true;
                 opts.importance.whitespace = ai_core::options::WhitespaceMode::IgnoreAmount;
             }
-            "-w" | "--ignore-whitespace" => opts.importance.whitespace = ai_core::options::WhitespaceMode::IgnoreAll,
+            "-w" | "--ignore-whitespace" => {
+                opts.importance.whitespace = ai_core::options::WhitespaceMode::IgnoreAll
+            }
             "--ignore-case" | "-i" => opts.importance.case_unimportant = true,
             _ if a.starts_with('-') => return arg_error(&format!("未知参数: {a}")),
             _ => positional.push(&args[i]),
@@ -873,12 +914,22 @@ enum TableOutcome {
     Error(String),
 }
 
-async fn run_table(left_s: &str, right_s: &str, opts: &ai_core::table::TableDiffOptions) -> Result<(), TableOutcome> {
+async fn run_table(
+    left_s: &str,
+    right_s: &str,
+    opts: &ai_core::table::TableDiffOptions,
+) -> Result<(), TableOutcome> {
     let vfs = RouteFs::new();
     let left_path = VfsPath::parse(left_s).map_err(|e| TableOutcome::Error(e.to_string()))?;
     let right_path = VfsPath::parse(right_s).map_err(|e| TableOutcome::Error(e.to_string()))?;
-    let left_text = vfs.read_file_text(&left_path).await.map_err(|e| TableOutcome::Error(e.to_string()))?;
-    let right_text = vfs.read_file_text(&right_path).await.map_err(|e| TableOutcome::Error(e.to_string()))?;
+    let left_text = vfs
+        .read_file_text(&left_path)
+        .await
+        .map_err(|e| TableOutcome::Error(e.to_string()))?;
+    let right_text = vfs
+        .read_file_text(&right_path)
+        .await
+        .map_err(|e| TableOutcome::Error(e.to_string()))?;
 
     let model = ai_core::table::diff_tables(&left_text, &right_text, opts)
         .map_err(|e| TableOutcome::Error(e.to_string()))?;
@@ -910,15 +961,24 @@ async fn run_table(left_s: &str, right_s: &str, opts: &ai_core::table::TableDiff
             .map(|c| {
                 let l = c.left.clone().unwrap_or_default();
                 let r = c.right.clone().unwrap_or_default();
-                format!("{}{}|{}", cell_mark(c.status), escape_cell(&l), escape_cell(&r))
+                format!(
+                    "{}{}|{}",
+                    cell_mark(c.status),
+                    escape_cell(&l),
+                    escape_cell(&r)
+                )
             })
             .collect();
         let _ = writeln!(
             lock,
             "{}\t{}\t{}\t{}",
             row.kind.as_str(),
-            row.left.map(|v| v.to_string()).unwrap_or_else(|| "-".into()),
-            row.right.map(|v| v.to_string()).unwrap_or_else(|| "-".into()),
+            row.left
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "-".into()),
+            row.right
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "-".into()),
             cells.join("\t")
         );
     }
@@ -927,7 +987,10 @@ async fn run_table(left_s: &str, right_s: &str, opts: &ai_core::table::TableDiff
 }
 
 fn escape_cell(v: &str) -> String {
-    v.replace('\\', "\\\\").replace('\t', "\\t").replace('\n', "\\n").replace('\r', "\\r")
+    v.replace('\\', "\\\\")
+        .replace('\t', "\\t")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
 }
 
 // ---------------------------------------------------------------------------
@@ -987,25 +1050,43 @@ enum HexOutcome {
     Error(String),
 }
 
-async fn run_hex(left_s: &str, right_s: &str, opts: &ai_core::hex::HexOptions) -> Result<(), HexOutcome> {
+async fn run_hex(
+    left_s: &str,
+    right_s: &str,
+    opts: &ai_core::hex::HexOptions,
+) -> Result<(), HexOutcome> {
     let vfs = RouteFs::new();
     let left_path = VfsPath::parse(left_s).map_err(|e| HexOutcome::Error(e.to_string()))?;
     let right_path = VfsPath::parse(right_s).map_err(|e| HexOutcome::Error(e.to_string()))?;
-    let left = vfs.read_file_bytes(&left_path).await.map_err(|e| HexOutcome::Error(e.to_string()))?;
-    let right = vfs.read_file_bytes(&right_path).await.map_err(|e| HexOutcome::Error(e.to_string()))?;
+    let left = vfs
+        .read_file_bytes(&left_path)
+        .await
+        .map_err(|e| HexOutcome::Error(e.to_string()))?;
+    let right = vfs
+        .read_file_bytes(&right_path)
+        .await
+        .map_err(|e| HexOutcome::Error(e.to_string()))?;
 
     let model = ai_core::hex::diff_bytes(&left, &right, opts);
     use std::io::Write as _;
     let stdout = std::io::stdout();
     let mut lock = stdout.lock();
-    if model.blocks.iter().all(|b| b.kind == ai_core::hex::HexBlockKind::Same) {
+    if model
+        .blocks
+        .iter()
+        .all(|b| b.kind == ai_core::hex::HexBlockKind::Same)
+    {
         return Ok(());
     }
     let sum = &model.summary;
     let _ = writeln!(
         lock,
         "# same={}B\tchanged={}B\tinserted={}B\tdeleted={}B\tblocks={}",
-        sum.same_bytes, sum.changed_bytes, sum.inserted_bytes, sum.deleted_bytes, model.blocks.len()
+        sum.same_bytes,
+        sum.changed_bytes,
+        sum.inserted_bytes,
+        sum.deleted_bytes,
+        model.blocks.len()
     );
     let kind = |b: ai_core::hex::HexBlockKind| match b {
         ai_core::hex::HexBlockKind::Same => "same",
@@ -1018,26 +1099,60 @@ async fn run_hex(left_s: &str, right_s: &str, opts: &ai_core::hex::HexOptions) -
             (Some(l), Some(r)) => writeln!(
                 lock,
                 "{}\tleft[0x{:x}..0x{:x})\tright[0x{:x}..0x{:x})\t{}B",
-                kind(b.kind), l.offset, l.offset + l.len, r.offset, r.offset + r.len, l.len
+                kind(b.kind),
+                l.offset,
+                l.offset + l.len,
+                r.offset,
+                r.offset + r.len,
+                l.len
             ),
-            (Some(l), None) => writeln!(lock, "{}\tleft[0x{:x}..0x{:x})\t{}B", kind(b.kind), l.offset, l.offset + l.len, l.len),
-            (None, Some(r)) => writeln!(lock, "{}\tright[0x{:x}..0x{:x})\t{}B", kind(b.kind), r.offset, r.offset + r.len, r.len),
+            (Some(l), None) => writeln!(
+                lock,
+                "{}\tleft[0x{:x}..0x{:x})\t{}B",
+                kind(b.kind),
+                l.offset,
+                l.offset + l.len,
+                l.len
+            ),
+            (None, Some(r)) => writeln!(
+                lock,
+                "{}\tright[0x{:x}..0x{:x})\t{}B",
+                kind(b.kind),
+                r.offset,
+                r.offset + r.len,
+                r.len
+            ),
             (None, None) => Ok(()),
         };
     }
     // 首个差异区域的十六进制行预览（每侧至多 4 行）
-    for b in model.blocks.iter().filter(|b| b.kind != ai_core::hex::HexBlockKind::Same).take(1) {
+    for b in model
+        .blocks
+        .iter()
+        .filter(|b| b.kind != ai_core::hex::HexBlockKind::Same)
+        .take(1)
+    {
         if let Some(l) = b.left {
             let _ = writeln!(lock, "-- left preview @0x{:x}", l.offset);
-            let off = (l.offset as usize / ai_core::hex::HEX_LINE_BYTES) * ai_core::hex::HEX_LINE_BYTES;
-            for line in ai_core::hex::render_hex_lines(&left, (off / ai_core::hex::HEX_LINE_BYTES) as u64, 4) {
+            let off =
+                (l.offset as usize / ai_core::hex::HEX_LINE_BYTES) * ai_core::hex::HEX_LINE_BYTES;
+            for line in ai_core::hex::render_hex_lines(
+                &left,
+                (off / ai_core::hex::HEX_LINE_BYTES) as u64,
+                4,
+            ) {
                 let _ = writeln!(lock, "{}  {}  {}", line.addr, line.hex, line.ascii);
             }
         }
         if let Some(r) = b.right {
             let _ = writeln!(lock, "-- right preview @0x{:x}", r.offset);
-            let off = (r.offset as usize / ai_core::hex::HEX_LINE_BYTES) * ai_core::hex::HEX_LINE_BYTES;
-            for line in ai_core::hex::render_hex_lines(&right, (off / ai_core::hex::HEX_LINE_BYTES) as u64, 4) {
+            let off =
+                (r.offset as usize / ai_core::hex::HEX_LINE_BYTES) * ai_core::hex::HEX_LINE_BYTES;
+            for line in ai_core::hex::render_hex_lines(
+                &right,
+                (off / ai_core::hex::HEX_LINE_BYTES) as u64,
+                4,
+            ) {
                 let _ = writeln!(lock, "{}  {}  {}", line.addr, line.hex, line.ascii);
             }
         }
@@ -1136,11 +1251,18 @@ pub fn cmd_patch(args: &[String]) -> ExitCode {
         };
         let file = &parsed.files[0];
         if file.binary {
-            eprintln!("aic patch: 二进制文件跳过（补丁标注 Binary/GIT binary patch）: {}", file.label());
+            eprintln!(
+                "aic patch: 二进制文件跳过（补丁标注 Binary/GIT binary patch）: {}",
+                file.label()
+            );
             return EXIT_ERROR.into();
         }
         return match ai_core::patch::apply_file(&orig, file, &opts) {
-            Ok(ai_core::patch::ApplyOutcome::Applied { text, fuzz_used, offset }) => {
+            Ok(ai_core::patch::ApplyOutcome::Applied {
+                text,
+                fuzz_used,
+                offset,
+            }) => {
                 if opts.dry_run {
                     eprintln!("aic patch: DRY OK（fuzz={fuzz_used}, offset={offset}）");
                     EXIT_SAME.into()
@@ -1181,7 +1303,12 @@ pub fn cmd_patch(args: &[String]) -> ExitCode {
     let Some(root) = &dir else {
         return arg_error("patch apply 需要 --input <file>（单文件）或 --dir <root>（多文件）");
     };
-    match ai_core::patch::apply_patch(&ai_core::patch::StdFs, std::path::Path::new(root), &patch_text, &opts) {
+    match ai_core::patch::apply_patch(
+        &ai_core::patch::StdFs,
+        std::path::Path::new(root),
+        &patch_text,
+        &opts,
+    ) {
         Ok(report) => {
             use std::io::Write as _;
             let stdout = std::io::stdout();
@@ -1194,7 +1321,15 @@ pub fn cmd_patch(args: &[String]) -> ExitCode {
                     ai_core::patch::FileApplyStatus::NoOp => "noOp",
                     ai_core::patch::FileApplyStatus::Failed => "FAILED",
                 };
-                let _ = writeln!(lock, "{}\t{}\tfuzz={}\toffset={}\t{}", status, r.path, r.fuzz_used, r.offset_applied, r.detail.clone().unwrap_or_default());
+                let _ = writeln!(
+                    lock,
+                    "{}\t{}\tfuzz={}\toffset={}\t{}",
+                    status,
+                    r.path,
+                    r.fuzz_used,
+                    r.offset_applied,
+                    r.detail.clone().unwrap_or_default()
+                );
             }
             let _ = lock.flush();
             // 退出码语义（lib.rs 契约）：patch apply 是"执行"而非"比较"，
@@ -1280,8 +1415,14 @@ async fn run_picture(left_s: &str, right_s: &str, flags: &PictureFlags) -> Resul
     let vfs = RouteFs::new();
     let left_path = VfsPath::parse(left_s).map_err(|e| e.to_string())?;
     let right_path = VfsPath::parse(right_s).map_err(|e| e.to_string())?;
-    let left = vfs.read_file_bytes(&left_path).await.map_err(|e| e.to_string())?;
-    let right = vfs.read_file_bytes(&right_path).await.map_err(|e| e.to_string())?;
+    let left = vfs
+        .read_file_bytes(&left_path)
+        .await
+        .map_err(|e| e.to_string())?;
+    let right = vfs
+        .read_file_bytes(&right_path)
+        .await
+        .map_err(|e| e.to_string())?;
     let opts = ai_core::picture::PictureDiffOptions {
         tolerance: flags.tolerance.unwrap_or(8) as u8,
         block: flags.block.unwrap_or(32),
@@ -1304,7 +1445,11 @@ async fn run_picture(left_s: &str, right_s: &str, flags: &PictureFlags) -> Resul
         let _ = writeln!(
             lock,
             "block ({},{}) {}x{} diff {:.0}%",
-            b.x, b.y, b.w, b.h, b.diff_ratio * 100.0
+            b.x,
+            b.y,
+            b.w,
+            b.h,
+            b.diff_ratio * 100.0
         );
     }
     if r.blocks.len() > 20 {

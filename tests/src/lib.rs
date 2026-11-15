@@ -14,8 +14,16 @@ pub fn engine_bin() -> PathBuf {
     let target = std::env::var("CARGO_TARGET_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|_| root.join("target"));
-    let target = if target.is_absolute() { target } else { root.join(target) };
-    let profile = if cfg!(debug_assertions) { "debug" } else { "release" };
+    let target = if target.is_absolute() {
+        target
+    } else {
+        root.join(target)
+    };
+    let profile = if cfg!(debug_assertions) {
+        "debug"
+    } else {
+        "release"
+    };
     let mut p = target.join(profile).join("ai-engine");
     if cfg!(windows) {
         p.set_extension("exe");
@@ -36,7 +44,9 @@ pub fn ensure_engine_fresh() {
     ENGINE_FRESH.get_or_init(|| {
         let bin = engine_bin();
         let Ok(bin_meta) = bin.metadata() else { return };
-        let Ok(bin_time) = bin_meta.modified() else { return };
+        let Ok(bin_time) = bin_meta.modified() else {
+            return;
+        };
         let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let root = manifest.parent().expect("workspace root");
         let mut newest = bin_time;
@@ -75,7 +85,9 @@ pub fn ensure_engine_fresh() {
 
 /// 递归收集目录内最新的修改时间
 fn collect_newest(dir: &Path, newest: &mut std::time::SystemTime) {
-    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
     for entry in entries.flatten() {
         let path = entry.path();
         let Ok(md) = entry.metadata() else { continue };
@@ -115,7 +127,10 @@ pub fn ensure_cli_fresh() {
         let Some(bin_time) = bin_time else { return };
         collect_newest(&root.join("cli").join("aic").join("src"), &mut newest);
         for crate_dir in ["ai-protocol", "ai-core", "ai-vfs", "ai-dir"] {
-            collect_newest(&root.join("engine").join(crate_dir).join("src"), &mut newest);
+            collect_newest(
+                &root.join("engine").join(crate_dir).join("src"),
+                &mut newest,
+            );
         }
         for f in ["Cargo.toml", "Cargo.lock"] {
             if let Ok(md) = root.join(f).metadata() {
@@ -164,8 +179,16 @@ fn cli_bin_unchecked(name: &str) -> PathBuf {
     let target = std::env::var("CARGO_TARGET_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|_| root.join("target"));
-    let target = if target.is_absolute() { target } else { root.join(target) };
-    let profile = if cfg!(debug_assertions) { "debug" } else { "release" };
+    let target = if target.is_absolute() {
+        target
+    } else {
+        root.join(target)
+    };
+    let profile = if cfg!(debug_assertions) {
+        "debug"
+    } else {
+        "release"
+    };
     let mut p = target.join(profile).join(name);
     if cfg!(windows) {
         p.set_extension("exe");
@@ -184,7 +207,9 @@ pub fn run_engine(inputs: &[serde_json::Value], record: Option<&Path>) -> Vec<se
         bin.display()
     );
     let mut cmd = Command::new(&bin);
-    cmd.arg("--stdio").stdin(Stdio::piped()).stdout(Stdio::piped());
+    cmd.arg("--stdio")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped());
     if let Some(path) = record {
         cmd.arg("--record").arg(path);
     }
@@ -288,7 +313,11 @@ pub fn build_corpus() -> Corpus {
     std::fs::write(left.join("sub").join("inner.txt"), "sub left\n").unwrap();
     std::fs::write(right.join("sub").join("inner.txt"), "sub right\n").unwrap();
 
-    Corpus { _dir: dir, left, right }
+    Corpus {
+        _dir: dir,
+        left,
+        right,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -338,11 +367,7 @@ pub fn should_bless() -> bool {
     std::env::var("UPDATE_GOLDEN").ok().as_deref() == Some("1")
 }
 
-pub fn assert_matches_snapshot(
-    name: &str,
-    path: &Path,
-    actual_pretty: &str,
-) -> Result<(), String> {
+pub fn assert_matches_snapshot(name: &str, path: &Path, actual_pretty: &str) -> Result<(), String> {
     if should_bless() {
         std::fs::create_dir_all(path.parent().expect("快照父目录")).expect("创建快照目录");
         std::fs::write(path, actual_pretty).expect("写快照");
@@ -359,7 +384,10 @@ pub fn assert_matches_snapshot(
         let mut diff_note = String::new();
         for (i, (a, b)) in expected.lines().zip(actual_pretty.lines()).enumerate() {
             if a != b {
-                diff_note.push_str(&format!("  第 {} 行:\n    期望: {a}\n    实际: {b}\n", i + 1));
+                diff_note.push_str(&format!(
+                    "  第 {} 行:\n    期望: {a}\n    实际: {b}\n",
+                    i + 1
+                ));
                 if diff_note.len() > 2000 {
                     break;
                 }
@@ -382,7 +410,6 @@ pub fn req(id: i64, method: &str, params: serde_json::Value) -> serde_json::Valu
 pub fn note(method: &str, params: serde_json::Value) -> serde_json::Value {
     serde_json::json!({"jsonrpc": "2.0", "method": method, "params": params})
 }
-
 
 // ---------------------------------------------------------------------------
 // P2 大规模语料：确定性伪随机树（PB-03/PB-10 基准与大规模冒烟用）
@@ -460,7 +487,9 @@ pub fn build_big_corpus(n_files: u64, seed: u64) -> BigCorpus {
         buf.clear();
         let mut cursor = pattern;
         for _ in 0..size {
-            cursor = cursor.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            cursor = cursor
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             buf.push((cursor >> 33) as u8);
         }
         let roll = rng.below(100);
@@ -504,5 +533,10 @@ pub fn build_big_corpus(n_files: u64, seed: u64) -> BigCorpus {
             written += 2;
         }
     }
-    BigCorpus { _dir: dir, left, right, files_written: written }
+    BigCorpus {
+        _dir: dir,
+        left,
+        right,
+        files_written: written,
+    }
 }

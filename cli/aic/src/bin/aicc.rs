@@ -47,11 +47,18 @@ fn map_vcs_args(args: &[String]) -> Option<Vec<String>> {
     let mut i = 0usize;
     while i < args.len() {
         let a = args[i].as_str();
-        let skip_with_value = matches!(a, "--title1" | "--title2" | "--lefttitle" | "--righttitle" | "--title3" | "--title4")
-            || a == "-fv"
+        let skip_with_value = matches!(
+            a,
+            "--title1" | "--title2" | "--lefttitle" | "--righttitle" | "--title3" | "--title4"
+        ) || a == "-fv"
             || a == "--fileviewer";
-        let ignored_flag = a == "--ro" || a == "-ro" || a == "--readonly"
-            || a == "-ro1" || a == "-ro2" || a == "--leftreadonly" || a == "--rightreadonly";
+        let ignored_flag = a == "--ro"
+            || a == "-ro"
+            || a == "--readonly"
+            || a == "-ro1"
+            || a == "-ro2"
+            || a == "--leftreadonly"
+            || a == "--rightreadonly";
         let ignored_kv = a.starts_with("--title1=")
             || a.starts_with("--title2=")
             || a.starts_with("--lefttitle=")
@@ -75,10 +82,12 @@ fn map_vcs_args(args: &[String]) -> Option<Vec<String>> {
     }
 
     // 2. 无子命令时按 VCS 约定映射
-    let has_subcommand = rest
-        .first()
-        .map(String::as_str)
-        .is_some_and(|a| matches!(a, "diff" | "merge" | "quick" | "help" | "--help" | "-h" | "--version" | "-V"));
+    let has_subcommand = rest.first().map(String::as_str).is_some_and(|a| {
+        matches!(
+            a,
+            "diff" | "merge" | "quick" | "help" | "--help" | "-h" | "--version" | "-V"
+        )
+    });
     if has_subcommand {
         return Some(rest);
     }
@@ -117,7 +126,9 @@ fn map_vcs_args(args: &[String]) -> Option<Vec<String>> {
 /// 返回 None 表示未找到 aic（调用方走进程内回退）。
 fn spawn_wrapped(args: &[String]) -> Option<ExitCode> {
     let exe = std::env::current_exe().ok()?;
-    let sibling = exe.parent()?.join(if cfg!(windows) { "aic.exe" } else { "aic" });
+    let sibling = exe
+        .parent()?
+        .join(if cfg!(windows) { "aic.exe" } else { "aic" });
     if !sibling.is_file() {
         return None;
     }
@@ -166,7 +177,15 @@ mod tests {
 
     #[test]
     fn gui_switch_with_separate_value_is_stripped() {
-        let m = map_vcs_args(&v(&["-fv", "Text Compare", "--lefttitle", "L", "a.txt", "b.txt"])).unwrap();
+        let m = map_vcs_args(&v(&[
+            "-fv",
+            "Text Compare",
+            "--lefttitle",
+            "L",
+            "a.txt",
+            "b.txt",
+        ]))
+        .unwrap();
         assert_eq!(m, v(&["diff", "a.txt", "b.txt"]));
     }
 
@@ -196,6 +215,9 @@ mod tests {
     #[test]
     fn no_positional_paths_returns_none() {
         assert!(map_vcs_args(&v(&[])).is_none());
-        assert!(map_vcs_args(&v(&["--ro"])).is_none(), "仅 GUI 开关 = 无参数");
+        assert!(
+            map_vcs_args(&v(&["--ro"])).is_none(),
+            "仅 GUI 开关 = 无参数"
+        );
     }
 }

@@ -11,11 +11,11 @@
 //! 重新固化 fixtures：`python3 tests/table_matrix/generate_fixtures.py`。
 
 use ai_compare_tests as _;
+use ai_core::options::WhitespaceMode;
 use ai_core::table::{
     compare_cell, diff_table_data, diff_tables, parse_table, CellDiffStatus, ColumnAlign,
     ColumnType, RowAlign, TableDiffOptions, TableImportance, TableParseOptions,
 };
-use ai_core::options::WhitespaceMode;
 
 const FIXTURES: &str = include_str!("../table_matrix/fixtures.json");
 
@@ -58,7 +58,11 @@ fn parse_matches_python_csv_oracle() {
             continue;
         }
         let opts = TableParseOptions {
-            delimiter: if name.contains("_tsv_") || name.contains("tsv") { '\t' } else { ',' },
+            delimiter: if name.contains("_tsv_") || name.contains("tsv") {
+                '\t'
+            } else {
+                ','
+            },
             ..TableParseOptions::default()
         };
         let left = parse_table(text(&entry, "left"), &opts)
@@ -79,8 +83,14 @@ fn parse_matches_python_csv_oracle() {
             all.extend(right.rows.clone());
             all
         };
-        assert_eq!(actual_left, expected_left, "{name}: 左侧解析与 Python csv oracle 不一致");
-        assert_eq!(actual_right, expected_right, "{name}: 右侧解析与 Python csv oracle 不一致");
+        assert_eq!(
+            actual_left, expected_left,
+            "{name}: 左侧解析与 Python csv oracle 不一致"
+        );
+        assert_eq!(
+            actual_right, expected_right,
+            "{name}: 右侧解析与 Python csv oracle 不一致"
+        );
     }
 }
 
@@ -93,13 +103,22 @@ fn kinds(model: &ai_core::table::TableDiffModel) -> Vec<&'static str> {
 }
 
 fn statuses(model: &ai_core::table::TableDiffModel, row: usize) -> Vec<&'static str> {
-    model.rows[row].cells.iter().map(|c| c.status.as_str()).collect()
+    model.rows[row]
+        .cells
+        .iter()
+        .map(|c| c.status.as_str())
+        .collect()
 }
 
 #[test]
 fn golden_01_basic_change() {
     let e = &fixtures()[0];
-    let m = diff_tables(text(e, "left"), text(e, "right"), &TableDiffOptions::default()).unwrap();
+    let m = diff_tables(
+        text(e, "left"),
+        text(e, "right"),
+        &TableDiffOptions::default(),
+    )
+    .unwrap();
     assert_eq!(kinds(&m), vec!["same", "changed"]);
     assert_eq!(statuses(&m, 1), vec!["same", "same", "importantDiff"]);
     assert!(m.rows[1].important);
@@ -108,14 +127,24 @@ fn golden_01_basic_change() {
 #[test]
 fn golden_04_embedded_newline_rows() {
     let e = &fixtures()[3];
-    let m = diff_tables(text(e, "left"), text(e, "right"), &TableDiffOptions::default()).unwrap();
+    let m = diff_tables(
+        text(e, "left"),
+        text(e, "right"),
+        &TableDiffOptions::default(),
+    )
+    .unwrap();
     assert_eq!(kinds(&m), vec!["same", "added"], "内嵌换行单元格整体为单行");
 }
 
 #[test]
 fn golden_05_bom_semantics() {
     let e = &fixtures()[4];
-    let m = diff_tables(text(e, "left"), text(e, "right"), &TableDiffOptions::default()).unwrap();
+    let m = diff_tables(
+        text(e, "left"),
+        text(e, "right"),
+        &TableDiffOptions::default(),
+    )
+    .unwrap();
     assert_eq!(kinds(&m), vec!["same"], "BOM 剥离后两侧全同");
     assert_eq!(m.columns[0].name, "id", "BOM 不污染表头列名");
 }
@@ -123,14 +152,24 @@ fn golden_05_bom_semantics() {
 #[test]
 fn golden_07_ragged_and_empty() {
     let e = &fixtures()[6];
-    let m = diff_tables(text(e, "left"), text(e, "right"), &TableDiffOptions::default()).unwrap();
+    let m = diff_tables(
+        text(e, "left"),
+        text(e, "right"),
+        &TableDiffOptions::default(),
+    )
+    .unwrap();
     assert_eq!(kinds(&m), vec!["same", "same"], "松散行短列取空语义稳定");
 }
 
 #[test]
 fn golden_08_unicode() {
     let e = &fixtures()[7];
-    let m = diff_tables(text(e, "left"), text(e, "right"), &TableDiffOptions::default()).unwrap();
+    let m = diff_tables(
+        text(e, "left"),
+        text(e, "right"),
+        &TableDiffOptions::default(),
+    )
+    .unwrap();
     assert_eq!(kinds(&m), vec!["same", "changed"]);
     assert_eq!(m.rows[1].cells[1].left.as_deref(), Some("京都"));
     assert_eq!(m.rows[1].cells[1].right.as_deref(), Some("大阪"));
@@ -142,10 +181,17 @@ fn golden_09_duplicate_keys_pair_in_order() {
     let m = diff_tables(
         text(e, "left"),
         text(e, "right"),
-        &TableDiffOptions { key_columns: vec![0], ..Default::default() },
+        &TableDiffOptions {
+            key_columns: vec![0],
+            ..Default::default()
+        },
     )
     .unwrap();
-    assert_eq!(kinds(&m), vec!["changed", "changed", "removed"], "键重复按出现序配对");
+    assert_eq!(
+        kinds(&m),
+        vec!["changed", "changed", "removed"],
+        "键重复按出现序配对"
+    );
 }
 
 #[test]
@@ -154,7 +200,10 @@ fn golden_10_column_reorder_by_name() {
     let m = diff_tables(
         text(e, "left"),
         text(e, "right"),
-        &TableDiffOptions { column_align: ColumnAlign::ByLeftName, ..Default::default() },
+        &TableDiffOptions {
+            column_align: ColumnAlign::ByLeftName,
+            ..Default::default()
+        },
     )
     .unwrap();
     // 右侧缺 id 列 -> 每行 id 单元格 leftOnly（重要差异）
@@ -172,10 +221,17 @@ fn golden_11_missing_column_is_left_only() {
     let m = diff_tables(
         text(e, "left"),
         text(e, "right"),
-        &TableDiffOptions { column_align: ColumnAlign::ByLeftName, ..Default::default() },
+        &TableDiffOptions {
+            column_align: ColumnAlign::ByLeftName,
+            ..Default::default()
+        },
     )
     .unwrap();
-    assert_eq!(kinds(&m), vec!["changed"], "extra 列单侧 -> 每行均有 leftOnly 单元格");
+    assert_eq!(
+        kinds(&m),
+        vec!["changed"],
+        "extra 列单侧 -> 每行均有 leftOnly 单元格"
+    );
     assert_eq!(statuses(&m, 0), vec!["same", "same", "leftOnly"]);
     assert!(m.rows[0].important, "单侧列算重要差异");
 }
@@ -183,7 +239,12 @@ fn golden_11_missing_column_is_left_only() {
 #[test]
 fn golden_12_empty_cells_roundtrip() {
     let e = &fixtures()[11];
-    let m = diff_tables(text(e, "left"), text(e, "right"), &TableDiffOptions::default()).unwrap();
+    let m = diff_tables(
+        text(e, "left"),
+        text(e, "right"),
+        &TableDiffOptions::default(),
+    )
+    .unwrap();
     assert_eq!(kinds(&m), vec!["same", "same", "added"]);
 }
 
@@ -195,7 +256,10 @@ fn golden_13_numeric_importance_p10_option() {
     assert_eq!(statuses(&m, 1)[1], "importantDiff", "默认无容差");
     // P10 预留的数值容差：0.2 内判不重要（蓝点）
     let tolerant = TableDiffOptions {
-        importance: TableImportance { numeric_tolerance: Some(0.2), ..Default::default() },
+        importance: TableImportance {
+            numeric_tolerance: Some(0.2),
+            ..Default::default()
+        },
         ..Default::default()
     };
     let m = diff_tables(text(e, "left"), text(e, "right"), &tolerant).unwrap();
@@ -210,7 +274,10 @@ fn golden_14_case_unimportant_blue_dot() {
     let m = diff_tables(text(e, "left"), text(e, "right"), &strict).unwrap();
     assert!(m.rows[0].important, "默认大小写重要（红点）");
     let iu = TableDiffOptions {
-        importance: TableImportance { case_unimportant: true, ..Default::default() },
+        importance: TableImportance {
+            case_unimportant: true,
+            ..Default::default()
+        },
         ..Default::default()
     };
     let m = diff_tables(text(e, "left"), text(e, "right"), &iu).unwrap();
@@ -223,7 +290,10 @@ fn golden_14_case_unimportant_blue_dot() {
 fn golden_15_whitespace_unimportant() {
     let e = &fixtures()[14];
     let iu = TableDiffOptions {
-        importance: TableImportance { whitespace: WhitespaceMode::IgnoreAll, ..Default::default() },
+        importance: TableImportance {
+            whitespace: WhitespaceMode::IgnoreAll,
+            ..Default::default()
+        },
         ..Default::default()
     };
     let m = diff_tables(text(e, "left"), text(e, "right"), &iu).unwrap();
@@ -233,7 +303,10 @@ fn golden_15_whitespace_unimportant() {
 #[test]
 fn golden_17_tsv_diff() {
     let e = &fixtures()[16];
-    let opts = TableParseOptions { delimiter: '\t', ..Default::default() };
+    let opts = TableParseOptions {
+        delimiter: '\t',
+        ..Default::default()
+    };
     let l = parse_table(text(e, "left"), &opts).unwrap();
     let r = parse_table(text(e, "right"), &opts).unwrap();
     let m = diff_table_data(&l, &r, &TableDiffOptions::default());
@@ -247,10 +320,17 @@ fn golden_18_added_removed_shape() {
     let m = diff_tables(
         text(e, "left"),
         text(e, "right"),
-        &TableDiffOptions { row_align: RowAlign::Standard, ..Default::default() },
+        &TableDiffOptions {
+            row_align: RowAlign::Standard,
+            ..Default::default()
+        },
     )
     .unwrap();
-    assert_eq!(kinds(&m), vec!["same", "removed", "same", "added", "added"], "Standard 行对齐");
+    assert_eq!(
+        kinds(&m),
+        vec!["same", "removed", "same", "added", "added"],
+        "Standard 行对齐"
+    );
     assert_eq!(m.rows[1].left, Some(1));
     assert_eq!(m.rows[1].right, None);
     assert_eq!(m.rows[3].right, Some(2), "首个 added 行 = 右侧行 2");
@@ -262,7 +342,10 @@ fn golden_unaligned_row_mode() {
     let m = diff_tables(
         text(e, "left"),
         text(e, "right"),
-        &TableDiffOptions { row_align: RowAlign::Unaligned, ..Default::default() },
+        &TableDiffOptions {
+            row_align: RowAlign::Unaligned,
+            ..Default::default()
+        },
     )
     .unwrap();
     // 不对齐（FR-TBL-004）：按行号位置配对（0↔0, 1↔1, 2↔2）+ 右侧余量 added
@@ -274,11 +357,33 @@ fn golden_skew_fallback_bounded() {
     // 键交叉（monotone 阻塞）：skew=1 内容补配；skew=0 不补配
     let left = "id,v\n1,a\n2,b\n3,c\n4,d\n5,e\n";
     let right = "id,v\n2,b\n3,c\n4,d\n5,e\n1,a\n";
-    let m0 = diff_tables(left, right, &TableDiffOptions { key_columns: vec![0], skew_tolerance: 0, ..Default::default() }).unwrap();
+    let m0 = diff_tables(
+        left,
+        right,
+        &TableDiffOptions {
+            key_columns: vec![0],
+            skew_tolerance: 0,
+            ..Default::default()
+        },
+    )
+    .unwrap();
     assert_eq!(m0.summary.removed_rows, 4);
     assert_eq!(m0.summary.added_rows, 4);
-    let m1 = diff_tables(left, right, &TableDiffOptions { key_columns: vec![0], skew_tolerance: 1, ..Default::default() }).unwrap();
-    assert_eq!(kinds(&m1), vec!["same", "same", "same", "same", "same"], "偏斜容差 1 补配全部");
+    let m1 = diff_tables(
+        left,
+        right,
+        &TableDiffOptions {
+            key_columns: vec![0],
+            skew_tolerance: 1,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        kinds(&m1),
+        vec!["same", "same", "same", "same", "same"],
+        "偏斜容差 1 补配全部"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -288,14 +393,31 @@ fn golden_skew_fallback_bounded() {
 #[test]
 fn cell_compare_numeric_and_date_columns() {
     assert_eq!(
-        compare_cell("1.0", "1.000", ColumnType::Number, &TableImportance::default()),
+        compare_cell(
+            "1.0",
+            "1.000",
+            ColumnType::Number,
+            &TableImportance::default()
+        ),
         CellDiffStatus::ImportantDiff,
         "数值列按数值语义：字面不同但值相同 -> 键折叠后等价；此处直接比较仍是 Important（无容差）"
     );
-    let imp = TableImportance { numeric_tolerance: Some(0.001), ..Default::default() };
-    assert_eq!(compare_cell("1.0", "1.000", ColumnType::Number, &imp), CellDiffStatus::UnimportantDiff);
-    assert_eq!(compare_cell("2024-01-01", "2024-01-01", ColumnType::Date, &imp), CellDiffStatus::Same);
-    assert_eq!(compare_cell("x", "x", ColumnType::Text, &imp), CellDiffStatus::Same);
+    let imp = TableImportance {
+        numeric_tolerance: Some(0.001),
+        ..Default::default()
+    };
+    assert_eq!(
+        compare_cell("1.0", "1.000", ColumnType::Number, &imp),
+        CellDiffStatus::UnimportantDiff
+    );
+    assert_eq!(
+        compare_cell("2024-01-01", "2024-01-01", ColumnType::Date, &imp),
+        CellDiffStatus::Same
+    );
+    assert_eq!(
+        compare_cell("x", "x", ColumnType::Text, &imp),
+        CellDiffStatus::Same
+    );
 }
 
 /// 类型推断覆盖：Number/Date/Text（宽松；13 语料的 score 列应为 Number）

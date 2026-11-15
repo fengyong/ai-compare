@@ -52,14 +52,24 @@ fn diff_seq_inner<T: PartialEq>(
     degraded: &mut bool,
 ) -> Vec<RawOp> {
     let mut out: Vec<RawOp> = Vec::new();
-    let mut stack: Vec<Task> = vec![Task::Range { a0: 0, a1: a.len() as u32, b0: 0, b1: b.len() as u32 }];
+    let mut stack: Vec<Task> = vec![Task::Range {
+        a0: 0,
+        a1: a.len() as u32,
+        b0: 0,
+        b1: b.len() as u32,
+    }];
 
     while let Some(task) = stack.pop() {
         match task {
             Task::Eq(len) => out.push(RawOp::Equal(len)),
             Task::Ins(len) => out.push(RawOp::Insert(len)),
             Task::Del(len) => out.push(RawOp::Delete(len)),
-            Task::Range { mut a0, a1, mut b0, b1 } => {
+            Task::Range {
+                mut a0,
+                a1,
+                mut b0,
+                b1,
+            } => {
                 // 超时抢占：剩余子问题降级为全删全插（脚本仍合法）
                 if let Some(dl) = deadline {
                     if std::time::Instant::now() > dl {
@@ -77,7 +87,10 @@ fn diff_seq_inner<T: PartialEq>(
                 }
                 // 公共前缀：直接输出
                 let mut pre = 0u32;
-                while a0 + pre < a1 && b0 + pre < b1 && a[(a0 + pre) as usize] == b[(b0 + pre) as usize] {
+                while a0 + pre < a1
+                    && b0 + pre < b1
+                    && a[(a0 + pre) as usize] == b[(b0 + pre) as usize]
+                {
                     pre += 1;
                 }
                 if pre > 0 {
@@ -87,7 +100,10 @@ fn diff_seq_inner<T: PartialEq>(
                 }
                 // 公共后缀：压栈延后输出（必须位于中段之后）
                 let mut suf = 0u32;
-                while a1 > a0 + suf && b1 > b0 + suf && a[(a1 - 1 - suf) as usize] == b[(b1 - 1 - suf) as usize] {
+                while a1 > a0 + suf
+                    && b1 > b0 + suf
+                    && a[(a1 - 1 - suf) as usize] == b[(b1 - 1 - suf) as usize]
+                {
                     suf += 1;
                 }
                 let a1 = a1 - suf;
@@ -168,7 +184,11 @@ pub fn coalesce_ops(ops: Vec<RawOp>) -> Vec<RawOp> {
 /// 线性空间中点分治：寻找"中蛇"（middle snake），
 /// 返回蛇末端 (x, y)（0 起、半开）作为分割点。
 /// `deadline` 超时返回 None（每 32 轮 d 迭代检查一次，摊销开销可忽略）。
-fn middle_snake<T: PartialEq>(a: &[T], b: &[T], deadline: Option<std::time::Instant>) -> Option<(usize, usize)> {
+fn middle_snake<T: PartialEq>(
+    a: &[T],
+    b: &[T],
+    deadline: Option<std::time::Instant>,
+) -> Option<(usize, usize)> {
     let n = a.len();
     let m = b.len();
     debug_assert!(n > 0 && m > 0, "调用方已排除空侧");
@@ -381,7 +401,11 @@ mod tests {
             for op in &ops {
                 match op {
                     RawOp::Equal(k) => {
-                        assert_eq!(&a[ia..ia + *k as usize], &b[ib..ib + *k as usize], "Equal 段必须真等");
+                        assert_eq!(
+                            &a[ia..ia + *k as usize],
+                            &b[ib..ib + *k as usize],
+                            "Equal 段必须真等"
+                        );
                         ia += *k as usize;
                         ib += *k as usize;
                     }
@@ -392,10 +416,32 @@ mod tests {
             assert_eq!(ia, a.len(), "脚本未覆盖全部 a");
             assert_eq!(ib, b.len(), "脚本未覆盖全部 b");
             // 最优性：Delete+Insert 行数 == DP 编辑距离
-            let del: u32 = ops.iter().filter_map(|o| if let RawOp::Delete(k) = o { Some(*k) } else { None }).sum();
-            let ins: u32 = ops.iter().filter_map(|o| if let RawOp::Insert(k) = o { Some(*k) } else { None }).sum();
+            let del: u32 = ops
+                .iter()
+                .filter_map(|o| {
+                    if let RawOp::Delete(k) = o {
+                        Some(*k)
+                    } else {
+                        None
+                    }
+                })
+                .sum();
+            let ins: u32 = ops
+                .iter()
+                .filter_map(|o| {
+                    if let RawOp::Insert(k) = o {
+                        Some(*k)
+                    } else {
+                        None
+                    }
+                })
+                .sum();
             let dp = edit_distance_dp(&a, &b);
-            assert_eq!(del as usize + ins as usize, dp, "脚本非最优（a={a:?} b={b:?}）");
+            assert_eq!(
+                del as usize + ins as usize,
+                dp,
+                "脚本非最优（a={a:?} b={b:?}）"
+            );
         }
     }
 
@@ -434,6 +480,14 @@ mod tests {
         let a: Vec<u8> = vec![0, 1, 2, 9, 4, 5];
         let b: Vec<u8> = vec![0, 1, 2, 8, 4, 5];
         let ops = diff_seq(&a, &b);
-        assert_eq!(ops, vec![RawOp::Equal(3), RawOp::Delete(1), RawOp::Insert(1), RawOp::Equal(2)]);
+        assert_eq!(
+            ops,
+            vec![
+                RawOp::Equal(3),
+                RawOp::Delete(1),
+                RawOp::Insert(1),
+                RawOp::Equal(2)
+            ]
+        );
     }
 }

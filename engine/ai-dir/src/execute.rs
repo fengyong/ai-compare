@@ -14,7 +14,7 @@
 //! - 复制保留源 mtime（BC 复制语义）；move = copy + 删源；
 //!   rename 优先走 VFS 原子 rename（能力位 [`ai_vfs::VfsCaps::MOVE`]）。
 
-use ai_protocol::{PlannedOperation, PlannedOpKind};
+use ai_protocol::{PlannedOpKind, PlannedOperation};
 use ai_vfs::{EntryKind, StatInfo, VfsCaps, VfsPath, VfsProvider};
 
 use crate::CancelFlag;
@@ -41,16 +41,35 @@ pub enum FileOp {
     /// 跨侧复制（FR-DIR-060）。
     /// `path` = 源侧真实 rel；`target_path` = 目标侧真实 rel（R3-03：平铺/手动
     /// 异名对齐时两者不同）；None = 目标沿用源 rel（旧行为，兼容树形同路径）。
-    Copy { path: String, target_path: Option<String>, from: Side, to: Side },
+    Copy {
+        path: String,
+        target_path: Option<String>,
+        from: Side,
+        to: Side,
+    },
     /// 跨侧移动 = 复制 + 删源（FR-DIR-062）
-    Move { path: String, target_path: Option<String>, from: Side, to: Side },
+    Move {
+        path: String,
+        target_path: Option<String>,
+        from: Side,
+        to: Side,
+    },
     /// 同侧改名（FR-DIR-064；目标 = 源父目录 + new_name）
-    Rename { path: String, side: Side, new_name: String },
+    Rename {
+        path: String,
+        side: Side,
+        new_name: String,
+    },
     /// 删除（目录为递归删除；FR-DIR-063）
     Delete { path: String, side: Side },
     /// 时间戳：mtime_ms > 0 设为指定值；0 = 从对侧复制（FR-DIR-065 touch）。
     /// `target_path` 为 mtime=0 时取时间戳的**对侧**真实 rel（None = 同源 rel）。
-    Touch { path: String, target_path: Option<String>, side: Side, mtime_ms: u64 },
+    Touch {
+        path: String,
+        target_path: Option<String>,
+        side: Side,
+        mtime_ms: u64,
+    },
     /// 新建文件夹（FR-DIR-066）
     Mkdir { path: String, side: Side },
 }
@@ -102,7 +121,12 @@ impl FileOp {
     /// 人类可读描述（dry_run 清单 / 确认框明细行）
     pub fn describe(&self) -> String {
         match self {
-            FileOp::Copy { path, target_path, from, to } => {
+            FileOp::Copy {
+                path,
+                target_path,
+                from,
+                to,
+            } => {
                 let dst = target_path.as_deref().unwrap_or(path);
                 if dst == path {
                     format!("复制 {from}→{to}: {path}")
@@ -110,7 +134,12 @@ impl FileOp {
                     format!("复制 {from}→{to}: {path} → {dst}")
                 }
             }
-            FileOp::Move { path, target_path, from, to } => {
+            FileOp::Move {
+                path,
+                target_path,
+                from,
+                to,
+            } => {
                 let dst = target_path.as_deref().unwrap_or(path);
                 if dst == path {
                     format!("移动 {from}→{to}: {path}")
@@ -118,9 +147,18 @@ impl FileOp {
                     format!("移动 {from}→{to}: {path} → {dst}")
                 }
             }
-            FileOp::Rename { path, side, new_name } => format!("改名（{side}）: {path} → {new_name}"),
+            FileOp::Rename {
+                path,
+                side,
+                new_name,
+            } => format!("改名（{side}）: {path} → {new_name}"),
             FileOp::Delete { path, side } => format!("删除（{side}）: {path}"),
-            FileOp::Touch { path, side, mtime_ms, .. } => {
+            FileOp::Touch {
+                path,
+                side,
+                mtime_ms,
+                ..
+            } => {
                 if *mtime_ms == 0 {
                     format!("对时（{side}，取对侧时间戳）: {path}")
                 } else {
@@ -134,8 +172,12 @@ impl FileOp {
     /// 源侧/操作侧 rel 路径（校验/展示用）
     pub fn path(&self) -> &str {
         match self {
-            FileOp::Copy { path, .. } | FileOp::Move { path, .. } | FileOp::Rename { path, .. } => path,
-            FileOp::Delete { path, .. } | FileOp::Touch { path, .. } | FileOp::Mkdir { path, .. } => path,
+            FileOp::Copy { path, .. } | FileOp::Move { path, .. } | FileOp::Rename { path, .. } => {
+                path
+            }
+            FileOp::Delete { path, .. }
+            | FileOp::Touch { path, .. }
+            | FileOp::Mkdir { path, .. } => path,
         }
     }
 
@@ -143,9 +185,15 @@ impl FileOp {
     /// 缺省 = 源侧 rel（旧载荷兼容）。
     pub fn target_rel(&self) -> &str {
         match self {
-            FileOp::Copy { path, target_path, .. }
-            | FileOp::Move { path, target_path, .. }
-            | FileOp::Touch { path, target_path, .. } => target_path.as_deref().unwrap_or(path),
+            FileOp::Copy {
+                path, target_path, ..
+            }
+            | FileOp::Move {
+                path, target_path, ..
+            }
+            | FileOp::Touch {
+                path, target_path, ..
+            } => target_path.as_deref().unwrap_or(path),
             _ => self.path(),
         }
     }
@@ -153,9 +201,15 @@ impl FileOp {
     /// 该操作涉及的全部 rel 路径（安全护栏必须逐一校验，R3-03 §1.1 要求 7）
     pub fn all_rels(&self) -> Vec<&str> {
         match self {
-            FileOp::Copy { path, target_path, .. }
-            | FileOp::Move { path, target_path, .. }
-            | FileOp::Touch { path, target_path, .. } => match target_path {
+            FileOp::Copy {
+                path, target_path, ..
+            }
+            | FileOp::Move {
+                path, target_path, ..
+            }
+            | FileOp::Touch {
+                path, target_path, ..
+            } => match target_path {
                 Some(dst) if dst != path => vec![path.as_str(), dst.as_str()],
                 _ => vec![path.as_str()],
             },
@@ -262,7 +316,11 @@ pub async fn execute_ops(
     cancel: &CancelFlag,
 ) -> ExecuteReport {
     let total = ops.len();
-    let mut report = ExecuteReport { total, dry_run: opts.dry_run, ..Default::default() };
+    let mut report = ExecuteReport {
+        total,
+        dry_run: opts.dry_run,
+        ..Default::default()
+    };
     for (i, op) in ops.iter().enumerate() {
         if let Some(cb) = progress.as_deref_mut() {
             cb(i + 1, total, op);
@@ -296,7 +354,11 @@ pub async fn execute_ops_with_roots(
     cancel: &CancelFlag,
 ) -> ExecuteReport {
     let total = items.len();
-    let mut report = ExecuteReport { total, dry_run: opts.dry_run, ..Default::default() };
+    let mut report = ExecuteReport {
+        total,
+        dry_run: opts.dry_run,
+        ..Default::default()
+    };
     for (i, (op, src_root, dst_root)) in items.iter().enumerate() {
         if let Some(cb) = progress.as_deref_mut() {
             cb(i + 1, total, op);
@@ -321,8 +383,17 @@ pub async fn execute_ops_with_roots(
 }
 
 /// 单项执行（校验 + 落盘；dry_run 只校验）
-async fn execute_one(vfs: &dyn VfsProvider, roots: &(VfsPath, VfsPath), op: &FileOp, opts: &ExecuteOptions) -> OpResult {
-    let mk = |status: OpStatus, detail: Option<String>| OpResult { op: op.clone(), status, detail };
+async fn execute_one(
+    vfs: &dyn VfsProvider,
+    roots: &(VfsPath, VfsPath),
+    op: &FileOp,
+    opts: &ExecuteOptions,
+) -> OpResult {
+    let mk = |status: OpStatus, detail: Option<String>| OpResult {
+        op: op.clone(),
+        status,
+        detail,
+    };
     let detail_of = |r: Result<OpStatus, String>| match r {
         Ok(s) => mk(s, None),
         Err(msg) => mk(OpStatus::Failed, Some(msg)),
@@ -357,11 +428,21 @@ async fn execute_one(vfs: &dyn VfsProvider, roots: &(VfsPath, VfsPath), op: &Fil
         Err(msg) => mk(OpStatus::Failed, Some(msg)),
     };
     match op {
-        FileOp::Copy { path, target_path, from, to } => {
+        FileOp::Copy {
+            path,
+            target_path,
+            from,
+            to,
+        } => {
             let dst = target_path.as_deref().unwrap_or(path);
             ok(copy_path(vfs, roots, path, dst, *from, *to).await)
         }
-        FileOp::Move { path, target_path, from, to } => {
+        FileOp::Move {
+            path,
+            target_path,
+            from,
+            to,
+        } => {
             let dst = target_path.as_deref().unwrap_or(path);
             let r = copy_path(vfs, roots, path, dst, *from, *to).await;
             if let Err(msg) = r {
@@ -369,9 +450,20 @@ async fn execute_one(vfs: &dyn VfsProvider, roots: &(VfsPath, VfsPath), op: &Fil
             }
             detail_of(remove_side(vfs, roots, path, *from, false).await)
         }
-        FileOp::Rename { path, side, new_name } => ok(rename_side(vfs, roots, path, *side, new_name).await),
-        FileOp::Delete { path, side } => detail_of(remove_side(vfs, roots, path, *side, true).await),
-        FileOp::Touch { path, target_path, side, mtime_ms } => {
+        FileOp::Rename {
+            path,
+            side,
+            new_name,
+        } => ok(rename_side(vfs, roots, path, *side, new_name).await),
+        FileOp::Delete { path, side } => {
+            detail_of(remove_side(vfs, roots, path, *side, true).await)
+        }
+        FileOp::Touch {
+            path,
+            target_path,
+            side,
+            mtime_ms,
+        } => {
             let other = target_path.as_deref().unwrap_or(path);
             ok(touch_side(vfs, roots, path, other, *side, *mtime_ms).await)
         }
@@ -407,7 +499,11 @@ fn parent_rel(rel: &str) -> String {
 /// 根外数据。`vfs.stat` 为 lstat 语义，逐分量检查即可拦住。
 ///
 /// 只检查**祖先**分量：删除符号链接本身是安全的 unlink（不跟随），必须继续放行。
-async fn reject_symlink_ancestors(vfs: &dyn VfsProvider, root: &VfsPath, rel: &str) -> Result<(), String> {
+async fn reject_symlink_ancestors(
+    vfs: &dyn VfsProvider,
+    root: &VfsPath,
+    rel: &str,
+) -> Result<(), String> {
     let mut segs = rel.split('/').peekable();
     let mut cur = root.clone();
     while let Some(seg) = segs.next() {
@@ -425,7 +521,11 @@ async fn reject_symlink_ancestors(vfs: &dyn VfsProvider, root: &VfsPath, rel: &s
 }
 
 /// 写入型操作的目标末分量若为符号链接，写入会跟随它落到根外，必须拒绝。
-async fn reject_symlink_target(vfs: &dyn VfsProvider, root: &VfsPath, rel: &str) -> Result<(), String> {
+async fn reject_symlink_target(
+    vfs: &dyn VfsProvider,
+    root: &VfsPath,
+    rel: &str,
+) -> Result<(), String> {
     if let Ok(st) = vfs.stat(&root.join(rel)).await {
         if st.kind == EntryKind::Symlink {
             return Err(format!("拒绝写入符号链接目标（{rel}）：会越过比较根"));
@@ -435,15 +535,41 @@ async fn reject_symlink_target(vfs: &dyn VfsProvider, root: &VfsPath, rel: &str)
 }
 
 /// 对一项操作涉及的全部侧做祖先分量护栏；写入型操作再加末分量护栏。
-async fn reject_symlink_escape(vfs: &dyn VfsProvider, roots: &(VfsPath, VfsPath), op: &FileOp) -> Result<(), String> {
+async fn reject_symlink_escape(
+    vfs: &dyn VfsProvider,
+    roots: &(VfsPath, VfsPath),
+    op: &FileOp,
+) -> Result<(), String> {
     let targets: Vec<(Side, &str)> = match op {
         // R3-03：源与目标各自用真实 rel 做祖先护栏；异名对齐时目标侧
         // 的目录链可能与源侧完全不同，只校验源会漏掉目标侧符号链接。
-        FileOp::Copy { path, target_path, from, to } | FileOp::Move { path, target_path, from, to } => {
-            vec![(*from, path.as_str()), (*to, target_path.as_deref().unwrap_or(path))]
+        FileOp::Copy {
+            path,
+            target_path,
+            from,
+            to,
         }
-        FileOp::Touch { path, target_path, side, mtime_ms } => {
-            let other = match side { Side::Left => Side::Right, Side::Right => Side::Left };
+        | FileOp::Move {
+            path,
+            target_path,
+            from,
+            to,
+        } => {
+            vec![
+                (*from, path.as_str()),
+                (*to, target_path.as_deref().unwrap_or(path)),
+            ]
+        }
+        FileOp::Touch {
+            path,
+            target_path,
+            side,
+            mtime_ms,
+        } => {
+            let other = match side {
+                Side::Left => Side::Right,
+                Side::Right => Side::Left,
+            };
             let mut v = vec![(*side, path.as_str())];
             if *mtime_ms == 0 {
                 v.push((other, target_path.as_deref().unwrap_or(path)));
@@ -459,8 +585,24 @@ async fn reject_symlink_escape(vfs: &dyn VfsProvider, roots: &(VfsPath, VfsPath)
     }
     // 写入会跟随末分量符号链接落到根外；删除符号链接本身是安全 unlink，放行。
     match op {
-        FileOp::Copy { path, target_path, to, .. } | FileOp::Move { path, target_path, to, .. } => {
-            reject_symlink_target(vfs, side_root(roots, *to), target_path.as_deref().unwrap_or(path)).await
+        FileOp::Copy {
+            path,
+            target_path,
+            to,
+            ..
+        }
+        | FileOp::Move {
+            path,
+            target_path,
+            to,
+            ..
+        } => {
+            reject_symlink_target(
+                vfs,
+                side_root(roots, *to),
+                target_path.as_deref().unwrap_or(path),
+            )
+            .await
         }
         FileOp::Touch { path, side, .. } => {
             reject_symlink_target(vfs, side_root(roots, *side), path).await
@@ -472,9 +614,24 @@ async fn reject_symlink_escape(vfs: &dyn VfsProvider, roots: &(VfsPath, VfsPath)
 /// 执行前校验（dry_run / 复制冲突检查共用）
 ///
 /// 返回 Ok(Some(note))：附注（如"将覆盖目标"）；Ok(None)：无附注。
-async fn validate(vfs: &dyn VfsProvider, roots: &(VfsPath, VfsPath), op: &FileOp) -> Result<Option<String>, String> {
+async fn validate(
+    vfs: &dyn VfsProvider,
+    roots: &(VfsPath, VfsPath),
+    op: &FileOp,
+) -> Result<Option<String>, String> {
     match op {
-        FileOp::Copy { path, target_path, from, to } | FileOp::Move { path, target_path, from, to } => {
+        FileOp::Copy {
+            path,
+            target_path,
+            from,
+            to,
+        }
+        | FileOp::Move {
+            path,
+            target_path,
+            from,
+            to,
+        } => {
             let dst_rel = target_path.as_deref().unwrap_or(path);
             let src = resolve(roots, *from, path);
             let src_stat = vfs
@@ -490,15 +647,22 @@ async fn validate(vfs: &dyn VfsProvider, roots: &(VfsPath, VfsPath), op: &FileOp
                 Err(_) => Ok(None),
             }
         }
-        FileOp::Rename { path, side, new_name } => {
+        FileOp::Rename {
+            path,
+            side,
+            new_name,
+        } => {
             let src = resolve(roots, *side, path);
-            vfs.stat(&src).await.map_err(|e| format!("源不存在（{side}）: {path}: {e}"))?;
+            vfs.stat(&src)
+                .await
+                .map_err(|e| format!("源不存在（{side}）: {path}: {e}"))?;
             if sanitize_rel(new_name).is_err() {
                 return Err(format!("新名称非法: {new_name}"));
             }
             let parent = parent_rel(path);
             let dst = side_root(roots, *side).join(&parent).join(new_name);
-            if dst.as_str() != resolve(roots, *side, path).as_str() && vfs.stat(&dst).await.is_ok() {
+            if dst.as_str() != resolve(roots, *side, path).as_str() && vfs.stat(&dst).await.is_ok()
+            {
                 return Err(format!("目标名已存在（{side}）: {parent}/{new_name}"));
             }
             Ok(None)
@@ -510,9 +674,16 @@ async fn validate(vfs: &dyn VfsProvider, roots: &(VfsPath, VfsPath), op: &FileOp
                 Err(_) => Err(format!("目标不存在（{side}）: {path}")),
             }
         }
-        FileOp::Touch { path, target_path, side, mtime_ms } => {
+        FileOp::Touch {
+            path,
+            target_path,
+            side,
+            mtime_ms,
+        } => {
             let target = resolve(roots, *side, path);
-            vfs.stat(&target).await.map_err(|e| format!("目标不存在（{side}）: {path}: {e}"))?;
+            vfs.stat(&target)
+                .await
+                .map_err(|e| format!("目标不存在（{side}）: {path}: {e}"))?;
             if *mtime_ms == 0 {
                 let other = match side {
                     Side::Left => Side::Right,
@@ -520,7 +691,9 @@ async fn validate(vfs: &dyn VfsProvider, roots: &(VfsPath, VfsPath), op: &FileOp
                 };
                 let other_rel = target_path.as_deref().unwrap_or(path);
                 let src = resolve(roots, other, other_rel);
-                vfs.stat(&src).await.map_err(|e| format!("对侧不存在，无法取时间戳: {other_rel}: {e}"))?;
+                vfs.stat(&src)
+                    .await
+                    .map_err(|e| format!("对侧不存在，无法取时间戳: {other_rel}: {e}"))?;
             }
             Ok(None)
         }
@@ -570,7 +743,10 @@ async fn copy_path(
     let dst = resolve(roots, to, dst_rel);
     // 父目录链按**目标** rel 创建（异名对齐时目标侧目录链不同于源侧）
     mkdir_parents(vfs, roots, to, dst_rel).await?;
-    let src_stat = vfs.stat(&src).await.map_err(|e| format!("源不可读（{from}）: {src_rel}: {e}"))?;
+    let src_stat = vfs
+        .stat(&src)
+        .await
+        .map_err(|e| format!("源不可读（{from}）: {src_rel}: {e}"))?;
     if src_stat.kind == EntryKind::Dir {
         copy_tree(vfs, &src, &dst, dst_rel).await
     } else {
@@ -579,7 +755,12 @@ async fn copy_path(
 }
 
 /// 复制根 rel 的父目录链（目的侧）
-async fn mkdir_parents(vfs: &dyn VfsProvider, roots: &(VfsPath, VfsPath), side: Side, rel: &str) -> Result<(), String> {
+async fn mkdir_parents(
+    vfs: &dyn VfsProvider,
+    roots: &(VfsPath, VfsPath),
+    side: Side,
+    rel: &str,
+) -> Result<(), String> {
     let parent = parent_rel(rel);
     if parent.is_empty() {
         return Ok(());
@@ -592,7 +773,12 @@ async fn mkdir_parents(vfs: &dyn VfsProvider, roots: &(VfsPath, VfsPath), side: 
 
 /// 单文件复制：优先 VFS 原生 copy_file（含 mtime 保留）；
 /// 无 COPY 能力位时 read+write 组合降级（跨 Provider 组合）
-async fn copy_file_via(vfs: &dyn VfsProvider, src: &VfsPath, dst: &VfsPath, rel: &str) -> Result<(), String> {
+async fn copy_file_via(
+    vfs: &dyn VfsProvider,
+    src: &VfsPath,
+    dst: &VfsPath,
+    rel: &str,
+) -> Result<(), String> {
     let copyable = |p: &VfsPath| vfs.capabilities_for(p).has(VfsCaps::COPY);
     if copyable(src) && copyable(dst) {
         return vfs
@@ -600,8 +786,13 @@ async fn copy_file_via(vfs: &dyn VfsProvider, src: &VfsPath, dst: &VfsPath, rel:
             .await
             .map_err(|e| format!("复制失败: {rel}: {e}"));
     }
-    let bytes = vfs.read_file_bytes(src).await.map_err(|e| format!("读源失败: {rel}: {e}"))?;
-    vfs.write_file_bytes(dst, &bytes).await.map_err(|e| format!("写目标失败: {rel}: {e}"))
+    let bytes = vfs
+        .read_file_bytes(src)
+        .await
+        .map_err(|e| format!("读源失败: {rel}: {e}"))?;
+    vfs.write_file_bytes(dst, &bytes)
+        .await
+        .map_err(|e| format!("写目标失败: {rel}: {e}"))
 }
 
 /// 目录树递归复制（覆盖语义；符号链接按目标内容复制，失败项终止该树）
@@ -614,8 +805,15 @@ fn copy_tree<'a>(
     Box::pin(async move { copy_tree_inner(vfs, src_dir, dst_dir, rel_prefix).await })
 }
 
-async fn copy_tree_inner(vfs: &dyn VfsProvider, src_dir: &VfsPath, dst_dir: &VfsPath, rel_prefix: &str) -> Result<(), String> {
-    vfs.mkdir_all(dst_dir).await.map_err(|e| format!("创建目录失败: {rel_prefix}: {e}"))?;
+async fn copy_tree_inner(
+    vfs: &dyn VfsProvider,
+    src_dir: &VfsPath,
+    dst_dir: &VfsPath,
+    rel_prefix: &str,
+) -> Result<(), String> {
+    vfs.mkdir_all(dst_dir)
+        .await
+        .map_err(|e| format!("创建目录失败: {rel_prefix}: {e}"))?;
     let entries = vfs
         .list_dir(src_dir)
         .await
@@ -642,7 +840,13 @@ async fn copy_tree_inner(vfs: &dyn VfsProvider, src_dir: &VfsPath, dst_dir: &Vfs
 }
 
 /// 删除（side 内；recursive 仅用于目录；对已不存在目标返回 Skipped）
-async fn remove_side(vfs: &dyn VfsProvider, roots: &(VfsPath, VfsPath), rel: &str, side: Side, strict_missing: bool) -> Result<OpStatus, String> {
+async fn remove_side(
+    vfs: &dyn VfsProvider,
+    roots: &(VfsPath, VfsPath),
+    rel: &str,
+    side: Side,
+    strict_missing: bool,
+) -> Result<OpStatus, String> {
     let target = resolve(roots, side, rel);
     if !vfs.capabilities_for(&target).has(VfsCaps::DELETE) {
         return Err(format!("目标侧不支持删除（能力位缺失，{side}）"));
@@ -661,19 +865,38 @@ async fn remove_side(vfs: &dyn VfsProvider, roots: &(VfsPath, VfsPath), rel: &st
         return Err(format!("拒绝删除根目录（{side}）"));
     }
     let recursive = stat.kind == EntryKind::Dir;
-    vfs.remove(&target, recursive).await.map_err(|e| format!("删除失败（{side}）: {rel}: {e}"))?;
+    vfs.remove(&target, recursive)
+        .await
+        .map_err(|e| format!("删除失败（{side}）: {rel}: {e}"))?;
     Ok(OpStatus::Succeeded)
 }
 
 /// 同侧改名（优先 VFS 原子 rename）
-async fn rename_side(vfs: &dyn VfsProvider, roots: &(VfsPath, VfsPath), rel: &str, side: Side, new_name: &str) -> Result<(), String> {
+async fn rename_side(
+    vfs: &dyn VfsProvider,
+    roots: &(VfsPath, VfsPath),
+    rel: &str,
+    side: Side,
+    new_name: &str,
+) -> Result<(), String> {
     let src = resolve(roots, side, rel);
     if !vfs.capabilities_for(&src).has(VfsCaps::MOVE) {
         return Err(format!("目标侧不支持改名（能力位缺失，{side}）"));
     }
-    validate(vfs, roots, &FileOp::Rename { path: rel.to_string(), side, new_name: new_name.to_string() }).await?;
+    validate(
+        vfs,
+        roots,
+        &FileOp::Rename {
+            path: rel.to_string(),
+            side,
+            new_name: new_name.to_string(),
+        },
+    )
+    .await?;
     let dst = side_root(roots, side).join(&parent_rel(rel)).join(new_name);
-    vfs.rename(&src, &dst).await.map_err(|e| format!("改名失败（{side}）: {rel} → {new_name}: {e}"))
+    vfs.rename(&src, &dst)
+        .await
+        .map_err(|e| format!("改名失败（{side}）: {rel} → {new_name}: {e}"))
 }
 
 /// 时间戳（mtime_ms=0 取对侧；FR-DIR-065 touch）
@@ -703,11 +926,18 @@ async fn touch_side(
             .map_err(|e| format!("对侧不存在，无法取时间戳: {other_rel}: {e}"))?;
         src_stat.mtime_ms
     };
-    vfs.set_mtime(&target, mtime).await.map_err(|e| format!("对时失败（{side}）: {rel}: {e}"))
+    vfs.set_mtime(&target, mtime)
+        .await
+        .map_err(|e| format!("对时失败（{side}）: {rel}: {e}"))
 }
 
 /// 新建文件夹（父目录链自动创建；目标已存在报错）
-async fn mkdir_side(vfs: &dyn VfsProvider, roots: &(VfsPath, VfsPath), rel: &str, side: Side) -> Result<(), String> {
+async fn mkdir_side(
+    vfs: &dyn VfsProvider,
+    roots: &(VfsPath, VfsPath),
+    rel: &str,
+    side: Side,
+) -> Result<(), String> {
     let target = resolve(roots, side, rel);
     if !vfs.capabilities_for(&target).has(VfsCaps::MKDIR) {
         return Err(format!("目标侧不支持创建目录（能力位缺失，{side}）"));
@@ -715,7 +945,9 @@ async fn mkdir_side(vfs: &dyn VfsProvider, roots: &(VfsPath, VfsPath), rel: &str
     if vfs.stat(&target).await.is_ok() {
         return Err(format!("目标已存在（{side}）: {rel}"));
     }
-    vfs.mkdir_all(&target).await.map_err(|e| format!("创建目录失败（{side}）: {rel}: {e}"))
+    vfs.mkdir_all(&target)
+        .await
+        .map_err(|e| format!("创建目录失败（{side}）: {rel}: {e}"))
 }
 
 #[cfg(test)]
@@ -752,7 +984,12 @@ mod tests {
     }
 
     fn copy_l2r(rel: &str) -> FileOp {
-        FileOp::Copy { path: rel.into(), target_path: None, from: Side::Left, to: Side::Right }
+        FileOp::Copy {
+            path: rel.into(),
+            target_path: None,
+            from: Side::Left,
+            to: Side::Right,
+        }
     }
 
     fn planned(kind: PlannedOpKind, path: &str) -> PlannedOperation {
@@ -784,7 +1021,10 @@ mod tests {
         let (_dir, l, r) = make_trees().await;
         let vfs = LocalFs::new();
         let roots = (l.clone(), r.clone());
-        let plan = vec![planned(PlannedOpKind::CopyLeftToRight, "lonly.txt"), planned(PlannedOpKind::DeleteRight, "ronly.txt")];
+        let plan = vec![
+            planned(PlannedOpKind::CopyLeftToRight, "lonly.txt"),
+            planned(PlannedOpKind::DeleteRight, "ronly.txt"),
+        ];
         let mut progress_count = 0usize;
         let report = execute_planned_operations(
             &vfs,
@@ -797,16 +1037,26 @@ mod tests {
         .await;
         assert!(report.dry_run);
         assert_eq!(report.total, 2);
-        assert_eq!(report.succeeded.len(), 2, "校验通过项进将执行清单: {report:?}");
+        assert_eq!(
+            report.succeeded.len(),
+            2,
+            "校验通过项进将执行清单: {report:?}"
+        );
         assert_eq!(progress_count, 2, "dry_run 同样产出进度事件");
         // 文件系统未变：右仍存在、左→右复制未发生
         assert!(vfs.stat(&r.join("ronly.txt")).await.is_ok());
         assert!(vfs.stat(&r.join("lonly.txt")).await.is_err());
         // 源不存在的项应进失败清单
         let plan2 = vec![planned(PlannedOpKind::CopyLeftToRight, "ghost.txt")];
-        let report2 = execute_planned_operations(&vfs, &roots, &plan2, &opts(true), None, &CancelFlag::new()).await;
+        let report2 =
+            execute_planned_operations(&vfs, &roots, &plan2, &opts(true), None, &CancelFlag::new())
+                .await;
         assert_eq!(report2.failed.len(), 1);
-        assert!(report2.failed[0].detail.as_deref().unwrap().contains("ghost.txt"));
+        assert!(report2.failed[0]
+            .detail
+            .as_deref()
+            .unwrap()
+            .contains("ghost.txt"));
     }
 
     #[tokio::test]
@@ -814,11 +1064,22 @@ mod tests {
         let (_dir, l, r) = make_trees().await;
         let vfs = LocalFs::new();
         let roots = (l.clone(), r.clone());
-        let report = execute_ops(&vfs, &roots, &[copy_l2r("lonly.txt")], &opts(false), None, &CancelFlag::new()).await;
+        let report = execute_ops(
+            &vfs,
+            &roots,
+            &[copy_l2r("lonly.txt")],
+            &opts(false),
+            None,
+            &CancelFlag::new(),
+        )
+        .await;
         assert_eq!(report.succeeded.len(), 1, "{report:?}");
         let st = vfs.stat(&r.join("lonly.txt")).await.unwrap();
         assert_eq!(st.size, 1);
-        assert_eq!(vfs.read_file_bytes(&r.join("lonly.txt")).await.unwrap(), b"L");
+        assert_eq!(
+            vfs.read_file_bytes(&r.join("lonly.txt")).await.unwrap(),
+            b"L"
+        );
         // mtime 保留（BC 复制语义）
         let src = vfs.stat(&l.join("lonly.txt")).await.unwrap();
         assert_eq!(st.mtime_ms, src.mtime_ms);
@@ -829,10 +1090,24 @@ mod tests {
         let (_dir, l, r) = make_trees().await;
         let vfs = LocalFs::new();
         let roots = (l.clone(), r.clone());
-        let report = execute_ops(&vfs, &roots, &[copy_l2r("tree")], &opts(false), None, &CancelFlag::new()).await;
+        let report = execute_ops(
+            &vfs,
+            &roots,
+            &[copy_l2r("tree")],
+            &opts(false),
+            None,
+            &CancelFlag::new(),
+        )
+        .await;
         assert_eq!(report.succeeded.len(), 1, "{report:?}");
-        assert_eq!(vfs.read_file_bytes(&r.join("tree/a.txt")).await.unwrap(), b"a-L");
-        assert_eq!(vfs.read_file_bytes(&r.join("tree/b.txt")).await.unwrap(), b"b-L");
+        assert_eq!(
+            vfs.read_file_bytes(&r.join("tree/a.txt")).await.unwrap(),
+            b"a-L"
+        );
+        assert_eq!(
+            vfs.read_file_bytes(&r.join("tree/b.txt")).await.unwrap(),
+            b"b-L"
+        );
     }
 
     #[tokio::test]
@@ -841,21 +1116,54 @@ mod tests {
         let vfs = LocalFs::new();
         let roots = (l.clone(), r.clone());
         // 文件→文件：覆盖
-        let report = execute_ops(&vfs, &roots, &[copy_l2r("diff.txt")], &opts(false), None, &CancelFlag::new()).await;
+        let report = execute_ops(
+            &vfs,
+            &roots,
+            &[copy_l2r("diff.txt")],
+            &opts(false),
+            None,
+            &CancelFlag::new(),
+        )
+        .await;
         assert_eq!(report.succeeded.len(), 1);
-        assert_eq!(vfs.read_file_bytes(&r.join("diff.txt")).await.unwrap(), b"LEFT");
+        assert_eq!(
+            vfs.read_file_bytes(&r.join("diff.txt")).await.unwrap(),
+            b"LEFT"
+        );
         // 文件→目录：类型冲突
         std::fs::create_dir_all(r.as_str().to_string() + "/clash").unwrap();
-        let report2 = execute_ops(&vfs, &roots, &[copy_l2r("lonly.txt")], &opts(false), None, &CancelFlag::new()).await;
+        let report2 = execute_ops(
+            &vfs,
+            &roots,
+            &[copy_l2r("lonly.txt")],
+            &opts(false),
+            None,
+            &CancelFlag::new(),
+        )
+        .await;
         // 注意路径不同名，此处构造同名冲突：lonly.txt 在右建为目录
         let _ = report2;
         let roots2 = (l.clone(), r.clone());
-        let op = FileOp::Copy { path: "same.txt".into(), target_path: None, from: Side::Left, to: Side::Right };
+        let op = FileOp::Copy {
+            path: "same.txt".into(),
+            target_path: None,
+            from: Side::Left,
+            to: Side::Right,
+        };
         std::fs::remove_file(r.as_str().to_string() + "/same.txt").unwrap();
         std::fs::create_dir(r.as_str().to_string() + "/same.txt").unwrap();
-        let report3 = execute_ops(&vfs, &roots2, &[op], &opts(false), None, &CancelFlag::new()).await;
-        assert_eq!(report3.failed.len(), 1, "文件→目录应报类型冲突: {report3:?}");
-        assert!(report3.failed[0].detail.as_deref().unwrap().contains("类型冲突"));
+        let report3 =
+            execute_ops(&vfs, &roots2, &[op], &opts(false), None, &CancelFlag::new()).await;
+        assert_eq!(
+            report3.failed.len(),
+            1,
+            "文件→目录应报类型冲突: {report3:?}"
+        );
+        assert!(report3.failed[0]
+            .detail
+            .as_deref()
+            .unwrap()
+            .contains("类型冲突"));
     }
 
     #[tokio::test]
@@ -864,8 +1172,14 @@ mod tests {
         let vfs = LocalFs::new();
         let roots = (l.clone(), r.clone());
         let ops = vec![
-            FileOp::Delete { path: "lonly.txt".into(), side: Side::Left },
-            FileOp::Delete { path: "tree".into(), side: Side::Left },
+            FileOp::Delete {
+                path: "lonly.txt".into(),
+                side: Side::Left,
+            },
+            FileOp::Delete {
+                path: "tree".into(),
+                side: Side::Left,
+            },
         ];
         let report = execute_ops(&vfs, &roots, &ops, &opts(false), None, &CancelFlag::new()).await;
         assert_eq!(report.succeeded.len(), 2, "{report:?}");
@@ -886,11 +1200,17 @@ mod tests {
         symlink(r.as_str(), &esc_path).unwrap();
         let vfs = LocalFs::new();
         let roots = (l.clone(), r.clone());
-        let op = FileOp::Delete { path: "esc".into(), side: Side::Left };
+        let op = FileOp::Delete {
+            path: "esc".into(),
+            side: Side::Left,
+        };
         let report = execute_ops(&vfs, &roots, &[op], &opts(false), None, &CancelFlag::new()).await;
         assert_eq!(report.succeeded.len(), 1, "{report:?}");
         assert!(std::fs::symlink_metadata(&esc_path).is_err(), "链接已删");
-        assert!(vfs.stat(&r.join("same.txt")).await.is_ok(), "链接目标（右根）完好无损");
+        assert!(
+            vfs.stat(&r.join("same.txt")).await.is_ok(),
+            "链接目标（右根）完好无损"
+        );
     }
 
     #[cfg(unix)]
@@ -902,14 +1222,35 @@ mod tests {
         std::fs::create_dir_all(&outside).unwrap();
         let precious = outside.join("precious.txt");
         std::fs::write(&precious, "PRECIOUS-OUTSIDE").unwrap();
-        std::fs::write(std::path::Path::new(l.as_str()).join("notes.txt"), "LEFT-CONTENT").unwrap();
-        symlink(&precious, std::path::Path::new(r.as_str()).join("notes.txt")).unwrap();
+        std::fs::write(
+            std::path::Path::new(l.as_str()).join("notes.txt"),
+            "LEFT-CONTENT",
+        )
+        .unwrap();
+        symlink(
+            &precious,
+            std::path::Path::new(r.as_str()).join("notes.txt"),
+        )
+        .unwrap();
         let vfs = LocalFs::new();
         let roots = (l.clone(), r.clone());
-        let op = FileOp::Copy { path: "notes.txt".into(), target_path: None, from: Side::Left, to: Side::Right };
+        let op = FileOp::Copy {
+            path: "notes.txt".into(),
+            target_path: None,
+            from: Side::Left,
+            to: Side::Right,
+        };
         let report = execute_ops(&vfs, &roots, &[op], &opts(false), None, &CancelFlag::new()).await;
-        assert_eq!(report.succeeded.len(), 0, "不得穿过目标符号链接写出根外: {report:?}");
-        assert_eq!(std::fs::read_to_string(&precious).unwrap(), "PRECIOUS-OUTSIDE", "根外文件必须完好");
+        assert_eq!(
+            report.succeeded.len(),
+            0,
+            "不得穿过目标符号链接写出根外: {report:?}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&precious).unwrap(),
+            "PRECIOUS-OUTSIDE",
+            "根外文件必须完好"
+        );
     }
 
     #[cfg(unix)]
@@ -924,9 +1265,16 @@ mod tests {
         symlink(&outside, std::path::Path::new(r.as_str()).join("sub")).unwrap();
         let vfs = LocalFs::new();
         let roots = (l.clone(), r.clone());
-        let op = FileOp::Delete { path: "sub/victim.txt".into(), side: Side::Right };
+        let op = FileOp::Delete {
+            path: "sub/victim.txt".into(),
+            side: Side::Right,
+        };
         let report = execute_ops(&vfs, &roots, &[op], &opts(false), None, &CancelFlag::new()).await;
-        assert_eq!(report.succeeded.len(), 0, "不得穿过符号链接父目录删除根外文件: {report:?}");
+        assert_eq!(
+            report.succeeded.len(),
+            0,
+            "不得穿过符号链接父目录删除根外文件: {report:?}"
+        );
         assert!(victim.exists(), "根外文件必须完好");
     }
 
@@ -950,12 +1298,28 @@ mod tests {
         symlink(&outside, rtree.join("sub")).unwrap();
         let vfs = LocalFs::new();
         let roots = (l.clone(), r.clone());
-        let report = execute_ops(&vfs, &roots, &[copy_l2r("tree")], &opts(false), None, &CancelFlag::new()).await;
-        assert_eq!(report.succeeded.len(), 0, "递归复制不得穿过嵌套符号链接目录写根外: {report:?}");
+        let report = execute_ops(
+            &vfs,
+            &roots,
+            &[copy_l2r("tree")],
+            &opts(false),
+            None,
+            &CancelFlag::new(),
+        )
+        .await;
+        assert_eq!(
+            report.succeeded.len(),
+            0,
+            "递归复制不得穿过嵌套符号链接目录写根外: {report:?}"
+        );
         assert_eq!(report.failed.len(), 1);
         let detail = report.failed[0].detail.as_deref().unwrap_or("");
         assert!(detail.contains("符号链接"), "失败明细须说明原因: {detail}");
-        assert_eq!(std::fs::read_to_string(&precious).unwrap(), "PRECIOUS-OUTSIDE", "根外文件必须完好");
+        assert_eq!(
+            std::fs::read_to_string(&precious).unwrap(),
+            "PRECIOUS-OUTSIDE",
+            "根外文件必须完好"
+        );
     }
 
     /// R3-01 变体：嵌套目录里的**文件**末分量是符号链接（目录本身是真的）。
@@ -976,9 +1340,25 @@ mod tests {
         symlink(&precious, rsub.join("file.txt")).unwrap();
         let vfs = LocalFs::new();
         let roots = (l.clone(), r.clone());
-        let report = execute_ops(&vfs, &roots, &[copy_l2r("tree")], &opts(false), None, &CancelFlag::new()).await;
-        assert_eq!(report.succeeded.len(), 0, "不得穿过嵌套符号链接文件写根外: {report:?}");
-        assert_eq!(std::fs::read_to_string(&precious).unwrap(), "PRECIOUS-OUTSIDE", "根外文件必须完好");
+        let report = execute_ops(
+            &vfs,
+            &roots,
+            &[copy_l2r("tree")],
+            &opts(false),
+            None,
+            &CancelFlag::new(),
+        )
+        .await;
+        assert_eq!(
+            report.succeeded.len(),
+            0,
+            "不得穿过嵌套符号链接文件写根外: {report:?}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&precious).unwrap(),
+            "PRECIOUS-OUTSIDE",
+            "根外文件必须完好"
+        );
     }
 
     /// 递归复制的**覆盖语义**：目标树已存在真实文件时必须被源内容覆写。
@@ -998,11 +1378,29 @@ mod tests {
         std::fs::write(rp.join("tree").join("sub").join("file.txt"), "OLD-DEEP").unwrap();
         let vfs = LocalFs::new();
         let roots = (l.clone(), r.clone());
-        let report = execute_ops(&vfs, &roots, &[copy_l2r("tree")], &opts(false), None, &CancelFlag::new()).await;
-        assert_eq!(report.failed.len(), 0, "覆盖已存在的目标树不应失败: {report:?}");
+        let report = execute_ops(
+            &vfs,
+            &roots,
+            &[copy_l2r("tree")],
+            &opts(false),
+            None,
+            &CancelFlag::new(),
+        )
+        .await;
+        assert_eq!(
+            report.failed.len(),
+            0,
+            "覆盖已存在的目标树不应失败: {report:?}"
+        );
         assert_eq!(report.succeeded.len(), 1);
-        assert_eq!(std::fs::read_to_string(rp.join("tree").join("a.txt")).unwrap(), "a-L");
-        assert_eq!(std::fs::read_to_string(rp.join("tree").join("sub").join("file.txt")).unwrap(), "LEFT-CONTENT");
+        assert_eq!(
+            std::fs::read_to_string(rp.join("tree").join("a.txt")).unwrap(),
+            "a-L"
+        );
+        assert_eq!(
+            std::fs::read_to_string(rp.join("tree").join("sub").join("file.txt")).unwrap(),
+            "LEFT-CONTENT"
+        );
     }
 
     #[tokio::test]
@@ -1010,10 +1408,18 @@ mod tests {
         let (_dir, l, r) = make_trees().await;
         let vfs = LocalFs::new();
         let roots = (l.clone(), r.clone());
-        let op = FileOp::Move { path: "lonly.txt".into(), target_path: None, from: Side::Left, to: Side::Right };
+        let op = FileOp::Move {
+            path: "lonly.txt".into(),
+            target_path: None,
+            from: Side::Left,
+            to: Side::Right,
+        };
         let report = execute_ops(&vfs, &roots, &[op], &opts(false), None, &CancelFlag::new()).await;
         assert_eq!(report.succeeded.len(), 1, "{report:?}");
-        assert_eq!(vfs.read_file_bytes(&r.join("lonly.txt")).await.unwrap(), b"L");
+        assert_eq!(
+            vfs.read_file_bytes(&r.join("lonly.txt")).await.unwrap(),
+            b"L"
+        );
         assert!(vfs.stat(&l.join("lonly.txt")).await.is_err(), "源应已删除");
     }
 
@@ -1022,14 +1428,23 @@ mod tests {
         let (_dir, l, r) = make_trees().await;
         let vfs = LocalFs::new();
         let roots = (l.clone(), r.clone());
-        let op = FileOp::Rename { path: "lonly.txt".into(), side: Side::Left, new_name: "renamed.txt".into() };
+        let op = FileOp::Rename {
+            path: "lonly.txt".into(),
+            side: Side::Left,
+            new_name: "renamed.txt".into(),
+        };
         let report = execute_ops(&vfs, &roots, &[op], &opts(false), None, &CancelFlag::new()).await;
         assert_eq!(report.succeeded.len(), 1, "{report:?}");
         assert!(vfs.stat(&l.join("renamed.txt")).await.is_ok());
         assert!(vfs.stat(&l.join("lonly.txt")).await.is_err());
         // 目标名已存在 → 失败
-        let op2 = FileOp::Rename { path: "diff.txt".into(), side: Side::Left, new_name: "same.txt".into() };
-        let report2 = execute_ops(&vfs, &roots, &[op2], &opts(false), None, &CancelFlag::new()).await;
+        let op2 = FileOp::Rename {
+            path: "diff.txt".into(),
+            side: Side::Left,
+            new_name: "same.txt".into(),
+        };
+        let report2 =
+            execute_ops(&vfs, &roots, &[op2], &opts(false), None, &CancelFlag::new()).await;
         assert_eq!(report2.failed.len(), 1);
     }
 
@@ -1041,7 +1456,12 @@ mod tests {
         // 左 diff.txt mtime < 右 diff.txt mtime（先读，再对时）
         let before = vfs.stat(&l.join("diff.txt")).await.unwrap();
         std::fs::write(r.as_str().to_string() + "/diff.txt", b"RIGHT2").unwrap();
-        let op = FileOp::Touch { path: "diff.txt".into(), target_path: None, side: Side::Left, mtime_ms: 0 };
+        let op = FileOp::Touch {
+            path: "diff.txt".into(),
+            target_path: None,
+            side: Side::Left,
+            mtime_ms: 0,
+        };
         let report = execute_ops(&vfs, &roots, &[op], &opts(false), None, &CancelFlag::new()).await;
         assert_eq!(report.succeeded.len(), 1, "{report:?}");
         let after = vfs.stat(&l.join("diff.txt")).await.unwrap();
@@ -1055,12 +1475,27 @@ mod tests {
         let (_dir, l, r) = make_trees().await;
         let vfs = LocalFs::new();
         let roots = (l.clone(), r.clone());
-        let op = FileOp::Mkdir { path: "newfolder".into(), side: Side::Right };
-        let report = execute_ops(&vfs, &roots, std::slice::from_ref(&op), &opts(false), None, &CancelFlag::new()).await;
+        let op = FileOp::Mkdir {
+            path: "newfolder".into(),
+            side: Side::Right,
+        };
+        let report = execute_ops(
+            &vfs,
+            &roots,
+            std::slice::from_ref(&op),
+            &opts(false),
+            None,
+            &CancelFlag::new(),
+        )
+        .await;
         assert_eq!(report.succeeded.len(), 1, "{report:?}");
-        assert_eq!(vfs.stat(&r.join("newfolder")).await.unwrap().kind, EntryKind::Dir);
+        assert_eq!(
+            vfs.stat(&r.join("newfolder")).await.unwrap().kind,
+            EntryKind::Dir
+        );
         // 已存在 → 失败
-        let report2 = execute_ops(&vfs, &roots, &[op], &opts(false), None, &CancelFlag::new()).await;
+        let report2 =
+            execute_ops(&vfs, &roots, &[op], &opts(false), None, &CancelFlag::new()).await;
         assert_eq!(report2.failed.len(), 1);
     }
 
@@ -1070,10 +1505,16 @@ mod tests {
         let vfs = LocalFs::new();
         let roots = (l.clone(), r.clone());
         let ops = vec![
-            copy_l2r("lonly.txt"),       // 成功
-            copy_l2r("ghost.txt"),       // 失败：源不存在
-            FileOp::Delete { path: "ronly.txt".into(), side: Side::Right }, // 成功
-            FileOp::Delete { path: "missing.txt".into(), side: Side::Right }, // 失败
+            copy_l2r("lonly.txt"), // 成功
+            copy_l2r("ghost.txt"), // 失败：源不存在
+            FileOp::Delete {
+                path: "ronly.txt".into(),
+                side: Side::Right,
+            }, // 成功
+            FileOp::Delete {
+                path: "missing.txt".into(),
+                side: Side::Right,
+            }, // 失败
         ];
         let report = execute_ops(&vfs, &roots, &ops, &opts(false), None, &CancelFlag::new()).await;
         assert_eq!(report.total, 4);
@@ -1090,12 +1531,27 @@ mod tests {
         let (_dir, l, r) = make_trees().await;
         let vfs = LocalFs::new();
         let roots = (l.clone(), r.clone());
-        let ops = vec![copy_l2r("lonly.txt"), copy_l2r("diff.txt"), copy_l2r("same.txt")];
+        let ops = vec![
+            copy_l2r("lonly.txt"),
+            copy_l2r("diff.txt"),
+            copy_l2r("same.txt"),
+        ];
         let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let seen2 = std::sync::Arc::clone(&seen);
-        let report = execute_ops(&vfs, &roots, &ops, &opts(false), Some(&mut move |done, total, op| {
-            seen2.lock().unwrap().push((done, total, op.path().to_string()));
-        }), &CancelFlag::new()).await;
+        let report = execute_ops(
+            &vfs,
+            &roots,
+            &ops,
+            &opts(false),
+            Some(&mut move |done, total, op| {
+                seen2
+                    .lock()
+                    .unwrap()
+                    .push((done, total, op.path().to_string()));
+            }),
+            &CancelFlag::new(),
+        )
+        .await;
         assert_eq!(report.succeeded.len(), 3);
         let seen = seen.lock().unwrap().clone();
         assert_eq!(seen.len(), 3);
@@ -1115,7 +1571,10 @@ mod tests {
         assert!(report.cancelled);
         assert_eq!(report.succeeded.len(), 0);
         assert_eq!(report.skipped.len(), 2, "{report:?}");
-        assert!(vfs.stat(&r.join("lonly.txt")).await.is_err(), "取消后不落盘");
+        assert!(
+            vfs.stat(&r.join("lonly.txt")).await.is_err(),
+            "取消后不落盘"
+        );
     }
 
     #[tokio::test]
@@ -1129,11 +1588,16 @@ mod tests {
             planned(PlannedOpKind::DeleteRight, "ronly.txt"),
             planned(PlannedOpKind::CopyLeftToRight, "diff.txt"),
         ];
-        let report = execute_planned_operations(&vfs, &roots, &plan, &opts(false), None, &CancelFlag::new()).await;
+        let report =
+            execute_planned_operations(&vfs, &roots, &plan, &opts(false), None, &CancelFlag::new())
+                .await;
         assert_eq!(report.succeeded.len(), 3, "{report:?}");
         assert!(vfs.stat(&r.join("lonly.txt")).await.is_ok());
         assert!(vfs.stat(&r.join("ronly.txt")).await.is_err());
-        assert_eq!(vfs.read_file_bytes(&r.join("diff.txt")).await.unwrap(), b"LEFT");
+        assert_eq!(
+            vfs.read_file_bytes(&r.join("diff.txt")).await.unwrap(),
+            b"LEFT"
+        );
     }
 
     #[tokio::test]
@@ -1142,9 +1606,18 @@ mod tests {
         let vfs = LocalFs::new();
         let roots = (l.clone(), r.clone());
         let ops = vec![
-            FileOp::Delete { path: String::new(), side: Side::Left },
-            FileOp::Delete { path: "a/../..".into(), side: Side::Right },
-            FileOp::Delete { path: "/etc".into(), side: Side::Right },
+            FileOp::Delete {
+                path: String::new(),
+                side: Side::Left,
+            },
+            FileOp::Delete {
+                path: "a/../..".into(),
+                side: Side::Right,
+            },
+            FileOp::Delete {
+                path: "/etc".into(),
+                side: Side::Right,
+            },
         ];
         let report = execute_ops(&vfs, &roots, &ops, &opts(false), None, &CancelFlag::new()).await;
         assert_eq!(report.failed.len(), 3, "全部被护栏拒绝: {report:?}");

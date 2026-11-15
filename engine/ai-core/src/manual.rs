@@ -11,7 +11,7 @@
 use std::borrow::Cow;
 
 use crate::myers::{self, RawOp};
-use crate::sections::{InlineState, Importance, Section, SectionKind};
+use crate::sections::{Importance, InlineState, Section, SectionKind};
 
 /// 「从不对齐差异」：把重要 Change section 拆为 Delete + Insert（FR-TXT-011）。
 ///
@@ -170,7 +170,13 @@ mod tests {
         let a = cow(&["P", "c1", "c2", "x", "G", "Q"]);
         let b = cow(&["P", "G", "c1", "c2", "y", "Q"]);
         // 模拟某个非最小基线产出的 [Del(3), Equal(1), Ins(3)] 模式
-        let ops = vec![RawOp::Equal(1), RawOp::Delete(3), RawOp::Equal(1), RawOp::Insert(3), RawOp::Equal(1)];
+        let ops = vec![
+            RawOp::Equal(1),
+            RawOp::Delete(3),
+            RawOp::Equal(1),
+            RawOp::Insert(3),
+            RawOp::Equal(1),
+        ];
         let passed = proximity_pass(&ops, &a, &b, 2500);
         let changed: u32 = passed
             .iter()
@@ -187,7 +193,13 @@ mod tests {
     fn proximity_skips_dissimilar_blocks() {
         let a = cow(&["P", "x1", "x2", "E1", "Q"]);
         let b = cow(&["P", "E1", "y1", "y2", "Q"]);
-        let ops = vec![RawOp::Equal(1), RawOp::Delete(2), RawOp::Equal(1), RawOp::Insert(2), RawOp::Equal(1)];
+        let ops = vec![
+            RawOp::Equal(1),
+            RawOp::Delete(2),
+            RawOp::Equal(1),
+            RawOp::Insert(2),
+            RawOp::Equal(1),
+        ];
         let passed = proximity_pass(&ops, &a, &b, 2500);
         assert_eq!(passed, ops, "无收益时保持原 ops");
     }
@@ -197,7 +209,13 @@ mod tests {
         // c1/c2 共享子序列(2) > 间隙(1)：skew ≥ 1 时窗口重 diff 有收益
         let a = cow(&["P", "c1", "c2", "x", "G", "Q"]);
         let b = cow(&["P", "G", "c1", "c2", "y", "Q"]);
-        let ops = vec![RawOp::Equal(1), RawOp::Delete(3), RawOp::Equal(1), RawOp::Insert(3), RawOp::Equal(1)];
+        let ops = vec![
+            RawOp::Equal(1),
+            RawOp::Delete(3),
+            RawOp::Equal(1),
+            RawOp::Insert(3),
+            RawOp::Equal(1),
+        ];
         // skew=0 < 间隙 1 → 模式不触发，保持原 ops
         let passed = proximity_pass(&ops, &a, &b, 0);
         assert_eq!(passed, ops, "间隙超出偏斜容差时不处理");
@@ -218,9 +236,15 @@ mod tests {
         // 接近度匹配作为选项接入完整管线（对本语料为 no-op），保证不破坏正确性
         let left = crate::LineTable::from_text("P\nc1\nc2\nx\nG\nQ\n");
         let right = crate::LineTable::from_text("P\nG\nc1\nc2\ny\nQ\n");
-        let manual = ManualAlignOptions { proximity_match: true, ..ManualAlignOptions::default() };
+        let manual = ManualAlignOptions {
+            proximity_match: true,
+            ..ManualAlignOptions::default()
+        };
         let cfg = crate::options::DiffConfig {
-            base: TextDiffOptions { algo: crate::options::LineAlignAlgo::Patience, ..TextDiffOptions::default() },
+            base: TextDiffOptions {
+                algo: crate::options::LineAlignAlgo::Patience,
+                ..TextDiffOptions::default()
+            },
             manual,
             ..crate::options::DiffConfig::default()
         };
@@ -255,6 +279,10 @@ mod tests {
             .filter(|s| s.kind == SectionKind::Equal)
             .map(|s| s.left.map_or(0, |r| r.len()))
             .sum();
-        assert_eq!(equal_lines, 4, "P/c1/c2/Q 均应对齐: {:?}", out.output.sections);
+        assert_eq!(
+            equal_lines, 4,
+            "P/c1/c2/Q 均应对齐: {:?}",
+            out.output.sections
+        );
     }
 }

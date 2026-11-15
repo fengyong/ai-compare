@@ -56,7 +56,12 @@ impl MemLru {
         }
         self.map.insert(
             path.to_string(),
-            Entry { size, mtime_ms, crc32, used: self.clock },
+            Entry {
+                size,
+                mtime_ms,
+                crc32,
+                used: self.clock,
+            },
         );
     }
 
@@ -86,7 +91,10 @@ impl std::fmt::Debug for HashCache {
 impl HashCache {
     /// 仅内存缓存（进程内复用；测试默认）
     pub fn in_memory() -> Self {
-        HashCache { mem: Mutex::new(MemLru::default()), db: None }
+        HashCache {
+            mem: Mutex::new(MemLru::default()),
+            db: None,
+        }
     }
 
     /// 打开（或创建）SQLite 落盘缓存。表结构与失效规则见模块文档。
@@ -106,7 +114,10 @@ impl HashCache {
         )?;
         let db = OnceLock::new();
         let _ = db.set(Mutex::new(conn));
-        Ok(HashCache { mem: Mutex::new(MemLru::default()), db: Some(db) })
+        Ok(HashCache {
+            mem: Mutex::new(MemLru::default()),
+            db: Some(db),
+        })
     }
 
     /// 查询（内存优先，SQLite 兜底并回填内存）
@@ -127,7 +138,10 @@ impl HashCache {
                 );
             if let Ok(Some(crc)) = crc {
                 let crc = u32::try_from(crc).unwrap_or(0);
-                self.mem.lock().expect("缓存锁").put(path, size, mtime_ms, crc);
+                self.mem
+                    .lock()
+                    .expect("缓存锁")
+                    .put(path, size, mtime_ms, crc);
                 return Some(crc);
             }
         }
@@ -136,7 +150,10 @@ impl HashCache {
 
     /// 写入（内存 + SQLite；SQLite 写失败静默忽略——缓存不影响正确性）
     pub fn put(&self, path: &str, size: u64, mtime_ms: u64, crc32: u32) {
-        self.mem.lock().expect("缓存锁").put(path, size, mtime_ms, crc32);
+        self.mem
+            .lock()
+            .expect("缓存锁")
+            .put(path, size, mtime_ms, crc32);
         if let Some(db) = &self.db {
             let conn = db.get().expect("SQLite 初始化").lock().expect("SQLite 锁");
             let now = std::time::SystemTime::now()
@@ -157,7 +174,10 @@ impl HashCache {
         self.mem.lock().expect("缓存锁").invalidate(path);
         if let Some(db) = &self.db {
             let conn = db.get().expect("SQLite 初始化").lock().expect("SQLite 锁");
-            let _ = conn.execute("DELETE FROM hash_cache WHERE path = ?1", rusqlite::params![path]);
+            let _ = conn.execute(
+                "DELETE FROM hash_cache WHERE path = ?1",
+                rusqlite::params![path],
+            );
         }
     }
 
@@ -201,7 +221,14 @@ mod tests {
         // 早期的条目被驱逐
         assert_eq!(c.get("/f0", 0, 1), None);
         // 新条目命中
-        assert_eq!(c.get(&format!("/f{}", LRU_CAPACITY + 9), (LRU_CAPACITY + 9) as u64, 1), Some(42));
+        assert_eq!(
+            c.get(
+                &format!("/f{}", LRU_CAPACITY + 9),
+                (LRU_CAPACITY + 9) as u64,
+                1
+            ),
+            Some(42)
+        );
     }
 
     #[test]

@@ -78,7 +78,11 @@ pub enum SyntaxItem {
         case_sensitive: bool,
     },
     /// 列类别：起始列-结束列（1 起；to = None 表示到行尾）
-    Column { from: u32, #[serde(default)] to: Option<u32> },
+    Column {
+        from: u32,
+        #[serde(default)]
+        to: Option<u32>,
+    },
     /// 行类别：页面标题（匹配每页顶部标题，通常换页字符；"或第 1 行"处理首页）
     RowTitle {
         #[serde(default)]
@@ -100,14 +104,25 @@ impl SyntaxItem {
     /// None = 该位置不匹配。RowTitle/Column 为整行/位置判定，不经此扫描。
     pub fn match_len_at(&self, text: &str, pos: usize) -> Option<usize> {
         match self {
-            SyntaxItem::Text { pattern, regex, case_sensitive } => {
+            SyntaxItem::Text {
+                pattern,
+                regex,
+                case_sensitive,
+            } => {
                 if *regex {
                     regex_match_len(pattern, &text[pos..], *case_sensitive, false)
                 } else {
                     literal_match_len(pattern, &text[pos..], *case_sensitive)
                 }
             }
-            SyntaxItem::Delimited { start, end, escape, to_eol, regex, case_sensitive } => {
+            SyntaxItem::Delimited {
+                start,
+                end,
+                escape,
+                to_eol,
+                regex,
+                case_sensitive,
+            } => {
                 let start_len = if *regex {
                     regex_match_len(start, &text[pos..], *case_sensitive, false)?
                 } else {
@@ -147,7 +162,11 @@ impl SyntaxItem {
                 // 未闭合：剩余整段视为跨度（注释跨行由逐行模型自然截断）
                 Some(chars.len() - pos)
             }
-            SyntaxItem::List { tokens, regex, case_sensitive } => {
+            SyntaxItem::List {
+                tokens,
+                regex,
+                case_sensitive,
+            } => {
                 let rest = &text[pos..];
                 tokens
                     .iter()
@@ -180,7 +199,11 @@ pub struct GrammarElement {
 
 impl GrammarElement {
     pub fn new(name: &str, items: Vec<SyntaxItem>) -> Self {
-        GrammarElement { name: name.to_string(), case_sensitive: false, items }
+        GrammarElement {
+            name: name.to_string(),
+            case_sensitive: false,
+            items,
+        }
     }
 }
 
@@ -405,7 +428,11 @@ fn regex_here(
     full: bool,
 ) -> Option<(usize, usize)> {
     if pi >= pat.len() {
-        return if !full || cur == txt.len() { Some((pi, cur)) } else { None };
+        return if !full || cur == txt.len() {
+            Some((pi, cur))
+        } else {
+            None
+        };
     }
     // 解析原子
     let (atom, next_pi) = parse_atom(pat, pi)?;
@@ -416,7 +443,11 @@ fn regex_here(
         Some('?') => (0, Some(1)),
         _ => (1, Some(1)),
     };
-    let next_pi = if matches!(quant, Some('*') | Some('+') | Some('?')) { next_pi + 1 } else { next_pi };
+    let next_pi = if matches!(quant, Some('*') | Some('+') | Some('?')) {
+        next_pi + 1
+    } else {
+        next_pi
+    };
 
     // 贪心 + 回溯：原子按次消费（ends[n] = 消费 n 次后的位置），再逐次吐出
     let mut ends: Vec<usize> = vec![cur];
@@ -502,7 +533,9 @@ fn atom_match(a: &Atom, txt: &[char], pos: usize, cs: bool) -> Option<usize> {
         Atom::Any => true,
         Atom::Lit(l) => fold_eq(*l, c, cs),
         Atom::Class(ranges, neg) => {
-            let inside = ranges.iter().any(|(lo, hi)| fold_eq(*lo, c, cs) && c as u32 <= *hi as u32 && c as u32 >= *lo as u32);
+            let inside = ranges.iter().any(|(lo, hi)| {
+                fold_eq(*lo, c, cs) && c as u32 <= *hi as u32 && c as u32 >= *lo as u32
+            });
             inside != *neg
         }
     };
@@ -527,7 +560,10 @@ fn literal_match_len(pattern: &str, text: &str, case_sensitive: bool) -> Option<
     if t.len() < p.len() {
         return None;
     }
-    let ok = p.iter().zip(t.iter()).all(|(pc, tc)| fold_eq(*pc, *tc, case_sensitive));
+    let ok = p
+        .iter()
+        .zip(t.iter())
+        .all(|(pc, tc)| fold_eq(*pc, *tc, case_sensitive));
     ok.then_some(p.len())
 }
 
@@ -587,7 +623,10 @@ pub fn sniff_shebang(head: &[u8]) -> Option<String> {
     if !stripped.starts_with(b"#!") {
         return None;
     }
-    let line_end = stripped.iter().position(|&b| b == b'\n').unwrap_or(stripped.len());
+    let line_end = stripped
+        .iter()
+        .position(|&b| b == b'\n')
+        .unwrap_or(stripped.len());
     let line = String::from_utf8_lossy(&stripped[2..line_end]);
     let line = line.trim_end_matches('\r').trim();
     let mut it = line.split_whitespace();
@@ -639,7 +678,9 @@ impl FormatRegistry {
 
     /// 内置格式表（≥12 语言；顺序即优先级）
     pub fn builtin() -> Self {
-        FormatRegistry { formats: builtin_formats() }
+        FormatRegistry {
+            formats: builtin_formats(),
+        }
     }
 
     /// 追加/按 id 覆盖（外部格式导入；返回受影响条数）
@@ -678,7 +719,9 @@ impl FormatRegistry {
     pub fn classify_file<'a>(&'a self, file_name: &str, head: &[u8]) -> FileClass<'a> {
         match sniff_bytes(head) {
             SniffKind::Binary => FileClass::Binary,
-            SniffKind::Text => FileClass::Text { format: self.detect(file_name, head) },
+            SniffKind::Text => FileClass::Text {
+                format: self.detect(file_name, head),
+            },
         }
     }
 
@@ -717,39 +760,111 @@ pub fn builtin_formats() -> Vec<FileFormat> {
         GrammarElement::new(
             "注释",
             vec![
-                SyntaxItem::Delimited { start: "/*".into(), end: Some("*/".into()), escape: None, to_eol: false, regex: false, case_sensitive: false },
-                SyntaxItem::Delimited { start: "//".into(), end: None, escape: None, to_eol: true, regex: false, case_sensitive: false },
+                SyntaxItem::Delimited {
+                    start: "/*".into(),
+                    end: Some("*/".into()),
+                    escape: None,
+                    to_eol: false,
+                    regex: false,
+                    case_sensitive: false,
+                },
+                SyntaxItem::Delimited {
+                    start: "//".into(),
+                    end: None,
+                    escape: None,
+                    to_eol: true,
+                    regex: false,
+                    case_sensitive: false,
+                },
             ],
         ),
         GrammarElement::new(
             "字符串",
             vec![
-                SyntaxItem::Delimited { start: "\"".into(), end: Some("\"".into()), escape: Some("\\".into()), to_eol: false, regex: false, case_sensitive: false },
-                SyntaxItem::Delimited { start: "'".into(), end: Some("'".into()), escape: Some("\\".into()), to_eol: false, regex: false, case_sensitive: false },
+                SyntaxItem::Delimited {
+                    start: "\"".into(),
+                    end: Some("\"".into()),
+                    escape: Some("\\".into()),
+                    to_eol: false,
+                    regex: false,
+                    case_sensitive: false,
+                },
+                SyntaxItem::Delimited {
+                    start: "'".into(),
+                    end: Some("'".into()),
+                    escape: Some("\\".into()),
+                    to_eol: false,
+                    regex: false,
+                    case_sensitive: false,
+                },
             ],
         ),
     ];
-    push("builtin-cpp", "C/C++ 源码", &["*.cpp", "*.cc", "*.cxx", "*.hpp", "*.hh", "*.hxx", "*.h", "*.c"], c_els.clone());
+    push(
+        "builtin-cpp",
+        "C/C++ 源码",
+        &[
+            "*.cpp", "*.cc", "*.cxx", "*.hpp", "*.hh", "*.hxx", "*.h", "*.c",
+        ],
+        c_els.clone(),
+    );
     push("builtin-csharp", "C# 源码", &["*.cs"], c_els.clone());
     push("builtin-java", "Java 源码", &["*.java"], c_els);
     push(
         "builtin-jsts",
         "JavaScript/TypeScript",
-        &["*.js", "*.mjs", "*.cjs", "*.jsx", "*.ts", "*.tsx", "*.mts", "*.cts"],
+        &[
+            "*.js", "*.mjs", "*.cjs", "*.jsx", "*.ts", "*.tsx", "*.mts", "*.cts",
+        ],
         vec![
             GrammarElement::new(
                 "注释",
                 vec![
-                    SyntaxItem::Delimited { start: "/*".into(), end: Some("*/".into()), escape: None, to_eol: false, regex: false, case_sensitive: false },
-                    SyntaxItem::Delimited { start: "//".into(), end: None, escape: None, to_eol: true, regex: false, case_sensitive: false },
+                    SyntaxItem::Delimited {
+                        start: "/*".into(),
+                        end: Some("*/".into()),
+                        escape: None,
+                        to_eol: false,
+                        regex: false,
+                        case_sensitive: false,
+                    },
+                    SyntaxItem::Delimited {
+                        start: "//".into(),
+                        end: None,
+                        escape: None,
+                        to_eol: true,
+                        regex: false,
+                        case_sensitive: false,
+                    },
                 ],
             ),
             GrammarElement::new(
                 "字符串",
                 vec![
-                    SyntaxItem::Delimited { start: "\"".into(), end: Some("\"".into()), escape: Some("\\".into()), to_eol: false, regex: false, case_sensitive: false },
-                    SyntaxItem::Delimited { start: "'".into(), end: Some("'".into()), escape: Some("\\".into()), to_eol: false, regex: false, case_sensitive: false },
-                    SyntaxItem::Delimited { start: "`".into(), end: Some("`".into()), escape: Some("\\".into()), to_eol: false, regex: false, case_sensitive: false },
+                    SyntaxItem::Delimited {
+                        start: "\"".into(),
+                        end: Some("\"".into()),
+                        escape: Some("\\".into()),
+                        to_eol: false,
+                        regex: false,
+                        case_sensitive: false,
+                    },
+                    SyntaxItem::Delimited {
+                        start: "'".into(),
+                        end: Some("'".into()),
+                        escape: Some("\\".into()),
+                        to_eol: false,
+                        regex: false,
+                        case_sensitive: false,
+                    },
+                    SyntaxItem::Delimited {
+                        start: "`".into(),
+                        end: Some("`".into()),
+                        escape: Some("\\".into()),
+                        to_eol: false,
+                        regex: false,
+                        case_sensitive: false,
+                    },
                 ],
             ),
         ],
@@ -761,15 +876,50 @@ pub fn builtin_formats() -> Vec<FileFormat> {
         vec![
             GrammarElement::new(
                 "注释",
-                vec![SyntaxItem::Delimited { start: "#".into(), end: None, escape: None, to_eol: true, regex: false, case_sensitive: false }],
+                vec![SyntaxItem::Delimited {
+                    start: "#".into(),
+                    end: None,
+                    escape: None,
+                    to_eol: true,
+                    regex: false,
+                    case_sensitive: false,
+                }],
             ),
             GrammarElement::new(
                 "字符串",
                 vec![
-                    SyntaxItem::Delimited { start: "\"\"\"".into(), end: Some("\"\"\"".into()), escape: Some("\\".into()), to_eol: false, regex: false, case_sensitive: false },
-                    SyntaxItem::Delimited { start: "'''".into(), end: Some("'''".into()), escape: Some("\\".into()), to_eol: false, regex: false, case_sensitive: false },
-                    SyntaxItem::Delimited { start: "\"".into(), end: Some("\"".into()), escape: Some("\\".into()), to_eol: false, regex: false, case_sensitive: false },
-                    SyntaxItem::Delimited { start: "'".into(), end: Some("'".into()), escape: Some("\\".into()), to_eol: false, regex: false, case_sensitive: false },
+                    SyntaxItem::Delimited {
+                        start: "\"\"\"".into(),
+                        end: Some("\"\"\"".into()),
+                        escape: Some("\\".into()),
+                        to_eol: false,
+                        regex: false,
+                        case_sensitive: false,
+                    },
+                    SyntaxItem::Delimited {
+                        start: "'''".into(),
+                        end: Some("'''".into()),
+                        escape: Some("\\".into()),
+                        to_eol: false,
+                        regex: false,
+                        case_sensitive: false,
+                    },
+                    SyntaxItem::Delimited {
+                        start: "\"".into(),
+                        end: Some("\"".into()),
+                        escape: Some("\\".into()),
+                        to_eol: false,
+                        regex: false,
+                        case_sensitive: false,
+                    },
+                    SyntaxItem::Delimited {
+                        start: "'".into(),
+                        end: Some("'".into()),
+                        escape: Some("\\".into()),
+                        to_eol: false,
+                        regex: false,
+                        case_sensitive: false,
+                    },
                 ],
             ),
         ],
@@ -782,15 +932,43 @@ pub fn builtin_formats() -> Vec<FileFormat> {
             GrammarElement::new(
                 "注释",
                 vec![
-                    SyntaxItem::Delimited { start: "/*".into(), end: Some("*/".into()), escape: None, to_eol: false, regex: false, case_sensitive: false },
-                    SyntaxItem::Delimited { start: "//".into(), end: None, escape: None, to_eol: true, regex: false, case_sensitive: false },
+                    SyntaxItem::Delimited {
+                        start: "/*".into(),
+                        end: Some("*/".into()),
+                        escape: None,
+                        to_eol: false,
+                        regex: false,
+                        case_sensitive: false,
+                    },
+                    SyntaxItem::Delimited {
+                        start: "//".into(),
+                        end: None,
+                        escape: None,
+                        to_eol: true,
+                        regex: false,
+                        case_sensitive: false,
+                    },
                 ],
             ),
             GrammarElement::new(
                 "字符串",
                 vec![
-                    SyntaxItem::Delimited { start: "\"".into(), end: Some("\"".into()), escape: Some("\\".into()), to_eol: false, regex: false, case_sensitive: false },
-                    SyntaxItem::Delimited { start: "`".into(), end: Some("`".into()), escape: None, to_eol: false, regex: false, case_sensitive: false },
+                    SyntaxItem::Delimited {
+                        start: "\"".into(),
+                        end: Some("\"".into()),
+                        escape: Some("\\".into()),
+                        to_eol: false,
+                        regex: false,
+                        case_sensitive: false,
+                    },
+                    SyntaxItem::Delimited {
+                        start: "`".into(),
+                        end: Some("`".into()),
+                        escape: None,
+                        to_eol: false,
+                        regex: false,
+                        case_sensitive: false,
+                    },
                 ],
             ),
         ],
@@ -803,13 +981,34 @@ pub fn builtin_formats() -> Vec<FileFormat> {
             GrammarElement::new(
                 "注释",
                 vec![
-                    SyntaxItem::Delimited { start: "/*".into(), end: Some("*/".into()), escape: None, to_eol: false, regex: false, case_sensitive: false },
-                    SyntaxItem::Delimited { start: "//".into(), end: None, escape: None, to_eol: true, regex: false, case_sensitive: false },
+                    SyntaxItem::Delimited {
+                        start: "/*".into(),
+                        end: Some("*/".into()),
+                        escape: None,
+                        to_eol: false,
+                        regex: false,
+                        case_sensitive: false,
+                    },
+                    SyntaxItem::Delimited {
+                        start: "//".into(),
+                        end: None,
+                        escape: None,
+                        to_eol: true,
+                        regex: false,
+                        case_sensitive: false,
+                    },
                 ],
             ),
             GrammarElement::new(
                 "字符串",
-                vec![SyntaxItem::Delimited { start: "\"".into(), end: Some("\"".into()), escape: Some("\\".into()), to_eol: false, regex: false, case_sensitive: false }],
+                vec![SyntaxItem::Delimited {
+                    start: "\"".into(),
+                    end: Some("\"".into()),
+                    escape: Some("\\".into()),
+                    to_eol: false,
+                    regex: false,
+                    case_sensitive: false,
+                }],
             ),
         ],
     );
@@ -821,15 +1020,43 @@ pub fn builtin_formats() -> Vec<FileFormat> {
             GrammarElement::new(
                 "注释",
                 vec![
-                    SyntaxItem::Delimited { start: "--".into(), end: None, escape: None, to_eol: true, regex: false, case_sensitive: false },
-                    SyntaxItem::Delimited { start: "/*".into(), end: Some("*/".into()), escape: None, to_eol: false, regex: false, case_sensitive: false },
+                    SyntaxItem::Delimited {
+                        start: "--".into(),
+                        end: None,
+                        escape: None,
+                        to_eol: true,
+                        regex: false,
+                        case_sensitive: false,
+                    },
+                    SyntaxItem::Delimited {
+                        start: "/*".into(),
+                        end: Some("*/".into()),
+                        escape: None,
+                        to_eol: false,
+                        regex: false,
+                        case_sensitive: false,
+                    },
                 ],
             ),
             GrammarElement::new(
                 "字符串",
                 vec![
-                    SyntaxItem::Delimited { start: "'".into(), end: Some("'".into()), escape: None, to_eol: false, regex: false, case_sensitive: false },
-                    SyntaxItem::Delimited { start: "\"".into(), end: Some("\"".into()), escape: None, to_eol: false, regex: false, case_sensitive: false },
+                    SyntaxItem::Delimited {
+                        start: "'".into(),
+                        end: Some("'".into()),
+                        escape: None,
+                        to_eol: false,
+                        regex: false,
+                        case_sensitive: false,
+                    },
+                    SyntaxItem::Delimited {
+                        start: "\"".into(),
+                        end: Some("\"".into()),
+                        escape: None,
+                        to_eol: false,
+                        regex: false,
+                        case_sensitive: false,
+                    },
                 ],
             ),
         ],
@@ -841,13 +1068,34 @@ pub fn builtin_formats() -> Vec<FileFormat> {
         vec![
             GrammarElement::new(
                 "注释",
-                vec![SyntaxItem::Delimited { start: "#".into(), end: None, escape: None, to_eol: true, regex: false, case_sensitive: false }],
+                vec![SyntaxItem::Delimited {
+                    start: "#".into(),
+                    end: None,
+                    escape: None,
+                    to_eol: true,
+                    regex: false,
+                    case_sensitive: false,
+                }],
             ),
             GrammarElement::new(
                 "字符串",
                 vec![
-                    SyntaxItem::Delimited { start: "\"".into(), end: Some("\"".into()), escape: Some("\\".into()), to_eol: false, regex: false, case_sensitive: false },
-                    SyntaxItem::Delimited { start: "'".into(), end: Some("'".into()), escape: None, to_eol: false, regex: false, case_sensitive: false },
+                    SyntaxItem::Delimited {
+                        start: "\"".into(),
+                        end: Some("\"".into()),
+                        escape: Some("\\".into()),
+                        to_eol: false,
+                        regex: false,
+                        case_sensitive: false,
+                    },
+                    SyntaxItem::Delimited {
+                        start: "'".into(),
+                        end: Some("'".into()),
+                        escape: None,
+                        to_eol: false,
+                        regex: false,
+                        case_sensitive: false,
+                    },
                 ],
             ),
         ],
@@ -859,8 +1107,22 @@ pub fn builtin_formats() -> Vec<FileFormat> {
         vec![GrammarElement::new(
             "注释",
             vec![
-                SyntaxItem::Delimited { start: "/*".into(), end: Some("*/".into()), escape: None, to_eol: false, regex: false, case_sensitive: false },
-                SyntaxItem::Delimited { start: "//".into(), end: None, escape: None, to_eol: true, regex: false, case_sensitive: false },
+                SyntaxItem::Delimited {
+                    start: "/*".into(),
+                    end: Some("*/".into()),
+                    escape: None,
+                    to_eol: false,
+                    regex: false,
+                    case_sensitive: false,
+                },
+                SyntaxItem::Delimited {
+                    start: "//".into(),
+                    end: None,
+                    escape: None,
+                    to_eol: true,
+                    regex: false,
+                    case_sensitive: false,
+                },
             ],
         )],
     );
@@ -871,13 +1133,34 @@ pub fn builtin_formats() -> Vec<FileFormat> {
         vec![
             GrammarElement::new(
                 "注释",
-                vec![SyntaxItem::Delimited { start: "#".into(), end: None, escape: None, to_eol: true, regex: false, case_sensitive: false }],
+                vec![SyntaxItem::Delimited {
+                    start: "#".into(),
+                    end: None,
+                    escape: None,
+                    to_eol: true,
+                    regex: false,
+                    case_sensitive: false,
+                }],
             ),
             GrammarElement::new(
                 "字符串",
                 vec![
-                    SyntaxItem::Delimited { start: "\"".into(), end: Some("\"".into()), escape: Some("\\".into()), to_eol: false, regex: false, case_sensitive: false },
-                    SyntaxItem::Delimited { start: "'".into(), end: Some("'".into()), escape: None, to_eol: false, regex: false, case_sensitive: false },
+                    SyntaxItem::Delimited {
+                        start: "\"".into(),
+                        end: Some("\"".into()),
+                        escape: Some("\\".into()),
+                        to_eol: false,
+                        regex: false,
+                        case_sensitive: false,
+                    },
+                    SyntaxItem::Delimited {
+                        start: "'".into(),
+                        end: Some("'".into()),
+                        escape: None,
+                        to_eol: false,
+                        regex: false,
+                        case_sensitive: false,
+                    },
                 ],
             ),
         ],
@@ -889,13 +1172,34 @@ pub fn builtin_formats() -> Vec<FileFormat> {
         vec![
             GrammarElement::new(
                 "注释",
-                vec![SyntaxItem::Delimited { start: "#".into(), end: None, escape: None, to_eol: true, regex: false, case_sensitive: false }],
+                vec![SyntaxItem::Delimited {
+                    start: "#".into(),
+                    end: None,
+                    escape: None,
+                    to_eol: true,
+                    regex: false,
+                    case_sensitive: false,
+                }],
             ),
             GrammarElement::new(
                 "字符串",
                 vec![
-                    SyntaxItem::Delimited { start: "\"".into(), end: Some("\"".into()), escape: Some("\\".into()), to_eol: false, regex: false, case_sensitive: false },
-                    SyntaxItem::Delimited { start: "'".into(), end: Some("'".into()), escape: None, to_eol: false, regex: false, case_sensitive: false },
+                    SyntaxItem::Delimited {
+                        start: "\"".into(),
+                        end: Some("\"".into()),
+                        escape: Some("\\".into()),
+                        to_eol: false,
+                        regex: false,
+                        case_sensitive: false,
+                    },
+                    SyntaxItem::Delimited {
+                        start: "'".into(),
+                        end: Some("'".into()),
+                        escape: None,
+                        to_eol: false,
+                        regex: false,
+                        case_sensitive: false,
+                    },
                 ],
             ),
         ],
@@ -908,13 +1212,34 @@ pub fn builtin_formats() -> Vec<FileFormat> {
             GrammarElement::new(
                 "注释",
                 vec![
-                    SyntaxItem::Delimited { start: "--[[".into(), end: Some("]]".into()), escape: None, to_eol: false, regex: false, case_sensitive: false },
-                    SyntaxItem::Delimited { start: "--".into(), end: None, escape: None, to_eol: true, regex: false, case_sensitive: false },
+                    SyntaxItem::Delimited {
+                        start: "--[[".into(),
+                        end: Some("]]".into()),
+                        escape: None,
+                        to_eol: false,
+                        regex: false,
+                        case_sensitive: false,
+                    },
+                    SyntaxItem::Delimited {
+                        start: "--".into(),
+                        end: None,
+                        escape: None,
+                        to_eol: true,
+                        regex: false,
+                        case_sensitive: false,
+                    },
                 ],
             ),
             GrammarElement::new(
                 "字符串",
-                vec![SyntaxItem::Delimited { start: "\"".into(), end: Some("\"".into()), escape: Some("\\".into()), to_eol: false, regex: false, case_sensitive: false }],
+                vec![SyntaxItem::Delimited {
+                    start: "\"".into(),
+                    end: Some("\"".into()),
+                    escape: Some("\\".into()),
+                    to_eol: false,
+                    regex: false,
+                    case_sensitive: false,
+                }],
             ),
         ],
     );
@@ -925,13 +1250,34 @@ pub fn builtin_formats() -> Vec<FileFormat> {
         vec![
             GrammarElement::new(
                 "注释",
-                vec![SyntaxItem::Delimited { start: "<!--".into(), end: Some("-->".into()), escape: None, to_eol: false, regex: false, case_sensitive: false }],
+                vec![SyntaxItem::Delimited {
+                    start: "<!--".into(),
+                    end: Some("-->".into()),
+                    escape: None,
+                    to_eol: false,
+                    regex: false,
+                    case_sensitive: false,
+                }],
             ),
             GrammarElement::new(
                 "字符串",
                 vec![
-                    SyntaxItem::Delimited { start: "\"".into(), end: Some("\"".into()), escape: None, to_eol: false, regex: false, case_sensitive: false },
-                    SyntaxItem::Delimited { start: "'".into(), end: Some("'".into()), escape: None, to_eol: false, regex: false, case_sensitive: false },
+                    SyntaxItem::Delimited {
+                        start: "\"".into(),
+                        end: Some("\"".into()),
+                        escape: None,
+                        to_eol: false,
+                        regex: false,
+                        case_sensitive: false,
+                    },
+                    SyntaxItem::Delimited {
+                        start: "'".into(),
+                        end: Some("'".into()),
+                        escape: None,
+                        to_eol: false,
+                        regex: false,
+                        case_sensitive: false,
+                    },
                 ],
             ),
         ],
@@ -944,13 +1290,34 @@ pub fn builtin_formats() -> Vec<FileFormat> {
             GrammarElement::new(
                 "注释",
                 vec![
-                    SyntaxItem::Delimited { start: "/*".into(), end: Some("*/".into()), escape: None, to_eol: false, regex: false, case_sensitive: false },
-                    SyntaxItem::Delimited { start: "//".into(), end: None, escape: None, to_eol: true, regex: false, case_sensitive: false },
+                    SyntaxItem::Delimited {
+                        start: "/*".into(),
+                        end: Some("*/".into()),
+                        escape: None,
+                        to_eol: false,
+                        regex: false,
+                        case_sensitive: false,
+                    },
+                    SyntaxItem::Delimited {
+                        start: "//".into(),
+                        end: None,
+                        escape: None,
+                        to_eol: true,
+                        regex: false,
+                        case_sensitive: false,
+                    },
                 ],
             ),
             GrammarElement::new(
                 "字符串",
-                vec![SyntaxItem::Delimited { start: "\"".into(), end: Some("\"".into()), escape: Some("\\".into()), to_eol: false, regex: false, case_sensitive: false }],
+                vec![SyntaxItem::Delimited {
+                    start: "\"".into(),
+                    end: Some("\"".into()),
+                    escape: Some("\\".into()),
+                    to_eol: false,
+                    regex: false,
+                    case_sensitive: false,
+                }],
             ),
         ],
     );
@@ -961,14 +1328,42 @@ pub fn builtin_formats() -> Vec<FileFormat> {
         vec![
             GrammarElement::new(
                 "注释",
-                vec![SyntaxItem::Delimited { start: "#".into(), end: None, escape: None, to_eol: true, regex: false, case_sensitive: false }],
+                vec![SyntaxItem::Delimited {
+                    start: "#".into(),
+                    end: None,
+                    escape: None,
+                    to_eol: true,
+                    regex: false,
+                    case_sensitive: false,
+                }],
             ),
             GrammarElement::new(
                 "字符串",
                 vec![
-                    SyntaxItem::Delimited { start: "\"\"\"".into(), end: Some("\"\"\"".into()), escape: Some("\\".into()), to_eol: false, regex: false, case_sensitive: false },
-                    SyntaxItem::Delimited { start: "\"".into(), end: Some("\"".into()), escape: Some("\\".into()), to_eol: false, regex: false, case_sensitive: false },
-                    SyntaxItem::Delimited { start: "'".into(), end: Some("'".into()), escape: None, to_eol: false, regex: false, case_sensitive: false },
+                    SyntaxItem::Delimited {
+                        start: "\"\"\"".into(),
+                        end: Some("\"\"\"".into()),
+                        escape: Some("\\".into()),
+                        to_eol: false,
+                        regex: false,
+                        case_sensitive: false,
+                    },
+                    SyntaxItem::Delimited {
+                        start: "\"".into(),
+                        end: Some("\"".into()),
+                        escape: Some("\\".into()),
+                        to_eol: false,
+                        regex: false,
+                        case_sensitive: false,
+                    },
+                    SyntaxItem::Delimited {
+                        start: "'".into(),
+                        end: Some("'".into()),
+                        escape: None,
+                        to_eol: false,
+                        regex: false,
+                        case_sensitive: false,
+                    },
                 ],
             ),
         ],
@@ -979,22 +1374,41 @@ pub fn builtin_formats() -> Vec<FileFormat> {
         &["*.yml", "*.yaml"],
         vec![GrammarElement::new(
             "注释",
-            vec![SyntaxItem::Delimited { start: "#".into(), end: None, escape: None, to_eol: true, regex: false, case_sensitive: false }],
+            vec![SyntaxItem::Delimited {
+                start: "#".into(),
+                end: None,
+                escape: None,
+                to_eol: true,
+                regex: false,
+                case_sensitive: false,
+            }],
         )],
     );
     push(
         "builtin-ini",
         "INI 配置",
         &["*.ini", "*.cfg", "*.conf", "*.properties"],
-        vec![
-            GrammarElement::new(
-                "注释",
-                vec![
-                    SyntaxItem::Delimited { start: ";".into(), end: None, escape: None, to_eol: true, regex: false, case_sensitive: false },
-                    SyntaxItem::Delimited { start: "#".into(), end: None, escape: None, to_eol: true, regex: false, case_sensitive: false },
-                ],
-            ),
-        ],
+        vec![GrammarElement::new(
+            "注释",
+            vec![
+                SyntaxItem::Delimited {
+                    start: ";".into(),
+                    end: None,
+                    escape: None,
+                    to_eol: true,
+                    regex: false,
+                    case_sensitive: false,
+                },
+                SyntaxItem::Delimited {
+                    start: "#".into(),
+                    end: None,
+                    escape: None,
+                    to_eol: true,
+                    regex: false,
+                    case_sensitive: false,
+                },
+            ],
+        )],
     );
     // 页标题示例（报表输出比较：换页符标题行不重要）
     push(
@@ -1003,7 +1417,11 @@ pub fn builtin_formats() -> Vec<FileFormat> {
         &["*.prt", "*.listing"],
         vec![GrammarElement::new(
             "页标题",
-            vec![SyntaxItem::RowTitle { pattern: "\\f.*".into(), lines: 2, or_first_line: true }],
+            vec![SyntaxItem::RowTitle {
+                pattern: "\\f.*".into(),
+                lines: 2,
+                or_first_line: true,
+            }],
         )],
     );
     // 非文本视图格式（FR-FMT-004）：双击目录行时由本表决定视图类型（FR-SEL-001）。
@@ -1073,7 +1491,11 @@ fn default_pack_kind() -> String {
 
 impl Default for FormatPack {
     fn default() -> Self {
-        FormatPack { version: 1, kind: default_pack_kind(), formats: Vec::new() }
+        FormatPack {
+            version: 1,
+            kind: default_pack_kind(),
+            formats: Vec::new(),
+        }
     }
 }
 
@@ -1103,12 +1525,19 @@ impl FormatPack {
 impl FormatRegistry {
     /// 导出当前注册表为格式集
     pub fn to_pack(&self) -> FormatPack {
-        FormatPack { version: 1, kind: default_pack_kind(), formats: self.formats.clone() }
+        FormatPack {
+            version: 1,
+            kind: default_pack_kind(),
+            formats: self.formats.clone(),
+        }
     }
 
     /// 合并格式集（按 id 覆盖/追加；返回受影响条数）
     pub fn merge_pack(&mut self, pack: &FormatPack) -> usize {
-        pack.formats.iter().filter(|f| self.upsert((*f).clone())).count()
+        pack.formats
+            .iter()
+            .filter(|f| self.upsert((*f).clone()))
+            .count()
     }
 }
 
@@ -1173,9 +1602,14 @@ pub fn unimportant_mask(
     // 页标题整行判定（\f 前缀；orFirstLine 处理首页）
     for e in &active {
         for item in &e.items {
-            if let SyntaxItem::RowTitle { pattern, or_first_line, .. } = item {
-                let is_title = chars.first() == Some(&'\u{c}')
-                    || (*or_first_line && line_index == Some(0));
+            if let SyntaxItem::RowTitle {
+                pattern,
+                or_first_line,
+                ..
+            } = item
+            {
+                let is_title =
+                    chars.first() == Some(&'\u{c}') || (*or_first_line && line_index == Some(0));
                 if is_title && (!pattern.is_empty() || *or_first_line) {
                     return UNIMPORTANT_MARK.to_string();
                 }
@@ -1246,7 +1680,11 @@ pub fn line_classify(
 ) -> LineClass {
     let masked = unimportant_mask(text, grammar, unimportant, line_index);
     let has_mark = masked.contains(UNIMPORTANT_MARK);
-    if has_mark && masked.chars().all(|c| c == UNIMPORTANT_MARK || c.is_whitespace()) {
+    if has_mark
+        && masked
+            .chars()
+            .all(|c| c == UNIMPORTANT_MARK || c.is_whitespace())
+    {
         LineClass::UnimportantText
     } else {
         LineClass::Plain
@@ -1293,7 +1731,10 @@ mod tests {
         assert!(mask_matches("?.c", "a.c"));
         assert!(!mask_matches("?.c", "ab.c"));
         assert!(mask_matches("*.???", "a.tsx"), "点后恰 3 字符");
-        assert!(!mask_matches("*.???", "foo.ts"), "点后仅 2 字符不满足 3 个 ?");
+        assert!(
+            !mask_matches("*.???", "foo.ts"),
+            "点后仅 2 字符不满足 3 个 ?"
+        );
     }
 
     #[test]
@@ -1356,8 +1797,14 @@ mod tests {
     fn det11_unknown_name_no_mask_hit() {
         let r = reg();
         // R3-17d 起 *.bin 属内置十六进制格式，"无命中"样本改用未登记扩展名
-        assert!(r.detect("data.xyz", b"plain").is_none(), "无掩码命中且无 shebang");
-        assert_eq!(r.detect("data.bin", b"plain").unwrap().view_kind, FormatViewKind::Hex);
+        assert!(
+            r.detect("data.xyz", b"plain").is_none(),
+            "无掩码命中且无 shebang"
+        );
+        assert_eq!(
+            r.detect("data.bin", b"plain").unwrap().view_kind,
+            FormatViewKind::Hex
+        );
     }
 
     // ---- 检测矩阵：shebang 嗅探 ----
@@ -1373,7 +1820,9 @@ mod tests {
     #[test]
     fn det13_shebang_env_python() {
         let r = reg();
-        let f = r.detect("tool", b"#!/usr/bin/env python3\nprint(1)\n").unwrap();
+        let f = r
+            .detect("tool", b"#!/usr/bin/env python3\nprint(1)\n")
+            .unwrap();
         assert_eq!(f.id, "builtin-python");
     }
 
@@ -1382,7 +1831,11 @@ mod tests {
         let r = reg();
         let mut head = vec![0xEF, 0xBB, 0xBF]; // UTF-8 BOM
         head.extend_from_slice(b"#!/bin/sh\n:");
-        assert_eq!(r.detect("x", &head).unwrap().id, "builtin-sh", "UTF-8 BOM 剥离后仍识别 shebang");
+        assert_eq!(
+            r.detect("x", &head).unwrap().id,
+            "builtin-sh",
+            "UTF-8 BOM 剥离后仍识别 shebang"
+        );
     }
 
     #[test]
@@ -1412,7 +1865,11 @@ mod tests {
             &b"\x7fELFbinary"[..],
             &b"MZwin"[..],
         ] {
-            assert_eq!(r.classify_file("x", head), FileClass::Binary, "{head:?} 应判二进制");
+            assert_eq!(
+                r.classify_file("x", head),
+                FileClass::Binary,
+                "{head:?} 应判二进制"
+            );
         }
     }
 
@@ -1420,7 +1877,10 @@ mod tests {
     fn det18_utf16_bom_is_text_class() {
         let r = reg();
         assert!(
-            matches!(r.classify_file("x", &[0xFF, 0xFE, 0x41, 0x00]), FileClass::Text { .. }),
+            matches!(
+                r.classify_file("x", &[0xFF, 0xFE, 0x41, 0x00]),
+                FileClass::Text { .. }
+            ),
             "UTF-16 BOM 按文本（编码层负责解码）"
         );
     }
@@ -1450,7 +1910,11 @@ mod tests {
         r.upsert(FileFormat::text("x1", "甲", &["*.log"], vec![]));
         r.upsert(FileFormat::text("x2", "乙", &["*.log"], vec![]));
         r.formats[0].enabled = false; // 禁用项跳过（FR-FMT-001）
-        assert_eq!(r.detect("a.log", b"").unwrap().id, "x2", "首个掩码匹配且启用者生效");
+        assert_eq!(
+            r.detect("a.log", b"").unwrap().id,
+            "x2",
+            "首个掩码匹配且启用者生效"
+        );
         // 禁用不参与遮蔽
         assert!(r.shadowed_ids().is_empty());
     }
@@ -1461,7 +1925,11 @@ mod tests {
         r.upsert(FileFormat::text("a", "甲", &["*.txt"], vec![]));
         r.upsert(FileFormat::text("b", "乙", &["*.txt"], vec![]));
         assert_eq!(r.detect("f.txt", b"").unwrap().id, "a", "列表顺序先者生效");
-        assert_eq!(r.shadowed_ids(), vec!["b".to_string()], "后者被前者遮蔽（红显）");
+        assert_eq!(
+            r.shadowed_ids(),
+            vec!["b".to_string()],
+            "后者被前者遮蔽（红显）"
+        );
     }
 
     // ---- 语法匹配与 line_classify 钩子 ----
@@ -1475,8 +1943,14 @@ mod tests {
         let g = c_grammar();
         let m = unimportant_mask("int a; // trailing", &g, &["注释".into()], None);
         assert_eq!(m, format!("int a; {UNIMPORTANT_MARK}"));
-        assert_eq!(line_classify("// whole comment", &g, &["注释".into()], None), LineClass::UnimportantText);
-        assert_eq!(line_classify("int a;", &g, &["注释".into()], None), LineClass::Plain);
+        assert_eq!(
+            line_classify("// whole comment", &g, &["注释".into()], None),
+            LineClass::UnimportantText
+        );
+        assert_eq!(
+            line_classify("int a;", &g, &["注释".into()], None),
+            LineClass::Plain
+        );
     }
 
     #[test]
@@ -1488,7 +1962,11 @@ mod tests {
             "整行块注释"
         );
         // 未闭合块注释：整行折叠
-        assert_eq!(line_classify("int x; /* open", &g, &["注释".into()], None), LineClass::Plain, "代码前缀仍在");
+        assert_eq!(
+            line_classify("int x; /* open", &g, &["注释".into()], None),
+            LineClass::Plain,
+            "代码前缀仍在"
+        );
         assert_eq!(
             unimportant_mask("int x; /* open", &g, &["注释".into()], None),
             format!("int x; {UNIMPORTANT_MARK}")
@@ -1499,7 +1977,11 @@ mod tests {
     fn cls25_string_contents_folded() {
         let g = c_grammar();
         let m = unimportant_mask("printf(\"hello %d\");", &g, &["字符串".into()], None);
-        assert_eq!(m, format!("printf({UNIMPORTANT_MARK});"), "字符串内容折叠，骨架保留");
+        assert_eq!(
+            m,
+            format!("printf({UNIMPORTANT_MARK});"),
+            "字符串内容折叠，骨架保留"
+        );
         // 两个仅字符串内容不同的行在掩码后等价
         let a = unimportant_mask("s = \"foo\";", &g, &["字符串".into()], None);
         let b = unimportant_mask("s = \"bar\";", &g, &["字符串".into()], None);
@@ -1513,7 +1995,14 @@ mod tests {
     fn cls26_element_names_case_insensitive() {
         let g = vec![GrammarElement::new(
             "Comment",
-            vec![SyntaxItem::Delimited { start: "//".into(), end: None, escape: None, to_eol: true, regex: false, case_sensitive: false }],
+            vec![SyntaxItem::Delimited {
+                start: "//".into(),
+                end: None,
+                escape: None,
+                to_eol: true,
+                regex: false,
+                case_sensitive: false,
+            }],
         )];
         assert_eq!(
             line_classify("// note", &g, &["comment".into()], None),
@@ -1533,7 +2022,10 @@ mod tests {
     fn cls28_column_item_masks_fixed_range() {
         let g = vec![GrammarElement::new(
             "行号列",
-            vec![SyntaxItem::Column { from: 1, to: Some(4) }],
+            vec![SyntaxItem::Column {
+                from: 1,
+                to: Some(4),
+            }],
         )];
         let m = unimportant_mask("  12 code", &g, &["行号列".into()], None);
         assert_eq!(m, format!("{UNIMPORTANT_MARK} code"), "列 1..4 折叠");
@@ -1543,21 +2035,46 @@ mod tests {
     fn cls29_row_title_formfeed_and_first_line() {
         let g = vec![GrammarElement::new(
             "页标题",
-            vec![SyntaxItem::RowTitle { pattern: "\\f.*".into(), lines: 2, or_first_line: true }],
+            vec![SyntaxItem::RowTitle {
+                pattern: "\\f.*".into(),
+                lines: 2,
+                or_first_line: true,
+            }],
         )];
-        assert_eq!(line_classify("\u{c}Page 1 of 9", &g, &["页标题".into()], None), LineClass::UnimportantText);
-        assert_eq!(line_classify("Report header", &g, &["页标题".into()], Some(0)), LineClass::UnimportantText, "orFirstLine 首行");
-        assert_eq!(line_classify("Report header", &g, &["页标题".into()], Some(3)), LineClass::Plain, "非首行不折叠");
+        assert_eq!(
+            line_classify("\u{c}Page 1 of 9", &g, &["页标题".into()], None),
+            LineClass::UnimportantText
+        );
+        assert_eq!(
+            line_classify("Report header", &g, &["页标题".into()], Some(0)),
+            LineClass::UnimportantText,
+            "orFirstLine 首行"
+        );
+        assert_eq!(
+            line_classify("Report header", &g, &["页标题".into()], Some(3)),
+            LineClass::Plain,
+            "非首行不折叠"
+        );
     }
 
     #[test]
     fn cls30_regex_text_item() {
         let g = vec![GrammarElement::new(
             "指令",
-            vec![SyntaxItem::Text { pattern: "#.*".into(), regex: true, case_sensitive: false }],
+            vec![SyntaxItem::Text {
+                pattern: "#.*".into(),
+                regex: true,
+                case_sensitive: false,
+            }],
         )];
-        assert_eq!(line_classify("#include <x.h>", &g, &["指令".into()], None), LineClass::UnimportantText);
-        assert_eq!(line_classify("y = #x", &g, &["指令".into()], None), LineClass::Plain);
+        assert_eq!(
+            line_classify("#include <x.h>", &g, &["指令".into()], None),
+            LineClass::UnimportantText
+        );
+        assert_eq!(
+            line_classify("y = #x", &g, &["指令".into()], None),
+            LineClass::Plain
+        );
     }
 
     #[test]
@@ -1575,7 +2092,11 @@ mod tests {
         let json = pack.to_json();
         let back = FormatPack::from_json(&json).expect("roundtrip");
         assert_eq!(back, pack);
-        assert!(back.formats.len() >= 12, "内置 ≥12 语言，实际 {}", back.formats.len());
+        assert!(
+            back.formats.len() >= 12,
+            "内置 ≥12 语言，实际 {}",
+            back.formats.len()
+        );
     }
 
     #[test]
@@ -1595,8 +2116,15 @@ mod tests {
 
     #[test]
     fn pack34_version_guard() {
-        let bad = FormatPack { version: 2, ..FormatPack::default() }.to_json();
-        assert!(matches!(FormatPack::from_json(&bad), Err(FormatPackError::Version(2))));
+        let bad = FormatPack {
+            version: 2,
+            ..FormatPack::default()
+        }
+        .to_json();
+        assert!(matches!(
+            FormatPack::from_json(&bad),
+            Err(FormatPackError::Version(2))
+        ));
         assert!(FormatPack::from_json("not json").is_err());
     }
 
@@ -1617,7 +2145,10 @@ mod tests {
         ids.sort();
         ids.dedup();
         assert_eq!(ids.len(), r.formats.len(), "内置 id 唯一");
-        assert!(r.formats.iter().filter(|f| f.masks.is_empty()).count() <= 1, "仅 shebang 兜底格式允许空掩码");
+        assert!(
+            r.formats.iter().filter(|f| f.masks.is_empty()).count() <= 1,
+            "仅 shebang 兜底格式允许空掩码"
+        );
     }
 
     // ---- R3-17d：非文本视图格式（FR-FMT-004；双击选型 FR-SEL-001） ----

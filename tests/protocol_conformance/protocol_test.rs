@@ -26,7 +26,9 @@ fn run_engine_raw(lines: &[String], wait: Duration) -> (Vec<Value>, bool) {
         bin.display()
     );
     let mut cmd = Command::new(&bin);
-    cmd.arg("--stdio").stdin(Stdio::piped()).stdout(Stdio::piped());
+    cmd.arg("--stdio")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped());
     cmd.stderr(Stdio::null());
     let mut child = cmd.spawn().expect("启动 ai-engine");
 
@@ -192,7 +194,9 @@ fn parse_error_is_answered_with_null_id() {
     let (outputs, _exited) = run_engine_raw(&lines, Duration::from_secs(10));
     let resp = resp_by_null_id(&outputs);
     assert_eq!(
-        resp.get("error").and_then(|e| e.get("code")).and_then(|c| c.as_i64()),
+        resp.get("error")
+            .and_then(|e| e.get("code"))
+            .and_then(|c| c.as_i64()),
         Some(-32700),
         "解析失败应为 -32700 ParseError，实际: {resp:?}"
     );
@@ -210,7 +214,9 @@ fn invalid_envelope_echoes_legal_id_when_present() {
     let (outputs, _exited) = run_engine_raw(&lines, Duration::from_secs(10));
     let resp = resp_by_id(&outputs, 42);
     assert_eq!(
-        resp.get("error").and_then(|e| e.get("code")).and_then(|c| c.as_i64()),
+        resp.get("error")
+            .and_then(|e| e.get("code"))
+            .and_then(|c| c.as_i64()),
         Some(-32600),
         "信封非法应为 -32600，实际: {resp:?}"
     );
@@ -232,7 +238,9 @@ fn wrong_jsonrpc_version_is_rejected() {
     let (outputs, _exited) = run_engine_raw(&lines, Duration::from_secs(10));
     let resp = resp_by_id(&outputs, 7);
     assert_eq!(
-        resp.get("error").and_then(|e| e.get("code")).and_then(|c| c.as_i64()),
+        resp.get("error")
+            .and_then(|e| e.get("code"))
+            .and_then(|c| c.as_i64()),
         Some(-32600),
         "jsonrpc 版本不符应为 -32600，实际: {resp:?}"
     );
@@ -260,13 +268,21 @@ fn merge3_open_is_idempotent_and_keeps_decisions() {
     );
 
     let inputs = vec![
-        harness::req(1, "initialize", json!({"clientInfo": {"name": "c", "version": "0"}, "protocolVersion": "1.0"})),
+        harness::req(
+            1,
+            "initialize",
+            json!({"clientInfo": {"name": "c", "version": "0"}, "protocolVersion": "1.0"}),
+        ),
         harness::req(
             2,
             "text/merge3/open",
             json!({"sessionId": "m1", "base": b, "left": l, "right": r, "options": null}),
         ),
-        harness::req(3, "text/merge3/sections", json!({"sessionId": "m1", "offset": 0, "count": 100})),
+        harness::req(
+            3,
+            "text/merge3/sections",
+            json!({"sessionId": "m1", "offset": 0, "count": 100}),
+        ),
     ];
     let outputs = harness::run_engine(&inputs, None);
     let opened = resp_by_id(&outputs, 2);
@@ -275,7 +291,9 @@ fn merge3_open_is_idempotent_and_keeps_decisions() {
         "首次 merge3/open 应成功，实际: {opened:?}"
     );
     let sections = resp_by_id(&outputs, 3);
-    let chunks = sections["result"]["chunks"].as_array().expect("chunks 数组");
+    let chunks = sections["result"]["chunks"]
+        .as_array()
+        .expect("chunks 数组");
     let conflict = chunks
         .iter()
         .find(|c| c["origin"] == "conflict")
@@ -284,7 +302,11 @@ fn merge3_open_is_idempotent_and_keeps_decisions() {
 
     // 提交决策（取左）
     let inputs2 = vec![
-        harness::req(1, "initialize", json!({"clientInfo": {"name": "c", "version": "0"}, "protocolVersion": "1.0"})),
+        harness::req(
+            1,
+            "initialize",
+            json!({"clientInfo": {"name": "c", "version": "0"}, "protocolVersion": "1.0"}),
+        ),
         harness::req(
             2,
             "text/merge3/open",
@@ -301,7 +323,11 @@ fn merge3_open_is_idempotent_and_keeps_decisions() {
             "text/merge3/open",
             json!({"sessionId": "m1", "base": b, "left": l, "right": r, "options": null}),
         ),
-        harness::req(5, "text/merge3/sections", json!({"sessionId": "m1", "offset": 0, "count": 100})),
+        harness::req(
+            5,
+            "text/merge3/sections",
+            json!({"sessionId": "m1", "offset": 0, "count": 100}),
+        ),
     ];
     let outputs2 = harness::run_engine(&inputs2, None);
     let reopened = resp_by_id(&outputs2, 4);
@@ -310,13 +336,16 @@ fn merge3_open_is_idempotent_and_keeps_decisions() {
         "同参数重复 merge3/open 必须幂等成功（决策不能因此丢失），实际: {reopened:?}"
     );
     let sections2 = resp_by_id(&outputs2, 5);
-    let chunks2 = sections2["result"]["chunks"].as_array().expect("chunks 数组");
+    let chunks2 = sections2["result"]["chunks"]
+        .as_array()
+        .expect("chunks 数组");
     let still = chunks2
         .iter()
         .find(|c| c["id"].as_u64() == Some(chunk_id))
         .expect("重开后仍应存在该块");
     assert_eq!(
-        still["decided"], json!(true),
+        still["decided"],
+        json!(true),
         "重开后已提交的决策必须保留，实际: {still:?}"
     );
     assert_eq!(still["decision"], json!("left"));
@@ -348,8 +377,14 @@ fn record_target_unwritable_warns_on_stderr() {
     let out = child.wait_with_output().expect("等待引擎退出");
     assert!(out.status.success(), "录制目标不可写不应让引擎拒绝服务");
     let err = String::from_utf8_lossy(&out.stderr);
-    assert!(err.contains("--record"), "必须告警录制已禁用，实际 stderr: {err}");
-    assert!(err.contains("missing-subdir"), "告警需含目标路径，实际 stderr: {err}");
+    assert!(
+        err.contains("--record"),
+        "必须告警录制已禁用，实际 stderr: {err}"
+    );
+    assert!(
+        err.contains("missing-subdir"),
+        "告警需含目标路径，实际 stderr: {err}"
+    );
     assert!(!bad.exists(), "不可写目标不应被创建");
 }
 
@@ -360,24 +395,27 @@ fn record_target_unwritable_warns_on_stderr() {
 /// 入站整数超过 2^53-1 时必须在协议边界拒绝，避免客户端 JSON.parse 静默丢精度。
 #[test]
 fn unsafe_integer_in_request_is_rejected() {
-    let lines = vec![
-        serde_json::to_string(&json!({
-            "jsonrpc": "2.0",
-            "id": 9,
-            "method": "hex/bytes",
-            "params": {"sessionId": "h1", "side": "left", "offset": 9007199254740992u64, "count": 16}
-        }))
-        .unwrap(),
-    ];
+    let lines = vec![serde_json::to_string(&json!({
+        "jsonrpc": "2.0",
+        "id": 9,
+        "method": "hex/bytes",
+        "params": {"sessionId": "h1", "side": "left", "offset": 9007199254740992u64, "count": 16}
+    }))
+    .unwrap()];
     let (outputs, _exited) = run_engine_raw(&lines, Duration::from_secs(5));
     let resp = resp_by_id(&outputs, 9);
     assert_eq!(
-        resp.get("error").and_then(|e| e.get("code")).and_then(|c| c.as_i64()),
+        resp.get("error")
+            .and_then(|e| e.get("code"))
+            .and_then(|c| c.as_i64()),
         Some(-32602),
         "越界整数应回 -32602，实际: {resp:?}"
     );
     assert!(
-        resp["error"]["message"].as_str().unwrap_or("").contains("2^53-1"),
+        resp["error"]["message"]
+            .as_str()
+            .unwrap_or("")
+            .contains("2^53-1"),
         "错误信息应指出安全整数上限: {resp:?}"
     );
 }
@@ -385,15 +423,13 @@ fn unsafe_integer_in_request_is_rejected() {
 /// 边界内的整数必须正常放行（不能误伤 epoch 毫秒、文件大小等合法值）。
 #[test]
 fn max_safe_integer_in_request_is_accepted() {
-    let lines = vec![
-        serde_json::to_string(&json!({
-            "jsonrpc": "2.0",
-            "id": 10,
-            "method": "hex/bytes",
-            "params": {"sessionId": "h1", "side": "left", "offset": 9007199254740991u64, "count": 16}
-        }))
-        .unwrap(),
-    ];
+    let lines = vec![serde_json::to_string(&json!({
+        "jsonrpc": "2.0",
+        "id": 10,
+        "method": "hex/bytes",
+        "params": {"sessionId": "h1", "side": "left", "offset": 9007199254740991u64, "count": 16}
+    }))
+    .unwrap()];
     let (outputs, _exited) = run_engine_raw(&lines, Duration::from_secs(5));
     let resp = resp_by_id(&outputs, 10);
     let msg = resp["error"]["message"].as_str().unwrap_or("");
@@ -414,13 +450,21 @@ fn rpc_numeric_fields_are_json_numbers() {
     std::fs::write(l.join("a.txt"), b"left").unwrap();
     std::fs::write(r.join("a.txt"), b"right!").unwrap();
     let inputs = vec![
-        harness::req(1, "initialize", json!({"clientInfo": {"name": "c", "version": "0"}, "protocolVersion": "1.0"})),
-        harness::req(2, "dir/open", json!({
-            "sessionId": "num1",
-            "left": l.to_string_lossy(),
-            "right": r.to_string_lossy(),
-            "criteria": {"mtimeToleranceSec": 0, "contentCompare": "always"}
-        })),
+        harness::req(
+            1,
+            "initialize",
+            json!({"clientInfo": {"name": "c", "version": "0"}, "protocolVersion": "1.0"}),
+        ),
+        harness::req(
+            2,
+            "dir/open",
+            json!({
+                "sessionId": "num1",
+                "left": l.to_string_lossy(),
+                "right": r.to_string_lossy(),
+                "criteria": {"mtimeToleranceSec": 0, "contentCompare": "always"}
+            }),
+        ),
     ];
     let outputs = harness::run_engine(&inputs, None);
     let open = outputs
@@ -428,8 +472,14 @@ fn rpc_numeric_fields_are_json_numbers() {
         .find(|m| m.get("id").and_then(|v| v.as_i64()) == Some(2))
         .expect("dir/open 应答");
     // rev: u64 → JSON number
-    assert!(open["result"]["rev"].is_number(), "rev 应为 JSON number: {open}");
-    assert!(open["result"]["rowCount"].is_number(), "rowCount 应为 JSON number: {open}");
+    assert!(
+        open["result"]["rev"].is_number(),
+        "rev 应为 JSON number: {open}"
+    );
+    assert!(
+        open["result"]["rowCount"].is_number(),
+        "rowCount 应为 JSON number: {open}"
+    );
 
     // dir/delta 里的 SideInfo.size / mtimeMs 是 u64
     let delta = outputs
@@ -441,8 +491,14 @@ fn rpc_numeric_fields_are_json_numbers() {
     for row in rows {
         for side in ["left", "right"] {
             if let Some(info) = row.get(side).filter(|v| !v.is_null()) {
-                assert!(info["size"].is_number(), "{side}.size 应为 JSON number: {info}");
-                assert!(info["mtimeMs"].is_number(), "{side}.mtimeMs 应为 JSON number: {info}");
+                assert!(
+                    info["size"].is_number(),
+                    "{side}.size 应为 JSON number: {info}"
+                );
+                assert!(
+                    info["mtimeMs"].is_number(),
+                    "{side}.mtimeMs 应为 JSON number: {info}"
+                );
             }
         }
     }
@@ -481,13 +537,20 @@ impl InteractiveEngine {
                 if line.trim().is_empty() {
                     continue;
                 }
-                let Ok(v) = serde_json::from_str::<Value>(&line) else { break };
+                let Ok(v) = serde_json::from_str::<Value>(&line) else {
+                    break;
+                };
                 if tx.send(v).is_err() {
                     break;
                 }
             }
         });
-        InteractiveEngine { child, stdin: Some(stdin), rx, all: Vec::new() }
+        InteractiveEngine {
+            child,
+            stdin: Some(stdin),
+            rx,
+            all: Vec::new(),
+        }
     }
 
     fn send(&mut self, v: &Value) {
@@ -571,8 +634,7 @@ fn by_id(m: &Value, id: i64) -> bool {
 }
 
 fn is_cancelled_progress(m: &Value) -> bool {
-    m.get("method") == Some(&json!("dir/progress"))
-        && m["params"]["phase"] == json!("cancelled")
+    m.get("method") == Some(&json!("dir/progress")) && m["params"]["phase"] == json!("cancelled")
 }
 
 /// 每侧 files 个文件分在 subdirs 个子目录：内容比较下扫描需要多个 await 周期，
@@ -612,10 +674,20 @@ fn initialize_declares_precise_cancel_scope() {
         .collect();
     assert_eq!(
         methods,
-        vec!["dir/open", "dir/execute", "dir/mergeScan", "dir/mergeExecute"]
+        vec![
+            "dir/open",
+            "dir/execute",
+            "dir/mergeScan",
+            "dir/mergeExecute"
+        ]
     );
     assert_eq!(caps["sessionCancel"], true);
-    for m in ["text/open", "text/inlineDiff", "report/generate", "dir/filter"] {
+    for m in [
+        "text/open",
+        "text/inlineDiff",
+        "report/generate",
+        "dir/filter",
+    ] {
         assert!(!methods.contains(&m), "{m} 未接 CancelFlag，不得声明可取消");
     }
 }
@@ -633,7 +705,9 @@ fn request_cancel_stops_long_scan_and_uncancellable_method_is_unaffected() {
 
     let mut e = InteractiveEngine::spawn();
     e.send(&init_req(1));
-    assert!(e.wait_for(|m| by_id(m, 1), Duration::from_secs(10)).is_some());
+    assert!(e
+        .wait_for(|m| by_id(m, 1), Duration::from_secs(10))
+        .is_some());
 
     let scan = json!({
         "sessionId": "d1",
@@ -657,7 +731,10 @@ fn request_cancel_stops_long_scan_and_uncancellable_method_is_unaffected() {
     let ok = e
         .wait_for(|m| by_id(m, 3), Duration::from_secs(30))
         .expect("未取消的扫描必须应答");
-    assert!(ok["result"]["rowCount"].is_number(), "对照扫描应成功: {ok:?}");
+    assert!(
+        ok["result"]["rowCount"].is_number(),
+        "对照扫描应成功: {ok:?}"
+    );
 
     // 对照 2：text/open 不在能力清单里，取消旗标不影响它
     e.send(&harness::req(
@@ -669,7 +746,10 @@ fn request_cancel_stops_long_scan_and_uncancellable_method_is_unaffected() {
     let text = e
         .wait_for(|m| by_id(m, 4), Duration::from_secs(10))
         .expect("表外方法也必须应答");
-    assert!(text.get("result").is_some(), "表外方法不应被请求级取消中断: {text:?}");
+    assert!(
+        text.get("result").is_some(),
+        "表外方法不应被请求级取消中断: {text:?}"
+    );
 
     e.send(&harness::req(5, "shutdown", json!({})));
     let (_all, exited) = e.finish(Duration::from_secs(5));
@@ -692,18 +772,24 @@ fn session_cancel_after_response_close_and_reopen_are_clean() {
 
     let mut e = InteractiveEngine::spawn();
     e.send(&init_req(1));
-    assert!(e.wait_for(|m| by_id(m, 1), Duration::from_secs(10)).is_some());
+    assert!(e
+        .wait_for(|m| by_id(m, 1), Duration::from_secs(10))
+        .is_some());
 
     e.send(&harness::req(2, "dir/open", open.clone()));
     let opened = e
         .wait_for(|m| by_id(m, 2), Duration::from_secs(20))
         .expect("dir/open 应答");
-    assert!(opened["result"]["sessionId"] == json!("d1"), "打开成功: {opened:?}");
+    assert!(
+        opened["result"]["sessionId"] == json!("d1"),
+        "打开成功: {opened:?}"
+    );
 
     // 应答之后再取消：旧实现此时已注销请求 id，后台扫描再也停不下来
     e.send(&harness::note("$/cancel", json!({"sessionId": "d1"})));
     assert!(
-        e.wait_for(is_cancelled_progress, Duration::from_secs(10)).is_some(),
+        e.wait_for(is_cancelled_progress, Duration::from_secs(10))
+            .is_some(),
         "会话级取消后必须收到 dir/progress(cancelled)，而不是只有 UI 改文案"
     );
     let cancelled_idx = e
@@ -712,8 +798,14 @@ fn session_cancel_after_response_close_and_reopen_are_clean() {
         .position(is_cancelled_progress)
         .expect("已记录 cancelled 事件");
 
-    e.send(&harness::req(3, "session/close", json!({"sessionId": "d1"})));
-    assert!(e.wait_for(|m| by_id(m, 3), Duration::from_secs(10)).is_some());
+    e.send(&harness::req(
+        3,
+        "session/close",
+        json!({"sessionId": "d1"}),
+    ));
+    assert!(e
+        .wait_for(|m| by_id(m, 3), Duration::from_secs(10))
+        .is_some());
 
     let noise = e.quiet_for(Duration::from_millis(500));
     assert_eq!(noise, 0, "close 后后台 pump/worker 必须退出，不再产生通知");
@@ -734,11 +826,18 @@ fn session_cancel_after_response_close_and_reopen_are_clean() {
         "取消后关闭重开应成功（无泄漏/无 411），实际: {reopened:?}"
     );
 
-    e.send(&harness::req(5, "session/close", json!({"sessionId": "d1"})));
+    e.send(&harness::req(
+        5,
+        "session/close",
+        json!({"sessionId": "d1"}),
+    ));
     e.send(&harness::req(6, "shutdown", json!({})));
     let (all, exited) = e.finish(Duration::from_secs(5));
     assert!(exited, "引擎必须正常退出（无悬挂后台任务）");
-    assert!(by_id(resp_by_id(&all, 6), 6), "shutdown 应答不得被取消流程吞掉");
+    assert!(
+        by_id(resp_by_id(&all, 6), 6),
+        "shutdown 应答不得被取消流程吞掉"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -746,9 +845,7 @@ fn session_cancel_after_response_close_and_reopen_are_clean() {
 // ---------------------------------------------------------------------------
 
 /// 把 stderr 收进共享字符串（避免 stderr 管道写满反过来阻塞引擎）。
-fn capture_stderr(
-    stderr: std::process::ChildStderr,
-) -> std::sync::Arc<std::sync::Mutex<String>> {
+fn capture_stderr(stderr: std::process::ChildStderr) -> std::sync::Arc<std::sync::Mutex<String>> {
     let logs = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
     let sink = std::sync::Arc::clone(&logs);
     std::thread::spawn(move || {
@@ -877,7 +974,10 @@ fn eof_unblocks_engine_when_reader_never_resumes() {
         }
         std::thread::sleep(Duration::from_millis(50));
     }
-    let elapsed = 12.0 - deadline.saturating_duration_since(Instant::now()).as_secs_f64();
+    let elapsed = 12.0
+        - deadline
+            .saturating_duration_since(Instant::now())
+            .as_secs_f64();
     let early_logs = logs.lock().expect("stderr 日志锁").clone();
     if !exited {
         let _ = child.kill();
@@ -888,7 +988,10 @@ fn eof_unblocks_engine_when_reader_never_resumes() {
         "慢读者永不恢复时 EOF 也必须解除阻塞（耗时 {elapsed:.1}s）；引擎日志: {early_logs}"
     );
     let log_text = logs.lock().expect("stderr 日志锁").clone();
-    assert!(log_text.contains("出站背压"), "应有队列满载日志: {log_text}");
+    assert!(
+        log_text.contains("出站背压"),
+        "应有队列满载日志: {log_text}"
+    );
     assert!(
         log_text.contains("关闭信号解除阻塞") || log_text.contains("stdout 写入被关闭信号中断"),
         "应观察到关闭信号解除出站/写入阻塞: {log_text}"

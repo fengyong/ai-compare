@@ -21,7 +21,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::formats::{unimportant_mask, GrammarElement, FileFormat};
+use crate::formats::{unimportant_mask, FileFormat, GrammarElement};
 use crate::options::ImportanceOptions;
 
 // ---------------------------------------------------------------------------
@@ -234,7 +234,10 @@ impl RulesOptions {
             Some(f) if !effective.unimportant_elements.is_empty() => f.grammar.clone(),
             _ => Vec::new(),
         };
-        RulesOptions { unimportant_elements: effective.unimportant_elements.clone(), grammar }
+        RulesOptions {
+            unimportant_elements: effective.unimportant_elements.clone(),
+            grammar,
+        }
     }
 
     /// 行重要性键预处理（keys 层调用；无折叠时原样返回以保持零分配路径）
@@ -347,11 +350,11 @@ impl RulesDocument {
 mod tests {
     use super::*;
     use crate::formats::builtin_registry;
+    use crate::options::DiffConfig;
+    use crate::options::ManualAlignOptions;
     use crate::options::{TextDiffOptions, WhitespaceMode};
     use crate::sections::Importance;
     use crate::{diff_config, LineTable};
-    use crate::options::DiffConfig;
-    use crate::options::ManualAlignOptions;
 
     fn c_format() -> &'static FileFormat {
         builtin_registry().detect("main.c", b"").unwrap()
@@ -367,7 +370,10 @@ mod tests {
 
     fn config_with(rules: RulesOptions, imp: ImportanceOptions) -> DiffConfig {
         DiffConfig {
-            base: TextDiffOptions { rules, ..TextDiffOptions::default() },
+            base: TextDiffOptions {
+                rules,
+                ..TextDiffOptions::default()
+            },
             importance: imp,
             manual: ManualAlignOptions::default(),
         }
@@ -380,9 +386,22 @@ mod tests {
         let left = LineTable::from_text("int a;\n// old comment\nint b;\n");
         let right = LineTable::from_text("int a;\n// new comment\nint b;\n");
         let rules = rules_options(&["注释"], Some(c_format()));
-        let keyed = diff_config(&left, &right, &config_with(rules, ImportanceOptions::default())).unwrap();
-        assert_eq!(keyed.output.sections.len(), 3, "骨架：Equal + Change + Equal");
-        assert_eq!(keyed.output.sections[1].important, Importance::Unimportant, "注释行差异不重要");
+        let keyed = diff_config(
+            &left,
+            &right,
+            &config_with(rules, ImportanceOptions::default()),
+        )
+        .unwrap();
+        assert_eq!(
+            keyed.output.sections.len(),
+            3,
+            "骨架：Equal + Change + Equal"
+        );
+        assert_eq!(
+            keyed.output.sections[1].important,
+            Importance::Unimportant,
+            "注释行差异不重要"
+        );
         assert_eq!(keyed.unimportant_sections, 1);
     }
 
@@ -391,7 +410,12 @@ mod tests {
         let left = LineTable::from_text("// old\n");
         let right = LineTable::from_text("// new\n");
         // 无语法折叠（rules 空）→ 注释差异重要
-        let keyed = diff_config(&left, &right, &config_with(RulesOptions::default(), ImportanceOptions::default())).unwrap();
+        let keyed = diff_config(
+            &left,
+            &right,
+            &config_with(RulesOptions::default(), ImportanceOptions::default()),
+        )
+        .unwrap();
         assert_eq!(keyed.output.sections[0].important, Importance::Important);
     }
 
@@ -401,7 +425,12 @@ mod tests {
         let left = LineTable::from_text("a\n// gone\nb\n");
         let right = LineTable::from_text("a\nb\n");
         let rules = rules_options(&["注释"], Some(c_format()));
-        let keyed = diff_config(&left, &right, &config_with(rules, ImportanceOptions::default())).unwrap();
+        let keyed = diff_config(
+            &left,
+            &right,
+            &config_with(rules, ImportanceOptions::default()),
+        )
+        .unwrap();
         let del = keyed
             .output
             .sections
@@ -419,7 +448,11 @@ mod tests {
         let rules = rules_options(&["注释"], Some(c_format()));
         let cfg = config_with(rules, ImportanceOptions::default());
         let keyed = diff_config(&left, &right, &cfg).unwrap();
-        assert_eq!(keyed.output.sections.len(), 1, "骨架仍为单 Change（对齐不变）");
+        assert_eq!(
+            keyed.output.sections.len(),
+            1,
+            "骨架仍为单 Change（对齐不变）"
+        );
         let sec = &keyed.output.sections[0];
         assert_eq!(sec.kind, crate::sections::SectionKind::Change);
         assert!(sec.important == Importance::Unimportant);
@@ -432,8 +465,17 @@ mod tests {
         let left = LineTable::from_text("x = \"alpha\";\n");
         let right = LineTable::from_text("x = \"beta\";\n");
         let rules = rules_options(&["字符串"], Some(c_format()));
-        let keyed = diff_config(&left, &right, &config_with(rules, ImportanceOptions::default())).unwrap();
-        assert_eq!(keyed.output.sections[0].important, Importance::Unimportant, "字符串内容差异不重要");
+        let keyed = diff_config(
+            &left,
+            &right,
+            &config_with(rules, ImportanceOptions::default()),
+        )
+        .unwrap();
+        assert_eq!(
+            keyed.output.sections[0].important,
+            Importance::Unimportant,
+            "字符串内容差异不重要"
+        );
     }
 
     #[test]
@@ -441,8 +483,17 @@ mod tests {
         let left = LineTable::from_text("x = \"alpha\";\n");
         let right = LineTable::from_text("y = \"beta\";\n");
         let rules = rules_options(&["字符串"], Some(c_format()));
-        let keyed = diff_config(&left, &right, &config_with(rules, ImportanceOptions::default())).unwrap();
-        assert_eq!(keyed.output.sections[0].important, Importance::Important, "代码标识符变化仍重要");
+        let keyed = diff_config(
+            &left,
+            &right,
+            &config_with(rules, ImportanceOptions::default()),
+        )
+        .unwrap();
+        assert_eq!(
+            keyed.output.sections[0].important,
+            Importance::Important,
+            "代码标识符变化仍重要"
+        );
     }
 
     // ---- 3. 与空白/大小写开关的叠加 ----
@@ -452,12 +503,22 @@ mod tests {
         let left = LineTable::from_text("// note\nValue = 1\n");
         let right = LineTable::from_text("// NOTE\nvalue = 1\n");
         let rules = rules_options(&["注释"], Some(c_format()));
-        let imp = ImportanceOptions { case_unimportant: true, ..ImportanceOptions::default() };
+        let imp = ImportanceOptions {
+            case_unimportant: true,
+            ..ImportanceOptions::default()
+        };
         let keyed = diff_config(&left, &right, &config_with(rules, imp)).unwrap();
-        assert!(keyed.unimportant_sections >= 1, "注释差异与大小写差异均不重要（可能合并为单 section）");
         assert!(
-            keyed.output.sections.iter().all(|s| s.kind != crate::sections::SectionKind::Change
-                || s.important == Importance::Unimportant),
+            keyed.unimportant_sections >= 1,
+            "注释差异与大小写差异均不重要（可能合并为单 section）"
+        );
+        assert!(
+            keyed
+                .output
+                .sections
+                .iter()
+                .all(|s| s.kind != crate::sections::SectionKind::Change
+                    || s.important == Importance::Unimportant),
             "全部 Change 均不重要"
         );
     }
@@ -467,11 +528,19 @@ mod tests {
         let left = LineTable::from_text("int   a;\n");
         let right = LineTable::from_text("int a;\n");
         let rules = rules_options(&["注释"], Some(c_format()));
-        let imp = ImportanceOptions { embedded_ws_unimportant: true, ..ImportanceOptions::default() };
+        let imp = ImportanceOptions {
+            embedded_ws_unimportant: true,
+            ..ImportanceOptions::default()
+        };
         let keyed = diff_config(&left, &right, &config_with(rules.clone(), imp)).unwrap();
         assert_eq!(keyed.output.sections[0].important, Importance::Unimportant);
         // 空白重要时仍重要（语法折叠不吞代码空白）
-        let keyed2 = diff_config(&left, &right, &config_with(rules, ImportanceOptions::default())).unwrap();
+        let keyed2 = diff_config(
+            &left,
+            &right,
+            &config_with(rules, ImportanceOptions::default()),
+        )
+        .unwrap();
         assert_eq!(keyed2.output.sections[0].important, Importance::Important);
     }
 
@@ -481,21 +550,30 @@ mod tests {
     fn r09_scope_inheritance_layering() {
         let mut set = RuleSet::default();
         let layer = RuleLayer {
-            compare: Some(CompareRules { case_unimportant: true, ..CompareRules::default() }),
+            compare: Some(CompareRules {
+                case_unimportant: true,
+                ..CompareRules::default()
+            }),
             unimportant_elements: Some(vec!["注释".into()]),
         };
         set.global = layer;
         set.type_defaults.insert(
             "text-compare".into(),
             RuleLayer {
-                compare: Some(CompareRules { trailing_ws_unimportant: true, ..CompareRules::default() }),
+                compare: Some(CompareRules {
+                    trailing_ws_unimportant: true,
+                    ..CompareRules::default()
+                }),
                 unimportant_elements: None,
             },
         );
         set.sessions.insert(
             "s1".into(),
             RuleLayer {
-                compare: Some(CompareRules { case_unimportant: false, ..CompareRules::default() }),
+                compare: Some(CompareRules {
+                    case_unimportant: false,
+                    ..CompareRules::default()
+                }),
                 unimportant_elements: Some(vec!["字符串".into()]),
             },
         );
@@ -508,13 +586,24 @@ mod tests {
         // 全局 → 类型默认（元素集继承全局；compare 覆盖为类型层）
         let e = set.resolve(Some("text-compare"), None, None);
         assert!(e.compare.trailing_ws_unimportant, "类型层 compare 整体覆盖");
-        assert!(!e.compare.case_unimportant, "类型层未开启的项回落缺省（整体覆盖语义）");
-        assert_eq!(e.unimportant_elements, vec!["注释".to_string()], "元素集 None 回落继承");
+        assert!(
+            !e.compare.case_unimportant,
+            "类型层未开启的项回落缺省（整体覆盖语义）"
+        );
+        assert_eq!(
+            e.unimportant_elements,
+            vec!["注释".to_string()],
+            "元素集 None 回落继承"
+        );
 
         // 全局 → 类型 → 会话
         let e = set.resolve(Some("text-compare"), Some("s1"), None);
         assert!(!e.compare.case_unimportant, "会话层显式关闭");
-        assert_eq!(e.unimportant_elements, vec!["字符串".to_string()], "会话层元素集覆盖");
+        assert_eq!(
+            e.unimportant_elements,
+            vec!["字符串".to_string()],
+            "会话层元素集覆盖"
+        );
     }
 
     #[test]
@@ -526,7 +615,11 @@ mod tests {
             unimportant_elements: vec!["注释".into()],
         });
         let e = set.resolve(None, None, Some("builtin-cpp"));
-        assert_eq!(e.unimportant_elements, vec!["注释".to_string()], "命中格式绑定覆盖");
+        assert_eq!(
+            e.unimportant_elements,
+            vec!["注释".to_string()],
+            "命中格式绑定覆盖"
+        );
         let e2 = set.resolve(None, None, Some("builtin-json"));
         assert_eq!(e2.unimportant_elements.len(), 2, "未绑定格式沿用会话层");
         let e3 = set.resolve(None, None, None);
@@ -538,7 +631,10 @@ mod tests {
         let mut set = RuleSet::default();
         set.set_layer(
             RuleTarget::TypeDefault("folder-compare".into()),
-            RuleLayer { compare: Some(CompareRules::default()), unimportant_elements: Some(vec!["注释".into()]) },
+            RuleLayer {
+                compare: Some(CompareRules::default()),
+                unimportant_elements: Some(vec!["注释".into()]),
+            },
         );
         assert!(set.type_defaults.contains_key("folder-compare"));
         set.set_layer(RuleTarget::Session("s9".into()), RuleLayer::default());
@@ -551,13 +647,19 @@ mod tests {
     fn r12_rules_document_roundtrip() {
         let mut set = RuleSet::default();
         let layer = RuleLayer {
-            compare: Some(CompareRules { case_unimportant: true, ..CompareRules::default() }),
+            compare: Some(CompareRules {
+                case_unimportant: true,
+                ..CompareRules::default()
+            }),
             unimportant_elements: Some(vec!["注释".into()]),
         };
         set.global = layer;
         set.type_defaults.insert(
             "text-compare".into(),
-            RuleLayer { compare: None, unimportant_elements: Some(vec!["字符串".into()]) },
+            RuleLayer {
+                compare: None,
+                unimportant_elements: Some(vec!["字符串".into()]),
+            },
         );
         set.sessions.insert("s1".into(), RuleLayer::default());
         set.format_bindings.push(RuleFormatBinding {
@@ -572,7 +674,10 @@ mod tests {
         let set2 = RuleSet::from_document(&back);
         assert_eq!(set2, set);
         // 解析行为不变
-        assert_eq!(set2.resolve(Some("text-compare"), Some("s1"), None), set.resolve(Some("text-compare"), Some("s1"), None));
+        assert_eq!(
+            set2.resolve(Some("text-compare"), Some("s1"), None),
+            set.resolve(Some("text-compare"), Some("s1"), None)
+        );
     }
 
     #[test]
@@ -586,7 +691,12 @@ mod tests {
     fn r14_formats_document_roundtrip() {
         let doc = FormatsDocument {
             version: FORMATS_DOCUMENT_VERSION,
-            custom: vec![crate::formats::FileFormat::text("my-format", "自定义", &["*.my"], vec![])],
+            custom: vec![crate::formats::FileFormat::text(
+                "my-format",
+                "自定义",
+                &["*.my"],
+                vec![],
+            )],
             builtin_overrides: vec![FormatOverride {
                 id: "builtin-cpp".into(),
                 enabled: Some(false),
@@ -629,15 +739,25 @@ mod tests {
     #[test]
     fn r17_compare_rules_default_matches_importance_default() {
         let imp: ImportanceOptions = CompareRules::default().into();
-        assert_eq!(imp, ImportanceOptions::default(), "CompareRules 缺省与 P1 重要性缺省一致");
+        assert_eq!(
+            imp,
+            ImportanceOptions::default(),
+            "CompareRules 缺省与 P1 重要性缺省一致"
+        );
     }
 
     #[test]
     fn r18_text_diff_options_rules_default_backward_compatible() {
         let opts = TextDiffOptions::default();
-        assert!(!opts.rules.has_folding(), "新字段缺省惰性：与 P0/P1 行为一致");
+        assert!(
+            !opts.rules.has_folding(),
+            "新字段缺省惰性：与 P0/P1 行为一致"
+        );
         // serde 场景（协议 DTO 独立）不适用；此处锚定 Rust 侧默认值等价性
-        let opts2 = TextDiffOptions { whitespace: WhitespaceMode::IgnoreAll, ..TextDiffOptions::default() };
+        let opts2 = TextDiffOptions {
+            whitespace: WhitespaceMode::IgnoreAll,
+            ..TextDiffOptions::default()
+        };
         assert!(!opts2.rules.has_folding());
     }
 }
