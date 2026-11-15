@@ -544,3 +544,47 @@
 - **工作包 B（出站有界背压）尚未开始**：出站仍是 `mpsc::unbounded_channel`，慢读者可致内存无界增长；按指导 §4.2 单独实现并做暂停读者压力测试。
 - `cancelEngineSession` 目前只有客户端 API 与真实引擎 E2E 验证，UI 尚无入口（会话级后台扫描取消由 `session/close` 承担）。
 - 批次 4（CI / rustfmt / cargo-deny）待办；`manualAlign` 异名合并缺陷、R3-21 剩余 `Option<T>` TS 可选性专项仍未修。
+
+## HY4 批次 3 工作包 B：R3-22 出站有界背压（2026-11-15，自主工作模式）
+
+依据 `HY4-NEXT-ROUND-2026-11-15.md` §4.2 / §8 批次 3，与工作包 A 完全分离提交。基线 `ef88a5c`（引擎 1023/0、UI 756/0、壳 18/0）。
+
+### 修复前实测
+
+- `server.rs` 用 `mpsc::unbounded_channel::<Outbound>()`；`pump.rs`、`handlers.rs` 的 `push_delta` / importance 通知都直接 `out.send(...)` 无界入队。读者变慢或停止读取（WebView 卡住、管道写满）时内存无界增长。
+- `writer_task` 用 `tokio::io::Stdout::write_all`（走 tokio blocking 线程池）。实测：即使引擎逻辑已打印「stdio 服务端退出」，runtime 默认 drop 仍无限等待卡在 OS write 的 blocking 线程，**进程永久 hang**（只能 kill -9）。这是修复前就存在的退出缺陷，压力测试首次暴露。
+
+### 实际修改的生产链路
+
+- 新增 `engine/ai-engine/src/outbound.rs`：`OutboundTx`（`mpsc::channel(OUTBOUND_CAPACITY=128)`）+ `Shutdown`（`watch` 广播）。`send()` 满载时**等待**（`reserve()` cancellation-safe，拿到 permit 一次性入队；不丢消息、不合并 delta、响应不与通知重排），等待期间一次性 warn 日志「出站背压」。
+- `send_with_cancel(msg, flag)`：pump 传入会话取消旗标，EOF / `session/close` 置位后在 `BACKPRESSURE_POLL=100ms` 内放弃等待并退出，慢读者不会把后台 pump 永久挂住。
+- `server.rs`：出站改用 `OutboundTx`；`writer_task` 的 `write_all` 与 `shutdown_rx.changed()` select，关闭时可中断被慢读者卡住的写；EOF 收尾给 `chain_prev` 2s 有界窗口，仅真被背压卡住（stalled）才 `fire()` 关闭信号 —— **正常路径不 fire，所有响应完整写出**。
+- `main.rs`：`runtime.shutdown_timeout(300ms)` 兜底，正常路径立即返回，卡死时不让 blocking 写线程阻止进程退出。
+- `pump.rs`：所有 delta / progress 发送带会话取消旗标；`handlers.rs`：`push_delta` 改 async、importance 通知逐条 await 入同一 FIFO。
+- 测试基建：所有 `UnboundedSender` / `unbounded_channel` 测试 helper 迁移到 `OutboundTx::for_test(capacity)`（全仓生产代码已无无界出站通道，仅注释保留历史说明）。
+
+### 新增回归测试（6 条）
+
+- `outbound.rs` 4 条：容量硬上界（第 3 条必须等待而非缓存）、暂停读者恢复后 12 条消息全量按 id 顺序收敛、会话取消旗标解除满载等待、进程级关闭信号解除满载等待（含晚订阅者初值与已关闭后的新 send）。
+- 真实进程压力测试 2 条（`protocol_conformance`，启动真实 `ai-engine --stdio`，stdout 不读模拟慢读者）：300 条请求 + shutdown 下，恢复读者后 **301 条响应一条不丢、严格按序**、引擎正常退出；读者永不恢复时 EOF 后引擎在有限时间内退出，stderr 出现「出站背压」+「关闭信号解除阻塞」日志。
+
+### 真实运行验证
+
+- 慢读者永不恢复用例连续重跑 **3/3 全绿**（耗时 7.3~11.0s，含引擎重建）。
+- 变异验证（回退修复，回归确实变红）：
+
+| 变异 | 结果 |
+| --- | --- |
+| `OutboundTx::new(1 << 20, ...)` 回退近似无界队列 | `eof_unblocks_engine_when_reader_never_resumes` FAILED（不再有背压日志） |
+| 删除 `runtime.shutdown_timeout(300ms)` | 同用例 FAILED（引擎逻辑已退出但进程 12s 仍存活，需 kill） |
+
+### 全量门禁（本次实测，提交前复跑）
+
+引擎 `cargo test --workspace` **1029/0**（1023 + 6）、clippy `-D warnings` 零警；协议 drift 通过；壳 **18/0** + clippy 零警；UI `tsc -b` 0 错、`vitest` **756/0**、`lint` / `build` / `format:check` / `e2e:engine` / `verify:demo` 全绿。
+
+### 仍未验证 / 未完成
+
+- **未验证**：真实 Tauri WebView 里长时间不消费 stdout 的 GUI 场景；非 macOS 的管道缓冲与 `shutdown_timeout` 行为（本批次在 darwin 实测）；`OUTBOUND_CAPACITY=128` 在极端大 delta 批次下的内存峰值未做 RSS 采样，上界由「容量 × 单批 `max_batch_rows`」结构性保证。
+- 请求本身仍可无界排队（串行链为每个在途请求建 task 与 CancelRegistry 条目），本工作包只收敛**出站**队列，未改请求准入。
+- 满载策略选的是「等待 + 有记录地放弃（仅退出时）」，未实现 delta 合并；若后续需要合并，须自行维护 rev / hasMore / removals 顺序与最终状态收敛。
+- 批次 4（CI / rustfmt / cargo-deny）待办；`manualAlign` 异名合并、R3-21 剩余 `Option<T>` TS 可选性仍未修。

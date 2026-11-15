@@ -6,10 +6,11 @@ use std::sync::{Arc, Mutex as StdMutex};
 
 use ai_protocol::{self, error::codes, RpcResponse};
 use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{mpsc, watch, Mutex};
 
 use crate::handlers::{dispatch, HandlerCtx, Handled};
 use crate::log;
+use crate::outbound::{OutboundTx, Shutdown, OUTBOUND_CAPACITY};
 use crate::ServerOptions;
 
 pub use crate::cancel::CancelRegistry;
@@ -224,8 +225,15 @@ pub async fn run_stdio(opts: ServerOptions) -> std::io::Result<()> {
     }
     let recorder = Arc::new(recorder);
 
-    let (tx, rx) = mpsc::unbounded_channel::<Outbound>();
-    let writer = tokio::spawn(writer_task(rx, tokio::io::stdout(), Arc::clone(&recorder)));
+    // R3-22 工作包 B：有界出站队列（此前 unbounded，慢读者可致内存无界增长）
+    let shutdown = Arc::new(Shutdown::new());
+    let (tx, rx) = OutboundTx::new(OUTBOUND_CAPACITY, Arc::clone(&shutdown));
+    let writer = tokio::spawn(writer_task(
+        rx,
+        tokio::io::stdout(),
+        Arc::clone(&recorder),
+        shutdown.subscribe(),
+    ));
 
     log::info("stdio 服务端启动（NDJSON / JSON-RPC 2.0）");
 
@@ -252,7 +260,7 @@ pub async fn run_stdio(opts: ServerOptions) -> std::io::Result<()> {
                     ai_protocol::RequestId::Null(None),
                     ai_protocol::error_object(codes::PARSE_ERROR, format!("JSON 解析失败: {e}")),
                 );
-                send_outbound(&tx, Outbound::Response(resp));
+                send_outbound(&tx, Outbound::Response(resp)).await;
                 continue;
             }
         };
@@ -278,7 +286,7 @@ pub async fn run_stdio(opts: ServerOptions) -> std::io::Result<()> {
                         id,
                         ai_protocol::error_object(codes::INVALID_PARAMS, msg.clone()),
                     )),
-                );
+                ).await;
             }
             log::warn(msg);
             continue;
@@ -302,7 +310,7 @@ pub async fn run_stdio(opts: ServerOptions) -> std::io::Result<()> {
                             id,
                             ai_protocol::error_object(codes::INVALID_REQUEST, format!("请求信封不合法: {e}")),
                         )),
-                    );
+                    ).await;
                     continue;
                 }
             };
@@ -317,7 +325,7 @@ pub async fn run_stdio(opts: ServerOptions) -> std::io::Result<()> {
                             format!("jsonrpc 版本必须为 \"2.0\"，收到 {:?}", req.jsonrpc),
                         ),
                     )),
-                );
+                ).await;
                 continue;
             }
             if req.method == ai_protocol::method::SHUTDOWN {
@@ -330,7 +338,7 @@ pub async fn run_stdio(opts: ServerOptions) -> std::io::Result<()> {
                     if let Some(p) = prev {
                         let _ = p.await;
                     }
-                    send_outbound(&tx2, Outbound::Response(RpcResponse::success(id, serde_json::Value::Null)));
+                    send_outbound(&tx2, Outbound::Response(RpcResponse::success(id, serde_json::Value::Null))).await;
                 }));
                 break;
             }
@@ -379,16 +387,28 @@ pub async fn run_stdio(opts: ServerOptions) -> std::io::Result<()> {
         }
     }
 
-    // 等待在途请求（至多一个）收尾
-    if let Some(prev) = chain_prev {
-        let _ = prev.await;
-    }
+    // 等待在途请求（至多一个）收尾。
+    // R3-22 工作包 B：慢读者会让出站 send 一直等待，故给 2s 有界保险；
+    // 正常路径立即完成，所有响应完整写出。只有真被背压卡住才 fire 关闭信号，
+    // 解除请求链 send 与 stdout write_all 的阻塞（放弃的消息有日志）。
+    let stalled = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        if let Some(prev) = chain_prev {
+            let _ = prev.await;
+        }
+    })
+    .await
+    .is_err();
     // 关闭全部会话：取消后台扫描，使常驻 delta pump 任务退出。
     //
-    // 为什么必须做：pump 持有出站通道（UnboundedSender）的克隆。若不取消，
+    // 为什么必须做：pump 持有出站发送端（OutboundTx）的克隆。若不取消，
     // 出站通道永不关闭 → writer_task 的 rx.recv() 永不返回 None →
     // writer.await 永久阻塞 → 客户端 EOF 后引擎进程挂死（只能 kill -9）。
+    // 会话旗标也会让 pump 在满载等待中于 BACKPRESSURE_POLL 内放弃（见 pump.rs）。
     cancel_all_dir_sessions(&ctx, &cancels).await;
+    if stalled {
+        log::warn("出站背压导致在途请求未及时收尾，触发关闭信号解除阻塞");
+        shutdown.fire();
+    }
     drop(tx);
     // 正常路径：pump 在下一次轮询（≤150ms）内感知取消 → 退出 → 出站通道关闭 →
     // writer 自然结束。这里只作"pump 异常卡死"的有界保险（5s），
@@ -438,7 +458,7 @@ async fn process_request(
     ctx: HandlerCtx,
     cancels: Arc<CancelRegistry>,
     cancel_flag: Arc<AtomicBool>,
-    tx: mpsc::UnboundedSender<Outbound>,
+    tx: OutboundTx,
 ) {
     let id = req.id.clone();
     let key = id.cancel_key();
@@ -477,25 +497,27 @@ async fn process_request(
     };
     match result {
         Ok(Handled::Value(v)) => {
-            send_outbound(&tx, Outbound::Response(RpcResponse::success(id, v)));
+            send_outbound(&tx, Outbound::Response(RpcResponse::success(id, v))).await;
         }
         Ok(Handled::WithNotifications { response, notifications }) => {
-            send_outbound(&tx, Outbound::Response(RpcResponse::success(id, response)));
+            // 响应先于通知入同一 FIFO：不丢、不重排。满载时逐条等待读者消费。
+            send_outbound(&tx, Outbound::Response(RpcResponse::success(id, response))).await;
             for n in notifications {
-                send_outbound(&tx, Outbound::Notification(n));
+                send_outbound(&tx, Outbound::Notification(n)).await;
             }
         }
         Err(err) => {
             log::warn(format!("{} {} 失败: code={} {}", method, id, err.code, err.message));
-            send_outbound(&tx, Outbound::Response(RpcResponse::failure(id, err)));
+            send_outbound(&tx, Outbound::Response(RpcResponse::failure(id, err))).await;
         }
     }
 }
 
 async fn writer_task(
-    mut rx: mpsc::UnboundedReceiver<Outbound>,
+    mut rx: mpsc::Receiver<Outbound>,
     stdout: tokio::io::Stdout,
     recorder: Arc<Recorder>,
+    mut shutdown_rx: watch::Receiver<bool>,
 ) {
     use tokio::io::AsyncWriteExt;
     let mut out = stdout;
@@ -517,10 +539,20 @@ async fn writer_task(
                     recorder.record("out", &v);
                 }
                 s.push('\n');
-                if out.write_all(s.as_bytes()).await.is_err() {
-                    break;
+                // 关闭信号可中断被慢读者阻塞的 write_all。正常路径不触发，
+                // 消息仍完整写出；只有 EOF 收尾被背压卡死时才放弃（客户端已离开）。
+                tokio::select! {
+                    res = out.write_all(s.as_bytes()) => {
+                        if res.is_err() {
+                            return;
+                        }
+                        let _ = out.flush().await;
+                    }
+                    _ = shutdown_rx.changed() => {
+                        log::info("stdout 写入被关闭信号中断（客户端已离开）");
+                        return;
+                    }
                 }
-                let _ = out.flush().await;
             }
             Err(e) => {
                 log::error(format!("出站消息序列化失败: {e}"));
@@ -530,10 +562,9 @@ async fn writer_task(
     let _ = out.flush().await;
 }
 
-fn send_outbound(tx: &mpsc::UnboundedSender<Outbound>, msg: Outbound) {
-    if tx.send(msg).is_err() {
-        log::error("输出通道已关闭（客户端断开）");
-    }
+/// 出站入队（有界）：满载时等待，返回 false 表示通道关闭/取消/关闭信号。
+async fn send_outbound(tx: &OutboundTx, msg: Outbound) -> bool {
+    tx.send(msg).await
 }
 
 #[cfg(test)]
@@ -562,7 +593,7 @@ mod tests {
         let flag = cancels.register_request(&id.cancel_key());
         let observer = Arc::clone(&flag);
         cancels.bind_session_flag("d1", Arc::clone(&flag));
-        let (tx, mut rx) = mpsc::unbounded_channel::<Outbound>();
+        let (tx, mut rx) = OutboundTx::for_test(OUTBOUND_CAPACITY);
         let req = ai_protocol::RpcRequest {
             jsonrpc: ai_protocol::JSONRPC_VERSION.to_string(),
             id,
@@ -628,7 +659,7 @@ mod tests {
         id: ai_protocol::RequestId,
         params: Option<serde_json::Value>,
     ) -> Vec<Outbound> {
-        let (tx, mut rx) = mpsc::unbounded_channel::<Outbound>();
+        let (tx, mut rx) = OutboundTx::for_test(OUTBOUND_CAPACITY);
         let flag = cancels.register_request(&id.cancel_key());
         let req = ai_protocol::RpcRequest {
             jsonrpc: ai_protocol::JSONRPC_VERSION.to_string(),

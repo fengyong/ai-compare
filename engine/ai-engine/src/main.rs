@@ -73,13 +73,20 @@ fn run(opts: ServerOptions) -> ExitCode {
             return ExitCode::from(1);
         }
     };
-    match runtime.block_on(server::run_stdio(opts)) {
+    let code = match runtime.block_on(server::run_stdio(opts)) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             log::error(format!("服务端异常退出: {e}"));
             ExitCode::from(1)
         }
-    }
+    };
+    // R3-22 工作包 B：`tokio::io::Stdout` 的写入走 tokio blocking 线程池。
+    // 读者永不消费时，最后一次 OS write 会一直卡在管道缓冲区上；runtime
+    // 默认 drop 会无限等待 blocking 池，导致「引擎逻辑已退出」但进程 hang。
+    // 给一个有界关闭窗口：正常路径立即返回；卡住时超时后进程退出，
+    // 由 OS 终止残留写线程（客户端已离开，无需保证尾部字节写出）。
+    runtime.shutdown_timeout(std::time::Duration::from_millis(300));
+    code
 }
 
 fn print_usage() {

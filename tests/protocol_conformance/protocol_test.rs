@@ -740,3 +740,157 @@ fn session_cancel_after_response_close_and_reopen_are_clean() {
     assert!(exited, "引擎必须正常退出（无悬挂后台任务）");
     assert!(by_id(resp_by_id(&all, 6), 6), "shutdown 应答不得被取消流程吞掉");
 }
+
+// ---------------------------------------------------------------------------
+// R3-22 工作包 B：出站有界背压（真实暂停读者压力测试）
+// ---------------------------------------------------------------------------
+
+/// 把 stderr 收进共享字符串（避免 stderr 管道写满反过来阻塞引擎）。
+fn capture_stderr(
+    stderr: std::process::ChildStderr,
+) -> std::sync::Arc<std::sync::Mutex<String>> {
+    let logs = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+    let sink = std::sync::Arc::clone(&logs);
+    std::thread::spawn(move || {
+        for line in std::io::BufReader::new(stderr).lines() {
+            match line {
+                Ok(l) => {
+                    let mut g = sink.lock().expect("stderr 日志锁");
+                    g.push_str(&l);
+                    g.push('\n');
+                }
+                Err(_) => break,
+            }
+        }
+    });
+    logs
+}
+
+/// 启动 stdio 引擎，stdout/stderr 均接管（不读 stdout 即可模拟慢读者）。
+fn spawn_with_pipes() -> (
+    std::process::Child,
+    std::process::ChildStdin,
+    std::process::ChildStdout,
+    std::sync::Arc<std::sync::Mutex<String>>,
+) {
+    harness::ensure_engine_fresh();
+    let mut cmd = Command::new(harness::engine_bin());
+    cmd.arg("--stdio")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = cmd.spawn().expect("启动 ai-engine");
+    let stdin = child.stdin.take().expect("stdin");
+    let stdout = child.stdout.take().expect("stdout");
+    let logs = capture_stderr(child.stderr.take().expect("stderr"));
+    (child, stdin, stdout, logs)
+}
+
+/// 写入大量请求（含 shutdown）后 EOF。请求数远大于出站容量，
+/// 保证队列 + stdout 管道在读者暂停期间都被填满。
+fn write_burst(stdin: &mut std::process::ChildStdin, count: i64) {
+    for id in 1..=count {
+        writeln!(stdin, "{}", harness::req(id, "initialize", init_params(id))).unwrap();
+    }
+    writeln!(stdin, "{}", harness::req(count + 1, "shutdown", json!({}))).unwrap();
+    stdin.flush().unwrap();
+}
+
+fn init_params(id: i64) -> serde_json::Value {
+    json!({"clientInfo": {"name": format!("slow-reader-{id}")}, "protocolVersion": "1.0"})
+}
+
+/// 暂停读者恢复后：最终状态必须收敛 —— 所有响应不丢、不重排，引擎正常退出。
+/// 同时从 stderr 观察「出站背压」日志，证明队列确实达到容量上限而非只是恰好没满。
+#[test]
+fn paused_reader_resumes_and_every_response_arrives_in_order() {
+    const COUNT: i64 = 300;
+    let (mut child, mut stdin, stdout, logs) = spawn_with_pipes();
+
+    // 读者先暂停 400ms（此时 stdout 无人读取），再开始逐行读
+    let (tx, rx) = std::sync::mpsc::channel();
+    let reader = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(400));
+        let mut ids = Vec::new();
+        for line in std::io::BufReader::new(stdout).lines() {
+            let Ok(line) = line else { break };
+            if line.trim().is_empty() {
+                continue;
+            }
+            let v: Value = serde_json::from_str(&line).expect("NDJSON 合法");
+            if let Some(id) = v.get("id").and_then(|v| v.as_i64()) {
+                ids.push(id);
+            }
+        }
+        let _ = tx.send(ids);
+    });
+
+    write_burst(&mut stdin, COUNT);
+    drop(stdin); // EOF
+    let ids = rx
+        .recv_timeout(Duration::from_secs(25))
+        .expect("暂停读者恢复后引擎必须在有限时间内收敛并退出");
+    let _ = reader.join();
+
+    assert_eq!(
+        ids.len(),
+        (COUNT + 1) as usize,
+        "每一条响应（含 shutdown）都必须到达，实际 {} 条",
+        ids.len()
+    );
+    for (i, id) in ids.iter().enumerate() {
+        assert_eq!(*id, i as i64 + 1, "响应顺序不得重排: {ids:?}");
+    }
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut exited = false;
+    while Instant::now() < deadline {
+        if child.try_wait().expect("try_wait").is_some() {
+            exited = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    if !exited {
+        let _ = child.kill();
+    }
+    assert!(exited, "收敛后引擎必须正常退出");
+    // 队列满载日志由「读者永不恢复」用例验证；本例读者会恢复，是否达到
+    // 容量上限取决于 OS 管道缓冲大小，不作为断言（否则测试与平台缓冲耦合）。
+    drop(logs);
+}
+
+/// 读者永不恢复：EOF 必须解除出站阻塞，引擎在有限时间内退出（不 hang、不需 kill -9）。
+#[test]
+fn eof_unblocks_engine_when_reader_never_resumes() {
+    const COUNT: i64 = 300;
+    let (mut child, mut stdin, _stdout, logs) = spawn_with_pipes();
+    // stdout 故意不读：child 仍持有读端，但无人消费 → writer 阻塞在 write_all
+    write_burst(&mut stdin, COUNT);
+    drop(stdin); // 客户端离开：EOF
+
+    let deadline = Instant::now() + Duration::from_secs(12);
+    let mut exited = false;
+    while Instant::now() < deadline {
+        if child.try_wait().expect("try_wait").is_some() {
+            exited = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let elapsed = 12.0 - deadline.saturating_duration_since(Instant::now()).as_secs_f64();
+    let early_logs = logs.lock().expect("stderr 日志锁").clone();
+    if !exited {
+        let _ = child.kill();
+    }
+    let _ = child.wait();
+    assert!(
+        exited,
+        "慢读者永不恢复时 EOF 也必须解除阻塞（耗时 {elapsed:.1}s）；引擎日志: {early_logs}"
+    );
+    let log_text = logs.lock().expect("stderr 日志锁").clone();
+    assert!(log_text.contains("出站背压"), "应有队列满载日志: {log_text}");
+    assert!(
+        log_text.contains("关闭信号解除阻塞") || log_text.contains("stdout 写入被关闭信号中断"),
+        "应观察到关闭信号解除出站/写入阻塞: {log_text}"
+    );
+}

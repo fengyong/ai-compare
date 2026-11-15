@@ -72,7 +72,7 @@ pub async fn dispatch(
     params: Option<serde_json::Value>,
     ctx: &HandlerCtx,
     cancel: &ai_dir::CancelFlag,
-    out: tokio::sync::mpsc::UnboundedSender<crate::server::Outbound>,
+    out: crate::outbound::OutboundTx,
 ) -> Result<Handled, RpcErrorObject> {
     match method {
         ai_protocol::method::INITIALIZE => initialize(params),
@@ -226,7 +226,7 @@ async fn dir_open(
     params: Option<serde_json::Value>,
     ctx: &HandlerCtx,
     cancel: &ai_dir::CancelFlag,
-    out: tokio::sync::mpsc::UnboundedSender<crate::server::Outbound>,
+    out: crate::outbound::OutboundTx,
 ) -> Result<Handled, RpcErrorObject> {
     // 平铺模式按文件名**跨目录**对齐，而 DTO 的 depth 缺省为 Some(1)（P0
     // 顶层比较的语义）。若不给 depth 就沿用 1，模型只展开根目录、flat_rows
@@ -340,7 +340,7 @@ async fn dir_open_model(
     right: VfsPath,
     ctx: &HandlerCtx,
     cancel: &ai_dir::CancelFlag,
-    out: tokio::sync::mpsc::UnboundedSender<crate::server::Outbound>,
+    out: crate::outbound::OutboundTx,
 ) -> Result<Handled, RpcErrorObject> {
     let lazy = params.lazy_scan == Some(true);
     let target_depth = params.depth;
@@ -516,7 +516,7 @@ fn format_aware_delta_notification(
 async fn dir_expand(
     params: Option<serde_json::Value>,
     ctx: &HandlerCtx,
-    out: tokio::sync::mpsc::UnboundedSender<crate::server::Outbound>,
+    out: crate::outbound::OutboundTx,
 ) -> Result<Handled, RpcErrorObject> {
     let params: ai_protocol::DirExpandParams = parse_params(params)?;
     let model = dir_model(&ctx.sessions, &params.session_id).await?;
@@ -529,7 +529,7 @@ async fn dir_expand(
     let progress = model.progress();
     let rev = delta.as_ref().map(|d| d.rev).unwrap_or(model.rev_snapshot());
     if let Some(d) = &delta {
-        push_delta(&out, &params.session_id, d, ctx.max_batch_rows);
+        push_delta(&out, &params.session_id, d, ctx.max_batch_rows).await;
     }
     let response = ai_protocol::DirExpandResult {
         session_id: params.session_id,
@@ -545,7 +545,7 @@ async fn dir_expand(
 async fn dir_filter(
     params: Option<serde_json::Value>,
     ctx: &HandlerCtx,
-    out: tokio::sync::mpsc::UnboundedSender<crate::server::Outbound>,
+    out: crate::outbound::OutboundTx,
 ) -> Result<Handled, RpcErrorObject> {
     let params: ai_protocol::DirFilterParams = parse_params(params)?;
     let model = dir_model(&ctx.sessions, &params.session_id).await?;
@@ -564,7 +564,7 @@ async fn dir_filter(
     let stats = model.stats_snapshot();
     let rev = delta.as_ref().map(|d| d.rev).unwrap_or(model.rev_snapshot());
     if let Some(d) = &delta {
-        push_delta(&out, &params.session_id, d, ctx.max_batch_rows);
+        push_delta(&out, &params.session_id, d, ctx.max_batch_rows).await;
     }
     let rows = model.rows_snapshot().await;
     let visible = rows.iter().filter(|r| !r.hidden).count() as u32;
@@ -583,7 +583,7 @@ async fn dir_filter(
 async fn dir_align(
     params: Option<serde_json::Value>,
     ctx: &HandlerCtx,
-    out: tokio::sync::mpsc::UnboundedSender<crate::server::Outbound>,
+    out: crate::outbound::OutboundTx,
 ) -> Result<Handled, RpcErrorObject> {
     let params: ai_protocol::DirAlignParams = parse_params(params)?;
     let model = dir_model(&ctx.sessions, &params.session_id).await?;
@@ -596,7 +596,7 @@ async fn dir_align(
     let stats = model.stats_snapshot();
     let rev = delta.as_ref().map(|d| d.rev).unwrap_or(model.rev_snapshot());
     if let Some(d) = &delta {
-        push_delta(&out, &params.session_id, d, ctx.max_batch_rows);
+        push_delta(&out, &params.session_id, d, ctx.max_batch_rows).await;
     }
     let response = ai_protocol::DirAlignResult {
         session_id: params.session_id,
@@ -636,7 +636,7 @@ async fn dir_operate(
 async fn dir_compare_content(
     params: Option<serde_json::Value>,
     ctx: &HandlerCtx,
-    out: tokio::sync::mpsc::UnboundedSender<crate::server::Outbound>,
+    out: crate::outbound::OutboundTx,
 ) -> Result<Handled, RpcErrorObject> {
     let params: ai_protocol::DirCompareContentParams = parse_params(params)?;
     let model = dir_model(&ctx.sessions, &params.session_id).await?;
@@ -650,7 +650,7 @@ async fn dir_compare_content(
     let delta = model.take_delta().await;
     let stats = model.stats_snapshot();
     if let Some(d) = &delta {
-        push_delta(&out, &params.session_id, d, ctx.max_batch_rows);
+        push_delta(&out, &params.session_id, d, ctx.max_batch_rows).await;
     }
     let response = ai_protocol::DirCompareContentResult {
         results: rows
@@ -685,8 +685,8 @@ async fn dir_model(
 }
 
 /// 把一份 delta 数据切批推送（removals 只随首批）
-fn push_delta(
-    out: &tokio::sync::mpsc::UnboundedSender<crate::server::Outbound>,
+async fn push_delta(
+    out: &crate::outbound::OutboundTx,
     session_id: &str,
     d: &ai_dir::DirDeltaData,
     max_batch: usize,
@@ -704,9 +704,11 @@ fn push_delta(
         if i == 0 {
             delta.scan_errors = batch::scan_issues(&d.scan_errors);
         }
-        let _ = out.send(crate::server::Outbound::Notification(
+        // 有界出站：满载时等待读者消费；false 表示客户端已离开/关闭中。
+        out.send(crate::server::Outbound::Notification(
             ai_protocol::RpcServerNotification::new(ai_protocol::method::DIR_DELTA, &delta),
-        ));
+        ))
+        .await;
     }
 }
 
@@ -1182,7 +1184,7 @@ fn compute_inline(
 async fn text_sections(
     params: Option<serde_json::Value>,
     ctx: &HandlerCtx,
-    out: tokio::sync::mpsc::UnboundedSender<crate::server::Outbound>,
+    out: crate::outbound::OutboundTx,
 ) -> Result<Handled, RpcErrorObject> {
     let params: ai_protocol::TextSectionsParams = parse_params(params)?;
     let session_id = params.session_id.clone();
@@ -1342,7 +1344,8 @@ async fn text_sections(
 
     // 3. 通知按序入队：importance 组先于应答（响应在最后，见 dir/expand 同款顺序约定）
     for n in importance_notifications {
-        let _ = out.send(crate::server::Outbound::Notification(n));
+        // 通知按序入同一有界 FIFO；满载时等待，不丢 importance 组。
+        out.send(crate::server::Outbound::Notification(n)).await;
     }
     Ok(Handled::Value(
         serde_json::to_value(&result).expect("text/sections 结果可序列化"),
@@ -2826,10 +2829,10 @@ mod p2_tests {
     }
 
     fn chan() -> (
-        tokio::sync::mpsc::UnboundedSender<Outbound>,
-        tokio::sync::mpsc::UnboundedReceiver<Outbound>,
+        crate::outbound::OutboundTx,
+        tokio::sync::mpsc::Receiver<Outbound>,
     ) {
-        tokio::sync::mpsc::unbounded_channel()
+        crate::outbound::OutboundTx::for_test(crate::outbound::OUTBOUND_CAPACITY)
     }
 
     async fn make_trees() -> (tempfile::TempDir, String, String) {
@@ -2849,7 +2852,7 @@ mod p2_tests {
         (dir, l.to_string_lossy().into_owned(), r.to_string_lossy().into_owned())
     }
 
-    async fn collect(mut rx: tokio::sync::mpsc::UnboundedReceiver<Outbound>) -> Vec<serde_json::Value> {
+    async fn collect(mut rx: tokio::sync::mpsc::Receiver<Outbound>) -> Vec<serde_json::Value> {
         tokio::time::sleep(std::time::Duration::from_millis(250)).await;
         let mut out = Vec::new();
         while let Ok(msg) = rx.try_recv() {
@@ -2892,7 +2895,7 @@ mod p2_tests {
             Handled::WithNotifications { notifications, .. } => notifications.clone(),
             _ => Vec::new(),
         } {
-            let _ = tx.send(Outbound::Notification(n));
+            let _ = tx.send(Outbound::Notification(n)).await;
         }
 
         // 2. dir/expand 展开 sub（先展开使 sub/inner.txt 进入可见集）
@@ -3053,7 +3056,7 @@ mod p2_tests {
 
     async fn open_cc(
         c: &HandlerCtx,
-        tx: &tokio::sync::mpsc::UnboundedSender<Outbound>,
+        tx: &crate::outbound::OutboundTx,
         id: &str,
         l: &std::path::Path,
         r: &std::path::Path,
@@ -3080,7 +3083,7 @@ mod p2_tests {
 
     async fn compare_cc(
         c: &HandlerCtx,
-        tx: &tokio::sync::mpsc::UnboundedSender<Outbound>,
+        tx: &crate::outbound::OutboundTx,
         id: &str,
         extra: serde_json::Value,
     ) -> serde_json::Value {
@@ -3325,10 +3328,10 @@ mod p3_tests {
     }
 
     fn chan() -> (
-        tokio::sync::mpsc::UnboundedSender<Outbound>,
-        tokio::sync::mpsc::UnboundedReceiver<Outbound>,
+        crate::outbound::OutboundTx,
+        tokio::sync::mpsc::Receiver<Outbound>,
     ) {
-        tokio::sync::mpsc::unbounded_channel()
+        crate::outbound::OutboundTx::for_test(crate::outbound::OUTBOUND_CAPACITY)
     }
 
     /// 文本语料：首尾相同 + Change（含尾随空白差异行）+ Insert
@@ -3619,10 +3622,10 @@ mod p7_tests {
     }
 
     fn chan() -> (
-        tokio::sync::mpsc::UnboundedSender<Outbound>,
-        tokio::sync::mpsc::UnboundedReceiver<Outbound>,
+        crate::outbound::OutboundTx,
+        tokio::sync::mpsc::Receiver<Outbound>,
     ) {
-        tokio::sync::mpsc::unbounded_channel()
+        crate::outbound::OutboundTx::for_test(crate::outbound::OUTBOUND_CAPACITY)
     }
 
     /// 三方语料：base 头尾同 + 两个冲突块（行 1、行 3）+ 右侧独有尾部
@@ -3971,10 +3974,10 @@ mod p9_tests {
     }
 
     fn chan() -> (
-        tokio::sync::mpsc::UnboundedSender<Outbound>,
-        tokio::sync::mpsc::UnboundedReceiver<Outbound>,
+        crate::outbound::OutboundTx,
+        tokio::sync::mpsc::Receiver<Outbound>,
     ) {
-        tokio::sync::mpsc::unbounded_channel()
+        crate::outbound::OutboundTx::for_test(crate::outbound::OUTBOUND_CAPACITY)
     }
 
     /// 表格语料：键列 + 两处单元格差异 + 右侧新增行
@@ -4575,10 +4578,10 @@ mod p10_tests {
     }
 
     fn chan() -> (
-        tokio::sync::mpsc::UnboundedSender<Outbound>,
-        tokio::sync::mpsc::UnboundedReceiver<Outbound>,
+        crate::outbound::OutboundTx,
+        tokio::sync::mpsc::Receiver<Outbound>,
     ) {
-        tokio::sync::mpsc::unbounded_channel()
+        crate::outbound::OutboundTx::for_test(crate::outbound::OUTBOUND_CAPACITY)
     }
 
     async fn value_of(r: Result<Handled, RpcErrorObject>) -> serde_json::Value {
@@ -4919,10 +4922,10 @@ mod p11_report_tests {
     }
 
     fn chan() -> (
-        tokio::sync::mpsc::UnboundedSender<Outbound>,
-        tokio::sync::mpsc::UnboundedReceiver<Outbound>,
+        crate::outbound::OutboundTx,
+        tokio::sync::mpsc::Receiver<Outbound>,
     ) {
-        tokio::sync::mpsc::unbounded_channel()
+        crate::outbound::OutboundTx::for_test(crate::outbound::OUTBOUND_CAPACITY)
     }
 
     async fn value_of(r: Result<Handled, RpcErrorObject>) -> serde_json::Value {
@@ -5207,10 +5210,10 @@ mod dir_merge_tests {
     }
 
     fn chan() -> (
-        tokio::sync::mpsc::UnboundedSender<Outbound>,
-        tokio::sync::mpsc::UnboundedReceiver<Outbound>,
+        crate::outbound::OutboundTx,
+        tokio::sync::mpsc::Receiver<Outbound>,
     ) {
-        tokio::sync::mpsc::unbounded_channel()
+        crate::outbound::OutboundTx::for_test(crate::outbound::OUTBOUND_CAPACITY)
     }
 
     async fn value_of(got: Result<Handled, RpcErrorObject>) -> serde_json::Value {
@@ -5684,8 +5687,8 @@ mod text_edit_tests {
         HandlerCtx::new(512)
     }
 
-    fn chan() -> tokio::sync::mpsc::UnboundedSender<crate::server::Outbound> {
-        tokio::sync::mpsc::unbounded_channel().0
+    fn chan() -> crate::outbound::OutboundTx {
+        crate::outbound::OutboundTx::for_test(crate::outbound::OUTBOUND_CAPACITY).0
     }
 
     async fn call(
@@ -6482,8 +6485,8 @@ mod merge3_save_tests {
         HandlerCtx::new(512)
     }
 
-    fn chan() -> tokio::sync::mpsc::UnboundedSender<crate::server::Outbound> {
-        tokio::sync::mpsc::unbounded_channel().0
+    fn chan() -> crate::outbound::OutboundTx {
+        crate::outbound::OutboundTx::for_test(crate::outbound::OUTBOUND_CAPACITY).0
     }
 
     async fn call(
@@ -6817,8 +6820,8 @@ mod route_vfs_tests {
         HandlerCtx::new(512)
     }
 
-    fn chan() -> tokio::sync::mpsc::UnboundedSender<crate::server::Outbound> {
-        tokio::sync::mpsc::unbounded_channel().0
+    fn chan() -> crate::outbound::OutboundTx {
+        crate::outbound::OutboundTx::for_test(crate::outbound::OUTBOUND_CAPACITY).0
     }
 
     async fn call(
@@ -6896,7 +6899,7 @@ mod route_vfs_tests {
         std::fs::create_dir(&root).unwrap();
         std::fs::write(root.join("a.txt"), "A").unwrap();
 
-        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let (tx, mut rx) = crate::outbound::OutboundTx::for_test(crate::outbound::OUTBOUND_CAPACITY);
         let handled = dispatch(
             "dir/open",
             Some(json!({
@@ -7073,8 +7076,8 @@ mod text_encoding_tests {
         HandlerCtx::new(512)
     }
 
-    fn chan() -> tokio::sync::mpsc::UnboundedSender<crate::server::Outbound> {
-        tokio::sync::mpsc::unbounded_channel().0
+    fn chan() -> crate::outbound::OutboundTx {
+        crate::outbound::OutboundTx::for_test(crate::outbound::OUTBOUND_CAPACITY).0
     }
 
     async fn call(
@@ -7351,20 +7354,20 @@ mod r3_03_rpc_tests {
     use super::*;
     use crate::server::Outbound;
     use serde_json::json;
-    use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
+    use crate::outbound::{OutboundTx, OUTBOUND_CAPACITY};
 
     fn ctx() -> HandlerCtx {
         HandlerCtx::new(512)
     }
 
     fn chan() -> (
-        UnboundedSender<Outbound>,
-        tokio::sync::mpsc::UnboundedReceiver<Outbound>,
+        OutboundTx,
+        tokio::sync::mpsc::Receiver<Outbound>,
     ) {
-        unbounded_channel()
+        OutboundTx::for_test(OUTBOUND_CAPACITY)
     }
 
-    async fn call(c: &HandlerCtx, method: &str, params: serde_json::Value, tx: &UnboundedSender<Outbound>) -> serde_json::Value {
+    async fn call(c: &HandlerCtx, method: &str, params: serde_json::Value, tx: &OutboundTx) -> serde_json::Value {
         let handled = dispatch(method, Some(params), c, &ai_dir::CancelFlag::new(), tx.clone()).await.unwrap();
         match handled {
             Handled::Value(v) => v,
@@ -7631,10 +7634,9 @@ mod r3_03_rpc_tests {
 #[cfg(test)]
 mod r3_22_cancel_tests {
     use super::*;
-    use crate::server::Outbound;
     use serde_json::json;
+    use crate::outbound::{OutboundTx, OUTBOUND_CAPACITY};
     use std::sync::atomic::Ordering;
-    use tokio::sync::mpsc::unbounded_channel;
 
     fn ctx() -> HandlerCtx {
         HandlerCtx::new(512)
@@ -7660,7 +7662,7 @@ mod r3_22_cancel_tests {
         params: serde_json::Value,
         cancel: &ai_dir::CancelFlag,
     ) -> Result<serde_json::Value, RpcErrorObject> {
-        let (tx, _rx) = unbounded_channel::<Outbound>();
+        let (tx, _rx) = OutboundTx::for_test(OUTBOUND_CAPACITY);
         dispatch(method, Some(params), c, cancel, tx)
             .await
             .map(|h| match h {

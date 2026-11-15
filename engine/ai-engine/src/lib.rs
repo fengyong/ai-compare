@@ -20,6 +20,7 @@ pub mod cancel;
 pub mod handlers;
 pub mod log;
 pub mod mapping;
+pub mod outbound;
 pub mod pump;
 pub mod server;
 

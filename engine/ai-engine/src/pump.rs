@@ -19,30 +19,48 @@ const POLL_INTERVAL: Duration = Duration::from_millis(150);
 pub fn spawn(
     session_id: String,
     model: Arc<DirModel>,
-    out: tokio::sync::mpsc::UnboundedSender<Outbound>,
+    out: crate::outbound::OutboundTx,
     max_batch_rows: usize,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         // 虚拟初值 Running：首轮若已完成（目标深度被可视层覆盖）也发送一次
         // dir/progress(completed)，保证客户端总能收到终态进度事件
         let mut last_phase = ai_protocol::ProgressPhase::Running;
+        // R3-22 工作包 B：出站有界。pump 的每次发送都带会话取消旗标，
+        // 因此 EOF / session/close 置位后，即使慢读者让队列满载，pump 也会
+        // 在 BACKPRESSURE_POLL 内放弃等待并退出（不会挂死进程）。
+        let cancel = Arc::clone(&model.cancel_token().0);
         loop {
             // 取消/会话关闭：排空后退出
-            if model.cancel_token().is_cancelled() {
-                drain(&session_id, &model, &out, max_batch_rows).await;
-                let _ = out.send(Outbound::Notification(progress_event(
-                    &session_id,
-                    &model,
-                    ai_protocol::ProgressPhase::Cancelled,
-                )));
+            if cancel.load(std::sync::atomic::Ordering::SeqCst) {
+                drain(&session_id, &model, &out, &cancel, max_batch_rows).await;
+                out.send_with_cancel(
+                    Outbound::Notification(progress_event(
+                        &session_id,
+                        &model,
+                        ai_protocol::ProgressPhase::Cancelled,
+                    )),
+                    Some(&cancel),
+                )
+                .await;
                 return;
             }
             // 等待模型通知（带超时兜底：关闭/取消不依赖通知到达）
             let _ = tokio::time::timeout(POLL_INTERVAL, model.notified()).await;
-            drain(&session_id, &model, &out, max_batch_rows).await;
+            if !drain(&session_id, &model, &out, &cancel, max_batch_rows).await {
+                return;
+            }
             let phase = model.phase();
             if phase != last_phase {
-                let _ = out.send(Outbound::Notification(progress_event(&session_id, &model, phase)));
+                if !out
+                    .send_with_cancel(
+                        Outbound::Notification(progress_event(&session_id, &model, phase)),
+                        Some(&cancel),
+                    )
+                    .await
+                {
+                    return;
+                }
                 last_phase = phase;
                 if phase == ai_protocol::ProgressPhase::Cancelled {
                     return;
@@ -52,13 +70,14 @@ pub fn spawn(
     })
 }
 
-/// 取尽当前增量并按批推送
+/// 取尽当前增量并按批推送；返回 false 表示出站被取消/关闭，pump 应退出。
 async fn drain(
     session_id: &str,
     model: &Arc<DirModel>,
-    out: &tokio::sync::mpsc::UnboundedSender<Outbound>,
+    out: &crate::outbound::OutboundTx,
+    cancel: &std::sync::atomic::AtomicBool,
     max_batch_rows: usize,
-) {
+) -> bool {
     while let Some(d) = model.take_delta().await {
         let batches = batch::batch_rows(d.upserts, max_batch_rows);
         // 扫描错误必须回到 UI：读不到的子目录已置 Unknown，但用户还需要知道
@@ -75,12 +94,21 @@ async fn drain(
             if i == 0 {
                 delta.scan_errors = batch::scan_issues(&d.scan_errors);
             }
-            let _ = out.send(Outbound::Notification(ai_protocol::RpcServerNotification::new(
-                ai_protocol::method::DIR_DELTA,
-                &delta,
-            )));
+            if !out
+                .send_with_cancel(
+                    Outbound::Notification(ai_protocol::RpcServerNotification::new(
+                        ai_protocol::method::DIR_DELTA,
+                        &delta,
+                    )),
+                    Some(cancel),
+                )
+                .await
+            {
+                return false;
+            }
         }
     }
+    true
 }
 
 fn progress_event(
