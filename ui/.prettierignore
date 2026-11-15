@@ -2,3 +2,8 @@
 # regenerate_ui_bindings` 再生成，drift 测试 generated_bindings_match_ui 对其做
 # 逐字节比对。prettier 改写会破坏字节一致性，故排除（R3-26）。
 src/protocol/generated/
+
+# 演示二进制资产（base64）：由 scripts/gen-demo-assets.mjs 生成。prettier 对长短
+# 不一的 base64 字符串行宽处理与生成器不一致，排除以保证再生成可复现（数据文件，
+# 仍受 tsc 类型检查）。
+src/lib/demoAssets.ts
