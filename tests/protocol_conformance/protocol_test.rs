@@ -16,8 +16,14 @@ use ai_compare_tests as harness;
 use serde_json::{json, Value};
 
 /// 起引擎：写入原始行（可为非法 JSON）→ 关 stdin → 收集 stdout。
-/// 返回 (输出行, 进程是否在限时内退出)。
-fn run_engine_raw(lines: &[String], wait: Duration) -> (Vec<Value>, bool) {
+/// 返回 (输出行, 进程是否在限时内退出, 从写出输入到退出的耗时)。
+///
+/// R3-26 收尾：此前 `reader.join()` 会无界阻塞到 stdout 关闭，把 `wait`
+/// 预算整段吞掉（代码里的注释声称要避免、实现却没做到）。并行跑全量测试
+/// 时多个测试目标同时 spawn 引擎，正常退出也可能被误判为「2s 内未退出」。
+/// 现在用 `recv_timeout(wait)` 让预算真正生效，并把实测耗时交回调用方，
+/// 由调用方区分「硬上限」与「正常退出行为阈值」。
+fn run_engine_raw_timed(lines: &[String], wait: Duration) -> (Vec<Value>, bool, Duration) {
     harness::ensure_engine_fresh();
     let bin = harness::engine_bin();
     assert!(
@@ -44,19 +50,20 @@ fn run_engine_raw(lines: &[String], wait: Duration) -> (Vec<Value>, bool) {
     });
 
     let stdout = child.stdout.take().expect("stdout");
+    let (tx, rx) = std::sync::mpsc::channel();
     let reader = std::thread::spawn(move || {
         let mut data = String::new();
         let mut r = stdout;
         let _ = r.read_to_string(&mut data);
-        data
+        let _ = tx.send(data);
     });
 
     // 计时起点 = 写出输入的时刻（stdin 随即关闭 → 引擎收到 EOF）。
-    // 必须在读线程结束之后再取起点，否则"引擎迟迟不退出"会被读线程的
-    // 阻塞时间掩盖（读线程要等到引擎退出才 EOF）—— 变异验证踩过此坑。
     let start = Instant::now();
     writer.join().expect("写线程");
-    let out = reader.join().expect("读线程");
+    // stdout 关闭意味着引擎写完全部应答并退出/放弃输出；挂死时 fd 永不
+    // 关闭，recv_timeout 让 wait 成为真正的硬上限（而不是被 join 吞掉）。
+    let out = rx.recv_timeout(wait).unwrap_or_default();
 
     // 进程退出轮询（客户端 EOF 后引擎必须自行退出）
     let deadline = start + wait;
@@ -72,17 +79,25 @@ fn run_engine_raw(lines: &[String], wait: Duration) -> (Vec<Value>, bool) {
             None => std::thread::sleep(Duration::from_millis(25)),
         }
     }
+    let elapsed = start.elapsed();
     if status.is_none() {
         let _ = child.kill();
     }
     // 无论哪条路径都回收子进程（避免僵尸进程）
     let _ = child.wait();
+    let _ = reader.join();
 
     let values = out
         .lines()
         .filter(|l| !l.trim().is_empty())
         .map(|l| serde_json::from_str(l).expect("引擎输出必须是合法 NDJSON"))
         .collect();
+    (values, exited, elapsed)
+}
+
+/// 兼容原有调用点：只关心「是否在限时内退出」。
+fn run_engine_raw(lines: &[String], wait: Duration) -> (Vec<Value>, bool) {
+    let (values, exited, _) = run_engine_raw_timed(lines, wait);
     (values, exited)
 }
 
@@ -137,12 +152,16 @@ fn engine_exits_after_stdin_eof_with_open_dir_session() {
         ))
         .unwrap(),
     ];
-    // 窗口取 2s：正常路径 pump ≤150ms 内感知取消退出；超时兜底是 5s，
-    // 故 2s 窗口既能抓到"pump 永不退出"，也能抓到"靠超时兜底才退出"。
-    let (outputs, exited) = run_engine_raw(&lines, Duration::from_secs(2));
+    // 10s 是进程硬上限（并行跑全量时多个测试目标同时 spawn 引擎）；
+    // 5s 才是行为阈值 —— 超时兜底是 5s，"靠兜底才退出"仍必须被判为回归。
+    let (outputs, exited, elapsed) = run_engine_raw_timed(&lines, Duration::from_secs(10));
     assert!(
         exited,
-        "客户端 EOF 后引擎进程未在 2s 内退出（挂死）：pump 持有出站通道克隆导致 writer 永不结束"
+        "客户端 EOF 后引擎进程未在 10s 内退出（挂死）：pump 持有出站发送端导致 writer 永不结束"
+    );
+    assert!(
+        elapsed < Duration::from_secs(5),
+        "退出耗时 {elapsed:?}：不应靠 5s 超时兜底才退出（pump 可能未取消）"
     );
     // 应答本身仍要正确（退出不能吞掉应答）
     assert!(resp_by_id(&outputs, 1).get("result").is_some());
@@ -153,8 +172,13 @@ fn engine_exits_after_stdin_eof_with_open_dir_session() {
 #[test]
 fn engine_exits_after_stdin_eof_without_session() {
     let lines = vec![serde_json::to_string(&init_req(1)).unwrap()];
-    let (outputs, exited) = run_engine_raw(&lines, Duration::from_secs(2));
-    assert!(exited, "客户端 EOF 后引擎进程未在 2s 内退出");
+    // 与「有会话」用例同一口径：10s 硬上限 + 5s 正常退出阈值
+    let (outputs, exited, elapsed) = run_engine_raw_timed(&lines, Duration::from_secs(10));
+    assert!(exited, "客户端 EOF 后引擎进程未在 10s 内退出");
+    assert!(
+        elapsed < Duration::from_secs(5),
+        "无会话时退出耗时 {elapsed:?}，不应触发 5s 兜底"
+    );
     assert!(resp_by_id(&outputs, 1).get("result").is_some());
 }
 

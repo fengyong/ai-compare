@@ -602,7 +602,7 @@
 
 - 根 workspace + Tauri 独立 workspace 全量 rustfmt，仅 75 个 `.rs` 文件的格式变化（12737 插入 / 3075 删除），不含行为、依赖、协议改动。
 - 格式化后两处 `cargo fmt --all -- --check` 均 0 diff；引擎 1029/0、clippy 零警、协议 drift 通过、Tauri 18/0、`e2e:engine` / `verify:demo` 通过。连续 3 次全量 Rust 测试均通过。
-- **如实记录**：曾在「同一命令连续执行两次 `cargo test --workspace`」时观察到一次 `engine_exits_after_stdin_eof_without_session` 偶发失败；单跑 5/5、`protocol_conformance` 全套 16/16、连续 3 次全量均通过。疑似多测试目标并发触发 `ensure_engine_fresh` 重建引擎二进制的时序竞态，未定位到确定根因，**不作为已修复项**。
+- **如实记录**：曾在连续全量测试时观察到 `engine_exits_after_stdin_eof_without_session` 偶发失败（单跑 5/5、全套 16/16、连续 3 次全量通过，但并行全量仍偶发）。根因已在下方「批次 4 收尾」定位并修复，修复后连续 5 次全量 1029/0。
 
 ### 提交 3：cargo-deny 真实问题修复 + CI 补 fmt/deny 门禁
 
@@ -633,3 +633,25 @@
 | 4 | 保存/恢复各会话类型 | 分别打开 text/dir/table/hex/merge3 后保存并重启应用恢复 | 各类型会话与视图状态正确恢复 |
 | 5 | 目录视图状态切标签后保留 | 目录比较里展开/过滤/对齐后切到别的标签再切回 | 展开层级、过滤条件、对齐状态保留 |
 | 6 | 同步运行中取消 | 大目录同步执行中点「取消」 | 后续批次不再发出、在途批次被中断、无残留半成品文件 |
+
+## 批次 4 收尾：修复 EOF 回归的 flaky 测试基建（2026-11-15）
+
+批次 4 最终复验再次出现 `engine_exits_after_stdin_eof_without_session` 偶发失败，不能带 flaky 收尾，故定位后单独修复。
+
+### 根因（已定位，非「并行重建竞态」猜测）
+
+`tests/protocol_conformance/protocol_test.rs::run_engine_raw` 里注释明确写着「必须在读线程结束之后再取起点，否则『引擎迟迟不退出』会被读线程的阻塞时间掩盖」，但实现把 `Instant::now()` 放在 `reader.join()` **之前**：`join()` 要等 stdout 关闭（≈引擎退出）才返回，于是从写入到进程退出的整段时间都被算进 2s 预算。`cargo test --workspace` 并行跑多个测试目标、同时 spawn 多个引擎进程时，正常退出也可能超过 2s → 误判为「挂死」。挂死场景反而会让 `join()` 无界阻塞，超时完全失效。
+
+### 修复
+
+- 新增 `run_engine_raw_timed`：读线程通过 `mpsc::channel` 回传 stdout，主线程用 `rx.recv_timeout(wait)` 取，**让 `wait` 成为真正的硬上限**；返回 `(输出, 是否在限时内退出, 实测退出耗时)`。原 `run_engine_raw` 保留为两值包装，其它调用点不改。
+- 两个 EOF 用例改为 **10s 硬上限 + 5s 行为阈值**：`exited` 必须为真且 `elapsed < 5s`。既给并行全量留出 CPU 竞争余量，又保留「靠 5s 超时兜底才退出也判回归」的原设计意图，不是单纯放宽超时。
+
+### 验证
+
+- 变异验证：注释掉 `cancel_all_dir_sessions(...)` 后，`engine_exits_after_stdin_eof_with_open_dir_session` FAILED，报 `退出耗时 5.512s：不应靠 5s 超时兜底才退出`，证明行为阈值仍能抓到 pump 未取消的真实回归。
+- 恢复后 `protocol_conformance` **16/16**；`cargo test --locked --workspace` **连续 5 次均 1029/0**（修复前并行全量约 1/3 概率误判）。
+
+### 全量门禁（本次实测）
+
+`cargo test --locked --workspace` 1029/0（连续 5 次）、clippy `-D warnings` 零警、根/Tauri fmt check 0 diff、`cargo deny check` 四项 ok、Tauri 18/0、UI 756/0 + `lint`/`build`/`format:check`/`e2e:engine`/`verify:demo` 全绿。本提交只改测试基建与状态文档，未改生产代码。
