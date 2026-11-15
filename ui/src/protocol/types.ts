@@ -267,6 +267,12 @@ export type DirExecuteOp = {
   side: 'left' | 'right';
   /** copy/move 目标侧（缺省 = 对侧） */
   targetSide?: 'left' | 'right' | null;
+  /**
+   * R3-03：copy/move 的**目标侧真实 rel**（手动对齐左右异名、平铺模式下
+   * 与 path 不同）；touch(mtimeMs=0) 时作为取时间戳的对侧 rel。
+   * 缺省 = path（旧引擎/树形同路径兼容）。
+   */
+  targetPath?: string | null;
   /** rename 新名称（仅 rename） */
   newName?: string | null;
   /** touch 目标 mtime（epoch ms；0/缺省 = 取对侧时间戳） */

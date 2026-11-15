@@ -7304,3 +7304,225 @@ mod text_encoding_tests {
         assert_ne!(bytes, back.text.as_bytes(), "输出不能被改写成 UTF-8");
     }
 }
+
+// ---------------------------------------------------------------------------
+// R3-03：RPC 入口（dir/open → dir/operate → dir/execute）真实落盘回归
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod r3_03_rpc_tests {
+    use super::*;
+    use crate::server::Outbound;
+    use serde_json::json;
+    use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
+
+    fn ctx() -> HandlerCtx {
+        HandlerCtx::new(512)
+    }
+
+    fn chan() -> (
+        UnboundedSender<Outbound>,
+        tokio::sync::mpsc::UnboundedReceiver<Outbound>,
+    ) {
+        unbounded_channel()
+    }
+
+    async fn call(c: &HandlerCtx, method: &str, params: serde_json::Value, tx: &UnboundedSender<Outbound>) -> serde_json::Value {
+        let handled = dispatch(method, Some(params), c, &ai_dir::CancelFlag::new(), tx.clone()).await.unwrap();
+        match handled {
+            Handled::Value(v) => v,
+            Handled::WithNotifications { response, .. } => response,
+        }
+    }
+
+    /// 原黑盒场景走完整 RPC 链路：平铺重名 → 镜像左→右 → 真实磁盘终态。
+    /// 计划里不得把显示 id（x.txt / x.txt#1）当操作地址。
+    #[tokio::test]
+    async fn rpc_flat_mirror_executes_on_real_paths() {
+        let d = tempfile::tempdir().unwrap();
+        let l = d.path().join("L");
+        let r = d.path().join("R");
+        for (root, files) in [
+            (&l, [("d1/x.txt", "L1"), ("d2/x.txt", "L2")]),
+            (&r, [("d1/x.txt", "R1"), ("d2/x.txt", "R2")]),
+        ] {
+            for (rel, data) in files {
+                let p = root.join(rel);
+                std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+                std::fs::write(p, data.as_bytes()).unwrap();
+            }
+        }
+        let c = ctx();
+        let (tx, _rx) = chan();
+
+        call(
+            &c,
+            "dir/open",
+            json!({
+                "sessionId": "r3",
+                "left": l.to_string_lossy(),
+                "right": r.to_string_lossy(),
+                "flat": true,
+                "depth": 3,
+                "criteria": {"mtimeToleranceSec": 0, "contentCompare": "always"}
+            }),
+            &tx,
+        )
+        .await;
+
+        let operated = call(
+            &c,
+            "dir/operate",
+            json!({"sessionId": "r3", "preset": "mirrorLeftToRight"}),
+            &tx,
+        )
+        .await;
+        let plan = operated["plan"].as_array().expect("dir/operate 计划");
+        assert_eq!(plan.len(), 2, "两个同名文件都应进计划: {operated}");
+        for p in plan {
+            let row_id = p["path"].as_str().unwrap();
+            let src = p["sourcePath"].as_str().expect("引擎必须解析出 sourcePath");
+            let dst = p["targetPath"].as_str().expect("引擎必须解析出 targetPath");
+            assert!(!row_id.contains('/'), "平铺行 id 不应含路径: {row_id}");
+            assert!(!src.contains('#') && src.contains('/'), "源必须是真实 rel: {src}");
+            assert!(!dst.contains('#') && dst.contains('/'), "目标必须是真实 rel: {dst}");
+        }
+
+        // 模拟 UI plannedToOp：执行载荷用真实路径，不重新拼接行 id
+        let ops: Vec<serde_json::Value> = plan
+            .iter()
+            .map(|p| {
+                json!({
+                    "kind": "copy",
+                    "path": p["sourcePath"],
+                    "side": "left",
+                    "targetSide": "right",
+                    "targetPath": p["targetPath"]
+                })
+            })
+            .collect();
+        let executed = call(
+            &c,
+            "dir/execute",
+            json!({"sessionId": "r3", "ops": ops}),
+            &tx,
+        )
+        .await;
+        assert_eq!(
+            executed["failed"].as_array().unwrap().len(),
+            0,
+            "执行不得失败: {executed}"
+        );
+
+        // 真实磁盘终态：两个子目录里的文件都变成左侧内容，根目录不得误建 x.txt
+        assert_eq!(std::fs::read(r.join("d1/x.txt")).unwrap(), b"L1");
+        assert_eq!(std::fs::read(r.join("d2/x.txt")).unwrap(), b"L2");
+        assert!(!r.join("x.txt").exists(), "不得按显示 id 在根目录建文件");
+        assert!(!r.join("x.txt#1").exists(), "不得把消歧 id 当路径");
+        assert_eq!(std::fs::read(l.join("d1/x.txt")).unwrap(), b"L1", "源不应被改写");
+    }
+
+    /// 手动对齐左右异名的等价协议链路：dir/execute 必须能把 a.txt 复制到
+    /// 目标侧另一个真实名字 b.txt（DirExecuteOp.targetPath -> FileOp.target_path）。
+    ///
+    /// 注：引擎 `dir/open manualAlign` 目前不会把异名两侧合并成一行（独立缺陷，
+    /// 见本轮报告），故这里直接验证协议执行层；库内 run_sync 用例已覆盖
+    /// 手动对齐行的完整计划生成与落盘。
+    #[tokio::test]
+    async fn rpc_execute_copy_with_different_target_path() {
+        let d = tempfile::tempdir().unwrap();
+        let l = d.path().join("L");
+        let r = d.path().join("R");
+        std::fs::create_dir_all(&l).unwrap();
+        std::fs::create_dir_all(&r).unwrap();
+        std::fs::write(l.join("a.txt"), b"AAA").unwrap();
+        std::fs::write(r.join("b.txt"), b"BBB").unwrap();
+        let c = ctx();
+        let (tx, _rx) = chan();
+
+        // 普通树形同步会话（不依赖 flat/manualAlign 的扫描行为）
+        call(
+            &c,
+            "dir/open",
+            json!({
+                "sessionId": "r3m",
+                "left": l.to_string_lossy(),
+                "right": r.to_string_lossy(),
+                "criteria": {"mtimeToleranceSec": 0, "contentCompare": "always"}
+            }),
+            &tx,
+        )
+        .await;
+
+        // 异名复制：源 a.txt，目标 b.txt（两侧真实 rel 不同）
+        let executed = call(
+            &c,
+            "dir/execute",
+            json!({
+                "sessionId": "r3m",
+                "ops": [{
+                    "kind": "copy",
+                    "path": "a.txt",
+                    "side": "left",
+                    "targetSide": "right",
+                    "targetPath": "b.txt"
+                }]
+            }),
+            &tx,
+        )
+        .await;
+        assert_eq!(
+            executed["failed"].as_array().unwrap().len(),
+            0,
+            "异名复制不得失败: {executed}"
+        );
+        assert_eq!(std::fs::read(r.join("b.txt")).unwrap(), b"AAA", "应写进目标侧真实名字 b.txt");
+        assert!(!r.join("a.txt").exists(), "不得按源名在右侧另建一份");
+        assert_eq!(std::fs::read(l.join("a.txt")).unwrap(), b"AAA", "源不应被改写");
+    }
+
+    /// 安全护栏：新增的目标侧路径也必须是合法 rel（不得成为绕过 .. 的入口）
+    #[tokio::test]
+    async fn rpc_rejects_escaping_target_path() {
+        let d = tempfile::tempdir().unwrap();
+        let l = d.path().join("L");
+        let r = d.path().join("R");
+        std::fs::create_dir_all(&l).unwrap();
+        std::fs::create_dir_all(&r).unwrap();
+        std::fs::write(l.join("a.txt"), b"AAA").unwrap();
+        let c = ctx();
+        let (tx, _rx) = chan();
+        call(
+            &c,
+            "dir/open",
+            json!({
+                "sessionId": "r3g",
+                "left": l.to_string_lossy(),
+                "right": r.to_string_lossy(),
+                "criteria": {"mtimeToleranceSec": 0, "contentCompare": "always"}
+            }),
+            &tx,
+        )
+        .await;
+        let (tx2, _rx2) = chan();
+        let executed = call(
+            &c,
+            "dir/execute",
+            json!({
+                "sessionId": "r3g",
+                "ops": [{
+                    "kind": "copy",
+                    "path": "a.txt",
+                    "side": "left",
+                    "targetSide": "right",
+                    "targetPath": "../outside.txt"
+                }]
+            }),
+            &tx2,
+        )
+        .await;
+        assert_eq!(executed["failed"].as_array().unwrap().len(), 1, "越界目标必须失败: {executed}");
+        assert!(!d.path().join("outside.txt").exists(), "根外不得产生文件");
+    }
+
+}
+

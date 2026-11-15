@@ -7,7 +7,7 @@ import type { DirExecuteOpKind } from "./DirExecuteOpKind";
  */
 export type DirExecuteOp = { kind: DirExecuteOpKind, 
 /**
- * rel 路径（POSIX 风格；rename 为源路径）
+ * rel 路径（POSIX 风格；copy/move 为**源侧**路径，rename 为源路径）
  */
 path: string, 
 /**
@@ -18,6 +18,11 @@ side: DiffSide,
  * copy/move 目标侧（缺省 = 对侧）
  */
 targetSide: DiffSide | null, 
+/**
+ * R3-03：copy/move 的**目标侧真实 rel**（手动对齐左右异名时与 path 不同）；
+ * touch(mtimeMs=0) 时作为取时间戳的对侧 rel。缺省 = path（旧客户端兼容）。
+ */
+targetPath?: string, 
 /**
  * rename 新名称（仅 rename）
  */

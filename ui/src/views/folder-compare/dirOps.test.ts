@@ -124,13 +124,27 @@ describe('dirOps：行地址取真实侧路径（R3-03）', () => {
   ];
   const sel = new Set(['x.txt#0', 'x.txt#1']);
 
-  it('copy/move 用源侧真实路径，不用显示 id', () => {
+  it('copy/move 用源侧真实路径，异名对齐时目标侧也带真实地址', () => {
     expect(buildOpsForCommand('copyToRight', flat, sel)).toEqual([
-      { kind: 'copy', path: 'dup/x.txt', side: 'left', targetSide: 'right' },
+      // 左右异名：目标必须落在真的 other/x.txt，而不是沿用源名 dup/x.txt
+      {
+        kind: 'copy',
+        path: 'dup/x.txt',
+        side: 'left',
+        targetSide: 'right',
+        targetPath: 'other/x.txt',
+      },
+      // 右侧孤立项不存在：按源 rel 在对侧创建，无需额外 targetPath
       { kind: 'copy', path: 'deep/x.txt', side: 'left', targetSide: 'right' },
     ]);
     expect(buildOpsForCommand('moveToLeft', flat, new Set(['x.txt#0']))).toEqual([
-      { kind: 'move', path: 'other/x.txt', side: 'right', targetSide: 'left' },
+      {
+        kind: 'move',
+        path: 'other/x.txt',
+        side: 'right',
+        targetSide: 'left',
+        targetPath: 'dup/x.txt',
+      },
     ]);
   });
 

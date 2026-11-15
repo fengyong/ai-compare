@@ -1761,9 +1761,9 @@ async fn exec_cross_ops(
                 return None;
             }
             Some(if is_move {
-                FileOp::Move { path: row.rel_path.clone(), from, to }
+                FileOp::Move { path: row.rel_path.clone(), target_path: None, from, to }
             } else {
-                FileOp::Copy { path: row.rel_path.clone(), from, to }
+                FileOp::Copy { path: row.rel_path.clone(), target_path: None, from, to }
             })
         })
         .collect();
@@ -2089,7 +2089,7 @@ async fn exec_touch(
         for &i in &selected {
             let row = &arena[i];
             if row.kind == EntryKind::File && row.left.is_some() && row.right.is_some() && !row.rel_path.is_empty() {
-                ops.push(FileOp::Touch { path: row.rel_path.clone(), side: target, mtime_ms: 0 });
+                ops.push(FileOp::Touch { path: row.rel_path.clone(), target_path: None, side: target, mtime_ms: 0 });
             }
         }
     } else if let Some((side, what)) = set {
@@ -2115,7 +2115,7 @@ async fn exec_touch(
                     ai_dir::execute::Side::Right => row.right.is_some(),
                 };
                 if has {
-                    ops.push(FileOp::Touch { path: row.rel_path.clone(), side: *s, mtime_ms });
+                    ops.push(FileOp::Touch { path: row.rel_path.clone(), target_path: None, side: *s, mtime_ms });
                 }
             }
         }

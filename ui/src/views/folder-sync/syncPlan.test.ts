@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { DirRow, PlannedOperation } from '../../protocol/types';
+import { plannedToOp } from '../folder-compare/dirOps';
 import {
   applyStrategyToPlan,
   buildSyncPlanRows,
@@ -341,5 +342,144 @@ describe('folder-sync/syncPlan 结果报告聚合与导出', () => {
       },
     );
     expect(text).toContain('试运行');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// R3-03：显示 id（rowId）与真实执行地址分离
+// ---------------------------------------------------------------------------
+describe('R3-03：预览显示真实路径，执行载荷不依赖行 id', () => {
+  const flatRow = (): DirRow => ({
+    ...row('x.txt#0', 'contentDiff', 200, 100),
+    leftPath: 'sub/x.txt',
+    rightPath: 'sub/x.txt',
+  });
+
+  it('平铺行：预览显示真实地址，执行载荷用真实 rel 而非 #i 行 id', () => {
+    const plan: PlannedOperation[] = [
+      {
+        op: 'copyLeftToRight',
+        path: 'x.txt#0',
+        reason: 'preset:mirrorLeftToRight',
+        sourcePath: 'sub/x.txt',
+        targetPath: 'sub/x.txt',
+        displayPath: 'sub/x.txt',
+      },
+    ];
+    const planRows = buildSyncPlanRows(plan, [], [flatRow()], {});
+    // 关联键（选中/逐项改写）仍是行 id
+    expect(planRows[0].path).toBe('x.txt#0');
+    // 计划预览显示引擎解析出的真实执行地址
+    expect(planRows[0].displayPath).toBe('sub/x.txt');
+    const ops = planRowsToExecuteOps(planRows);
+    expect(ops).toEqual([
+      {
+        kind: 'copy',
+        path: 'sub/x.txt',
+        side: 'left',
+        targetSide: 'right',
+        targetPath: 'sub/x.txt',
+      },
+    ]);
+    expect(ops[0].path).not.toContain('#');
+  });
+
+  it('左右异名：执行载荷分别携带源/目标真实路径', () => {
+    const plan: PlannedOperation[] = [
+      {
+        op: 'copyLeftToRight',
+        path: 'a.txt',
+        reason: 'test',
+        sourcePath: 'a.txt',
+        targetPath: 'b.txt',
+        displayPath: 'b.txt',
+      },
+    ];
+    const alignedRow: DirRow = {
+      ...row('a.txt', 'contentDiff', 200, 100),
+      leftPath: 'a.txt',
+      rightPath: 'b.txt',
+    };
+    const planRows = buildSyncPlanRows(plan, [], [alignedRow], {});
+    expect(planRows[0].displayPath).toBe('b.txt');
+    const ops = planRowsToExecuteOps(planRows);
+    expect(ops[0].path).toBe('a.txt');
+    expect(ops[0].targetPath).toBe('b.txt');
+  });
+
+  it('逐项改写（override）后真实路径字段不丢失', () => {
+    const plan: PlannedOperation[] = [
+      {
+        op: 'copyLeftToRight',
+        path: 'x.txt#0',
+        reason: 'test',
+        sourcePath: 'sub/x.txt',
+        targetPath: 'sub/x.txt',
+        displayPath: 'sub/x.txt',
+      },
+    ];
+    const planRows = buildSyncPlanRows(plan, [], [flatRow()], {
+      'x.txt#0': 'copyRightToLeft',
+    });
+    const ops = planRowsToExecuteOps(planRows);
+    expect(ops[0].kind).toBe('copy');
+    expect(ops[0].side).toBe('right');
+    expect(ops[0].path).toBe('sub/x.txt');
+    expect(ops[0].path).not.toContain('#');
+  });
+
+  it('leftWins 改向后源/目标真实地址同步换向', () => {
+    const plan: PlannedOperation[] = [
+      {
+        op: 'copyRightToLeft',
+        path: 'a.txt',
+        reason: 'test',
+        sourcePath: 'b.txt',
+        targetPath: 'a.txt',
+        displayPath: 'a.txt',
+      },
+    ];
+    const alignedRow: DirRow = {
+      ...row('a.txt', 'contentDiff', 100, 200),
+      leftPath: 'a.txt',
+      rightPath: 'b.txt',
+    };
+    const r = applyStrategyToPlan(plan, [alignedRow], {
+      ...DEFAULT_SYNC_STRATEGY,
+      leftWins: true,
+    });
+    expect(r.ops[0].op).toBe('copyLeftToRight');
+    expect(r.ops[0].sourcePath).toBe('a.txt');
+    expect(r.ops[0].targetPath).toBe('b.txt');
+    expect(r.ops[0].displayPath).toBe('b.txt');
+    const ops = planRowsToExecuteOps(buildSyncPlanRows(r.ops, r.skipped, [alignedRow], {}));
+    expect(ops[0].path).toBe('a.txt');
+    expect(ops[0].targetPath).toBe('b.txt');
+  });
+
+  it('delete/touch 使用 operationPath / sourcePath，不回落到行 id', () => {
+    const del: PlannedOperation = {
+      op: 'deleteLeft',
+      path: 'x.txt#1',
+      reason: 'test',
+      operationPath: 'sub/only.txt',
+      displayPath: 'sub/only.txt',
+    };
+    const tch: PlannedOperation = {
+      op: 'touchLeft',
+      path: 'x.txt#0',
+      reason: 'test',
+      sourcePath: 'other/b.txt',
+      operationPath: 'sub/x.txt',
+      displayPath: 'sub/x.txt',
+    };
+    expect(plannedToOp(del)).toEqual({ kind: 'delete', path: 'sub/only.txt', side: 'left' });
+    expect(plannedToOp(tch)).toEqual({
+      kind: 'touch',
+      path: 'sub/x.txt',
+      side: 'left',
+      mtimeMs: 0,
+      targetPath: 'other/b.txt',
+    });
   });
 });

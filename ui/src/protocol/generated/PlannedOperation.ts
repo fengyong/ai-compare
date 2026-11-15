@@ -2,14 +2,38 @@
 import type { PlannedOpKind } from "./PlannedOpKind";
 
 /**
- * 一条计划操作（path 为 rel 路径；执行器按会话根拼接）
+ * 一条计划操作。
+ *
+ * **路径语义（R3-03）**：`path` 是**行 id**（显示/选择/消歧键），不是文件地址。
+ * 树形模式下它恰好等于 rel 路径（历史兼容），但平铺模式为 `name` / `name#i`，
+ * 手动对齐时左右还可能异名 —— 这几种情况都必须走下面由引擎解析出的真实
+ * 相对路径字段，执行器与 UI 不得再用 `path` 寻址。
  */
 export type PlannedOperation = { op: PlannedOpKind, 
 /**
- * 目标 rel 路径（复制动作的源侧同路径存在）
+ * 行 id（显示/选择/消歧键，**非文件地址**）；用于选择集、策略行关联与逐项改写键
  */
 path: string, 
 /**
  * 触发原因（预设名 / 规则序号 + 命中条件摘要）
  */
-reason: string, };
+reason: string, 
+/**
+ * copy/move 的真实**源侧**相对路径（引擎按 DirRow.leftPath/rightPath 解析）。
+ * 缺省时旧客户端可回退 `path`（树形同路径场景）。
+ */
+sourcePath?: string, 
+/**
+ * copy/move 的真实**目标侧**相对路径。手动对齐左右异名时与 source_path 不同；
+ * 孤立项复制到对侧时取源侧 rel。缺省时回退 `path`。
+ */
+targetPath?: string, 
+/**
+ * delete/touch 等单侧操作的真实路径（取该操作实际存在侧的 rel）
+ */
+operationPath?: string, 
+/**
+ * 展示用真实路径（UI 计划预览）；必须与最终执行地址一致。
+ * 缺省时回退 `path`。
+ */
+displayPath?: string, };

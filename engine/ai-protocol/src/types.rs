@@ -629,7 +629,9 @@ pub enum DirEntryStatus {
 #[cfg_attr(feature = "ts", ts(export))]
 #[serde(rename_all = "camelCase")]
 pub struct DirRow {
-    /// 稳定行 id（相对路径，POSIX 风格；根的子项无前缀；平铺模式带 # 序号消歧）
+    /// 稳定行 id（显示/选择/消歧键）。树形模式下等于 rel 路径；**平铺模式为
+    /// `name` / `name#i`，手动对齐时左右异名 —— 均不是文件地址**。
+    /// 寻址一律用 left_path / right_path。
     pub id: String,
     pub name: String,
     pub kind: EntryKind,
@@ -2218,13 +2220,18 @@ pub enum DirExecuteOpKind {
 #[serde(rename_all = "camelCase")]
 pub struct DirExecuteOp {
     pub kind: DirExecuteOpKind,
-    /// rel 路径（POSIX 风格；rename 为源路径）
+    /// rel 路径（POSIX 风格；copy/move 为**源侧**路径，rename 为源路径）
     pub path: String,
     /// copy/move 的源侧；delete/touch/mkdir/rename 的操作侧
     pub side: DiffSide,
     /// copy/move 目标侧（缺省 = 对侧）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target_side: Option<DiffSide>,
+    /// R3-03：copy/move 的**目标侧真实 rel**（手动对齐左右异名时与 path 不同）；
+    /// touch(mtimeMs=0) 时作为取时间戳的对侧 rel。缺省 = path（旧客户端兼容）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub target_path: Option<String>,
     /// rename 新名称（仅 rename）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub new_name: Option<String>,
@@ -3266,17 +3273,55 @@ pub struct DirOperateParams {
     pub paths: Option<Vec<String>>,
 }
 
-/// 一条计划操作（path 为 rel 路径；执行器按会话根拼接）
+/// 一条计划操作。
+///
+/// **路径语义（R3-03）**：`path` 是**行 id**（显示/选择/消歧键），不是文件地址。
+/// 树形模式下它恰好等于 rel 路径（历史兼容），但平铺模式为 `name` / `name#i`，
+/// 手动对齐时左右还可能异名 —— 这几种情况都必须走下面由引擎解析出的真实
+/// 相对路径字段，执行器与 UI 不得再用 `path` 寻址。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 #[serde(rename_all = "camelCase")]
 pub struct PlannedOperation {
     pub op: PlannedOpKind,
-    /// 目标 rel 路径（复制动作的源侧同路径存在）
+    /// 行 id（显示/选择/消歧键，**非文件地址**）；用于选择集、策略行关联与逐项改写键
     pub path: String,
     /// 触发原因（预设名 / 规则序号 + 命中条件摘要）
     pub reason: String,
+    /// copy/move 的真实**源侧**相对路径（引擎按 DirRow.leftPath/rightPath 解析）。
+    /// 缺省时旧客户端可回退 `path`（树形同路径场景）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub source_path: Option<String>,
+    /// copy/move 的真实**目标侧**相对路径。手动对齐左右异名时与 source_path 不同；
+    /// 孤立项复制到对侧时取源侧 rel。缺省时回退 `path`。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub target_path: Option<String>,
+    /// delete/touch 等单侧操作的真实路径（取该操作实际存在侧的 rel）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub operation_path: Option<String>,
+    /// 展示用真实路径（UI 计划预览）；必须与最终执行地址一致。
+    /// 缺省时回退 `path`。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub display_path: Option<String>,
+}
+
+impl PlannedOperation {
+    /// 该操作实际作用的文件地址（真实相对路径；旧载荷回退行 id）。
+    ///
+    /// 用于大小写碰撞重排、空目录判定、报告 reason 回填等需要「地址」而非「行 id」
+    /// 的场景。优先级：目标侧 > 单侧操作 > 源侧 > 行 id。
+    pub fn address(&self) -> &str {
+        self.target_path
+            .as_deref()
+            .or(self.operation_path.as_deref())
+            .or(self.source_path.as_deref())
+            .unwrap_or(&self.path)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

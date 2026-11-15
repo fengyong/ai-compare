@@ -64,12 +64,14 @@ fn reorder_case_collisions(plan: Vec<PlannedOperation>) -> Vec<PlannedOperation>
     let mut moved: BTreeSet<usize> = BTreeSet::new();
     for (ci, c) in plan.iter().enumerate() {
         let Some(cs) = copy_dest(c.op) else { continue };
-        let cf = fold(&c.path);
+        // 碰撞判定基于**真实文件地址**，不能用行 id：平铺模式下 id 是 name/name#i，
+        // `#i` 消歧后缀会破坏大小写折叠比较（R3-03）。
+        let cf = fold(c.address());
         for (di, d) in plan.iter().enumerate().skip(ci + 1) {
             if moved.contains(&di) {
                 continue;
             }
-            if del_side(d.op) == Some(cs) && d.path != c.path && fold(&d.path) == cf {
+            if del_side(d.op) == Some(cs) && d.address() != c.address() && fold(d.address()) == cf {
                 before.entry(ci).or_default().push(di);
                 moved.insert(di);
             }
@@ -112,20 +114,20 @@ fn apply_preset(row: &DirRow, preset: Option<SyncPreset>, plan: &mut Vec<Planned
     match row.status {
         DirEntryStatus::LeftOnly => match preset {
             SyncPreset::MirrorLeftToRight | SyncPreset::UpdateLeftToRight => {
-                push(plan, PlannedOpKind::CopyLeftToRight, &row.id, &reason);
+                push(plan, PlannedOpKind::CopyLeftToRight, row, &reason);
             }
             SyncPreset::MirrorRightToLeft => {
-                push(plan, PlannedOpKind::DeleteLeft, &row.id, &reason);
+                push(plan, PlannedOpKind::DeleteLeft, row, &reason);
             }
             // 更新右→左 / 双向更新：左侧孤有项保留（不动）
             SyncPreset::UpdateRightToLeft | SyncPreset::UpdateBoth => {}
         },
         DirEntryStatus::RightOnly => match preset {
             SyncPreset::MirrorRightToLeft | SyncPreset::UpdateRightToLeft => {
-                push(plan, PlannedOpKind::CopyRightToLeft, &row.id, &reason);
+                push(plan, PlannedOpKind::CopyRightToLeft, row, &reason);
             }
             SyncPreset::MirrorLeftToRight => {
-                push(plan, PlannedOpKind::DeleteRight, &row.id, &reason);
+                push(plan, PlannedOpKind::DeleteRight, row, &reason);
             }
             SyncPreset::UpdateLeftToRight | SyncPreset::UpdateBoth => {}
         },
@@ -145,30 +147,30 @@ fn apply_preset(row: &DirRow, preset: Option<SyncPreset>, plan: &mut Vec<Planned
             let right_newer = mt(&row.right) > mt(&row.left);
             match preset {
                 SyncPreset::MirrorLeftToRight => {
-                    push(plan, PlannedOpKind::CopyLeftToRight, &row.id, &reason);
+                    push(plan, PlannedOpKind::CopyLeftToRight, row, &reason);
                 }
                 // 更新语义：仅当本侧不旧于对侧时复制（FR-DIR-067 Update）
                 SyncPreset::UpdateLeftToRight => {
                     if mt(&row.left) >= mt(&row.right) {
-                        push(plan, PlannedOpKind::CopyLeftToRight, &row.id, &reason);
+                        push(plan, PlannedOpKind::CopyLeftToRight, row, &reason);
                     }
                 }
                 SyncPreset::MirrorRightToLeft => {
-                    push(plan, PlannedOpKind::CopyRightToLeft, &row.id, &reason);
+                    push(plan, PlannedOpKind::CopyRightToLeft, row, &reason);
                 }
                 SyncPreset::UpdateRightToLeft => {
                     if mt(&row.right) >= mt(&row.left) {
-                        push(plan, PlannedOpKind::CopyRightToLeft, &row.id, &reason);
+                        push(plan, PlannedOpKind::CopyRightToLeft, row, &reason);
                     }
                 }
                 SyncPreset::UpdateBoth => {
                     if left_newer {
-                        push(plan, PlannedOpKind::CopyLeftToRight, &row.id, &reason);
+                        push(plan, PlannedOpKind::CopyLeftToRight, row, &reason);
                     } else if right_newer {
-                        push(plan, PlannedOpKind::CopyRightToLeft, &row.id, &reason);
+                        push(plan, PlannedOpKind::CopyRightToLeft, row, &reason);
                     } else {
                         // mtime 相等仍状态差异（如内容不同）：确定性取左→右
-                        push(plan, PlannedOpKind::CopyLeftToRight, &row.id, &reason);
+                        push(plan, PlannedOpKind::CopyLeftToRight, row, &reason);
                     }
                 }
             }
@@ -211,15 +213,50 @@ fn apply_rules(row: &DirRow, rules: &[SyncRule], plan: &mut Vec<PlannedOperation
         if hit {
             let reason = format!("rule#{idx}");
             if let Some(op) = Option::<PlannedOpKind>::from(rule.action) {
-                push(plan, op, &row.id, &reason);
+                push(plan, op, row, &reason);
             }
             return; // 首条命中生效（含 Skip：终止规则链）
         }
     }
 }
 
-fn push(plan: &mut Vec<PlannedOperation>, op: PlannedOpKind, path: &str, reason: &str) {
-    plan.push(PlannedOperation { op, path: path.to_string(), reason: reason.to_string() });
+/// 生成一条计划操作（R3-03：显示 id 与真实文件地址彻底分离）。
+///
+/// `path` 保持行 id（选择集/策略行关联/逐项改写的键，历史兼容），
+/// 真实地址由引擎在**计划生成阶段**按 DirRow.leftPath/rightPath 解析进
+/// sourcePath / targetPath / operationPath，UI 与执行器不再猜测。
+///
+/// 旧载荷（两侧路径字段都缺失）回退到行 id，保证树形同路径场景兼容。
+fn push(plan: &mut Vec<PlannedOperation>, op: PlannedOpKind, row: &DirRow, reason: &str) {
+    let lp = row.left_path.clone().unwrap_or_else(|| row.id.clone());
+    let rp = row.right_path.clone().unwrap_or_else(|| row.id.clone());
+    // 孤立项复制到对侧时目标侧尚无 rel：按源侧 rel 在对侧创建同名项。
+    let left_target = row.left_path.as_ref().map(|_| lp.clone()).unwrap_or_else(|| rp.clone());
+    let right_target = row.right_path.as_ref().map(|_| rp.clone()).unwrap_or_else(|| lp.clone());
+
+    let (source_path, target_path, operation_path) = match op {
+        PlannedOpKind::CopyLeftToRight => (Some(lp.clone()), Some(right_target), None),
+        PlannedOpKind::CopyRightToLeft => (Some(rp.clone()), Some(left_target), None),
+        // 删除取该孤立项实际存在侧的路径
+        PlannedOpKind::DeleteLeft => (None, None, Some(lp)),
+        PlannedOpKind::DeleteRight => (None, None, Some(rp)),
+        // touch(mtime=0) 从对侧取时间戳：source_path 记对侧、operation_path 记本侧
+        PlannedOpKind::TouchLeft => (Some(rp), None, Some(lp)),
+        PlannedOpKind::TouchRight => (Some(lp), None, Some(rp)),
+    };
+    let display_path = target_path
+        .clone()
+        .or_else(|| operation_path.clone())
+        .or_else(|| source_path.clone());
+    plan.push(PlannedOperation {
+        op,
+        path: row.id.clone(),
+        reason: reason.to_string(),
+        source_path,
+        target_path,
+        operation_path,
+        display_path,
+    });
 }
 
 // ===========================================================================
@@ -310,30 +347,42 @@ pub fn apply_strategy(
     let by_id: std::collections::HashMap<&str, &DirRow> =
         rows.iter().map(|r| (r.id.as_str(), r)).collect();
     let mut out = SyncPlan::default();
-    for op in plan {
+    for mut op in plan {
         let row = by_id.get(op.path.as_str()).copied();
         let status = row.map(|r| r.status);
         let kind_is_dir = row.map(|r| r.kind == ai_protocol::EntryKind::Dir).unwrap_or(false);
 
         // 1. 只读侧跳过（优先级最高：目标侧不可写）
+        // 保留全部真实路径字段：不能重新构造一个只有 op/path/reason 的裸计划项。
         if let Some(ro) = strategy.readonly {
             if SyncStrategy::writes_to(op.op, ro) {
-                out.skipped.push(PlannedOperation {
-                    op: op.op,
-                    path: op.path,
-                    reason: format!("{}; strategy:readonlySide({:?})", op.reason, ro),
-                });
+                op.reason = format!("{}; strategy:readonlySide({:?})", op.reason, ro);
+                out.skipped.push(op);
                 continue;
             }
         }
 
-        // 2. 冲突策略：左侧优先时，配对差异行的右→左复制改向为左→右
-        let mut op = op;
+        // 2. 冲突策略：左侧优先时，配对差异行的右→左复制改向为左→右。
+        // 改向不只是改枚举：源/目标真实侧地址必须**同步换向**，否则会把右侧
+        // 内容写回左侧（R3-03 §2.3 要求 5）。按 row 的两侧真实路径重新解析。
         if strategy.conflict_policy == ConflictPolicy::LeftWins
             && op.op == PlannedOpKind::CopyRightToLeft
             && matches!(status, Some(DirEntryStatus::ContentDiff) | Some(DirEntryStatus::QuickDiff) | Some(DirEntryStatus::DirDiff))
         {
             op.op = PlannedOpKind::CopyLeftToRight;
+            if let Some(r) = row {
+                let lp = r.left_path.clone().unwrap_or_else(|| r.id.clone());
+                let rp = r.right_path.clone().unwrap_or_else(|| r.id.clone());
+                let right_target = r.right_path.as_ref().map(|_| rp.clone()).unwrap_or_else(|| lp.clone());
+                op.source_path = Some(lp);
+                op.target_path = Some(right_target.clone());
+                op.operation_path = None;
+                op.display_path = Some(right_target);
+            } else {
+                // 无行可关联（旧载荷）：交换源/目标，至少保持方向一致
+                std::mem::swap(&mut op.source_path, &mut op.target_path);
+                op.display_path = op.target_path.clone();
+            }
             op.reason.push_str("; strategy:leftWins");
         }
 
@@ -351,7 +400,7 @@ pub fn apply_strategy(
         if !strategy.sync_empty_dirs
             && kind_is_dir
             && matches!(status, Some(DirEntryStatus::LeftOnly) | Some(DirEntryStatus::RightOnly))
-            && is_empty_dir.is_some_and(|f| f(&op.path))
+            && is_empty_dir.is_some_and(|f| f(op.address()))
             && matches!(op.op, PlannedOpKind::CopyLeftToRight | PlannedOpKind::CopyRightToLeft | PlannedOpKind::DeleteLeft | PlannedOpKind::DeleteRight)
         {
             op.reason.push_str("; strategy:skipEmptyDir");
@@ -478,15 +527,30 @@ pub async fn run_sync(
     let empty_dirs = if !req.strategy.sync_empty_dirs {
         let mut set = std::collections::HashSet::new();
         for row in rows {
-            if row.kind == ai_protocol::EntryKind::Dir {
-                let path = if row.id.is_empty() {
-                    roots.0.clone()
-                } else {
-                    roots.0.join(&row.id)
-                };
+            if row.kind != ai_protocol::EntryKind::Dir {
+                continue;
+            }
+            // R3-03：按两侧**真实相对路径**实测，不能用 row.id（平铺为 name#i）。
+            // 集合键与 PlannedOperation::address() 对齐，策略才能命中。
+            if row.left_path.is_none() && row.right_path.is_none() {
+                // 旧载荷兼容：两侧都缺路径字段时退回行 id（树形同路径）
+                let path = if row.id.is_empty() { roots.0.clone() } else { roots.0.join(&row.id) };
                 if let Ok(entries) = vfs.list_dir(&path).await {
                     if entries.is_empty() {
                         set.insert(row.id.clone());
+                    }
+                }
+                continue;
+            }
+            for (root, rel) in [
+                (&roots.0, row.left_path.as_deref()),
+                (&roots.1, row.right_path.as_deref()),
+            ] {
+                let Some(rel) = rel else { continue };
+                let path = if rel.is_empty() { root.clone() } else { root.join(rel) };
+                if let Ok(entries) = vfs.list_dir(&path).await {
+                    if entries.is_empty() {
+                        set.insert(rel.to_string());
                     }
                 }
             }
@@ -522,7 +586,7 @@ pub async fn run_sync(
     for op in &plan.skipped {
         report.batch.details.push(OpRecord {
             kind: format!("{:?}", op.op),
-            path: op.path.clone(),
+            path: op.display_path.clone().unwrap_or_else(|| op.address().to_string()),
             reason: op.reason.clone(),
             status: RecordStatus::Skipped,
             detail: Some("策略跳过".into()),
@@ -543,7 +607,7 @@ pub async fn run_sync(
         bump_stat(&mut report.batch.stats, status);
         report.batch.details.push(OpRecord {
             kind: format!("{:?}", r.op),
-            path: r.op.path().to_string(),
+            path: plan_display(&plan.ops, r.op.path()),
             reason: plan_reason(&plan.ops, r.op.path()),
             status,
             detail: r.detail.clone(),
@@ -553,7 +617,7 @@ pub async fn run_sync(
         report.batch.stats.failed += 1;
         report.batch.details.push(OpRecord {
             kind: format!("{:?}", r.op),
-            path: r.op.path().to_string(),
+            path: plan_display(&plan.ops, r.op.path()),
             reason: plan_reason(&plan.ops, r.op.path()),
             status: RecordStatus::Failed,
             detail: r.detail.clone(),
@@ -563,7 +627,7 @@ pub async fn run_sync(
         report.batch.stats.skipped += 1;
         report.batch.details.push(OpRecord {
             kind: format!("{:?}", r.op),
-            path: r.op.path().to_string(),
+            path: plan_display(&plan.ops, r.op.path()),
             reason: plan_reason(&plan.ops, r.op.path()),
             status: RecordStatus::Skipped,
             detail: r.detail.clone(),
@@ -583,9 +647,25 @@ pub async fn run_sync(
     report
 }
 
-/// 从计划回查触发原因（执行级 OpResult 只带路径）
+/// 按**真实执行地址**回查计划项（R3-03：执行结果的 path 不再是行 id）。
+fn plan_for<'a>(plan: &'a [PlannedOperation], executed: &str) -> Option<&'a PlannedOperation> {
+    plan.iter().find(|p| {
+        p.source_path.as_deref() == Some(executed)
+            || p.operation_path.as_deref() == Some(executed)
+            || p.address() == executed
+            || p.path == executed // 旧载荷（无真实路径字段）按行 id 回查
+    })
+}
+
 fn plan_reason(plan: &[PlannedOperation], path: &str) -> String {
-    plan.iter().find(|p| p.path == path).map(|p| p.reason.clone()).unwrap_or_default()
+    plan_for(plan, path).map(|p| p.reason.clone()).unwrap_or_default()
+}
+
+/// 报告显示地址：优先计划里的展示路径（与 UI 计划预览一致），否则用执行地址。
+fn plan_display(plan: &[PlannedOperation], executed: &str) -> String {
+    plan_for(plan, executed)
+        .and_then(|p| p.display_path.clone())
+        .unwrap_or_else(|| executed.to_string())
 }
 
 fn bump_stat(stats: &mut BatchStats, status: RecordStatus) {
@@ -1076,5 +1156,271 @@ mod tests {
         assert_eq!(vfs.read_file_bytes(&r.join("diff.txt")).await.unwrap(), b"LEFT");
         assert_eq!(report.batch.stats.copied, 1, "{:?}", report.batch.details);
         assert_eq!(report.batch.stats.failed, 0);
+    }
+
+    // ---- R3-03：平铺/手动对齐的显示 id 不得被当作文件地址 ----
+
+    /// 构造一个带真实侧路径的行（平铺 id 与 rel 分离）
+    fn path_row(id: &str, lp: Option<&str>, rp: Option<&str>, status: DirEntryStatus, lm: u64, rm: u64) -> DirRow {
+        DirRow {
+            id: id.into(),
+            name: id.split('#').next().unwrap_or(id).into(),
+            kind: EntryKind::File,
+            left: lp.map(|_| SideInfo::base(4, lm)),
+            right: rp.map(|_| SideInfo::base(5, rm)),
+            status,
+            has_children: false,
+            hidden: false,
+            suppressed: false,
+            left_path: lp.map(str::to_string),
+            right_path: rp.map(str::to_string),
+        }
+    }
+
+    /// R3-03 复现：平铺行 id = "x.txt"，两侧真实 rel = "sub/x.txt"。
+    /// 修复前 run_sync 用 row.id 拼 L/x.txt → 源不存在 → failed，右侧仍为 RIGHT。
+    #[tokio::test]
+    async fn r3_03_flat_row_sync_uses_real_side_paths() {
+        use ai_vfs::{LocalFs, VfsPath};
+        let dir = tempfile::tempdir().unwrap();
+        let l = dir.path().join("L");
+        let r = dir.path().join("R");
+        std::fs::create_dir_all(l.join("sub")).unwrap();
+        std::fs::create_dir_all(r.join("sub")).unwrap();
+        std::fs::write(l.join("sub").join("x.txt"), b"LEFT").unwrap();
+        std::fs::write(r.join("sub").join("x.txt"), b"RIGHT").unwrap();
+        let roots = (
+            VfsPath::parse(l.to_str().unwrap()).unwrap(),
+            VfsPath::parse(r.to_str().unwrap()).unwrap(),
+        );
+        let vfs = LocalFs::new();
+        let row = path_row("x.txt", Some("sub/x.txt"), Some("sub/x.txt"), DirEntryStatus::ContentDiff, 200, 100);
+        let req = SyncRequest { preset: Some(SyncPreset::MirrorLeftToRight), ..Default::default() };
+        let report = run_sync(&vfs, &roots, &[row], &req, None, &CancelFlag::new()).await;
+
+        assert_eq!(report.batch.stats.failed, 0, "计划不得把显示 id 当文件地址: {:?}", report.batch.details);
+        assert_eq!(
+            vfs.read_file_bytes(&roots.1.join("sub/x.txt")).await.unwrap(),
+            b"LEFT",
+            "真正的 R/sub/x.txt 必须被同步为左侧内容"
+        );
+        assert_eq!(vfs.read_file_bytes(&roots.0.join("sub/x.txt")).await.unwrap(), b"LEFT", "源不应被改写");
+    }
+
+    /// 建真实磁盘双根 + LocalFs（R3-03 回归矩阵要求最终磁盘状态断言）
+    fn disk_case(
+        left: &[(&str, &[u8])],
+        right: &[(&str, &[u8])],
+    ) -> (
+        tempfile::TempDir,
+        (ai_vfs::VfsPath, ai_vfs::VfsPath),
+        ai_vfs::LocalFs,
+    ) {
+        use ai_vfs::{LocalFs, VfsPath};
+        let d = tempfile::tempdir().unwrap();
+        let l = d.path().join("L");
+        let r = d.path().join("R");
+        std::fs::create_dir_all(&l).unwrap();
+        std::fs::create_dir_all(&r).unwrap();
+        for (root, files) in [(&l, left), (&r, right)] {
+            for (rel, data) in files {
+                let p = root.join(rel);
+                std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+                std::fs::write(p, data).unwrap();
+            }
+        }
+        let roots = (
+            VfsPath::parse(l.to_str().unwrap()).unwrap(),
+            VfsPath::parse(r.to_str().unwrap()).unwrap(),
+        );
+        (d, roots, LocalFs::new())
+    }
+
+    fn req(preset: SyncPreset) -> SyncRequest<'static> {
+        SyncRequest { preset: Some(preset), ..Default::default() }
+    }
+
+    // 1. 树形普通同路径：兼容且真实地址正确
+    #[tokio::test]
+    async fn r3_03_tree_same_path_compat() {
+        let (_d, roots, vfs) = disk_case(&[("a.txt", b"L")], &[("a.txt", b"R")]);
+        let row = path_row("a.txt", Some("a.txt"), Some("a.txt"), DirEntryStatus::ContentDiff, 200, 100);
+        let plan = plan_operations(std::slice::from_ref(&row), Some(SyncPreset::MirrorLeftToRight), None, None);
+        assert_eq!(plan[0].path, "a.txt");
+        assert_eq!(plan[0].source_path.as_deref(), Some("a.txt"));
+        assert_eq!(plan[0].target_path.as_deref(), Some("a.txt"));
+        let report = run_sync(&vfs, &roots, &[row], &req(SyncPreset::MirrorLeftToRight), None, &CancelFlag::new()).await;
+        assert_eq!(report.batch.stats.failed, 0, "{:?}", report.batch.details);
+        assert_eq!(vfs.read_file_bytes(&roots.1.join("a.txt")).await.unwrap(), b"L");
+    }
+
+    // 2. 平铺 update 预设（左较新才复制）走真实子目录地址
+    #[tokio::test]
+    async fn r3_03_flat_update_preset() {
+        let (_d, roots, vfs) = disk_case(&[("sub/x.txt", b"LEFT")], &[("sub/x.txt", b"RIGHT")]);
+        let row = path_row("x.txt", Some("sub/x.txt"), Some("sub/x.txt"), DirEntryStatus::ContentDiff, 200, 100);
+        let report = run_sync(&vfs, &roots, &[row], &req(SyncPreset::UpdateLeftToRight), None, &CancelFlag::new()).await;
+        assert_eq!(report.batch.stats.failed, 0, "{:?}", report.batch.details);
+        assert_eq!(vfs.read_file_bytes(&roots.1.join("sub/x.txt")).await.unwrap(), b"LEFT");
+    }
+
+    // 3. 同名 basename 产生 name#i 消歧，不得把 #i 送进执行器
+    #[tokio::test]
+    async fn r3_03_duplicate_basename_hash_suffix() {
+        let (_d, roots, vfs) = disk_case(
+            &[("d1/x.txt", b"L1"), ("d2/x.txt", b"L2")],
+            &[("d1/x.txt", b"R1"), ("d2/x.txt", b"R2")],
+        );
+        let rows = vec![
+            path_row("x.txt", Some("d1/x.txt"), Some("d1/x.txt"), DirEntryStatus::ContentDiff, 200, 100),
+            path_row("x.txt#1", Some("d2/x.txt"), Some("d2/x.txt"), DirEntryStatus::ContentDiff, 200, 100),
+        ];
+        let plan = plan_operations(&rows, Some(SyncPreset::MirrorLeftToRight), None, None);
+        assert_eq!(plan.len(), 2);
+        for p in &plan {
+            assert!(!p.address().contains('#'), "显示消歧后缀不得作为文件地址: {p:?}");
+            assert!(p.address().starts_with('d'), "应使用真实子目录 rel: {p:?}");
+        }
+        let report = run_sync(&vfs, &roots, &rows, &req(SyncPreset::MirrorLeftToRight), None, &CancelFlag::new()).await;
+        assert_eq!(report.batch.stats.failed, 0, "{:?}", report.batch.details);
+        assert_eq!(vfs.read_file_bytes(&roots.1.join("d1/x.txt")).await.unwrap(), b"L1");
+        assert_eq!(vfs.read_file_bytes(&roots.1.join("d2/x.txt")).await.unwrap(), b"L2");
+        assert!(vfs.stat(&roots.1.join("x.txt")).await.is_err(), "不得在根误建 x.txt");
+        assert!(vfs.stat(&roots.1.join("x.txt#1")).await.is_err(), "不得把行 id 当路径建文件");
+    }
+
+    // 4. 手动对齐左右异名：左→右 / 右→左 都落到目标侧真实名字
+    #[tokio::test]
+    async fn r3_03_manual_aligned_different_names_both_directions() {
+        let (_d, roots, vfs) = disk_case(&[("a.txt", b"AAA")], &[("b.txt", b"BBB")]);
+        let row = path_row("a.txt", Some("a.txt"), Some("b.txt"), DirEntryStatus::ContentDiff, 200, 100);
+        let plan = plan_operations(std::slice::from_ref(&row), Some(SyncPreset::MirrorLeftToRight), None, None);
+        assert_eq!(plan[0].source_path.as_deref(), Some("a.txt"));
+        assert_eq!(plan[0].target_path.as_deref(), Some("b.txt"));
+        let report = run_sync(&vfs, &roots, &[row], &req(SyncPreset::MirrorLeftToRight), None, &CancelFlag::new()).await;
+        assert_eq!(report.batch.stats.failed, 0, "{:?}", report.batch.details);
+        assert_eq!(vfs.read_file_bytes(&roots.1.join("b.txt")).await.unwrap(), b"AAA");
+        assert!(vfs.stat(&roots.1.join("a.txt")).await.is_err(), "不得按源名在右侧另建一份");
+
+        // 右→左：目标写到左 a.txt，右侧 b.txt 保留
+        let (_d2, roots2, vfs2) = disk_case(&[("a.txt", b"AAA")], &[("b.txt", b"BBB")]);
+        let row2 = path_row("a.txt", Some("a.txt"), Some("b.txt"), DirEntryStatus::ContentDiff, 100, 200);
+        let plan2 = plan_operations(std::slice::from_ref(&row2), Some(SyncPreset::MirrorRightToLeft), None, None);
+        assert_eq!(plan2[0].source_path.as_deref(), Some("b.txt"));
+        assert_eq!(plan2[0].target_path.as_deref(), Some("a.txt"));
+        let report2 = run_sync(&vfs2, &roots2, &[row2], &req(SyncPreset::MirrorRightToLeft), None, &CancelFlag::new()).await;
+        assert_eq!(report2.batch.stats.failed, 0, "{:?}", report2.batch.details);
+        assert_eq!(vfs2.read_file_bytes(&roots2.0.join("a.txt")).await.unwrap(), b"BBB");
+        assert!(vfs2.stat(&roots2.0.join("b.txt")).await.is_err(), "不得按源名在左侧另建一份");
+    }
+
+    // 5. 手动对齐的 delete / touch 使用真实侧路径
+    #[tokio::test]
+    async fn r3_03_manual_aligned_delete_and_touch() {
+        // delete：leftOnly 孤立项在子目录，镜像右→左应删掉真实的 L/sub/a.txt
+        let (_d, roots, vfs) = disk_case(&[("sub/a.txt", b"L")], &[]);
+        let row = path_row("a.txt", Some("sub/a.txt"), None, DirEntryStatus::LeftOnly, 100, 0);
+        let plan = plan_operations(std::slice::from_ref(&row), Some(SyncPreset::MirrorRightToLeft), None, None);
+        assert_eq!(plan[0].op, PlannedOpKind::DeleteLeft);
+        assert_eq!(plan[0].operation_path.as_deref(), Some("sub/a.txt"));
+        let report = run_sync(&vfs, &roots, &[row], &req(SyncPreset::MirrorRightToLeft), None, &CancelFlag::new()).await;
+        assert_eq!(report.batch.stats.failed, 0, "{:?}", report.batch.details);
+        assert!(vfs.stat(&roots.0.join("sub/a.txt")).await.is_err(), "真实侧文件应被删除");
+
+        // touch：左右异名，mtime=0 取对侧时间戳；对侧地址必须是 b.txt
+        let (_d2, roots2, vfs2) = disk_case(&[("a.txt", b"A")], &[("b.txt", b"B")]);
+        let row2 = path_row("a.txt", Some("a.txt"), Some("b.txt"), DirEntryStatus::ContentDiff, 100, 900);
+        let rules = [SyncRule {
+            name_mask: None,
+            status: None,
+            newer: None,
+            action: RuleAction::TouchLeft,
+        }];
+        let plan2 = plan_operations(std::slice::from_ref(&row2), None, Some(&rules), None);
+        assert_eq!(plan2[0].operation_path.as_deref(), Some("a.txt"), "本侧地址");
+        assert_eq!(plan2[0].source_path.as_deref(), Some("b.txt"), "对侧时间戳来源");
+        let req2 = SyncRequest { rules: Some(&rules), ..Default::default() };
+        let report2 = run_sync(&vfs2, &roots2, &[row2], &req2, None, &CancelFlag::new()).await;
+        assert_eq!(report2.batch.stats.failed, 0, "{:?}", report2.batch.details);
+        assert_eq!(vfs2.read_file_bytes(&roots2.0.join("a.txt")).await.unwrap(), b"A", "对时不应改内容");
+        assert_eq!(vfs2.read_file_bytes(&roots2.1.join("b.txt")).await.unwrap(), b"B", "对侧不应改内容");
+    }
+
+    // 6. leftOnly/rightOnly：复制到对侧按源 rel 创建；镜像删除用孤立项存在侧
+    #[tokio::test]
+    async fn r3_03_orphan_copy_and_mirror_delete() {
+        let (_d, roots, vfs) = disk_case(&[("sub/only.txt", b"ONLY")], &[("keep.txt", b"KEEP")]);
+        let rows = vec![
+            path_row("only.txt", Some("sub/only.txt"), None, DirEntryStatus::LeftOnly, 100, 0),
+            path_row("keep.txt", None, Some("keep.txt"), DirEntryStatus::RightOnly, 0, 100),
+        ];
+        let plan = plan_operations(&rows, Some(SyncPreset::MirrorLeftToRight), None, None);
+        let copy = plan.iter().find(|p| p.op == PlannedOpKind::CopyLeftToRight).unwrap();
+        assert_eq!(copy.source_path.as_deref(), Some("sub/only.txt"));
+        assert_eq!(copy.target_path.as_deref(), Some("sub/only.txt"), "目标侧孤立项按源 rel 创建");
+        let del = plan.iter().find(|p| p.op == PlannedOpKind::DeleteRight).unwrap();
+        assert_eq!(del.operation_path.as_deref(), Some("keep.txt"));
+        let report = run_sync(&vfs, &roots, &rows, &req(SyncPreset::MirrorLeftToRight), None, &CancelFlag::new()).await;
+        assert_eq!(report.batch.stats.failed, 0, "{:?}", report.batch.details);
+        assert_eq!(vfs.read_file_bytes(&roots.1.join("sub/only.txt")).await.unwrap(), b"ONLY");
+        assert!(vfs.stat(&roots.1.join("keep.txt")).await.is_err(), "孤立项应被删除");
+        assert_eq!(vfs.read_file_bytes(&roots.0.join("sub/only.txt")).await.unwrap(), b"ONLY", "源不应被改写");
+    }
+
+    // 7. leftWins 改向后真实源/目标必须同步换向（不能只改 op 枚举）
+    #[tokio::test]
+    async fn r3_03_left_wins_flips_real_paths() {
+        let (_d, roots, vfs) = disk_case(&[("a.txt", b"LEFT")], &[("b.txt", b"RIGHT")]);
+        let row = path_row("a.txt", Some("a.txt"), Some("b.txt"), DirEntryStatus::ContentDiff, 100, 200);
+        let strategy = SyncStrategy { conflict_policy: ConflictPolicy::LeftWins, ..Default::default() };
+        let request = SyncRequest { preset: Some(SyncPreset::UpdateBoth), strategy, ..Default::default() };
+        let report = run_sync(&vfs, &roots, &[row], &request, None, &CancelFlag::new()).await;
+        let p = &report.plan[0];
+        assert_eq!(p.op, PlannedOpKind::CopyLeftToRight, "右较新本应右→左，leftWins 改向");
+        assert_eq!(p.source_path.as_deref(), Some("a.txt"), "源换成左");
+        assert_eq!(p.target_path.as_deref(), Some("b.txt"), "目标换成右");
+        assert_eq!(report.batch.stats.failed, 0, "{:?}", report.batch.details);
+        assert_eq!(vfs.read_file_bytes(&roots.1.join("b.txt")).await.unwrap(), b"LEFT", "左侧内容应胜出");
+        assert_eq!(vfs.read_file_bytes(&roots.0.join("a.txt")).await.unwrap(), b"LEFT", "左侧不应被回写");
+    }
+
+    // 8. 大小写碰撞重排：按真实地址比较，先删后建不误删新文件
+    #[tokio::test]
+    async fn r3_03_case_collision_reorder_uses_real_address() {
+        let (_d, roots, vfs) = disk_case(&[("old.txt", b"NEW")], &[("OLD.TXT", b"OLD")]);
+        let rows = vec![
+            path_row("old.txt", Some("old.txt"), None, DirEntryStatus::LeftOnly, 100, 0),
+            path_row("OLD.TXT", None, Some("OLD.TXT"), DirEntryStatus::RightOnly, 0, 100),
+        ];
+        let plan = plan_operations(&rows, Some(SyncPreset::MirrorLeftToRight), None, None);
+        let cpos = plan.iter().position(|p| p.op == PlannedOpKind::CopyLeftToRight).unwrap();
+        let dpos = plan.iter().position(|p| p.op == PlannedOpKind::DeleteRight).unwrap();
+        assert!(dpos < cpos, "大小写碰撞时删除必须先于复制: {plan:?}");
+        let report = run_sync(&vfs, &roots, &rows, &req(SyncPreset::MirrorLeftToRight), None, &CancelFlag::new()).await;
+        assert_eq!(report.batch.stats.failed, 0, "{:?}", report.batch.details);
+        assert_eq!(vfs.read_file_bytes(&roots.1.join("old.txt")).await.unwrap(), b"NEW", "新文件不得被误删");
+    }
+
+    // 9+10. dryRun 不落盘 / 真实执行落盘 / 失败隔离且无关文件不变
+    #[tokio::test]
+    async fn r3_03_dry_run_then_real_exec_and_failed_isolation() {
+        let (_d, roots, vfs) = disk_case(&[("sub/x.txt", b"LEFT")], &[("sub/x.txt", b"RIGHT")]);
+        let row = path_row("x.txt", Some("sub/x.txt"), Some("sub/x.txt"), DirEntryStatus::ContentDiff, 200, 100);
+        let dry = SyncRequest { preset: Some(SyncPreset::MirrorLeftToRight), dry_run: true, ..Default::default() };
+        let d = run_sync(&vfs, &roots, std::slice::from_ref(&row), &dry, None, &CancelFlag::new()).await;
+        assert_eq!(vfs.read_file_bytes(&roots.1.join("sub/x.txt")).await.unwrap(), b"RIGHT", "dryRun 不得落盘");
+        assert_eq!(d.batch.stats.failed, 0);
+        let real = run_sync(&vfs, &roots, &[row], &req(SyncPreset::MirrorLeftToRight), None, &CancelFlag::new()).await;
+        assert_eq!(real.batch.stats.failed, 0);
+        assert_eq!(vfs.read_file_bytes(&roots.1.join("sub/x.txt")).await.unwrap(), b"LEFT", "真实执行落盘到正确位置");
+
+        // 源侧缺文件：必须进 failed，右侧目标与无关文件保持不动
+        let (_d2, roots2, vfs2) = disk_case(&[], &[("sub/x.txt", b"RIGHT"), ("keep.txt", b"KEEP")]);
+        let broken = path_row("x.txt", Some("sub/x.txt"), Some("sub/x.txt"), DirEntryStatus::ContentDiff, 200, 100);
+        let f = run_sync(&vfs2, &roots2, &[broken], &req(SyncPreset::MirrorLeftToRight), None, &CancelFlag::new()).await;
+        assert_eq!(f.batch.stats.failed, 1, "源不存在必须计入 failed: {:?}", f.batch.details);
+        assert_eq!(vfs2.read_file_bytes(&roots2.1.join("sub/x.txt")).await.unwrap(), b"RIGHT");
+        assert_eq!(vfs2.read_file_bytes(&roots2.1.join("keep.txt")).await.unwrap(), b"KEEP", "无关文件不变");
+        assert!(vfs2.stat(&roots2.1.join("x.txt")).await.is_err(), "不得按行 id 在根误建文件");
     }
 }

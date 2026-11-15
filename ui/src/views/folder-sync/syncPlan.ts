@@ -67,12 +67,15 @@ export function applyStrategyToPlan(
   strategy: SyncStrategyUi,
 ): { ops: PlannedOperation[]; skipped: PlannedOperation[] } {
   const byId = new Map(rows.map((r) => [r.id, r]));
-  const isLeafOrphanDir = (rel: string, row: DirRow): boolean => {
+  const isLeafOrphanDir = (row: DirRow): boolean => {
     if (row.status !== 'leftOnly' && row.status !== 'rightOnly') return false;
-    // 有任意后代行（文件或目录）即非叶子目录
+    // R3-03：按真实 rel 路径判层级；平铺行 id 是 name/name#i，没有 `/` 层级，
+    // 用 id 做前缀判断会把所有平铺目录误判为空目录而跳过。
+    const rel = row.leftPath ?? row.rightPath;
+    if (!rel) return true;
     const prefix = `${rel}/`;
     for (const r of rows) {
-      if (r.id.startsWith(prefix)) return false;
+      if (r.leftPath?.startsWith(prefix) || r.rightPath?.startsWith(prefix)) return false;
     }
     return true;
   };
@@ -93,7 +96,20 @@ export function applyStrategyToPlan(
 
     // 2. 冲突策略：左侧优先时差异行的右→左复制改向
     if (strategy.leftWins && op.op === 'copyRightToLeft' && row && isDiffRow(row)) {
-      op = { ...op, op: 'copyLeftToRight', reason: `${op.reason}; strategy:leftWins` };
+      // 改向不只是换枚举：真实源/目标侧地址必须一起换向，否则会把右侧
+      // 内容写回左侧（R3-03）。异名对齐时两侧 rel 不同，按 row 重新解析。
+      const lp = row.leftPath ?? op.targetPath;
+      const rp = row.rightPath ?? op.sourcePath;
+      const target = rp ?? lp;
+      op = {
+        ...op,
+        op: 'copyLeftToRight',
+        reason: `${op.reason}; strategy:leftWins`,
+        sourcePath: lp,
+        targetPath: target,
+        operationPath: undefined,
+        displayPath: target ?? op.displayPath,
+      };
     }
 
     // 3. 删除孤儿开关
@@ -112,7 +128,7 @@ export function applyStrategyToPlan(
       !strategy.syncEmptyDirs &&
       row &&
       row.kind === 'dir' &&
-      isLeafOrphanDir(op.path, row) &&
+      isLeafOrphanDir(row) &&
       (op.op === 'copyLeftToRight' ||
         op.op === 'copyRightToLeft' ||
         op.op === 'deleteLeft' ||
@@ -129,7 +145,14 @@ export function applyStrategyToPlan(
 
 /** 计划预览行（状态机：预设动作 + 用户改写 + 策略跳过 的合成视图） */
 export interface SyncPlanRow {
+  /** 行 id（关联/改写键，**非文件地址**） */
   path: string;
+  /** 展示用真实路径（计划预览显示它，与最终执行地址一致） */
+  displayPath?: string;
+  /** 执行载荷所需的真实侧路径（R3-03：透传，不得重新拼接） */
+  sourcePath?: string;
+  targetPath?: string;
+  operationPath?: string;
   name: string;
   kind: DirRow['kind'];
   /** 最终动作（keep = 不动作） */
@@ -174,7 +197,7 @@ export function buildSyncPlanRows(
       effectiveOp = 'keep';
       source = 'strategySkip';
     }
-    out.push(toPlanRow(op.path, row, effectiveOp, source, op.reason));
+    out.push(toPlanRow(op, row, effectiveOp, source, op.reason));
   }
   for (const op of strategySkipped) {
     if (seen.has(op.path)) continue;
@@ -183,26 +206,25 @@ export function buildSyncPlanRows(
     const override = overrides[op.path] ?? 'auto';
     const effectiveOp = override === 'keep' ? 'keep' : override === 'auto' ? 'keep' : override;
     out.push(
-      toPlanRow(
-        op.path,
-        row,
-        effectiveOp,
-        override === 'auto' ? 'strategySkip' : 'override',
-        op.reason,
-      ),
+      toPlanRow(op, row, effectiveOp, override === 'auto' ? 'strategySkip' : 'override', op.reason),
     );
   }
   return out;
 
   function toPlanRow(
-    path: string,
+    op: PlannedOperation,
     row: DirRow | undefined,
     effectiveOp: PlannedOpKind | 'keep',
     source: SyncPlanRow['source'],
     reason: string,
   ): SyncPlanRow {
+    const path = op.path;
     return {
       path,
+      displayPath: op.displayPath ?? op.targetPath ?? op.operationPath ?? op.sourcePath ?? op.path,
+      sourcePath: op.sourcePath,
+      targetPath: op.targetPath,
+      operationPath: op.operationPath,
       name: row?.name ?? path.split('/').pop() ?? path,
       kind: row?.kind ?? 'file',
       effectiveOp,
@@ -224,7 +246,17 @@ export function planRowsToExecuteOps(planRows: readonly SyncPlanRow[]): DirExecu
   const out: DirExecuteOp[] = [];
   for (const pr of planRows) {
     if (pr.effectiveOp === 'keep') continue;
-    out.push(plannedToOp({ op: pr.effectiveOp, path: pr.path, reason: pr.reason }));
+    out.push(
+      plannedToOp({
+        op: pr.effectiveOp,
+        path: pr.path,
+        reason: pr.reason,
+        sourcePath: pr.sourcePath,
+        targetPath: pr.targetPath,
+        operationPath: pr.operationPath,
+        displayPath: pr.displayPath,
+      }),
+    );
   }
   return out;
 }

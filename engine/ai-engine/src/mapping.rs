@@ -713,15 +713,15 @@ pub fn dir_execute_op_from_dto(op: &ai_protocol::DirExecuteOp) -> Result<ai_dir:
     };
     let target = op.target_side.map(side_of).unwrap_or(opposite);
     match op.kind {
-        ai_protocol::DirExecuteOpKind::Copy => Ok(ai_dir::FileOp::Copy { path: op.path.clone(), from: side, to: target }),
-        ai_protocol::DirExecuteOpKind::Move => Ok(ai_dir::FileOp::Move { path: op.path.clone(), from: side, to: target }),
+        ai_protocol::DirExecuteOpKind::Copy => Ok(ai_dir::FileOp::Copy { path: op.path.clone(), target_path: op.target_path.clone(), from: side, to: target }),
+        ai_protocol::DirExecuteOpKind::Move => Ok(ai_dir::FileOp::Move { path: op.path.clone(), target_path: op.target_path.clone(), from: side, to: target }),
         ai_protocol::DirExecuteOpKind::Rename => Ok(ai_dir::FileOp::Rename {
             path: op.path.clone(),
             side,
             new_name: op.new_name.clone().ok_or("rename 操作需要 newName 字段")?,
         }),
         ai_protocol::DirExecuteOpKind::Delete => Ok(ai_dir::FileOp::Delete { path: op.path.clone(), side }),
-        ai_protocol::DirExecuteOpKind::Touch => Ok(ai_dir::FileOp::Touch { path: op.path.clone(), side, mtime_ms: op.mtime_ms.unwrap_or(0) }),
+        ai_protocol::DirExecuteOpKind::Touch => Ok(ai_dir::FileOp::Touch { path: op.path.clone(), target_path: op.target_path.clone(), side, mtime_ms: op.mtime_ms.unwrap_or(0) }),
         ai_protocol::DirExecuteOpKind::Mkdir => Ok(ai_dir::FileOp::Mkdir { path: op.path.clone(), side }),
     }
 }
@@ -738,19 +738,21 @@ pub fn dir_execute_op_to_dto(op: &ai_dir::FileOp) -> ai_protocol::DirExecuteOp {
         Side::Right => Side::Left,
     };
     match op {
-        ai_dir::FileOp::Copy { path, from, to } => ai_protocol::DirExecuteOp {
+        ai_dir::FileOp::Copy { path, target_path, from, to } => ai_protocol::DirExecuteOp {
             kind: ai_protocol::DirExecuteOpKind::Copy,
             path: path.clone(),
             side: side_dto(*from),
             target_side: (*to != opposite_of(*from)).then(|| side_dto(*to)),
+            target_path: target_path.clone(),
             new_name: None,
             mtime_ms: None,
         },
-        ai_dir::FileOp::Move { path, from, to } => ai_protocol::DirExecuteOp {
+        ai_dir::FileOp::Move { path, target_path, from, to } => ai_protocol::DirExecuteOp {
             kind: ai_protocol::DirExecuteOpKind::Move,
             path: path.clone(),
             side: side_dto(*from),
             target_side: (*to != opposite_of(*from)).then(|| side_dto(*to)),
+            target_path: target_path.clone(),
             new_name: None,
             mtime_ms: None,
         },
@@ -759,6 +761,7 @@ pub fn dir_execute_op_to_dto(op: &ai_dir::FileOp) -> ai_protocol::DirExecuteOp {
             path: path.clone(),
             side: side_dto(*side),
             target_side: None,
+            target_path: None,
             new_name: Some(new_name.clone()),
             mtime_ms: None,
         },
@@ -767,14 +770,16 @@ pub fn dir_execute_op_to_dto(op: &ai_dir::FileOp) -> ai_protocol::DirExecuteOp {
             path: path.clone(),
             side: side_dto(*side),
             target_side: None,
+            target_path: None,
             new_name: None,
             mtime_ms: None,
         },
-        ai_dir::FileOp::Touch { path, side, mtime_ms } => ai_protocol::DirExecuteOp {
+        ai_dir::FileOp::Touch { path, target_path, side, mtime_ms } => ai_protocol::DirExecuteOp {
             kind: ai_protocol::DirExecuteOpKind::Touch,
             path: path.clone(),
             side: side_dto(*side),
             target_side: None,
+            target_path: target_path.clone(),
             new_name: None,
             mtime_ms: (*mtime_ms != 0).then_some(*mtime_ms),
         },
@@ -783,6 +788,7 @@ pub fn dir_execute_op_to_dto(op: &ai_dir::FileOp) -> ai_protocol::DirExecuteOp {
             path: path.clone(),
             side: side_dto(*side),
             target_side: None,
+            target_path: None,
             new_name: None,
             mtime_ms: None,
         },

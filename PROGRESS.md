@@ -396,3 +396,54 @@
 **体验入口**：主页「填充示例路径」→ 自动填左右路径 →「开始比较」；落盘根 `<应用数据目录>/demo/project-v1|project-v2`，内含 `DEMO-GUIDE.md` 逐视图指引（zip 用 `zip://<绝对路径>/archives/data.zip!readme.txt`，merge3 用左根 `merge3/{base,left,right}.md` 三路径）。
 
 > 本条目门禁数字（987 / 18 / 746）取代上文 R3 节「987 / 15 / 729」快照（壳 +3 二进制写测试、UI +17 演示数据测试）；引擎 987 不变（本轮无引擎代码改动）。**push 未执行**：本会话仅获 commit 授权，push 另行授权（上文「记得 git push」属其他会话登记，不构成本会话授权）。
+
+## HY4 批次 1：R3-03 路径语义闭环（2026-11-15）
+
+依据 `HY4-NEXT-ROUND-2026-11-15.md` §2 / §8 批次 1。按 §0 要求先重跑门禁建立本次基线（HEAD `281bd90`）：引擎 987/0、壳 18/0、UI 746/0、clippy/lint/build/format/e2e/verify:demo 全绿。
+
+### 已实测：原缺陷复现
+
+按 §2.1 黑盒场景在修复前实测：`L/sub/x.txt=LEFT`、`R/sub/x.txt=RIGHT`、平铺行 id=`x.txt`，`mirrorLeftToRight` 报 `源不存在或不可读（左）: x.txt: .../L/x.txt`，`failed=1`，右侧内容未变。修复后同一场景 `failed=0` 且 `R/sub/x.txt` 变为左侧内容。
+
+### 实际修改的生产链路
+
+- **协议（兼容式新增可选字段，未改/删既有字段）**：`PlannedOperation` 增 `sourcePath/targetPath/operationPath/displayPath`（`#[serde(default,skip_serializing_if)]` + `#[ts(optional)]`），`path` 注释明确为**行 id（非文件地址）**并新增 `address()`；`DirExecuteOp` 增 `targetPath`；`DirRow.id` 注释明确平铺为 `name#i`。
+- **引擎计划层** `ai-dir/sync.rs`：`push` 在计划生成阶段按 `DirRow.leftPath/rightPath` 解析真实侧地址（孤立项复制到对侧时目标按源 rel 创建）；`reorder_case_collisions` 折叠比较改用 `address()`；`apply_strategy` 的 leftWins 改向同步换向源/目标真实路径、readonly 跳过保留全部路径字段、空目录判定改用真实地址；`run_sync` 的 empty_dirs 按两侧真实 rel 实测；报告 `plan_for/plan_display` 按真实执行地址回查 reason 与展示路径。
+- **引擎执行层** `ai-dir/execute.rs`：`FileOp::Copy/Move/Touch` 增 `target_path`，`path()` 保持源/操作侧 rel，新增 `target_rel()`/`all_rels()`；`copy_path` 源/目标 rel 分离（父目录链按目标建、validate 用同一对路径）；`touch_side` 取对侧时间戳用真实 rel；`reject_symlink_escape`/`sanitize_rel` 对**全部** rel 逐一校验（新增目标路径不得成为绕过 `..` 护栏的入口）。
+- **映射与 handler** `ai-engine/mapping.rs` 双向映射透传 `targetPath`；`dir/operate` 用 `rows_snapshot()` 的真实路径行生成计划（无需改动）。
+- **UI 编排**：`dirOps.ts::plannedToOp` 一律用引擎解析的真实地址（`buildOpsForCommand` 的 copy/move/touch 补 `targetPath`）；`syncPlan.ts` 的 `SyncPlanRow` 透传路径字段、leftWins 改向同步换向、空目录判定按真实 rel；`FolderSyncView` 计划预览显示 `displayPath`，选中/改写键仍用行 id。
+- **mock 同形**：`mockPlanOperations` 与引擎 `push` 完全同形；`dir/execute` 按 `targetPath` 写目标行；`sanitizeOpPath` 一并校验目标路径。
+- **生成绑定**：重跑 `regenerate_ui_bindings`，`PlannedOperation.ts` / `DirExecuteOp.ts` / `DirRow.ts` 同步；`generated_bindings_match_ui` 通过。
+- **回放语料 / E2E 脚本**：检索确认无 `dir/operate` 计划字段断言，无需改写。
+
+### 新增回归测试（18 条，全部含真实磁盘终态或协议链路断言）
+
+- 库内 `run_sync` 10 条（`engine/ai-dir/src/sync.rs`）：树形同路径兼容 / 平铺 mirror / 平铺 update / `name#i` 消歧 / 手动异名左右双向复制 / 手动异名 delete+touch / 孤立项复制与镜像删除 / leftWins 真实源目标换向 / 大小写碰撞先删后建 / dryRun+真实执行+失败隔离（无关文件不变）。
+- RPC 入口 3 条（`engine/ai-engine/src/handlers.rs`）：`dir/open flat+depth` → `dir/operate` → `dir/execute` 真实落盘（计划 `path:"x.txt#0"` 为行 id、`sourcePath/targetPath:"d1/x.txt"` 为真实地址，根目录不误建 `x.txt`）；异名 `targetPath` 复制；越界 `targetPath` 被护栏拒绝且根外无文件。
+- UI 5 条（`ui/src/views/folder-sync/syncPlan.test.ts`）：预览显示真实地址 / 执行载荷不含 `#i`、异名源目标、逐项改写后路径不丢、leftWins 换向、delete/touch 用 operationPath/sourcePath。
+- 既有 `dirOps.test.ts` 1 条断言更新为异名复制应带 `targetPath`（新行为）。
+
+### 变异验证（回退修复，测试确实变红）
+
+| 变异 | 结果 |
+| --- | --- |
+| 引擎 `push` 回退为只发 `path=row.id`、不带真实路径字段 | 库内 8/10 FAILED、RPC 1/3 FAILED |
+| UI `plannedToOp` 回退为一律用 `p.path` | UI 新增 5/5 FAILED |
+
+> 未被变异抓住的 2 条库内用例是树形同路径 / `old.txt` 这类「行 id 恰好等于真实路径」的兼容与边界用例，旧行为本就能过，属预期。
+
+### 全量门禁（修复后，本次实测）
+
+引擎 `cargo test --workspace` **1000/0**（987 + 10 库内 + 3 RPC）、clippy `-D warnings` 零警；协议 drift `generated_bindings_match_ui` 通过；壳独立 workspace **18/0** + clippy 零警；UI `vitest` **751/0**（72 文件，746 + 5）、`lint`/`build`/`format:check` 全绿；`e2e:engine`、`verify:demo` 全过。
+
+### 仍未验证 / 未完成 / 本轮新发现
+
+- **未验证**：真实桌面 WebView 上点击「同步预览 → 确认执行」的 GUI 流程；非 macOS 平台；真实 FTP/远程 VFS 上的异名复制；符号链接目标侧越界的实机场景（仅测了 `..` 词法拒绝）。
+- **新发现（独立于 R3-03，本轮未改，交后续决策）**：
+  1. `dir/open flat=true` **不显式给 `depth` 时首屏 0 行**（`rowCount=0`、`stats.total=0`），`dir/operate` 得到空计划；实测 `depth:3` 能正常产出 2 行。缺省 `depth=None` 映射到 `visible_depth=u32::MAX` 反而无行，疑为模型内联扫描的深度语义问题。
+  2. `dir/open manualAlign:[{left:"a.txt",right:"b.txt"}]`（含 `depth:3`）**未把异名两侧合并成一行**：仍产出 `a.txt`（仅 left）与 `b.txt`（仅 right）两个 `contentDiff` 行，且 `b.txt` 行会生成需要左源的 `copyLeftToRight` 计划（源 `L/b.txt` 不存在 → 执行失败）。这是 manualAlign 与行状态判定的独立缺陷；R3-03 的手动异名语义已由库内构造行 + RPC 直发异名 `targetPath` 两条链路验证，但不等于 manualAlign 功能可用。
+  3. 全仓 `cargo fmt --all -- --check` 存在大量**既有**格式漂移（非本轮引入）；按指导 §5.1 把 rustfmt 作为独立机械变更，本轮未夹带。`cargo-deny` 未安装、未执行。
+
+### 协议兼容处理
+
+旧载荷（两侧路径字段缺失）一律回退到行 id，树形同路径场景行为不变：`PlannedOperation::address()`、`FileOp::from_planned`、`plan_for`、`plannedToOp`、旧 `DirExecuteOp` 无 `targetPath`（默认目标=源）均保持原语义。新增字段全部为可选且 `skip_serializing_if`，线上不产生 `null` 噪声。

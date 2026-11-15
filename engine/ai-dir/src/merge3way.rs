@@ -809,12 +809,12 @@ pub struct MergeRoots {
 fn plan_to_exec(roots: &MergeRoots, target: MergeTarget, plan: &MergePlannedOp) -> Result<(FileOp, VfsPath, VfsPath), String> {
     match (target, plan.kind) {
         (MergeTarget::Right, MergeOpKind::TakeLeft) => Ok((
-            FileOp::Copy { path: plan.path.clone(), from: Side::Left, to: Side::Right },
+            FileOp::Copy { path: plan.path.clone(), target_path: None, from: Side::Left, to: Side::Right },
             roots.left.clone(),
             roots.right.clone(),
         )),
         (MergeTarget::Left, MergeOpKind::TakeRight) => Ok((
-            FileOp::Copy { path: plan.path.clone(), from: Side::Right, to: Side::Left },
+            FileOp::Copy { path: plan.path.clone(), target_path: None, from: Side::Right, to: Side::Left },
             roots.right.clone(),
             roots.left.clone(),
         )),
@@ -831,7 +831,7 @@ fn plan_to_exec(roots: &MergeRoots, target: MergeTarget, plan: &MergePlannedOp) 
         (MergeTarget::Output, MergeOpKind::TakeLeft) => {
             let out = output_root(roots)?;
             Ok((
-                FileOp::Copy { path: plan.path.clone(), from: Side::Left, to: Side::Right },
+                FileOp::Copy { path: plan.path.clone(), target_path: None, from: Side::Left, to: Side::Right },
                 roots.left.clone(),
                 out,
             ))
@@ -839,7 +839,7 @@ fn plan_to_exec(roots: &MergeRoots, target: MergeTarget, plan: &MergePlannedOp) 
         (MergeTarget::Output, MergeOpKind::TakeRight) => {
             let out = output_root(roots)?;
             Ok((
-                FileOp::Copy { path: plan.path.clone(), from: Side::Left, to: Side::Right },
+                FileOp::Copy { path: plan.path.clone(), target_path: None, from: Side::Left, to: Side::Right },
                 roots.right.clone(),
                 out,
             ))

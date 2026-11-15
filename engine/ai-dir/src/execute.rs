@@ -38,41 +38,89 @@ impl std::fmt::Display for Side {
 /// 执行级操作（PlannedOperation 展开后的统一形态；右键/批量操作直接构造）
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FileOp {
-    /// 跨侧复制（FR-DIR-060）
-    Copy { path: String, from: Side, to: Side },
+    /// 跨侧复制（FR-DIR-060）。
+    /// `path` = 源侧真实 rel；`target_path` = 目标侧真实 rel（R3-03：平铺/手动
+    /// 异名对齐时两者不同）；None = 目标沿用源 rel（旧行为，兼容树形同路径）。
+    Copy { path: String, target_path: Option<String>, from: Side, to: Side },
     /// 跨侧移动 = 复制 + 删源（FR-DIR-062）
-    Move { path: String, from: Side, to: Side },
+    Move { path: String, target_path: Option<String>, from: Side, to: Side },
     /// 同侧改名（FR-DIR-064；目标 = 源父目录 + new_name）
     Rename { path: String, side: Side, new_name: String },
     /// 删除（目录为递归删除；FR-DIR-063）
     Delete { path: String, side: Side },
-    /// 时间戳：mtime_ms > 0 设为指定值；0 = 从对侧复制（FR-DIR-065 touch）
-    Touch { path: String, side: Side, mtime_ms: u64 },
+    /// 时间戳：mtime_ms > 0 设为指定值；0 = 从对侧复制（FR-DIR-065 touch）。
+    /// `target_path` 为 mtime=0 时取时间戳的**对侧**真实 rel（None = 同源 rel）。
+    Touch { path: String, target_path: Option<String>, side: Side, mtime_ms: u64 },
     /// 新建文件夹（FR-DIR-066）
     Mkdir { path: String, side: Side },
 }
 
 impl FileOp {
-    /// P2 计划操作 -> 执行级操作（TouchLeft/Right = 从对侧复制时间戳）
+    /// P2 计划操作 -> 执行级操作。
+    ///
+    /// R3-03：一律使用引擎在计划阶段解析好的真实侧路径（sourcePath /
+    /// targetPath / operationPath），**绝不使用 p.path（行 id）寻址**；
+    /// 旧载荷无这些字段时按行 id 回退（树形同路径兼容）。
     pub fn from_planned(p: &PlannedOperation) -> Self {
+        let fallback = || p.path.clone();
         match p.op {
-            PlannedOpKind::CopyLeftToRight => FileOp::Copy { path: p.path.clone(), from: Side::Left, to: Side::Right },
-            PlannedOpKind::CopyRightToLeft => FileOp::Copy { path: p.path.clone(), from: Side::Right, to: Side::Left },
-            PlannedOpKind::DeleteLeft => FileOp::Delete { path: p.path.clone(), side: Side::Left },
-            PlannedOpKind::DeleteRight => FileOp::Delete { path: p.path.clone(), side: Side::Right },
-            PlannedOpKind::TouchLeft => FileOp::Touch { path: p.path.clone(), side: Side::Left, mtime_ms: 0 },
-            PlannedOpKind::TouchRight => FileOp::Touch { path: p.path.clone(), side: Side::Right, mtime_ms: 0 },
+            PlannedOpKind::CopyLeftToRight => FileOp::Copy {
+                path: p.source_path.clone().unwrap_or_else(fallback),
+                target_path: p.target_path.clone(),
+                from: Side::Left,
+                to: Side::Right,
+            },
+            PlannedOpKind::CopyRightToLeft => FileOp::Copy {
+                path: p.source_path.clone().unwrap_or_else(fallback),
+                target_path: p.target_path.clone(),
+                from: Side::Right,
+                to: Side::Left,
+            },
+            PlannedOpKind::DeleteLeft => FileOp::Delete {
+                path: p.operation_path.clone().unwrap_or_else(fallback),
+                side: Side::Left,
+            },
+            PlannedOpKind::DeleteRight => FileOp::Delete {
+                path: p.operation_path.clone().unwrap_or_else(fallback),
+                side: Side::Right,
+            },
+            PlannedOpKind::TouchLeft => FileOp::Touch {
+                path: p.operation_path.clone().unwrap_or_else(fallback),
+                target_path: p.source_path.clone(),
+                side: Side::Left,
+                mtime_ms: 0,
+            },
+            PlannedOpKind::TouchRight => FileOp::Touch {
+                path: p.operation_path.clone().unwrap_or_else(fallback),
+                target_path: p.source_path.clone(),
+                side: Side::Right,
+                mtime_ms: 0,
+            },
         }
     }
 
     /// 人类可读描述（dry_run 清单 / 确认框明细行）
     pub fn describe(&self) -> String {
         match self {
-            FileOp::Copy { path, from, to } => format!("复制 {from}→{to}: {path}"),
-            FileOp::Move { path, from, to } => format!("移动 {from}→{to}: {path}"),
+            FileOp::Copy { path, target_path, from, to } => {
+                let dst = target_path.as_deref().unwrap_or(path);
+                if dst == path {
+                    format!("复制 {from}→{to}: {path}")
+                } else {
+                    format!("复制 {from}→{to}: {path} → {dst}")
+                }
+            }
+            FileOp::Move { path, target_path, from, to } => {
+                let dst = target_path.as_deref().unwrap_or(path);
+                if dst == path {
+                    format!("移动 {from}→{to}: {path}")
+                } else {
+                    format!("移动 {from}→{to}: {path} → {dst}")
+                }
+            }
             FileOp::Rename { path, side, new_name } => format!("改名（{side}）: {path} → {new_name}"),
             FileOp::Delete { path, side } => format!("删除（{side}）: {path}"),
-            FileOp::Touch { path, side, mtime_ms } => {
+            FileOp::Touch { path, side, mtime_ms, .. } => {
                 if *mtime_ms == 0 {
                     format!("对时（{side}，取对侧时间戳）: {path}")
                 } else {
@@ -83,11 +131,35 @@ impl FileOp {
         }
     }
 
-    /// rel 路径（校验/展示用）
+    /// 源侧/操作侧 rel 路径（校验/展示用）
     pub fn path(&self) -> &str {
         match self {
             FileOp::Copy { path, .. } | FileOp::Move { path, .. } | FileOp::Rename { path, .. } => path,
             FileOp::Delete { path, .. } | FileOp::Touch { path, .. } | FileOp::Mkdir { path, .. } => path,
+        }
+    }
+
+    /// 目标侧真实 rel（copy/move 的目标；touch 为对侧取时间戳的地址）。
+    /// 缺省 = 源侧 rel（旧载荷兼容）。
+    pub fn target_rel(&self) -> &str {
+        match self {
+            FileOp::Copy { path, target_path, .. }
+            | FileOp::Move { path, target_path, .. }
+            | FileOp::Touch { path, target_path, .. } => target_path.as_deref().unwrap_or(path),
+            _ => self.path(),
+        }
+    }
+
+    /// 该操作涉及的全部 rel 路径（安全护栏必须逐一校验，R3-03 §1.1 要求 7）
+    pub fn all_rels(&self) -> Vec<&str> {
+        match self {
+            FileOp::Copy { path, target_path, .. }
+            | FileOp::Move { path, target_path, .. }
+            | FileOp::Touch { path, target_path, .. } => match target_path {
+                Some(dst) if dst != path => vec![path.as_str(), dst.as_str()],
+                _ => vec![path.as_str()],
+            },
+            _ => vec![self.path()],
         }
     }
 }
@@ -256,9 +328,13 @@ async fn execute_one(vfs: &dyn VfsProvider, roots: &(VfsPath, VfsPath), op: &Fil
         Err(msg) => mk(OpStatus::Failed, Some(msg)),
     };
 
-    // 1. 安全护栏（全部操作一致：路径不可逃逸）
-    if let Err(msg) = sanitize_rel(op.path()) {
-        return mk(OpStatus::Failed, Some(msg));
+    // 1. 安全护栏（全部操作一致：路径不可逃逸）。
+    // R3-03：新增的目标侧真实路径同样是外部输入，必须逐一做词法校验，
+    // 否则平铺/异名对齐会成为绕过 `..`/绝对路径护栏的新入口。
+    for rel in op.all_rels() {
+        if let Err(msg) = sanitize_rel(rel) {
+            return mk(OpStatus::Failed, Some(msg));
+        }
     }
     // 符号链接逃逸护栏必须在此公共路径上：validate 只在 dry_run 与 copy_path
     // 内被调用，真实落盘的 delete/rename/touch/mkdir 根本不经过它。
@@ -281,9 +357,13 @@ async fn execute_one(vfs: &dyn VfsProvider, roots: &(VfsPath, VfsPath), op: &Fil
         Err(msg) => mk(OpStatus::Failed, Some(msg)),
     };
     match op {
-        FileOp::Copy { path, from, to } => ok(copy_path(vfs, roots, path, *from, *to).await),
-        FileOp::Move { path, from, to } => {
-            let r = copy_path(vfs, roots, path, *from, *to).await;
+        FileOp::Copy { path, target_path, from, to } => {
+            let dst = target_path.as_deref().unwrap_or(path);
+            ok(copy_path(vfs, roots, path, dst, *from, *to).await)
+        }
+        FileOp::Move { path, target_path, from, to } => {
+            let dst = target_path.as_deref().unwrap_or(path);
+            let r = copy_path(vfs, roots, path, dst, *from, *to).await;
             if let Err(msg) = r {
                 return mk(OpStatus::Failed, Some(msg));
             }
@@ -291,7 +371,10 @@ async fn execute_one(vfs: &dyn VfsProvider, roots: &(VfsPath, VfsPath), op: &Fil
         }
         FileOp::Rename { path, side, new_name } => ok(rename_side(vfs, roots, path, *side, new_name).await),
         FileOp::Delete { path, side } => detail_of(remove_side(vfs, roots, path, *side, true).await),
-        FileOp::Touch { path, side, mtime_ms } => ok(touch_side(vfs, roots, path, *side, *mtime_ms).await),
+        FileOp::Touch { path, target_path, side, mtime_ms } => {
+            let other = target_path.as_deref().unwrap_or(path);
+            ok(touch_side(vfs, roots, path, other, *side, *mtime_ms).await)
+        }
         FileOp::Mkdir { path, side } => ok(mkdir_side(vfs, roots, path, *side).await),
     }
 }
@@ -354,12 +437,21 @@ async fn reject_symlink_target(vfs: &dyn VfsProvider, root: &VfsPath, rel: &str)
 /// 对一项操作涉及的全部侧做祖先分量护栏；写入型操作再加末分量护栏。
 async fn reject_symlink_escape(vfs: &dyn VfsProvider, roots: &(VfsPath, VfsPath), op: &FileOp) -> Result<(), String> {
     let targets: Vec<(Side, &str)> = match op {
-        FileOp::Copy { path, from, to } | FileOp::Move { path, from, to } => {
-            vec![(*from, path.as_str()), (*to, path.as_str())]
+        // R3-03：源与目标各自用真实 rel 做祖先护栏；异名对齐时目标侧
+        // 的目录链可能与源侧完全不同，只校验源会漏掉目标侧符号链接。
+        FileOp::Copy { path, target_path, from, to } | FileOp::Move { path, target_path, from, to } => {
+            vec![(*from, path.as_str()), (*to, target_path.as_deref().unwrap_or(path))]
+        }
+        FileOp::Touch { path, target_path, side, mtime_ms } => {
+            let other = match side { Side::Left => Side::Right, Side::Right => Side::Left };
+            let mut v = vec![(*side, path.as_str())];
+            if *mtime_ms == 0 {
+                v.push((other, target_path.as_deref().unwrap_or(path)));
+            }
+            v
         }
         FileOp::Rename { path, side, .. }
         | FileOp::Delete { path, side }
-        | FileOp::Touch { path, side, .. }
         | FileOp::Mkdir { path, side } => vec![(*side, path.as_str())],
     };
     for (side, rel) in &targets {
@@ -367,8 +459,8 @@ async fn reject_symlink_escape(vfs: &dyn VfsProvider, roots: &(VfsPath, VfsPath)
     }
     // 写入会跟随末分量符号链接落到根外；删除符号链接本身是安全 unlink，放行。
     match op {
-        FileOp::Copy { path, to, .. } | FileOp::Move { path, to, .. } => {
-            reject_symlink_target(vfs, side_root(roots, *to), path).await
+        FileOp::Copy { path, target_path, to, .. } | FileOp::Move { path, target_path, to, .. } => {
+            reject_symlink_target(vfs, side_root(roots, *to), target_path.as_deref().unwrap_or(path)).await
         }
         FileOp::Touch { path, side, .. } => {
             reject_symlink_target(vfs, side_root(roots, *side), path).await
@@ -382,17 +474,18 @@ async fn reject_symlink_escape(vfs: &dyn VfsProvider, roots: &(VfsPath, VfsPath)
 /// 返回 Ok(Some(note))：附注（如"将覆盖目标"）；Ok(None)：无附注。
 async fn validate(vfs: &dyn VfsProvider, roots: &(VfsPath, VfsPath), op: &FileOp) -> Result<Option<String>, String> {
     match op {
-        FileOp::Copy { path, from, to } | FileOp::Move { path, from, to } => {
+        FileOp::Copy { path, target_path, from, to } | FileOp::Move { path, target_path, from, to } => {
+            let dst_rel = target_path.as_deref().unwrap_or(path);
             let src = resolve(roots, *from, path);
             let src_stat = vfs
                 .stat(&src)
                 .await
                 .map_err(|e| format!("源不存在或不可读（{from}）: {path}: {e}"))?;
-            let dst = resolve(roots, *to, path);
+            let dst = resolve(roots, *to, dst_rel);
             match vfs.stat(&dst).await {
                 Ok(dst_stat) => {
-                    type_conflict(&src_stat, &dst_stat, path)?;
-                    Ok(Some(format!("将覆盖目标（{to}）: {path}")))
+                    type_conflict(&src_stat, &dst_stat, dst_rel)?;
+                    Ok(Some(format!("将覆盖目标（{to}）: {dst_rel}")))
                 }
                 Err(_) => Ok(None),
             }
@@ -417,7 +510,7 @@ async fn validate(vfs: &dyn VfsProvider, roots: &(VfsPath, VfsPath), op: &FileOp
                 Err(_) => Err(format!("目标不存在（{side}）: {path}")),
             }
         }
-        FileOp::Touch { path, side, mtime_ms } => {
+        FileOp::Touch { path, target_path, side, mtime_ms } => {
             let target = resolve(roots, *side, path);
             vfs.stat(&target).await.map_err(|e| format!("目标不存在（{side}）: {path}: {e}"))?;
             if *mtime_ms == 0 {
@@ -425,8 +518,9 @@ async fn validate(vfs: &dyn VfsProvider, roots: &(VfsPath, VfsPath), op: &FileOp
                     Side::Left => Side::Right,
                     Side::Right => Side::Left,
                 };
-                let src = resolve(roots, other, path);
-                vfs.stat(&src).await.map_err(|e| format!("对侧不存在，无法取时间戳: {path}: {e}"))?;
+                let other_rel = target_path.as_deref().unwrap_or(path);
+                let src = resolve(roots, other, other_rel);
+                vfs.stat(&src).await.map_err(|e| format!("对侧不存在，无法取时间戳: {other_rel}: {e}"))?;
             }
             Ok(None)
         }
@@ -451,17 +545,36 @@ fn type_conflict(src: &StatInfo, dst: &StatInfo, path: &str) -> Result<(), Strin
 }
 
 /// 跨侧复制（文件 or 目录树；覆盖语义；保留源 mtime）
-async fn copy_path(vfs: &dyn VfsProvider, roots: &(VfsPath, VfsPath), rel: &str, from: Side, to: Side) -> Result<(), String> {
-    validate(vfs, roots, &FileOp::Copy { path: rel.to_string(), from, to }).await?;
-    let src = resolve(roots, from, rel);
-    let dst = resolve(roots, to, rel);
-    // 父目录链
-    mkdir_parents(vfs, roots, to, rel).await?;
-    let src_stat = vfs.stat(&src).await.map_err(|e| format!("源不可读（{from}）: {rel}: {e}"))?;
+async fn copy_path(
+    vfs: &dyn VfsProvider,
+    roots: &(VfsPath, VfsPath),
+    src_rel: &str,
+    dst_rel: &str,
+    from: Side,
+    to: Side,
+) -> Result<(), String> {
+    // R3-03：源与目标 rel 分离。validate 里也必须用同一对路径，
+    // 否则会拿目标地址去查源（或反之），把存在性校验做错。
+    validate(
+        vfs,
+        roots,
+        &FileOp::Copy {
+            path: src_rel.to_string(),
+            target_path: (dst_rel != src_rel).then(|| dst_rel.to_string()),
+            from,
+            to,
+        },
+    )
+    .await?;
+    let src = resolve(roots, from, src_rel);
+    let dst = resolve(roots, to, dst_rel);
+    // 父目录链按**目标** rel 创建（异名对齐时目标侧目录链不同于源侧）
+    mkdir_parents(vfs, roots, to, dst_rel).await?;
+    let src_stat = vfs.stat(&src).await.map_err(|e| format!("源不可读（{from}）: {src_rel}: {e}"))?;
     if src_stat.kind == EntryKind::Dir {
-        copy_tree(vfs, &src, &dst, rel).await
+        copy_tree(vfs, &src, &dst, dst_rel).await
     } else {
-        copy_file_via(vfs, &src, &dst, rel).await
+        copy_file_via(vfs, &src, &dst, dst_rel).await
     }
 }
 
@@ -564,7 +677,14 @@ async fn rename_side(vfs: &dyn VfsProvider, roots: &(VfsPath, VfsPath), rel: &st
 }
 
 /// 时间戳（mtime_ms=0 取对侧；FR-DIR-065 touch）
-async fn touch_side(vfs: &dyn VfsProvider, roots: &(VfsPath, VfsPath), rel: &str, side: Side, mtime_ms: u64) -> Result<(), String> {
+async fn touch_side(
+    vfs: &dyn VfsProvider,
+    roots: &(VfsPath, VfsPath),
+    rel: &str,
+    other_rel: &str,
+    side: Side,
+    mtime_ms: u64,
+) -> Result<(), String> {
     let target = resolve(roots, side, rel);
     if !vfs.capabilities_for(&target).has(VfsCaps::TOUCH) {
         return Err(format!("目标侧不支持修改时间戳（能力位缺失，{side}）"));
@@ -576,10 +696,11 @@ async fn touch_side(vfs: &dyn VfsProvider, roots: &(VfsPath, VfsPath), rel: &str
             Side::Left => Side::Right,
             Side::Right => Side::Left,
         };
+        // R3-03：手动异名对齐时，对侧时间戳来源的真实 rel 可能不同于本侧
         let src_stat = vfs
-            .stat(&resolve(roots, other, rel))
+            .stat(&resolve(roots, other, other_rel))
             .await
-            .map_err(|e| format!("对侧不存在，无法取时间戳: {rel}: {e}"))?;
+            .map_err(|e| format!("对侧不存在，无法取时间戳: {other_rel}: {e}"))?;
         src_stat.mtime_ms
     };
     vfs.set_mtime(&target, mtime).await.map_err(|e| format!("对时失败（{side}）: {rel}: {e}"))
@@ -631,11 +752,19 @@ mod tests {
     }
 
     fn copy_l2r(rel: &str) -> FileOp {
-        FileOp::Copy { path: rel.into(), from: Side::Left, to: Side::Right }
+        FileOp::Copy { path: rel.into(), target_path: None, from: Side::Left, to: Side::Right }
     }
 
     fn planned(kind: PlannedOpKind, path: &str) -> PlannedOperation {
-        PlannedOperation { op: kind, path: path.into(), reason: "test".into() }
+        PlannedOperation {
+            op: kind,
+            path: path.into(),
+            reason: "test".into(),
+            source_path: None,
+            target_path: None,
+            operation_path: None,
+            display_path: None,
+        }
     }
 
     #[tokio::test]
@@ -721,7 +850,7 @@ mod tests {
         // 注意路径不同名，此处构造同名冲突：lonly.txt 在右建为目录
         let _ = report2;
         let roots2 = (l.clone(), r.clone());
-        let op = FileOp::Copy { path: "same.txt".into(), from: Side::Left, to: Side::Right };
+        let op = FileOp::Copy { path: "same.txt".into(), target_path: None, from: Side::Left, to: Side::Right };
         std::fs::remove_file(r.as_str().to_string() + "/same.txt").unwrap();
         std::fs::create_dir(r.as_str().to_string() + "/same.txt").unwrap();
         let report3 = execute_ops(&vfs, &roots2, &[op], &opts(false), None, &CancelFlag::new()).await;
@@ -777,7 +906,7 @@ mod tests {
         symlink(&precious, std::path::Path::new(r.as_str()).join("notes.txt")).unwrap();
         let vfs = LocalFs::new();
         let roots = (l.clone(), r.clone());
-        let op = FileOp::Copy { path: "notes.txt".into(), from: Side::Left, to: Side::Right };
+        let op = FileOp::Copy { path: "notes.txt".into(), target_path: None, from: Side::Left, to: Side::Right };
         let report = execute_ops(&vfs, &roots, &[op], &opts(false), None, &CancelFlag::new()).await;
         assert_eq!(report.succeeded.len(), 0, "不得穿过目标符号链接写出根外: {report:?}");
         assert_eq!(std::fs::read_to_string(&precious).unwrap(), "PRECIOUS-OUTSIDE", "根外文件必须完好");
@@ -881,7 +1010,7 @@ mod tests {
         let (_dir, l, r) = make_trees().await;
         let vfs = LocalFs::new();
         let roots = (l.clone(), r.clone());
-        let op = FileOp::Move { path: "lonly.txt".into(), from: Side::Left, to: Side::Right };
+        let op = FileOp::Move { path: "lonly.txt".into(), target_path: None, from: Side::Left, to: Side::Right };
         let report = execute_ops(&vfs, &roots, &[op], &opts(false), None, &CancelFlag::new()).await;
         assert_eq!(report.succeeded.len(), 1, "{report:?}");
         assert_eq!(vfs.read_file_bytes(&r.join("lonly.txt")).await.unwrap(), b"L");
@@ -912,7 +1041,7 @@ mod tests {
         // 左 diff.txt mtime < 右 diff.txt mtime（先读，再对时）
         let before = vfs.stat(&l.join("diff.txt")).await.unwrap();
         std::fs::write(r.as_str().to_string() + "/diff.txt", b"RIGHT2").unwrap();
-        let op = FileOp::Touch { path: "diff.txt".into(), side: Side::Left, mtime_ms: 0 };
+        let op = FileOp::Touch { path: "diff.txt".into(), target_path: None, side: Side::Left, mtime_ms: 0 };
         let report = execute_ops(&vfs, &roots, &[op], &opts(false), None, &CancelFlag::new()).await;
         assert_eq!(report.succeeded.len(), 1, "{report:?}");
         let after = vfs.stat(&l.join("diff.txt")).await.unwrap();

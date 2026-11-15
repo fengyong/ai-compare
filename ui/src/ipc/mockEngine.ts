@@ -93,7 +93,6 @@ import {
   wildcardMatch,
 } from '../views/folder-compare/dirFilters';
 import { parentOf } from '../views/folder-compare/dirTree';
-import { sidePath } from '../views/folder-compare/dirOps';
 
 /**
  * 内置演示引擎（纯 TypeScript 实现的协议子集）。
@@ -682,7 +681,18 @@ export class MockEngine {
               break;
             }
             const targetSide = op.targetSide ?? (op.side === 'left' ? 'right' : 'left');
-            applyCopyToRow(row, targetSide);
+            // R3-03：手动对齐左右异名时目标 rel 不同于源 rel —— 写到目标行，
+            // 而不是把内容补到源行的目标侧（否则演示模型会"复制错文件"）。
+            const targetRel = op.targetPath ?? op.path;
+            const targetRow = targetRel === op.path ? row : (before.get(targetRel) ?? row);
+            if (targetRow === row) {
+              applyCopyToRow(row, targetSide);
+            } else {
+              const src = row[op.side]!;
+              targetRow[targetSide] = { ...src };
+              recomputeRowStatus(targetRow);
+              touched.add(targetRow.id);
+            }
             if (op.kind === 'move') {
               row[op.side] = null;
               recomputeRowStatus(row);
@@ -1827,11 +1837,18 @@ function statusForPair(l: SideInfo, r: SideInfo): DirEntryStatus {
 
 /** 操作路径护栏（与引擎 sanitize_rel 同形） */
 function sanitizeOpPath(op: DirExecuteOp): string | null {
-  const path = op.path;
-  if (!path) return '拒绝空路径（根目录不可作为操作目标）';
-  if (path.startsWith('/') || path.includes('\\')) return `拒绝绝对/反斜杠路径: ${path}`;
-  for (const seg of path.split('/')) {
-    if (!seg || seg === '.' || seg === '..') return `拒绝相对引用段: ${path}`;
+  // R3-03：目标侧真实路径同为外部输入，必须一起做词法校验（与引擎
+  // execute_one::all_rels 的逐一 sanitize_rel 同形），否则新增字段会成为
+  // 绕过 `..` / 绝对路径护栏的入口。
+  // 注意不能用 truthy 过滤：空字符串本身就是要被拒绝的输入。
+  for (const path of [op.path, op.targetPath].filter(
+    (p): p is string => p !== undefined && p !== null,
+  )) {
+    if (!path) return '拒绝空路径（根目录不可作为操作目标）';
+    if (path.startsWith('/') || path.includes('\\')) return `拒绝绝对/反斜杠路径: ${path}`;
+    for (const seg of path.split('/')) {
+      if (!seg || seg === '.' || seg === '..') return `拒绝相对引用段: ${path}`;
+    }
   }
   return null;
 }
@@ -1898,11 +1915,49 @@ function mockPlanOperations(
     if (sel && !sel.has(row.id)) continue;
     const reason = `preset:${preset}`;
     const push = (op: PlannedOperation['op']) => {
-      // 计划路径取 op 源侧的真实 rel（平铺 id 是显示消歧名，R3-03）
-      const side =
-        op === 'copyLeftToRight' || op === 'deleteLeft' || op === 'touchLeft' ? 'left' : 'right';
-      const path = sidePath(row, side);
-      if (path !== null) plan.push({ op, path, reason });
+      // R3-03：与引擎 sync.rs::push 完全同形。
+      // path = 行 id（关联/改写键）；真实地址拆成 source/target/operation/display，
+      // 由 mock 在计划阶段解析好，UI 不重新猜测。
+      const lp = row.leftPath ?? row.id;
+      const rp = row.rightPath ?? row.id;
+      const leftTarget = row.leftPath ? lp : rp;
+      const rightTarget = row.rightPath ? rp : lp;
+      let sourcePath: string | undefined;
+      let targetPath: string | undefined;
+      let operationPath: string | undefined;
+      switch (op) {
+        case 'copyLeftToRight':
+          sourcePath = lp;
+          targetPath = rightTarget;
+          break;
+        case 'copyRightToLeft':
+          sourcePath = rp;
+          targetPath = leftTarget;
+          break;
+        case 'deleteLeft':
+          operationPath = lp;
+          break;
+        case 'deleteRight':
+          operationPath = rp;
+          break;
+        case 'touchLeft':
+          sourcePath = rp;
+          operationPath = lp;
+          break;
+        case 'touchRight':
+          sourcePath = lp;
+          operationPath = rp;
+          break;
+      }
+      plan.push({
+        op,
+        path: row.id,
+        reason,
+        sourcePath,
+        targetPath,
+        operationPath,
+        displayPath: targetPath ?? operationPath ?? sourcePath,
+      });
     };
     const mt = (info: SideInfo | null) => info?.mtimeMs ?? 0;
     switch (row.status) {

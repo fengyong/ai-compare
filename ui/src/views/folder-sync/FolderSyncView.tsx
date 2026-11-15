@@ -398,9 +398,11 @@ export function FolderSyncView({ tab }: { tab: Tab }) {
                         <i className="ov-badge">{S.syncView.planSourceStrategy}</i>
                       )}
                     </span>
-                    <span className="mono" title={pr.path}>
+                    {/* R3-03：预览显示引擎解析出的真实执行地址（与最终落盘路径一致），
+                        选中/改写键仍用 pr.path（行 id），两者不得混用 */}
+                    <span className="mono" title={pr.displayPath ?? pr.path}>
                       {pr.kind === 'dir' ? '📁 ' : ''}
-                      {pr.path}
+                      {pr.displayPath ?? pr.path}
                     </span>
                     <span>
                       <select

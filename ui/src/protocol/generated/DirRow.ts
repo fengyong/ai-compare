@@ -8,7 +8,9 @@ import type { SideInfo } from "./SideInfo";
  */
 export type DirRow = { 
 /**
- * 稳定行 id（相对路径，POSIX 风格；根的子项无前缀；平铺模式带 # 序号消歧）
+ * 稳定行 id（显示/选择/消歧键）。树形模式下等于 rel 路径；**平铺模式为
+ * `name` / `name#i`，手动对齐时左右异名 —— 均不是文件地址**。
+ * 寻址一律用 left_path / right_path。
  */
 id: string, name: string, kind: EntryKind, left: SideInfo | null, right: SideInfo | null, status: DirEntryStatus, 
 /**

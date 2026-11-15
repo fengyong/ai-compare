@@ -84,11 +84,15 @@ export function buildOpsForCommand(
         const path = sidePath(row, sourceSide);
         if (path === null) continue;
         if (hasSelectedDescendant(id, selectedIds)) continue; // 子项覆盖（文件夹语义）
+        // R3-03：目标侧已有真实 rel 时必须写在它上面（手动对齐左右异名）；
+        // 目标侧为孤立项时按源侧 rel 在对侧创建同名项。
+        const dst = sidePath(row, targetSide) ?? path;
         push({
           kind: isMove ? 'move' : 'copy',
           path,
           side: sourceSide,
           targetSide,
+          ...(dst !== path ? { targetPath: dst } : {}),
         });
       }
       break;
@@ -124,8 +128,25 @@ export function buildOpsForCommand(
         const row = byId.get(id)!;
         const lp = sidePath(row, 'left');
         const rp = sidePath(row, 'right');
-        if (row.left && lp !== null) push({ kind: 'touch', path: lp, side: 'left', mtimeMs: 0 });
-        if (row.right && rp !== null) push({ kind: 'touch', path: rp, side: 'right', mtimeMs: 0 });
+        // mtimeMs=0 = 取对侧时间戳；对侧真实 rel 可能异名（手动对齐）
+        if (row.left && lp !== null) {
+          push({
+            kind: 'touch',
+            path: lp,
+            side: 'left',
+            mtimeMs: 0,
+            ...(rp ? { targetPath: rp } : {}),
+          });
+        }
+        if (row.right && rp !== null) {
+          push({
+            kind: 'touch',
+            path: rp,
+            side: 'right',
+            mtimeMs: 0,
+            ...(lp ? { targetPath: lp } : {}),
+          });
+        }
       }
       break;
     }
@@ -202,19 +223,39 @@ export function opsFromPlan(plan: PlannedOperation[]): DirExecuteOp[] {
 }
 
 export function plannedToOp(p: PlannedOperation): DirExecuteOp {
+  // R3-03：执行载荷一律用引擎在计划阶段解析好的真实侧路径。
+  // p.path 是行 id（平铺为 name#i），绝不能拿来寻址；旧载荷无真实路径
+  // 字段时按行 id 回退（树形同路径兼容）。
+  const src = p.sourcePath ?? p.path;
+  const single = p.operationPath ?? p.path;
+  // 仅在引擎真的给出异侧地址时输出该键；旧载荷缺省时保持对象形状不变，
+  // 避免线上 JSON 出现 `"targetPath": null` 与 UI 测试的显式 undefined 差异。
+  const dst = p.targetPath ? { targetPath: p.targetPath } : {};
   switch (p.op) {
     case 'copyLeftToRight':
-      return { kind: 'copy', path: p.path, side: 'left', targetSide: 'right' };
+      return { kind: 'copy', path: src, side: 'left', targetSide: 'right', ...dst };
     case 'copyRightToLeft':
-      return { kind: 'copy', path: p.path, side: 'right', targetSide: 'left' };
+      return { kind: 'copy', path: src, side: 'right', targetSide: 'left', ...dst };
     case 'deleteLeft':
-      return { kind: 'delete', path: p.path, side: 'left' };
+      return { kind: 'delete', path: single, side: 'left' };
     case 'deleteRight':
-      return { kind: 'delete', path: p.path, side: 'right' };
+      return { kind: 'delete', path: single, side: 'right' };
     case 'touchLeft':
-      return { kind: 'touch', path: p.path, side: 'left', mtimeMs: 0 };
+      return {
+        kind: 'touch',
+        path: single,
+        side: 'left',
+        mtimeMs: 0,
+        ...(p.sourcePath ? { targetPath: p.sourcePath } : {}),
+      };
     case 'touchRight':
-      return { kind: 'touch', path: p.path, side: 'right', mtimeMs: 0 };
+      return {
+        kind: 'touch',
+        path: single,
+        side: 'right',
+        mtimeMs: 0,
+        ...(p.sourcePath ? { targetPath: p.sourcePath } : {}),
+      };
   }
 }
 
