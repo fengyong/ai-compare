@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { SessionService } from '../../session/service';
-import { effectiveRulesFor } from './TextCompareView';
+import { effectiveRulesFor } from './rulesRuntime';
 
 /**
  * P10 运行时接线：设置页 compareRules 组 → text/open rules 参数。

@@ -14,6 +14,7 @@ import { S } from '../strings';
 import { closeGuardKind, firstPendingGuard, guardOf } from './closeGuard';
 import { resolveViewKind } from './settings/formatsModel';
 import { effectiveFormatsFromSettings } from './settings/formatsRuntime';
+import { effectiveRulesFor } from '../views/text-compare/rulesRuntime';
 import type { ShellStore, Tab, WindowState, WindowsSlice, TabsSlice, OpenTabOpts } from './shellState';
 
 /** 窗口 slice（FR-WIN-001/002）：多窗口、拖出标签、合并窗口 */
@@ -297,7 +298,13 @@ export const createTabsSlice: StateCreator<ShellStore, [], [], TabsSlice> = (set
   async openTextTab(leftPath, rightPath, opts: OpenTabOpts = {}) {
     try {
       const sessionId = engine.newSessionId('text');
-      await engine.openText({ sessionId, left: leftPath, right: rightPath, options: null });
+      await engine.openText({
+        sessionId,
+        left: leftPath,
+        right: rightPath,
+        options: null,
+        rules: effectiveRulesFor(leftPath, rightPath),
+      });
       const id = nextTabId('text');
       const tab: Tab = {
         id,
@@ -358,7 +365,13 @@ export const createTabsSlice: StateCreator<ShellStore, [], [], TabsSlice> = (set
     const baseName = (rel: string): string => rel.split('/').pop() || rel;
     try {
       const sessionId = engine.newSessionId('text');
-      await engine.openText({ sessionId, left, right, options: null });
+      await engine.openText({
+        sessionId,
+        left,
+        right,
+        options: null,
+        rules: effectiveRulesFor(left, right),
+      });
       const id = nextTabId('text');
       const tab: Tab = {
         id,
@@ -452,7 +465,13 @@ export const createTabsSlice: StateCreator<ShellStore, [], [], TabsSlice> = (set
     }
     const sessionId = engine.newSessionId('text');
     try {
-      await engine.openText({ sessionId, left, right, options: null });
+      await engine.openText({
+        sessionId,
+        left,
+        right,
+        options: null,
+        rules: effectiveRulesFor(left, right),
+      });
     } catch (err) {
       st.setNotice(`${S.folder.openFail}: ${err instanceof Error ? err.message : String(err)}`);
       return;
