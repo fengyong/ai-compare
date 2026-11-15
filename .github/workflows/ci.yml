@@ -1,0 +1,121 @@
+# CI：根 Rust workspace / Tauri 独立 workspace / UI + 真实引擎 E2E。
+#
+# R3-26 批次 4：先把已在本地实测稳定的门禁纳入 CI（HY4 §5.1 步骤 1）。
+# 所有 Rust 命令使用 --locked；工具链、Node、pnpm 版本固定，不通过
+# 放宽 lint / 忽略新警告换取绿灯。
+#
+# 本地等价门禁（本次提交前实测通过）：
+#   cargo test --locked --workspace
+#   cargo clippy --workspace --all-targets -- -D warnings
+#   cargo test -p ai-protocol --features ts generated_bindings_match_ui
+#   cargo test --manifest-path ui/src-tauri/Cargo.toml
+#   cargo clippy --manifest-path ui/src-tauri/Cargo.toml --all-targets -- -D warnings
+#   cd ui && pnpm test && pnpm lint && pnpm build && pnpm format:check
+#   cd ui && pnpm e2e:engine && pnpm verify:demo
+#
+# 注意：GitHub Actions runner 上的执行结果未在本机验证（本机无 runner），
+# 这里只保证命令与本地实测门禁一一对应，不声称 CI 已跑绿。
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # 固定工具链：RUSTUP_TOOLCHAIN 优先于仓库 rust-toolchain.toml 的 stable
+  # 通道，避免 CI 随 stable 升级而漂移。与本地实测 rustc 1.100.0 一致。
+  RUSTUP_TOOLCHAIN: "1.100.0"
+  RUST_VERSION: "1.100.0"
+  NODE_VERSION: "26.8.1"
+  PNPM_VERSION: "12.18.0"
+
+jobs:
+  rust:
+    name: Root Rust workspace
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+      - name: Tests (locked)
+        run: cargo test --locked --workspace
+      - name: Clippy (warnings denied)
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      - name: Generated TS bindings drift
+        run: cargo test --locked -p ai-protocol --features ts generated_bindings_match_ui
+
+  tauri:
+    name: Tauri workspace
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          components: rustfmt, clippy
+      # Tauri 2 在 Linux 上链接 webkit2gtk / appindicator / rsvg。
+      - name: Linux system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libayatana-appindicator3-dev \
+            librsvg2-dev patchelf
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "ui/src-tauri -> ui/src-tauri/target"
+      - name: Tests (locked)
+        run: cargo test --locked --manifest-path ui/src-tauri/Cargo.toml
+      - name: Clippy (warnings denied)
+        run: cargo clippy --locked --manifest-path ui/src-tauri/Cargo.toml --all-targets -- -D warnings
+
+  ui:
+    name: UI + real engine E2E
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: ui/pnpm-lock.yaml
+      - name: Install UI dependencies (frozen lockfile)
+        working-directory: ui
+        run: pnpm install --frozen-lockfile
+      - name: Build engine binary for E2E
+        run: cargo build --locked -p ai-engine
+      - name: Type check / tests / lint / build / format
+        working-directory: ui
+        run: |
+          pnpm test
+          pnpm lint
+          pnpm build
+          pnpm format:check
+      - name: Real engine protocol E2E
+        working-directory: ui
+        run: pnpm e2e:engine
+      - name: Demo assets against real engine
+        working-directory: ui
+        run: pnpm verify:demo
