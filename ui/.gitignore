@@ -4,6 +4,9 @@ dist-ssr
 coverage
 *.local
 
+# vitest 模块转换缓存（vitest.config.ts: fsModuleCachePath）
+.vitest-fs-cache
+
 # Tauri / Rust
 src-tauri/target
 src-tauri/gen/schemas

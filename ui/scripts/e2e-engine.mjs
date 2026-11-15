@@ -1065,7 +1065,53 @@ try {
     '未知编码标签报 413'
   );
 
-  // 7. 会话清理 + shutdown
+  // 7. R3-03：异名手动对齐 → 同步计划 → 正确落盘（工作包 1A 真实引擎验收）
+  {
+    const AL = join(dir, 'AL');
+    const AR = join(dir, 'AR');
+    mkdirSync(AL);
+    mkdirSync(AR);
+    writeFileSync(join(AL, 'a.txt'), 'AAA\n');
+    writeFileSync(join(AR, 'b.txt'), 'BBB\n');
+
+    const alignOpen = await client.request('dir/open', {
+      sessionId: 'e2e-align-1',
+      left: AL,
+      right: AR,
+      depth: 1,
+      criteria: { mtimeToleranceSec: 0, contentCompare: 'always' },
+      manualAlign: [{ left: 'a.txt', right: 'b.txt' }],
+    });
+    ok(alignOpen?.rowCount === 1, '预置 manualAlign 后只剩一行（不再拆成两行）', `rowCount=${alignOpen?.rowCount}`);
+
+    const alignPlan = await client.request('dir/operate', {
+      sessionId: 'e2e-align-1',
+      preset: 'mirrorLeftToRight',
+    });
+    const alignOps = alignPlan?.plan ?? [];
+    ok(alignOps.length === 1, '异名配对只产生一个操作', JSON.stringify(alignOps));
+    ok(
+      alignOps[0]?.sourcePath === 'a.txt' && alignOps[0]?.targetPath === 'b.txt',
+      '复制操作的源/目标分别来自左右真实路径',
+      JSON.stringify(alignOps[0]),
+    );
+
+    const alignExec = await client.request('dir/execute', {
+      sessionId: 'e2e-align-1',
+      ops: [{ kind: 'copy', path: 'a.txt', side: 'left', targetSide: 'right', targetPath: 'b.txt' }],
+    });
+    ok((alignExec?.failed?.length ?? 0) === 0, '异名复制执行无失败', JSON.stringify(alignExec?.failed));
+    ok(
+      readFileSync(join(AR, 'b.txt'), 'utf8') === 'AAA\n',
+      '右侧真实文件被写成左侧内容',
+      JSON.stringify(readFileSync(join(AR, 'b.txt'), 'utf8')),
+    );
+    ok(!existsSync(join(AR, 'a.txt')), '不得按源名在右侧另建一份');
+    ok(readFileSync(join(AL, 'a.txt'), 'utf8') === 'AAA\n', '源文件未被改写');
+    await client.request('session/close', { sessionId: 'e2e-align-1' });
+  }
+
+  // 8. 会话清理 + shutdown
   ok((await client.request('session/close', { sessionId: 'e2e-dir-1' })) === null, 'session/close dir 会话');
   ok((await client.request('session/close', { sessionId: 'e2e-text-1' })) === null, 'session/close text 会话');
   ok((await client.request('session/close', { sessionId: 'e2e-merge3-1' })) === null, 'session/close merge3 会话');

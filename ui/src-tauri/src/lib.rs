@@ -850,4 +850,67 @@ mod tests {
         let res = confine_within(&link.join("secret.json").display().to_string(), base.path());
         assert!(res.is_err(), "符号链接逃逸必须被拒绝，实际: {res:?}");
     }
+
+    // ------------------------------------------------------------------
+    // R3-23：WebView CSP 契约（配置级护栏）
+    // ------------------------------------------------------------------
+
+    /// 读取 tauri.conf.json 的 security 块（csp / devCsp）。
+    fn security_csp() -> (String, String) {
+        let raw = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tauri.conf.json"),
+        )
+        .expect("tauri.conf.json 可读");
+        let v: serde_json::Value = serde_json::from_str(&raw).expect("tauri.conf.json 是合法 JSON");
+        let sec = &v["app"]["security"];
+        (
+            sec["csp"].as_str().unwrap_or_default().to_string(),
+            sec["devCsp"].as_str().unwrap_or_default().to_string(),
+        )
+    }
+
+    /// 生产 CSP 必须存在且覆盖应用真实用到的资源来源。
+    ///
+    /// 依据（ui/src 侧实测）：
+    /// - CodeMirror 6 运行期注入 `<style>`（style-mod 的 StyleSet）→ style-src 需 'unsafe-inline'
+    /// - 图片比较用 `file://` 直接加载本地图（PictureCompareView）→ img-src 需 file:
+    /// - 报告导出/剪贴板另存用 `URL.createObjectURL`（blob:）→ img-src 需 blob:
+    /// - Tauri 2 的 invoke 底层 `fetch(ipc://localhost/...)`（Windows 为 http://ipc.localhost）
+    ///   → connect-src 需 ipc: 与 http://ipc.localhost
+    /// - 无 eval / new Function / 远程字体 / 远程脚本 → script-src 可收紧到 'self'
+    #[test]
+    fn prod_csp_covers_app_resource_origins() {
+        let (csp, dev_csp) = security_csp();
+        assert!(
+            !csp.is_empty(),
+            "生产 CSP 不得为空（csp: null 等于没有 CSP）"
+        );
+        for needle in [
+            "default-src 'self'",
+            "script-src 'self'",
+            "style-src 'self' 'unsafe-inline'",
+            "img-src 'self' file: data: blob:",
+            "connect-src 'self' ipc: http://ipc.localhost",
+            "object-src 'none'",
+            "base-uri 'self'",
+        ] {
+            assert!(
+                csp.contains(needle),
+                "生产 CSP 缺少 `{needle}`，实际: {csp}"
+            );
+        }
+        assert!(
+            !csp.contains("'unsafe-eval'"),
+            "生产 CSP 不得放开 'unsafe-eval'（应用不使用 eval）: {csp}"
+        );
+
+        // dev：CSP 单独放宽（HMR 内联脚本 + websocket + 源码映射 eval）
+        assert!(!dev_csp.is_empty(), "dev CSP 不得为空");
+        for needle in ["'unsafe-inline'", "'unsafe-eval'", "ws:", "ipc:"] {
+            assert!(
+                dev_csp.contains(needle),
+                "dev CSP 缺少 `{needle}`，实际: {dev_csp}"
+            );
+        }
+    }
 }

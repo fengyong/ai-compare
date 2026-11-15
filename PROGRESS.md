@@ -655,3 +655,74 @@
 ### 全量门禁（本次实测）
 
 `cargo test --locked --workspace` 1029/0（连续 5 次）、clippy `-D warnings` 零警、根/Tauri fmt check 0 diff、`cargo deny check` 四项 ok、Tauri 18/0、UI 756/0 + `lint`/`build`/`format:check`/`e2e:engine`/`verify:demo` 全绿。本提交只改测试基建与状态文档，未改生产代码。
+
+## SPACEBUNNY 批次：R3-03 收尾 + R3-21 Option 可选性 + 验证基建（2026-11-15）
+
+依据 `SPACEBUNNY-NEXT-ROUND-2026-11-15.md`（BC5 差距与实施顺序）。**交付报告见
+`SPACEBUNNY-DELIVERY-2026-11-15.md`**（含逐工作包的修改链路、变异验证、人工验证清单）。
+本轮完成工作包 1（1A+1B）、2、3（3A/3B/3C）；**未开始** F1/F2。
+
+### 工作包 1：R3-03 完整收尾（1A 真实行模型 + 1B 改向地址）
+
+**清偿了上一轮登记的「新发现 2」**（`PROGRESS.md` HY4 批次 1 §新发现 2：预置 `manualAlign`
+未把异名两侧合并成一行、`b.txt` 行会生成需要左源的 `copyLeftToRight` 计划）。
+
+- **1A（引擎行模型）**：`DirNode` 增 `right_rel`（右侧真实 rel）+ `absorbed_by`（被配对吸收）；
+  `align()` 由「只写 aligned_with」重写为**合并成一行**（存活节点承载左 rel + 右 rel，
+  被吸收节点不成行），`unalign()` 对称解合并；父目录聚合与 stats 跳过被吸收节点（不重复不遗漏）；
+  预置 `manualAlign` 与运行期 `dir/align` 共用 `apply_pending_pairs()`（深层项扫描到后自动配对）；
+  重复 align 幂等；两侧必须同父/都是文件/各自是孤立项（避免半配对行）。
+- **1B（UI 改向地址）**：`syncPlan.ts` 新增 `deriveOpAddresses()`，逐项改写按**当前行 + 目标操作**
+  重新派生 `sourcePath/targetPath/operationPath`（此前只改 `effectiveOp`，换向后仍写回原侧）；
+  `auto` 保持引擎计划；用户 `keep` 清空执行载荷。
+- **协议零改动**（只改引擎行模型与投影；`DirRow.leftPath/rightPath` 语义收紧为「该侧真实 rel」）。
+- **新增回归 27 条**：模型层 6、RPC 层 3、UI 纯函数 7、UI 组件级 4（新建 jsdom 环境），另有真实引擎回放 1 段。
+  **变异验证**：回退引擎 `align()` → 模型层 5/5 + RPC 3/3 FAILED；回退 UI `syncPlan.ts` → 纯函数 2 + 组件级 1 FAILED。
+- **真实落盘终态**：`L/a.txt=AAA` / `R/b.txt=BBB` + 预置对齐 → 计划只有 `a.txt → b.txt` →
+  执行后 `R/b.txt=AAA`、**未创建** `R/a.txt`、`failed=0`、源文件未改写（真实引擎回放已固化进 `pnpm e2e:engine`）。
+
+### 工作包 2：R3-21 Option 可选性专项
+
+- **协议**：`types.rs` 116 处 + `error.rs` 1 处补 `ts(optional)`；`SideInfo.unixMode/uid/gid`
+  由「TS 必填 `number`、线上可缺键」修正为 `ts(optional, type="number")`；
+  **恒定输出的 Option 字段一律不动**（`InlineSpanDto`/`DirMergeRow` 保持必填可空）。
+- **重新生成绑定** 47 文件 / 97 行；**保留**既有「漏项反向检查」与「禁绝 bigint 检查」。
+- **UI 修正**：生产 13 文件 + 夹具 14 文件；`tsc -b` 0 错；**未新增任何 `as unknown as`**；
+  抓到真实夹具缺陷（`partial.left !== undefined` → `'left' in partial`，否则缺侧被补成有侧）。
+- **新增护栏**（`engine/ai-protocol/src/option_shape.rs`）：源码级 `skip_serializing_if ⇔ ts(optional)`
+  一致性检查（已变异验证能抓回归）+ 「省略键/显式 null/有值」三态协议测试。
+- **线上 JSON 值零变化**（serde 未动）；显式 null 仍被接受（旧 UI 不破）。
+
+### 工作包 3：验证基建
+
+- **3A 真实 CI**：**未验证**（需 push 授权触发 runner）。已静态核对 CI 固定版本与本机实测
+  （rustc 1.100.0 / node 26.8.1 / pnpm 12.18.0 / cargo-deny 0.20.2 全部一致）、Linux Tauri
+  系统依赖齐备、E2E 引擎二进制路径与 CI 构建输出一致（无错配）。
+- **3B 组件/桌面故事**：**本仓库此前无任何渲染测试**，本轮建立最小组件测试环境
+  （jsdom + @testing-library/react），新增 9 条组件级用例覆盖故事 1/2/3/4/5。
+  **真实桌面 WebView 的同五个故事仍未实测**（人工清单见交付报告 §四）。
+- **3C CSP**：`csp: null` → 生产 CSP + `devCsp` 分离（依据 ui/src 全量实测的 6 类资源来源）；
+  新增配置级护栏测试。**真实 WebView 上的 CSP 生效与不破坏应用仍未实测**（不宣布完成）。
+
+### 全量门禁（本次实测）
+
+引擎 `cargo test --locked --workspace` **1040/0**（基线 1029 + 本轮 11：模型层 6 + RPC 3 + 协议护栏 2）、clippy `-D warnings` 零警、
+`cargo fmt --all -- --check` 0 diff、协议 drift 检查通过、`cargo deny check` 四项 ok；
+Tauri 独立 workspace **19/0** + clippy 零警 + fmt 0 diff；
+UI `vitest` **772/0**（75 文件，基线 763 + 本轮 9 组件级；另新增 7 条同步纯函数用例）、`tsc -b` 0 错、`lint`/`build`/`format:check` 全绿、
+`pnpm e2e:engine`（新增异名对齐段）、`pnpm verify:demo` 全过。
+
+### 本轮未验证 / 未完成 / 新发现（不得写成已完成）
+
+- **未验证**：真实桌面 WebView 的 GUI 流程与 CSP 生效（组件测试 ≠ GUI E2E）；
+  非 macOS 平台；真实 FTP/远程 VFS 的异名复制；符号链接目标侧越界的实机场景。
+- **R3-21 专项未处理项**（明确登记）：① 33 处**非 Option** 的零值省略字段（`ts(optional)` 不支持，
+  需另走 `ts(type="T | undefined")`）；② `ui/src/protocol/types.ts` 的 4 个本地重复类型与生成类型
+  同名不同形（既有漂移点）；③ 既有 12 处 `as unknown as`（本轮未新增也未清理）。
+- **新发现**：① `DirOpenParams` 结构体级 `#[serde(default)]` 使「省略 depth」= `Some(1)` 而非 `None`
+  （已在三态测试钉住并写注释，引擎默认值语义未改）；② 手动对齐当前只支持「两侧孤立项」，
+  一侧是同名配对行时报错——是刻意收窄（避免半配对行），但相对 BC 属**功能缺口**。
+- **清理（已执行）**：删除 `ui/node_modules/.vitest-cache.tmp-*`（过期缓存临时目录）与
+  `ui/node_modules/.vitest-cache`（被新位置取代的旧缓存）；保留 `ui/.vitest-fs-cache/`（生效中的缓存，
+  已被 `ui/.gitignore` 忽略）。删除后复跑 UI 测试仍 772/0。
+
