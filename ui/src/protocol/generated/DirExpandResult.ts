@@ -2,7 +2,7 @@
 import type { DirStats } from "./DirStats";
 import type { ScanProgress } from "./ScanProgress";
 
-export type DirExpandResult = { sessionId: string, rev: bigint, 
+export type DirExpandResult = { sessionId: string, rev: number, 
 /**
  * 本次展开新增可见行数
  */

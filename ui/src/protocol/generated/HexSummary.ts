@@ -3,4 +3,4 @@
 /**
  * 字节统计
  */
-export type HexSummary = { sameBytes: bigint, changedBytes: bigint, insertedBytes: bigint, deletedBytes: bigint, };
+export type HexSummary = { sameBytes: number, changedBytes: number, insertedBytes: number, deletedBytes: number, };

@@ -11,4 +11,4 @@ export type TextEditResult = { sessionId: string,
 /**
  * 会话版本号（每次成功编辑 +1）
  */
-rev: bigint, leftLineCount: number, rightLineCount: number, sectionCount: number, summary: DiffSummary, sections: Array<Section>, };
+rev: number, leftLineCount: number, rightLineCount: number, sectionCount: number, summary: DiffSummary, sections: Array<Section>, };

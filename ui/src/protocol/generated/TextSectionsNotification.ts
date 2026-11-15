@@ -13,7 +13,7 @@ import type { TextSectionEventKind } from "./TextSectionEventKind";
  * - `event: "replace"`：编辑后局部重算，replacedSpan 区间被 with 替换；
  * - `event: "importanceUpdate"`：重要性重判，updatedIds 按组共享 importance。
  */
-export type TextSectionsNotification = { sessionId: string, rev: bigint, 
+export type TextSectionsNotification = { sessionId: string, rev: number, 
 /**
  * 本次追加的 section（Append 语义，docs/03 §4.1 SectionEvent）
  */

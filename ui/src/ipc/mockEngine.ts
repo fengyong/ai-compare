@@ -421,7 +421,7 @@ export class MockEngine {
     return {
       sessionId,
       rowCount: rows.length,
-      rev: 1 as unknown as bigint,
+      rev: 1,
       scanState: 'completed',
     };
   }
@@ -436,8 +436,8 @@ export class MockEngine {
       const upserts = rows.slice(i * MAX_BATCH_ROWS, (i + 1) * MAX_BATCH_ROWS);
       deltas.push({
         sessionId,
-        // 线上语义为 JSON number（ts-rs 将 u64 映射为 bigint，JSON.parse 实际产出 number）
-        rev: (i + 1) as unknown as bigint,
+        // R3-21：生成类型与 NDJSON 均为 JSON number
+        rev: i + 1,
         upserts,
         removals: [],
         stats,
@@ -463,7 +463,7 @@ export class MockEngine {
     const depth = Math.max(1, p.depth ?? 1);
     const direct = s.treeRows.filter((r) => parentOf(r.id) === p.path && !r.hidden);
     const stats = computeStats(currentRows(s));
-    const rev = 2 as unknown as bigint;
+    const rev = 2;
     // depth>1 时同形补推更深层（mock 全量已在缓存，upsert 幂等无害）
     const all = new Map<string, DirRow>();
     const collect = (parent: string, level: number): void => {
@@ -533,7 +533,7 @@ export class MockEngine {
       return {
         result: {
           sessionId: s.id,
-          rev: 3 as unknown as bigint,
+          rev: 3,
           visibleRows: rows.filter((r) => !r.hidden).length,
           hiddenRows: rows.filter((r) => r.hidden).length,
           stats: computeStats(rows),
@@ -551,7 +551,7 @@ export class MockEngine {
     const stats = computeStats(rows);
     const delta: DirDelta = {
       sessionId: s.id,
-      rev: 4 as unknown as bigint,
+      rev: 4,
       upserts: rows,
       removals,
       stats,
@@ -562,7 +562,7 @@ export class MockEngine {
     return {
       result: {
         sessionId: s.id,
-        rev: 4 as unknown as bigint,
+        rev: 4,
         visibleRows: rows.filter((r) => !r.hidden).length,
         hiddenRows: rows.filter((r) => r.hidden).length,
         stats,
@@ -816,7 +816,7 @@ export class MockEngine {
       notifications = [
         {
           sessionId: s.id,
-          rev: 5 as unknown as bigint,
+          rev: 5,
           upserts,
           removals: [...removed],
           stats,
@@ -1115,7 +1115,7 @@ export class MockEngine {
     s.rev += 1;
     return {
       sessionId: s.id,
-      rev: s.rev as unknown as bigint,
+      rev: s.rev,
       leftLineCount: s.leftLines.length,
       rightLineCount: s.rightLines.length,
       sectionCount: s.sections.length,
@@ -1158,7 +1158,7 @@ export class MockEngine {
       saved.push({
         side: sd,
         path: target,
-        bytes: text.length as unknown as bigint,
+        bytes: text.length,
         lineCount: lines.length,
         ...(backupPath === undefined ? {} : { backupPath }),
       });
@@ -1169,7 +1169,7 @@ export class MockEngine {
     return {
       sessionId: s.id,
       saved,
-      rev: s.rev as unknown as bigint,
+      rev: s.rev,
       leftModified: s.modified.left,
       rightModified: s.modified.right,
     };
@@ -1621,13 +1621,13 @@ export class MockEngine {
     return {
       sessionId: p.sessionId,
       path: p.path,
-      bytes: out.text.length as unknown as bigint,
+      bytes: out.text.length,
       lineCount: out.text === '' ? 0 : out.text.split('\n').length - 1,
       ...(backupPath === undefined ? {} : { backupPath }),
       conflictCount: out.conflictCount,
       unresolvedChunks: out.unresolvedChunks,
       hasConflicts: out.hasConflicts,
-      rev: s.rev as unknown as bigint,
+      rev: s.rev,
     };
   }
 
@@ -1644,7 +1644,7 @@ export class MockEngine {
     const layout = p.layout ?? 'summary';
     const chars = Array.from(this.mockReportContent(layout, p));
     const total = chars.length;
-    const offset = Math.max(0, Math.min(Number(p.offset ?? 0), total));
+    const offset = Math.max(0, Math.min(p.offset ?? 0, total));
     const limit = p.limit === undefined || p.limit === null ? total : Math.max(0, Number(p.limit));
     const slice = chars.slice(offset, offset + limit).join('');
     return {
@@ -2819,10 +2819,10 @@ function summarize(sections: Section[]): DiffSummary {
 // 块来源覆盖 FR-TMRG-002 全部状态：stable / leftOnly / rightOnly /
 // bothChanged（相同更改自动合并）/ conflict（含 addAdd、不重要冲突自动采用）。
 
-/** u64 rev 在 NDJSON 上是 number（bigint 无法 JSON.stringify）；仅应答类型收窄 */
-type MockMerge3OpenResult = Omit<MergeOpenResult, 'rev'> & { rev: number };
-type MockMerge3SectionsResult = Omit<MergeSectionsResult, 'rev'> & { rev: number };
-type MockMerge3DecideResult = Omit<MergeDecideResult, 'rev'> & { rev: number };
+/** R3-21：u64 rev 在生成类型与 NDJSON 上均为 number，无需再收窄 */
+type MockMerge3OpenResult = MergeOpenResult;
+type MockMerge3SectionsResult = MergeSectionsResult;
+type MockMerge3DecideResult = MergeDecideResult;
 
 type Merge3Template = Omit<
   MergeChunkDto,

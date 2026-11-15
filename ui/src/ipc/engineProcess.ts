@@ -572,14 +572,10 @@ export async function saveMerge3(params: MergeSaveParams): Promise<MergeSaveResu
 
 /**
  * P11：报告生成（report/generate；FR-RPT-001/002）。
- * ts-rs 把 u64 的 offset/limit 生成为 bigint，但 NDJSON 传输必须是 number
- * （JSON.stringify 不支持 bigint），故此处把这两个字段收窄为 number，
- * 与 P14 hex/bytes 的 offset 处理同口径。
+ * R3-21：生成类型已与 NDJSON 对齐（offset/limit 均为 number），
+ * 不再需要 Omit + 收窄的适配别名。
  */
-export type ReportParams = Omit<ReportGenerateParams, 'offset' | 'limit'> & {
-  offset?: number;
-  limit?: number;
-};
+export type ReportParams = ReportGenerateParams;
 
 /** report/generate：会话快照 + 布局参数 → 报告内容（可 offset/limit 分块） */
 export async function generateReport(params: ReportParams): Promise<ReportGenerateResult> {

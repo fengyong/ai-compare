@@ -447,3 +447,47 @@
 ### 协议兼容处理
 
 旧载荷（两侧路径字段缺失）一律回退到行 id，树形同路径场景行为不变：`PlannedOperation::address()`、`FileOp::from_planned`、`plan_for`、`plannedToOp`、旧 `DirExecuteOp` 无 `targetPath`（默认目标=源）均保持原语义。新增字段全部为可选且 `skip_serializing_if`，线上不产生 `null` 噪声。
+
+## HY4 批次 2：R3-21 数字契约收敛（2026-11-15，自主工作模式）
+
+依据 `HY4-NEXT-ROUND-2026-11-15.md` §3。基线 `b87472b`（引擎 1001/0、UI 751/0）。
+
+### 实测发现（修复前）
+
+- `ui/src/protocol/generated/` 有 **20 个 .ts 含 `bigint`**，而引擎 NDJSON 实际输出 JSON number；UI 用 18 处 `as unknown as bigint`、4 个 `1n` 夹具、`ReportParams`/`MockMerge3*Result` 的 Omit 收窄绕过类型系统。
+- **一个隐蔽根因**：`ts_export.rs::export_to_bindings()` 是 181 项显式列表，但有 **10 个类型**带 `#[ts(export)]` 却漏出列表（`ContentCompareMethod/Result`、`DirCompareContent*`、`DirContentCompareRow`、`DirScanIssue`、`PictureBlockDto`、`PictureOpenParams/Result`、`PictureOptionsSpec`），其 UI 绑定**从未被重新生成**。`generated_bindings_match_ui` 只逐文件比对 `bindings/` 里已有的文件，漏项完全看不出来 —— 这就是 `PictureOpenResult.diffPixels` 长期停在 bigint 的原因。
+
+### 实际修改的生产链路
+
+- `ai-protocol/types.rs`：全部 `u64`/`i64` 字段加 `#[cfg_attr(feature="ts", ts(type="number"))]`（33 处）；5 个带 `skip_serializing_if` 的 `Option<u64>` 用 `ts(optional, type="number | null")`，与线上「省略键」一致；`error.rs::RpcErrorObject.code` 同为 number。
+- `ai-protocol/safe_int.rs`（新）：`MAX_SAFE_INTEGER = 2^53-1`、`is_safe_integer`/`is_safe_signed`、`find_unsafe_integer` 递归扫描（覆盖 u64/i64/f64 整数形态，返回 JSON 路径）。
+- `ai-engine/server.rs`：入站请求在协议边界统一校验，越界回 `-32602 Invalid params`（通知则记日志并忽略），避免 `JSON.parse` 静默截断精度。
+- `ai-protocol/ts_export.rs`：补齐 10 个漏项；**导出前清空 `bindings/` scratch**（否则残留文件让漏项永远查不出来）；`generated_bindings_match_ui` 增加「UI generated 每个 .ts 都必须由本次导出生成」的反向自检、「生成类型禁绝 bigint」断言、导出数 == UI 文件数。
+- UI：删除 18 处 `as unknown as bigint` + 4 个 `1n` 夹具；`ReportParams = ReportGenerateParams`、`MockMerge3*Result` 直接 alias（不再 Omit 收窄）；`mockEngine` 的 `Number(p.offset)` 简化；清理过时注释。
+
+### 协议兼容处理
+
+字段类型与线上线格式**均未改变**（仍是同一批 JSON number），只是 TS 声明从 `bigint` 纠正为 `number`；旧客户端不受影响。新增的安全整数约束只拒绝 `> 2^53-1` 的入站整数，边界内（epoch 毫秒、文件大小、rev）全部放行。未来若需无损传输更大整数，必须改字符串并递增协议主版本，已在 `safe_int.rs` 文档写明。
+
+### 新增回归测试（7 条）
+
+- `safe_int.rs`：边界值（MAX 通过 / MAX+1 拒绝、有符号负值）、任意深度检测、普通小数不误伤、浮点形态大整数也拒绝。
+- `tests/protocol_conformance`：越界入站整数 → `-32602` 且错误含 `2^53-1`；MAX 安全整数放行（区分于其它参数错误）；真实 `dir/open` RPC 应答的 `rev`/`rowCount` 与 `dir/delta` 的 `SideInfo.size`/`mtimeMs` 均为 JSON number。
+- `generated_bindings_match_ui`：反向漏项自检 + 禁绝 bigint + 数量一致。
+
+### 变异验证（回退修复，测试确实变红）
+
+| 变异 | 结果 |
+| --- | --- |
+| 在 UI generated 里塞回一个 `bigint` | drift 检查 FAILED ✓ |
+| 从导出列表删掉 `PictureOpenResult` | 首次**未**被抓到（scratch 残留），据此补上「导出前清空 scratch」；重做后 FAILED ✓ |
+
+### 全量门禁（修复后，本次实测）
+
+引擎 **1006/0** + clippy 零警；协议 drift 通过；壳 **18/0** + clippy 零警；UI **751/0**（72 文件）+ `lint`/`build`/`format:check` 全绿；`e2e:engine`、`verify:demo` 全过。生成绑定 `bigint` 计数 **0**。
+
+### 仍未验证 / 未完成 / 明确边界
+
+- **未做（独立专项）**：`Option` 字段的 TS 可选性。本批次只处理了 5 个 `Option<u64>`；其余约 160 个 `Option<T>` 仍导出为必填 `T | null`，而 serde 会省略键。修它需批量加 `ts(optional)` 并可能牵动 UI 数十处类型检查，按「每工作包独立」未夹带，登记为后续专项。
+- **未验证**：真实桌面 WebView 上的数值展示；非 macOS 平台；> 2^53 的出站值（引擎业务字段实际量级远低于该上限，出站未加运行时断言，仅靠协议约定 + 入站约束）。
+- 手写请求/响应类型（`engineProcess.ts` 的 hex/table 等）仍与生成类型重复，但不是双重 cast，本批次未清理。

@@ -7,7 +7,7 @@ export type MergeDecideResult = { sessionId: string,
 /**
  * 会话版本号（决策内容变化才递增；幂等提交 rev 不变）
  */
-rev: bigint, 
+rev: number, 
 /**
  * 本次提交的决策条数
  */

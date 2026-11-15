@@ -22,6 +22,19 @@ fn ui_generated_dir() -> PathBuf {
 /// 注：`TS::export()` 写入 ts-rs 默认的 `bindings/` 目录（`export_to` 属性
 /// 只影响其隐藏导出测试）。
 fn export_to_bindings() -> Result<(), Box<dyn std::error::Error>> {
+    // 先清空 scratch：ts-rs 只覆盖「本次实际导出」的类型，若不清空，
+    // 上次生成的残留 .ts 会让「类型有 #[ts(export)] 但漏出显式列表」永远
+    // 无法被发现（R3-21 实测：PictureOpenResult 等 10 个类型因此长期停在
+    // 旧的 bigint 版本，而 drift 的逐文件比对完全看不出来）。
+    let scratch = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("bindings");
+    if scratch.is_dir() {
+        for entry in std::fs::read_dir(&scratch)? {
+            let path = entry?.path();
+            if path.extension().and_then(|e| e.to_str()) == Some("ts") {
+                std::fs::remove_file(path)?;
+            }
+        }
+    }
     // 逐类型显式导出（顺序确定，不依赖 ts-rs 生成的隐藏测试的执行顺序）
     use crate::types::*;
     RequestId::export()?;
@@ -215,6 +228,19 @@ fn export_to_bindings() -> Result<(), Box<dyn std::error::Error>> {
     ReportGenerateParams::export()?;
     ReportGenerateResult::export()?;
     crate::error::RpcErrorObject::export()?;
+    // R3-21：以下 10 个类型此前有 #[ts(export)] 却漏出显式列表，导致其
+    // UI 绑定从未被重新生成（PictureOpenResult/RpcErrorObject 长期停在旧的
+    // bigint 版本）。补齐后由 generated_bindings_match_ui 的反向自检锁定。
+    ContentCompareMethod::export()?;
+    ContentCompareResult::export()?;
+    DirCompareContentParams::export()?;
+    DirCompareContentResult::export()?;
+    DirContentCompareRow::export()?;
+    DirScanIssue::export()?;
+    PictureBlockDto::export()?;
+    PictureOpenParams::export()?;
+    PictureOpenResult::export()?;
+    PictureOptionsSpec::export()?;
     Ok(())
 }
 
@@ -264,10 +290,38 @@ mod tests {
             assert_eq!(fresh, old, "{label} 与 UI generated 漂移（需再生成）");
             n += 1;
         }
-        assert!(
-            n >= 139,
-            "应导出全部协议类型（P10 formats/rules + P11 report），实际 {n}"
-        );
+        // 反向自检：UI generated 里的每个 .ts 都必须由本次导出重新生成。
+        // 否则「类型有 #[ts(export)] 但忘了进 export_to_bindings 列表」会让
+        // 绑定永久陈旧，而逐文件比对完全发现不了（R3-21 实测踩中）。
+        for entry in std::fs::read_dir(&ui_dir).expect("UI generated 目录") {
+            let name = entry.expect("read_dir").file_name();
+            if name.to_string_lossy().ends_with(".ts") {
+                assert!(
+                    bindings.join(&name).is_file(),
+                    "UI generated 有 {} 但 bindings 未生成：该类型漏出 export_to_bindings 列表",
+                    name.to_string_lossy()
+                );
+            }
+        }
+        // R3-21：生成类型不得再出现 bigint —— 线上 NDJSON 是 JSON number，
+        // bigint 会让 UI 写出 `as unknown as bigint` 之类的双重 cast。
+        for entry in std::fs::read_dir(&ui_dir).expect("UI generated 目录") {
+            let path = entry.expect("read_dir").path();
+            if path.extension().and_then(|e| e.to_str()) != Some("ts") {
+                continue;
+            }
+            let content = std::fs::read_to_string(&path).expect("读 UI generated");
+            assert!(
+                !content.contains("bigint"),
+                "{} 仍生成 bigint（与 NDJSON number 不符）",
+                path.display()
+            );
+        }
+        let ui_count = std::fs::read_dir(&ui_dir)
+            .expect("UI generated 目录")
+            .filter(|e| e.as_ref().is_ok_and(|e| e.file_name().to_string_lossy().ends_with(".ts")))
+            .count();
+        assert_eq!(n, ui_count, "导出类型数应与 UI generated 文件数一致");
     }
 
     /// 手动再生成 UI 契约：cargo test -p ai-protocol -- --ignored regenerate_ui_bindings

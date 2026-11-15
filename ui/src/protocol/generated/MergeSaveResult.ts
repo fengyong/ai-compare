@@ -8,4 +8,4 @@ export type MergeSaveResult = { sessionId: string, path: string,
 /**
  * 实际写入字节数（含写回的 BOM）
  */
-bytes: bigint, lineCount: number, backupPath?: string, conflictCount: number, unresolvedChunks: Array<number>, hasConflicts: boolean, rev: bigint, };
+bytes: number, lineCount: number, backupPath?: string, conflictCount: number, unresolvedChunks: Array<number>, hasConflicts: boolean, rev: number, };

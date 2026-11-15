@@ -294,6 +294,30 @@ pub async fn run_stdio(opts: ServerOptions) -> std::io::Result<()> {
 
         let has_id = value.get("id").is_some();
 
+        // R3-21 数字契约：入站整数必须落在 JS 安全整数范围（2^53-1）。
+        // 否则客户端 JSON.parse 会静默截断精度且不报错；与其让错误结果
+        // 悄悄进入比较/同步，不如在协议边界直接拒绝（Invalid params）。
+        if let Some(path) = ai_protocol::safe_int::find_unsafe_integer(&value) {
+            let msg = format!(
+                "整数超出 JS 安全范围（2^53-1）: {path}；需要更大值时须改用字符串等无损表示"
+            );
+            if has_id {
+                let id = value
+                    .get("id")
+                    .and_then(|v| serde_json::from_value::<ai_protocol::RequestId>(v.clone()).ok())
+                    .unwrap_or(ai_protocol::RequestId::Null(None));
+                send_outbound(
+                    &tx,
+                    Outbound::Response(RpcResponse::failure(
+                        id,
+                        ai_protocol::error_object(codes::INVALID_PARAMS, msg.clone()),
+                    )),
+                );
+            }
+            log::warn(msg);
+            continue;
+        }
+
         if has_id {
             // ---- 请求 ----
             // 先取原始 id（from_value 会消费 value）：信封非法时尽量回显原 id。

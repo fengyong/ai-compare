@@ -9,4 +9,4 @@ rowCount: number,
 /**
  * 最新 rev（delta 批次推完后与此一致）
  */
-rev: bigint, scanState: ScanState, };
+rev: number, scanState: ScanState, };

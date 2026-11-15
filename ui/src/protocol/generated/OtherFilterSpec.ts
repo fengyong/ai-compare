@@ -10,19 +10,19 @@ export type OtherFilterSpec = {
 /**
  * 仅保留修改时间 >= 该值（epoch ms）
  */
-minMtimeMs: bigint | null, 
+minMtimeMs?: number | null, 
 /**
  * 仅保留修改时间 <= 该值（epoch ms）
  */
-maxMtimeMs: bigint | null, 
+maxMtimeMs?: number | null, 
 /**
  * 仅保留大小 >= 该值（字节）
  */
-minSize: bigint | null, 
+minSize?: number | null, 
 /**
  * 仅保留大小 <= 该值（字节）
  */
-maxSize: bigint | null, 
+maxSize?: number | null, 
 /**
  * 仅保留内容包含该串的文件（UTF-8 前缀读）
  */

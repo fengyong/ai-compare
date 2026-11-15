@@ -4,4 +4,4 @@ import type { DiffSide } from "./DiffSide";
 /**
  * 单侧落盘结果。`bytes` 为实际写入字节数（含写回的 BOM）。
  */
-export type TextSaveEntry = { side: DiffSide, path: string, bytes: bigint, lineCount: number, backupPath?: string, };
+export type TextSaveEntry = { side: DiffSide, path: string, bytes: number, lineCount: number, backupPath?: string, };

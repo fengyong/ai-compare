@@ -69,7 +69,7 @@ function seedRows(rows: DirRow[]): void {
   releaseDirCache(PARENT_SID);
   const delta: DirDelta = {
     sessionId: PARENT_SID,
-    rev: 1n,
+    rev: 1,
     upserts: rows,
     removals: [],
     stats: {

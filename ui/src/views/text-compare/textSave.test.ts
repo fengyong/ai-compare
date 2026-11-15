@@ -10,14 +10,14 @@ import type { TextSaveEntry, TextSaveParams, TextSaveResult } from '../../protoc
 const entry = (side: 'left' | 'right', path: string): TextSaveEntry => ({
   side,
   path,
-  bytes: 3 as unknown as bigint,
+  bytes: 3,
   lineCount: 1,
 });
 
 const result = (saved: TextSaveEntry[]): TextSaveResult => ({
   sessionId: 's1',
   saved,
-  rev: 1 as unknown as bigint,
+  rev: 1,
   leftModified: false,
   rightModified: false,
 });

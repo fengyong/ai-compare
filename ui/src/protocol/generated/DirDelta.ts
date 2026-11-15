@@ -12,7 +12,7 @@ export type DirDelta = { sessionId: string,
 /**
  * 会话模型版本号（单调递增；每批次 +1）
  */
-rev: bigint, upserts: Array<DirRow>, 
+rev: number, upserts: Array<DirRow>, 
 /**
  * 被移除的行 id（P0 全量扫描不产生，字段为增量刷新预留）
  */

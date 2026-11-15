@@ -12,7 +12,7 @@ fuzzUsed: number,
 /**
  * 首个非零位置漂移（hunk 落点较补丁声明的行偏移）
  */
-offsetApplied: bigint, 
+offsetApplied: number, 
 /**
  * 失败/跳过原因
  */

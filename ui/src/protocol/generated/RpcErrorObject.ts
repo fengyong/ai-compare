@@ -3,7 +3,11 @@
 /**
  * JSON-RPC error 对象
  */
-export type RpcErrorObject = { code: bigint, message: string, 
+export type RpcErrorObject = { 
+/**
+ * JSON-RPC 错误码（线上为 JSON number；取值远小于 2^53）
+ */
+code: number, message: string, 
 /**
  * 结构化附加信息（本地化由 UI 完成：引擎只上报 (code, params)，docs/03 §6.7）
  */

@@ -12,13 +12,13 @@ const opts: MergeSaveOptions = { mode: 'plain', markerStyle: 'merge', backup: tr
 const result = (path: string): MergeSaveResult => ({
   sessionId: 's1',
   path,
-  bytes: 12 as unknown as bigint,
+  bytes: 12,
   lineCount: 3,
   backupPath: `${path}.bak`,
   conflictCount: 2,
   unresolvedChunks: [],
   hasConflicts: false,
-  rev: 1 as unknown as bigint,
+  rev: 1,
 });
 
 function recorder(impl?: (p: MergeSaveParams) => Promise<MergeSaveResult | null>) {

@@ -21,7 +21,7 @@ const row = (id: string, over: Partial<DirRow> = {}): DirRow => ({
 
 const delta = (over: Partial<DirDelta> & Pick<DirDelta, 'upserts'>): DirDelta => ({
   sessionId: 's1',
-  rev: 1n,
+  rev: 1,
   removals: [],
   stats: {
     total: over.upserts.length,

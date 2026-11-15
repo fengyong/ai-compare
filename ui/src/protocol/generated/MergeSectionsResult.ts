@@ -12,4 +12,4 @@ total: number, hasMore: boolean,
 /**
  * 会话版本号（决策提交后递增）
  */
-rev: bigint, chunks: Array<MergeChunkDto>, };
+rev: number, chunks: Array<MergeChunkDto>, };

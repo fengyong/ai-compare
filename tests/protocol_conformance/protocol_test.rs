@@ -352,3 +352,98 @@ fn record_target_unwritable_warns_on_stderr() {
     assert!(err.contains("missing-subdir"), "告警需含目标路径，实际 stderr: {err}");
     assert!(!bad.exists(), "不可写目标不应被创建");
 }
+
+// ---------------------------------------------------------------------------
+// R3-21：数字契约（u64/i64 线上为 JSON number + 安全整数边界）
+// ---------------------------------------------------------------------------
+
+/// 入站整数超过 2^53-1 时必须在协议边界拒绝，避免客户端 JSON.parse 静默丢精度。
+#[test]
+fn unsafe_integer_in_request_is_rejected() {
+    let lines = vec![
+        serde_json::to_string(&json!({
+            "jsonrpc": "2.0",
+            "id": 9,
+            "method": "hex/bytes",
+            "params": {"sessionId": "h1", "side": "left", "offset": 9007199254740992u64, "count": 16}
+        }))
+        .unwrap(),
+    ];
+    let (outputs, _exited) = run_engine_raw(&lines, Duration::from_secs(5));
+    let resp = resp_by_id(&outputs, 9);
+    assert_eq!(
+        resp.get("error").and_then(|e| e.get("code")).and_then(|c| c.as_i64()),
+        Some(-32602),
+        "越界整数应回 -32602，实际: {resp:?}"
+    );
+    assert!(
+        resp["error"]["message"].as_str().unwrap_or("").contains("2^53-1"),
+        "错误信息应指出安全整数上限: {resp:?}"
+    );
+}
+
+/// 边界内的整数必须正常放行（不能误伤 epoch 毫秒、文件大小等合法值）。
+#[test]
+fn max_safe_integer_in_request_is_accepted() {
+    let lines = vec![
+        serde_json::to_string(&json!({
+            "jsonrpc": "2.0",
+            "id": 10,
+            "method": "hex/bytes",
+            "params": {"sessionId": "h1", "side": "left", "offset": 9007199254740991u64, "count": 16}
+        }))
+        .unwrap(),
+    ];
+    let (outputs, _exited) = run_engine_raw(&lines, Duration::from_secs(5));
+    let resp = resp_by_id(&outputs, 10);
+    let msg = resp["error"]["message"].as_str().unwrap_or("");
+    assert!(
+        !msg.contains("2^53-1"),
+        "边界内整数不应被安全整数约束拒绝（会话不存在等其它错误不算）: {resp:?}"
+    );
+}
+
+/// 真实 RPC 应答里的代表性 u64 字段必须是 JSON number（不是 string / 不是 null）。
+#[test]
+fn rpc_numeric_fields_are_json_numbers() {
+    let dir = tempfile::tempdir().unwrap();
+    let l = dir.path().join("L");
+    let r = dir.path().join("R");
+    std::fs::create_dir_all(&l).unwrap();
+    std::fs::create_dir_all(&r).unwrap();
+    std::fs::write(l.join("a.txt"), b"left").unwrap();
+    std::fs::write(r.join("a.txt"), b"right!").unwrap();
+    let inputs = vec![
+        harness::req(1, "initialize", json!({"clientInfo": {"name": "c", "version": "0"}, "protocolVersion": "1.0"})),
+        harness::req(2, "dir/open", json!({
+            "sessionId": "num1",
+            "left": l.to_string_lossy(),
+            "right": r.to_string_lossy(),
+            "criteria": {"mtimeToleranceSec": 0, "contentCompare": "always"}
+        })),
+    ];
+    let outputs = harness::run_engine(&inputs, None);
+    let open = outputs
+        .iter()
+        .find(|m| m.get("id").and_then(|v| v.as_i64()) == Some(2))
+        .expect("dir/open 应答");
+    // rev: u64 → JSON number
+    assert!(open["result"]["rev"].is_number(), "rev 应为 JSON number: {open}");
+    assert!(open["result"]["rowCount"].is_number(), "rowCount 应为 JSON number: {open}");
+
+    // dir/delta 里的 SideInfo.size / mtimeMs 是 u64
+    let delta = outputs
+        .iter()
+        .find(|m| m.get("method") == Some(&json!("dir/delta")))
+        .expect("dir/delta 通知");
+    let rows = delta["params"]["upserts"].as_array().expect("upserts");
+    assert!(!rows.is_empty(), "应有目录行: {delta}");
+    for row in rows {
+        for side in ["left", "right"] {
+            if let Some(info) = row.get(side).filter(|v| !v.is_null()) {
+                assert!(info["size"].is_number(), "{side}.size 应为 JSON number: {info}");
+                assert!(info["mtimeMs"].is_number(), "{side}.mtimeMs 应为 JSON number: {info}");
+            }
+        }
+    }
+}

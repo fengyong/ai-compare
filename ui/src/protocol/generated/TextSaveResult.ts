@@ -5,7 +5,7 @@ import type { TextSaveEntry } from "./TextSaveEntry";
  * text/save 应答。保存不改比较模型，故 `rev` 为保存时的会话版本（不递增）；
  * 成功落盘的侧其"未保存编辑"标记被清除。
  */
-export type TextSaveResult = { sessionId: string, saved: Array<TextSaveEntry>, rev: bigint, 
+export type TextSaveResult = { sessionId: string, saved: Array<TextSaveEntry>, rev: number, 
 /**
  * 保存后仍有未保存编辑的侧（Both 语义下未编辑侧不会出现在 saved 中）
  */

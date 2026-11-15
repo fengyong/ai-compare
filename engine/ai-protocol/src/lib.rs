@@ -14,6 +14,7 @@
 //! 协议演进规则：**只加不改不删** + `initialize` 版本协商（semver 协议版本）。
 
 pub mod error;
+pub mod safe_int;
 #[cfg(feature = "ts")]
 pub mod ts_export;
 pub mod types;

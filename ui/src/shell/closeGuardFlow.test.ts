@@ -70,12 +70,12 @@ function saveResult(sessionId: string, sides: Array<'left' | 'right'>): TextSave
     saved: sides.map((side) => ({
       side,
       path: side === 'left' ? '/l.txt' : '/r.txt',
-      bytes: 2 as unknown as bigint,
+      bytes: 2,
       lineCount: 1,
       backupPath: `${side === 'left' ? '/l.txt' : '/r.txt'}.bak`,
     })),
-    // 线上 NDJSON 是 number，生成类型标 bigint（R3-21 待收敛）
-    rev: 1 as unknown as bigint,
+    // R3-21：生成类型与 NDJSON 均为 JSON number
+    rev: 1,
     leftModified: false,
     rightModified: false,
   };

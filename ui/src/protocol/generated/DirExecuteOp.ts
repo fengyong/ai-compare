@@ -30,4 +30,4 @@ newName: string | null,
 /**
  * touch 目标 mtime（epoch ms；0/缺省 = 取对侧时间戳）
  */
-mtimeMs: bigint | null, };
+mtimeMs?: number | null, };

@@ -37,6 +37,8 @@ pub mod codes {
 #[cfg_attr(feature = "ts", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts", ts(export))]
 pub struct RpcErrorObject {
+    /// JSON-RPC 错误码（线上为 JSON number；取值远小于 2^53）
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub code: i64,
     pub message: String,
     /// 结构化附加信息（本地化由 UI 完成：引擎只上报 (code, params)，docs/03 §6.7）

@@ -5,7 +5,7 @@ export type PictureOpenResult = { sessionId: string,
 /**
  * 画布尺寸（两侧最大宽高）
  */
-width: number, height: number, leftWidth: number, leftHeight: number, rightWidth: number, rightHeight: number, diffPixels: bigint, totalPixels: bigint, 
+width: number, height: number, leftWidth: number, leftHeight: number, rightWidth: number, rightHeight: number, diffPixels: number, totalPixels: number, 
 /**
  * 相似度百分比（100.0 = 全同）
  */

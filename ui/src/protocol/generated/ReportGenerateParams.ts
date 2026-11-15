@@ -60,8 +60,8 @@ includeFileLinks?: boolean,
 /**
  * 分块流：起始字符偏移（缺省 0）
  */
-offset?: bigint, 
+offset?: number, 
 /**
  * 分块流：本块最大字符数（None = 全量）
  */
-limit?: bigint, };
+limit?: number, };

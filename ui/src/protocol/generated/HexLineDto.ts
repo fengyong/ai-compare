@@ -7,7 +7,7 @@ export type HexLineDto = {
 /**
  * 行首字节地址
  */
-addr: bigint, 
+addr: number, 
 /**
  * 十六进制列（小写两位空格分隔；末行短于 16 字节不填充）
  */

@@ -592,6 +592,7 @@ pub struct DirOpenResult {
     /// 会话内可见行总数（等于全部 delta 的 upserts 总数）
     pub row_count: u32,
     /// 最新 rev（delta 批次推完后与此一致）
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub rev: u64,
     pub scan_state: ScanState,
 }
@@ -728,6 +729,7 @@ pub struct BatchInfo {
 pub struct DirDelta {
     pub session_id: String,
     /// 会话模型版本号（单调递增；每批次 +1）
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub rev: u64,
     pub upserts: Vec<DirRow>,
     /// 被移除的行 id（P0 全量扫描不产生，字段为增量刷新预留）
@@ -971,6 +973,7 @@ pub struct TextSectionsResult {
 #[serde(rename_all = "camelCase")]
 pub struct TextSectionsNotification {
     pub session_id: String,
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub rev: u64,
     /// 本次追加的 section（Append 语义，docs/03 §4.1 SectionEvent）
     pub appended: Vec<Section>,
@@ -1193,6 +1196,7 @@ pub struct TextEditParams {
 pub struct TextEditResult {
     pub session_id: String,
     /// 会话版本号（每次成功编辑 +1）
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub rev: u64,
     pub left_line_count: u32,
     pub right_line_count: u32,
@@ -1251,6 +1255,7 @@ pub struct TextSaveParams {
 pub struct TextSaveEntry {
     pub side: DiffSide,
     pub path: String,
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub bytes: u64,
     pub line_count: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1267,6 +1272,7 @@ pub struct TextSaveEntry {
 pub struct TextSaveResult {
     pub session_id: String,
     pub saved: Vec<TextSaveEntry>,
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub rev: u64,
     /// 保存后仍有未保存编辑的侧（Both 语义下未编辑侧不会出现在 saved 中）
     pub left_modified: bool,
@@ -1494,6 +1500,7 @@ pub struct MergeOpenResult {
     pub chunk_count: u32,
     /// 冲突块总数（含已自动采用的不重要冲突）
     pub conflict_count: u32,
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub rev: u64,
 }
 
@@ -1596,6 +1603,7 @@ pub struct MergeSectionsResult {
     pub total: u32,
     pub has_more: bool,
     /// 会话版本号（决策提交后递增）
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub rev: u64,
     pub chunks: Vec<MergeChunkDto>,
 }
@@ -1631,6 +1639,7 @@ pub struct MergeDecideParams {
 pub struct MergeDecideResult {
     pub session_id: String,
     /// 会话版本号（决策内容变化才递增；幂等提交 rev 不变）
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub rev: u64,
     /// 本次提交的决策条数
     pub decided: u32,
@@ -1719,6 +1728,7 @@ pub struct MergeSaveResult {
     pub session_id: String,
     pub path: String,
     /// 实际写入字节数（含写回的 BOM）
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub bytes: u64,
     pub line_count: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1727,6 +1737,7 @@ pub struct MergeSaveResult {
     pub conflict_count: u32,
     pub unresolved_chunks: Vec<u32>,
     pub has_conflicts: bool,
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub rev: u64,
 }
 
@@ -1995,9 +2006,13 @@ pub struct HexOpenParams {
 #[cfg_attr(feature = "ts", ts(export))]
 #[serde(rename_all = "camelCase")]
 pub struct HexSummary {
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub same_bytes: u64,
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub changed_bytes: u64,
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub inserted_bytes: u64,
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub deleted_bytes: u64,
 }
 
@@ -2007,7 +2022,9 @@ pub struct HexSummary {
 #[serde(rename_all = "camelCase")]
 pub struct HexOpenResult {
     pub session_id: String,
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub left_size: u64,
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub right_size: u64,
     /// diff 块数（same/changed/inserted/deleted 块序列）
     pub block_count: u32,
@@ -2070,7 +2087,9 @@ pub struct PictureOpenResult {
     pub left_height: u32,
     pub right_width: u32,
     pub right_height: u32,
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub diff_pixels: u64,
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub total_pixels: u64,
     /// 相似度百分比（100.0 = 全同）
     pub similarity_pct: f64,
@@ -2089,6 +2108,7 @@ pub struct HexBytesParams {
     pub session_id: String,
     pub side: DiffSide,
     /// 起始字节偏移（向下对齐到 16 字节行首；越界钳制）
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub offset: u64,
     /// 取回字节长度上限（向上对齐到整行；单页上限 4096 字节 = 256 行）
     pub length: u32,
@@ -2101,6 +2121,7 @@ pub struct HexBytesParams {
 #[serde(rename_all = "camelCase")]
 pub struct HexLineDto {
     /// 行首字节地址
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub addr: u64,
     /// 十六进制列（小写两位空格分隔；末行短于 16 字节不填充）
     pub hex: String,
@@ -2118,6 +2139,7 @@ pub struct HexBytesResult {
     pub session_id: String,
     pub side: DiffSide,
     /// 实际起始字节偏移（对齐后）
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub offset: u64,
     pub lines: Vec<HexLineDto>,
     /// true = 本页之后无更多行
@@ -2175,6 +2197,7 @@ pub struct PatchFileResultDto {
     /// 实际使用的模糊层数
     pub fuzz_used: u32,
     /// 首个非零位置漂移（hunk 落点较补丁声明的行偏移）
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub offset_applied: i64,
     /// 失败/跳过原因
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -2237,6 +2260,7 @@ pub struct DirExecuteOp {
     pub new_name: Option<String>,
     /// touch 目标 mtime（epoch ms；0/缺省 = 取对侧时间戳）
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional, type = "number | null"))]
     pub mtime_ms: Option<u64>,
 }
 
@@ -2981,15 +3005,19 @@ pub struct NameFilterSpec {
 pub struct OtherFilterSpec {
     /// 仅保留修改时间 >= 该值（epoch ms）
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional, type = "number | null"))]
     pub min_mtime_ms: Option<u64>,
     /// 仅保留修改时间 <= 该值（epoch ms）
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional, type = "number | null"))]
     pub max_mtime_ms: Option<u64>,
     /// 仅保留大小 >= 该值（字节）
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional, type = "number | null"))]
     pub min_size: Option<u64>,
     /// 仅保留大小 <= 该值（字节）
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional, type = "number | null"))]
     pub max_size: Option<u64>,
     /// 仅保留内容包含该串的文件（UTF-8 前缀读）
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -3087,6 +3115,7 @@ pub struct DirExpandParams {
 #[serde(rename_all = "camelCase")]
 pub struct DirExpandResult {
     pub session_id: String,
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub rev: u64,
     /// 本次展开新增可见行数
     pub new_rows: u32,
@@ -3126,6 +3155,7 @@ pub struct DirFilterParams {
 #[serde(rename_all = "camelCase")]
 pub struct DirFilterResult {
     pub session_id: String,
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub rev: u64,
     /// 过滤后可见行数
     pub visible_rows: u32,
@@ -3158,6 +3188,7 @@ pub struct DirAlignParams {
 #[serde(rename_all = "camelCase")]
 pub struct DirAlignResult {
     pub session_id: String,
+    #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub rev: u64,
     /// 状态被重判/更新的行数
     pub updated_rows: u32,
@@ -3566,11 +3597,11 @@ pub struct ReportGenerateParams {
     pub include_file_links: Option<bool>,
     /// 分块流：起始字符偏移（缺省 0）
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "ts", ts(optional))]
+    #[cfg_attr(feature = "ts", ts(optional, type = "number"))]
     pub offset: Option<u64>,
     /// 分块流：本块最大字符数（None = 全量）
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "ts", ts(optional))]
+    #[cfg_attr(feature = "ts", ts(optional, type = "number"))]
     pub limit: Option<u64>,
 }
 

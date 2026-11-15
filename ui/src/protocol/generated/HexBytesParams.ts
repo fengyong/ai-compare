@@ -8,7 +8,7 @@ export type HexBytesParams = { sessionId: string, side: DiffSide,
 /**
  * 起始字节偏移（向下对齐到 16 字节行首；越界钳制）
  */
-offset: bigint, 
+offset: number, 
 /**
  * 取回字节长度上限（向上对齐到整行；单页上限 4096 字节 = 256 行）
  */

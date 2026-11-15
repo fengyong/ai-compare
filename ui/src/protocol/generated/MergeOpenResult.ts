@@ -7,4 +7,4 @@ export type MergeOpenResult = { sessionId: string, baseLineCount: number, leftLi
 /**
  * 冲突块总数（含已自动采用的不重要冲突）
  */
-conflictCount: number, rev: bigint, };
+conflictCount: number, rev: number, };

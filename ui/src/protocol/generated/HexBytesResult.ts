@@ -6,7 +6,7 @@ export type HexBytesResult = { sessionId: string, side: DiffSide,
 /**
  * 实际起始字节偏移（对齐后）
  */
-offset: bigint, lines: Array<HexLineDto>, 
+offset: number, lines: Array<HexLineDto>, 
 /**
  * true = 本页之后无更多行
  */

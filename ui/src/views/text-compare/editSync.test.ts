@@ -22,7 +22,7 @@ const SUMMARY: DiffSummary = {
 function result(leftLineCount: number, rightLineCount: number): TextEditResult {
   return {
     sessionId: 's',
-    rev: 1n,
+    rev: 1,
     leftLineCount,
     rightLineCount,
     sectionCount: 1,
