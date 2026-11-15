@@ -671,7 +671,7 @@ SRS :50 把「文件级视图的差异信息**回传**文件夹会话（颜色�
 **用户授权**：「确认自主决策全部修复直至完成」——确信缺陷直接修，架构/契约级不确信项记录待决。
 **纪律**：每项独立提交、验收写进提交信息；不提交红测试；rustfmt/prettier 只清本次新增行（既有债不动）；push 另行授权。
 
-### 8.1 逐项处置（截至 HEAD `72ff2ec`）
+### 8.1 逐项处置（截至 HEAD `b0316cf`）
 
 | 项 | 摘要 | 处置 | 提交 |
 | --- | --- | --- | --- |
@@ -697,16 +697,16 @@ SRS :50 把「文件级视图的差异信息**回传**文件夹会话（颜色�
 | R3-20 | 三向合并输出落盘 text/merge3/save | 已修 | `105e786` |
 | R3-21 | 生成类型 vs 线上 JSON | (a)(c) 已修 / **(b) 待决** | `9aeca4f` |
 | R3-22 | 能力协商/取消/背压/录制 | (a)(b)(e) 已修 / **(c)(d) 待决** | `9aeca4f` `72ff2ec` |
-| R3-23 | Tauri 文件命令面/CSP 安全边界 | 本轮后续提交 | — |
-| R3-24 | 发行签名/跨平台/MSRV/README | 本轮后续提交 | — |
-| R3-25 | 巨型单文件与 mock 双实现漂移 | 本轮后续提交 | — |
-| R3-26 | format:check / rustfmt / cargo-deny 门禁 | 本轮后续提交 | — |
+| R3-23 | Tauri 文件命令面/CSP 安全边界 | 命令面收敛+引擎路径已修 / **CSP 待决** | `a806ee0` |
+| R3-24 | 发行签名/跨平台/MSRV/README | 签名+MSRV 已修 / **跨平台·README·LICENSE 待决** | `37188d0` |
+| R3-25 | 巨型单文件与 mock 双实现漂移 | **巨型文件重构待决**；PROGRESS 状态源校准见 §8.3 | — |
+| R3-26 | format:check / rustfmt / cargo-deny 门禁 | prettier 已修 / **rustfmt·cargo-deny 待决** | `b0316cf` |
 | R3-27 | 文本首开丢比较规则（自查） | 已修 | `77fa72d` |
 | R3-28 | 切标签丢目录视图状态（自查） | 本轮后续提交 | — |
 
 ### 8.2 架构/契约级待决（记录证据 + 修法 + 为何后置）
 
-以下三项**不是当前可达的功能缺陷**（门禁全绿、真实链路正确），而是需要改动协议类型契约或取消/背压架构的收敛项。按「架构变更先只读讨论再动代码」的项目纪律，记录待用户拍板，不在本轮擅自重构。
+以下各项**不是当前可达的功能缺陷**（门禁全绿、真实链路正确），而是需要改动协议类型契约、取消/背压架构、安全信任边界或发行工程的收敛项。按「架构变更先只读讨论再动代码」「测不到就说测不到」的项目纪律，记录证据 + 修法 + 为何后置，待用户拍板，不在本轮擅自重构或盲改。
 
 #### R3-21(b) u64 → bigint 生成类型 vs NDJSON number 线上语义
 
@@ -730,3 +730,38 @@ SRS :50 把「文件级视图的差异信息**回传**文件夹会话（颜色�
 - **为何后置**：每个通知发送点都要处理背压，且不能破坏输出顺序与 panic 隔离，属架构变更，需先设计讨论。
 
 > R3-22(e)（--record 静默降级）本轮**已修完**：open 失败告警（P2-06 `0d2780e`）+ 写入失败首次告警（`72ff2ec`）。写入失败分支无便携单测目标，已明说未加不可达守卫。
+
+#### R3-23 CSP=null（信任边界，未盲改）
+
+- **证据**：`tauri.conf.json:24` `"csp": null`。但全仓 `ui/src` 无 `dangerouslySetInnerHTML`/`srcdoc`/`innerHTML`/`outerHTML`（已 grep 确认），比较内容经 React 文本转义 + CM6 文本渲染，**无 HTML 注入汇**；`engine_start` 前端恒不传 path（`tauriTransport.ts:59`）。报告自述「不是当前已证实的远程漏洞」成立——CSP 是纵深防御，非可达漏洞。
+- **判定**：claim 属实（CSP 确为 null），但无活跃注入路径。
+- **修法（提案）**：设 Tauri 兼容 CSP，如 `default-src 'self'; connect-src 'self' ipc: http://ipc.localhost; img-src 'self' asset: http://asset.localhost data: blob:; style-src 'self' 'unsafe-inline'`（CM6 需 inline style；Tauri 自动为注入脚本加 nonce）。
+- **为何后置**：① 现有浏览器验证基建驱动的是 vite dev（纯 Chrome，Tauri 不施加 CSP），**无法在真实 WKWebView 上验证 CSP 不破坏应用**——「测不到就说测不到」；② 严格 `script-src` 会破坏 vite dev 的 HMR 内联脚本，需 dev/prod 分别配置；③ 无活跃汇，边际收益低而静默破坏风险高。应在能驱动真实桌面 WebView 验证时专项处理。
+- **本轮已做的收敛**：`settings_read/write/delete` 限制在应用设置目录（`confine_within`，5 测试 + 变异验证），`engine_start` release 忽略任意 path——把「一旦注入后果扩展到任意文件读写/进程启动」的实际命令面收敛掉（`a806ee0`）。
+
+#### R3-24 跨平台发行 / 公证 / 自动更新 / README / LICENSE
+
+- **证据**：`scripts/build-app.sh` 仅 macOS；无 notarization/auto-update/Win/Linux 发布验证；根仓库无 README/LICENSE（仅 ui/README）。
+- **判定**：claim 属实，属发行工程范畴，非当前 macOS 体验版的功能缺陷。
+- **修法（提案）**：① Win/Linux 打包脚本 + CI 矩阵；② macOS 公证（需 Apple Developer ID + notarytool 凭据）；③ Tauri updater 插件 + 签名密钥；④ 根 README/LICENSE/CONTRIBUTING。
+- **为何后置**：公证/自动更新需用户提供的开发者凭据与签名密钥（不可自主决定）；LICENSE 是法律选择，须用户拍板许可证类型；跨平台 CI 是独立发行专项。本轮已修签名静默失败（`codesign || true` → loud + `--verify --strict`）与 MSRV 对齐（`37188d0`），并把 Tauri 独立 workspace 纳入测试/clippy 实跑（15/15、零告警）。
+
+#### R3-25 巨型单文件重构
+
+- **证据**：`handlers.rs`/`script.rs`/`types.rs`/`report.rs`/`mockEngine.ts` 行数大（报告计数已过期，handlers.rs 现 ~5250+）；同时承担协议/业务/IO/大量测试。
+- **判定**：claim 属实，但「大并不自动等于差」——当前门禁全绿、真实链路正确，拆分无功能收益。
+- **修法（提案）**：按职责把 handlers.rs 拆为 text/dir/merge3/report 子模块，测试随实现迁移；mockEngine.ts 与真实协议契约用 drift 测试守住分叉。
+- **为何后置**：纯结构重构，触及大量调用链与测试布局，风险高收益零（功能不变），属架构变更需先只读讨论。PROGRESS.md「当前阶段=Walking Skeleton」过期属状态源校准，本轮后续提交修（§8.3）。
+
+#### R3-26 rustfmt 全 workspace 债务 / cargo-deny 执行点
+
+- **证据**：根 workspace rustfmt 既有债（ai-core ~523 hunk、ai-engine handlers.rs ~267 等）；cargo-deny 未安装，`deny.toml` 许可策略无执行点。
+- **判定**：claim 属实。注意 `format:check` 脚本仅 prettier（不含 rustfmt），本轮已使其全绿（`b0316cf`）。
+- **修法（提案）**：① 独立机械提交 `cargo fmt --all`（纯格式，需复跑全门禁）；② CI 安装 cargo-deny 并加 `cargo deny check` 门禁。
+- **为何后置**：rustfmt 全量是数百 hunk 的机械 churn，应作为独立提交与本轮功能修复隔离；cargo-deny 需安装新工具（review 纪律不擅自装工具）+ CI 执行点，属门禁基建专项。
+
+### 8.3 文档/状态源校准（本轮后续，#19）
+
+- PROGRESS.md「当前阶段」仍写 Walking Skeleton，与里程碑表格及当前 HEAD 不符 → 校准为当前里程碑（R3-25 子项）。
+- REVIEW.md §2 早期结论的过度声明、formats/* 接线状态、R3 全表 → 按实测校准。
+- 校准完成后回填本节状态与提交 hash。
