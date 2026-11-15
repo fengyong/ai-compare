@@ -209,6 +209,8 @@ pub enum Outbound {
 /// 录制器：`--record <file>` 双向 NDJSON
 struct Recorder {
     file: Option<StdMutex<std::io::BufWriter<std::fs::File>>>,
+    /// 写入失败只告警一次（避免每条消息刷屏）；与 open 失败告警对称，不静默丢录制
+    write_err_logged: AtomicBool,
 }
 
 impl Recorder {
@@ -216,20 +218,31 @@ impl Recorder {
     ///
     /// 为什么不能静默禁用：用户以为在录制、实际无文件，问题现场无法复现。
     fn open(path: Option<&std::path::Path>) -> (Self, Option<String>) {
-        let Some(p) = path else { return (Recorder { file: None }, None) };
+        let new = |file| Recorder {
+            file,
+            write_err_logged: AtomicBool::new(false),
+        };
+        let Some(p) = path else {
+            return (new(None), None);
+        };
         match std::fs::File::create(p) {
-            Ok(f) => (Recorder { file: Some(StdMutex::new(std::io::BufWriter::new(f))) }, None),
-            Err(e) => (Recorder { file: None }, Some(format!("{}: {e}", p.display()))),
+            Ok(f) => (new(Some(StdMutex::new(std::io::BufWriter::new(f)))), None),
+            Err(e) => (new(None), Some(format!("{}: {e}", p.display()))),
         }
     }
 
     fn record(&self, dir: &str, value: &serde_json::Value) {
-        if let Some(mutex) = &self.file {
-            use std::io::Write;
-            let mut w = mutex.lock().expect("录制锁");
-            let _ = serde_json::to_writer(&mut *w, &serde_json::json!({ "dir": dir, "msg": value }));
-            let _ = w.write_all(b"\n");
-            let _ = w.flush();
+        let Some(mutex) = &self.file else { return };
+        use std::io::Write;
+        let mut w = mutex.lock().expect("录制锁");
+        let res = serde_json::to_writer(&mut *w, &serde_json::json!({ "dir": dir, "msg": value }))
+            .map_err(|e| e.to_string())
+            .and_then(|_| w.write_all(b"\n").map_err(|e| e.to_string()))
+            .and_then(|_| w.flush().map_err(|e| e.to_string()));
+        if let Err(msg) = res {
+            if !self.write_err_logged.swap(true, Ordering::Relaxed) {
+                log::warn(format!("--record 写入失败，后续录制可能不完整: {msg}"));
+            }
         }
     }
 }
