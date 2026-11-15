@@ -128,7 +128,7 @@ export function stateLabel(chunk: MergeChunkDto): string {
   return '';
 }
 
-export function conflictKindLabel(kind: MergeConflictKind | null): string {
+export function conflictKindLabel(kind: MergeConflictKind | null | undefined): string {
   switch (kind) {
     case 'modifyModify':
       return S.merge3.conflictModifyModify;
@@ -165,9 +165,8 @@ export function rangeText(r: LineRange): string {
 }
 
 /**
- * 取一侧行内容。真实引擎对空区间会省略行内容字段（如右侧插入块没有
- * baseLines/leftLines，serde skip_serializing_if），而 ts-rs 生成类型仍
- * 声明为必填数组 —— UI 必须按空数组兜底，否则视图渲染会崩。
+ * 取一侧行内容。真实引擎对空区间会省略行内容键（serde skip_serializing_if），
+ * 生成类型以 `Array<string> | undefined` 如实声明；UI 按空数组兜底。
  */
 export function paneLines(chunk: MergeChunkDto, side: 'base' | 'left' | 'right'): string[] {
   const lines = side === 'base' ? chunk.baseLines : side === 'left' ? chunk.leftLines : chunk.rightLines;

@@ -212,11 +212,6 @@ fn default_true() -> bool {
     true
 }
 
-/// Option<bool> 字段的"缺省 true"（协议演进：可选能力位缺省视为可用）
-fn default_some_true() -> Option<bool> {
-    Some(true)
-}
-
 impl Default for CompareCriteria {
     fn default() -> Self {
         CompareCriteria {
@@ -403,8 +398,8 @@ pub struct EngineCapabilities {
     /// 分批的单批最大行数
     pub max_delta_batch_rows: u32,
     /// P3：text/lines 行内容分页入口（大内容按需分页，docs/03 §2.3.2）
-    /// 可选字段（缺省 true）：旧引擎载荷不含该字段时按 true 解析
-    #[serde(default = "default_some_true", skip_serializing_if = "Option::is_none")]
+    /// 可选字段（缺省 None）：旧引擎载荷不含该字段 = 不支持该能力，不得假定为 true
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub lines_read: Option<bool>,
     /// P2：dir/open 惰性 + 后台扫描（lazyScan 参数与 dir/progress 通知）
@@ -417,39 +412,39 @@ pub struct EngineCapabilities {
     #[serde(default = "default_true")]
     pub dir_operate: bool,
     /// P7：三向文本合并入口（text/merge3/* 四方法）
-    /// 可选字段（缺省 true）：旧引擎载荷不含该字段时按 true 解析
-    #[serde(default = "default_some_true", skip_serializing_if = "Option::is_none")]
+    /// 可选字段（缺省 None）：旧引擎载荷不含该字段 = 不支持该能力，不得假定为 true
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub three_way_merge: Option<bool>,
     /// P9：表格比较入口（table/open|sections）
-    /// 可选字段（缺省 true）：旧引擎载荷不含该字段时按 true 解析
-    #[serde(default = "default_some_true", skip_serializing_if = "Option::is_none")]
+    /// 可选字段（缺省 None）：旧引擎载荷不含该字段 = 不支持该能力，不得假定为 true
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub table_compare: Option<bool>,
     /// P9：十六进制比较入口（hex/open|bytes 分页）
-    /// 可选字段（缺省 true）：旧引擎载荷不含该字段时按 true 解析
-    #[serde(default = "default_some_true", skip_serializing_if = "Option::is_none")]
+    /// 可选字段（缺省 None）：旧引擎载荷不含该字段 = 不支持该能力，不得假定为 true
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub hex_compare: Option<bool>,
     /// P9：补丁应用入口（text/patch/apply）
-    /// 可选字段（缺省 true）：旧引擎载荷不含该字段时按 true 解析
-    #[serde(default = "default_some_true", skip_serializing_if = "Option::is_none")]
+    /// 可选字段（缺省 None）：旧引擎载荷不含该字段 = 不支持该能力，不得假定为 true
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub patch_apply: Option<bool>,
     /// P6 提案合入：dir/execute 文件操作执行（dryRun + 执行 + rescan delta）
-    /// 可选字段（缺省 true）：旧引擎载荷不含该字段时按 true 解析
-    #[serde(default = "default_some_true", skip_serializing_if = "Option::is_none")]
+    /// 可选字段（缺省 None）：旧引擎载荷不含该字段 = 不支持该能力，不得假定为 true
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub dir_execute: Option<bool>,
     /// P10：文件格式与规则体系入口（formats/list|save|load、rules/get|set、
     /// text/open rules、dir/open formatAware）
-    /// 可选字段（缺省 true）：旧引擎载荷不含该字段时按 true 解析
-    #[serde(default = "default_some_true", skip_serializing_if = "Option::is_none")]
+    /// 可选字段（缺省 None）：旧引擎载荷不含该字段 = 不支持该能力，不得假定为 true
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub format_rules: Option<bool>,
     /// P11：报告生成入口（report/generate；FR-RPT 布局族）
-    /// 可选字段（缺省 true）：旧引擎载荷不含该字段时按 true 解析
-    #[serde(default = "default_some_true", skip_serializing_if = "Option::is_none")]
+    /// 可选字段（缺省 None）：旧引擎载荷不含该字段 = 不支持该能力，不得假定为 true
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub reports: Option<bool>,
     /// P14：图片比较（picture/open）
@@ -1556,19 +1551,25 @@ pub struct MergeChunkDto {
     pub right: LineRange,
     /// Conflict 块：冲突类别
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub conflict_kind: Option<MergeConflictKind>,
     /// Conflict 块：L↔R 行级子对齐提示
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub conflict_rows: Option<Vec<MergeConflictRowDto>>,
     /// Conflict 块：不重要冲突（左右切片 importance 键序列整体相等）
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub conflict_unimportant: Option<bool>,
     /// 三方行内容（空区间省略；UI 三窗格直接消费）
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[cfg_attr(feature = "ts", ts(type = "Array<string> | undefined"))]
     pub base_lines: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[cfg_attr(feature = "ts", ts(type = "Array<string> | undefined"))]
     pub left_lines: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[cfg_attr(feature = "ts", ts(type = "Array<string> | undefined"))]
     pub right_lines: Vec<String>,
     /// 决策状态：decided = 有显式决策；auto_resolved = 自动采用（favor/iu）；
     /// unresolved = 冲突未决
@@ -3736,11 +3737,11 @@ mod tests {
     // ------------------------------------------------------------------
 
     #[test]
-    fn engine_capabilities_old_payload_gains_lines_read_default() {
-        // P2 旧载荷（无 linesRead）可解析；缺省 true（引擎 P3 起恒支持）
+    fn engine_capabilities_old_payload_lines_read_absent_is_none() {
+        // P2 旧载荷（无 linesRead）可解析；缺省 None（旧引擎缺字段=不支持）
         let old = r#"{"dirCompare":true,"textCompare":true,"inlineDiff":false,"cancel":true,"deltaBatching":true,"maxDeltaBatchRows":512,"dirBackgroundScan":true,"dirFilters":true,"dirOperate":true}"#;
         let v: EngineCapabilities = serde_json::from_str(old).unwrap();
-        assert_eq!(v.lines_read, Some(true));
+        assert_eq!(v.lines_read, None);
         // 新引擎序列化：linesRead 出现；值为 None 时省略（不会序列化为 null）
         let mut c = EngineCapabilities {
             dir_compare: true,
@@ -4054,14 +4055,14 @@ mod tests {
     // ------------------------------------------------------------------
 
     #[test]
-    fn p9_capabilities_old_payload_defaults_true() {
-        // P7 旧载荷（无 P9 能力位）可解析；缺省 true（可选能力位约定）
+    fn p9_capabilities_old_payload_absent_is_none() {
+        // P7 旧载荷（无 P9 能力位）可解析；缺省 None（旧引擎缺字段=不支持）
         let old = r#"{"dirCompare":true,"textCompare":true,"inlineDiff":false,"cancel":true,"deltaBatching":true,"maxDeltaBatchRows":512,"dirBackgroundScan":true,"dirFilters":true,"dirOperate":true}"#;
         let v: EngineCapabilities = serde_json::from_str(old).unwrap();
-        assert_eq!(v.table_compare, Some(true));
-        assert_eq!(v.hex_compare, Some(true));
-        assert_eq!(v.patch_apply, Some(true));
-        assert_eq!(v.dir_execute, Some(true));
+        assert_eq!(v.table_compare, None);
+        assert_eq!(v.hex_compare, None);
+        assert_eq!(v.patch_apply, None);
+        assert_eq!(v.dir_execute, None);
         // None 能力位序列化时省略（不出现 null）
         let mut c = EngineCapabilities {
             dir_compare: true,
@@ -4199,13 +4200,13 @@ mod tests {
 
     #[test]
     fn engine_capabilities_old_payload_without_three_way_merge() {
-        // P2/P3 旧载荷（无 threeWayMerge）可解析；缺省 true（可选能力位约定）
+        // P2/P3 旧载荷（无 threeWayMerge）可解析；缺省 None（旧引擎缺字段=不支持）
         let old = r#"{"dirCompare":true,"textCompare":true,"inlineDiff":false,"cancel":true,"deltaBatching":true,"maxDeltaBatchRows":512,"dirBackgroundScan":true,"dirFilters":true,"dirOperate":true}"#;
         let v: EngineCapabilities = serde_json::from_str(old).unwrap();
-        assert_eq!(v.three_way_merge, Some(true));
-        assert_eq!(v.lines_read, Some(true));
-        assert_eq!(v.format_rules, Some(true), "P10 能力位缺省 true");
-        assert_eq!(v.reports, Some(true), "P11 能力位缺省 true");
+        assert_eq!(v.three_way_merge, None);
+        assert_eq!(v.lines_read, None);
+        assert_eq!(v.format_rules, None, "P10 能力位缺省不得为 true");
+        assert_eq!(v.reports, None, "P11 能力位缺省不得为 true");
         // R3-18 起新能力位缺省 **false**（None）：旧引擎不含该字段时不得假定入口存在
         assert_eq!(v.dir_merge, None, "R3-07 能力位缺省不得为 true");
         assert_eq!(v.text_edit, None, "R3-18 能力位缺省不得为 true");

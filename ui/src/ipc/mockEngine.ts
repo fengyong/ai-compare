@@ -1451,13 +1451,13 @@ export class MockEngine {
       const chunk = deriveMergeChunk(t, s.decisions);
       if (marker && chunk.unresolved) {
         lines.push(`<<<<<<< ${s.labels.left}`);
-        lines.push(...chunk.leftLines);
+        lines.push(...(chunk.leftLines ?? []));
         if (style === 'diff3') {
           lines.push(`||||||| ${s.labels.base}`);
-          lines.push(...chunk.baseLines);
+          lines.push(...(chunk.baseLines ?? []));
         }
         lines.push('=======');
-        lines.push(...chunk.rightLines);
+        lines.push(...(chunk.rightLines ?? []));
         lines.push(`>>>>>>> ${s.labels.right}`);
       } else {
         lines.push(...chunk.outputLines);
@@ -2523,9 +2523,9 @@ function merge3Tpl(
     base,
     left,
     right,
-    conflictKind: opts.conflictKind ?? null,
-    conflictRows: opts.conflictRows ?? null,
-    conflictUnimportant: opts.unimportant ?? null,
+    conflictKind: opts.conflictKind ?? undefined,
+    conflictRows: opts.conflictRows ?? undefined,
+    conflictUnimportant: opts.unimportant ?? undefined,
     baseLines,
     leftLines,
     rightLines,
@@ -2608,15 +2608,15 @@ function merge3SplitLines(text: string): string[] {
 function merge3OutputForDecision(t: Merge3Template, d: MergeDecisionDto): string[] {
   switch (d.action) {
     case 'left':
-      return [...t.leftLines];
+      return [...(t.leftLines ?? [])];
     case 'right':
-      return [...t.rightLines];
+      return [...(t.rightLines ?? [])];
     case 'base':
-      return [...t.baseLines];
+      return [...(t.baseLines ?? [])];
     case 'leftThenRight':
-      return [...t.leftLines, ...t.rightLines];
+      return [...(t.leftLines ?? []), ...(t.rightLines ?? [])];
     case 'rightThenLeft':
-      return [...t.rightLines, ...t.leftLines];
+      return [...(t.rightLines ?? []), ...(t.leftLines ?? [])];
     case 'manual':
       return merge3SplitLines(d.text ?? '');
   }
@@ -2631,9 +2631,9 @@ function deriveMergeChunk(t: Merge3Template, decisions: Map<number, MergeDecisio
     base: t.base,
     left: t.left,
     right: t.right,
-    conflictKind: t.conflictKind,
-    conflictRows: t.conflictRows,
-    conflictUnimportant: t.conflictUnimportant,
+    conflictKind: t.conflictKind ?? undefined,
+    conflictRows: t.conflictRows ?? undefined,
+    conflictUnimportant: t.conflictUnimportant ?? undefined,
     baseLines: t.baseLines,
     leftLines: t.leftLines,
     rightLines: t.rightLines,

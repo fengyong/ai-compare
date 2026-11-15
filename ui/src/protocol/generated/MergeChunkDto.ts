@@ -16,19 +16,19 @@ base: LineRange, left: LineRange, right: LineRange,
 /**
  * Conflict 块：冲突类别
  */
-conflictKind: MergeConflictKind | null, 
+conflictKind?: MergeConflictKind, 
 /**
  * Conflict 块：L↔R 行级子对齐提示
  */
-conflictRows: Array<MergeConflictRowDto> | null, 
+conflictRows?: Array<MergeConflictRowDto>, 
 /**
  * Conflict 块：不重要冲突（左右切片 importance 键序列整体相等）
  */
-conflictUnimportant: boolean | null, 
+conflictUnimportant?: boolean, 
 /**
  * 三方行内容（空区间省略；UI 三窗格直接消费）
  */
-baseLines: Array<string>, leftLines: Array<string>, rightLines: Array<string>, 
+baseLines: Array<string> | undefined, leftLines: Array<string> | undefined, rightLines: Array<string> | undefined, 
 /**
  * 决策状态：decided = 有显式决策；auto_resolved = 自动采用（favor/iu）；
  * unresolved = 冲突未决
