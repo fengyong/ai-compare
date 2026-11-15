@@ -5,7 +5,9 @@ import {
   effectiveFormats,
   exportFormatPack,
   firstMatchingFormat,
+  grammarOf,
   importFormatPack,
+  itemsOf,
   maskListText,
   maskMatches,
   newCustomFormat,
@@ -59,7 +61,7 @@ describe('settings/formatsModel（P10 文件格式页纯逻辑）', () => {
     const ids = BUILTIN_FORMAT_CATALOG.map((f) => f.id);
     expect(new Set(ids).size).toBe(ids.length);
     const cpp = BUILTIN_FORMAT_CATALOG.find((f) => f.id === 'builtin-cpp')!;
-    expect(cpp.grammar.map((e) => e.name)).toContain('注释');
+    expect(grammarOf(cpp).map((e) => e.name)).toContain('注释');
     expect(cpp.masks).toContain('*.cpp');
   });
 
@@ -176,7 +178,10 @@ describe('settings/formatsModel（P10 文件格式页纯逻辑）', () => {
 
     const fresh = newCustomFormat('fmt-new');
     expect(validateFormatSpec({ ...fresh, masks: ['*.new'] })).toEqual([]);
-    expect(fresh.grammar[0].items[0]).toMatchObject({
+    // D1A：grammar/items 在协议侧是「零值省略键」；newCustomFormat 显式写入完整
+    // 结构（不会被省略），此处既钉住构造结果也覆盖共享读取器的兜底路径。
+    expect(fresh.grammar).toHaveLength(1);
+    expect(itemsOf(grammarOf(fresh)[0])[0]).toMatchObject({
       kind: 'delimited',
       start: '//',
       toEol: true,

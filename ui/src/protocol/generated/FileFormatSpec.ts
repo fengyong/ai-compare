@@ -9,4 +9,4 @@ export type FileFormatSpec = { id: string, enabled: boolean,
 /**
  * 文件名掩码（FR-FLT-001 语义；空 = 不匹配，仅能手动选择）
  */
-masks: Array<string>, description: string, viewKind: FormatViewKind, grammar: Array<GrammarElementSpec>, tabStops: number, independentLines: boolean, columnData: boolean, };
+masks?: Array<string>, description?: string, viewKind: FormatViewKind, grammar?: Array<GrammarElementSpec>, tabStops?: number, independentLines?: boolean, columnData?: boolean, };

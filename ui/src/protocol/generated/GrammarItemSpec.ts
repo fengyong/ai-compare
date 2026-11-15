@@ -12,7 +12,7 @@ pattern?: string,
 /**
  * list：token 集
  */
-tokens: Array<string>, 
+tokens?: Array<string>, 
 /**
  * delimited：起始/结束分隔符
  */
@@ -24,7 +24,7 @@ escape?: string,
 /**
  * delimited：起始命中后到行尾（无 end 时语义）
  */
-toEol: boolean, regex: boolean, caseSensitive: boolean, 
+toEol?: boolean, regex?: boolean, caseSensitive?: boolean, 
 /**
  * column：起始列（1 起）
  */
@@ -40,4 +40,4 @@ lines?: number,
 /**
  * rowTitle："或第 1 行"处理首页
  */
-orFirstLine: boolean, };
+orFirstLine?: boolean, };

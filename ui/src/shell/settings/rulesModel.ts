@@ -106,7 +106,8 @@ export function elementsOfFormat(
 ): string[] {
   if (!formatId) return [];
   const fmt = effectiveFormats(formatsState).find((f) => f.id === formatId);
-  return fmt ? fmt.grammar.map((e) => e.name) : [];
+  // D1A：grammar 是零值省略键（空时缺键），读取侧按空列表兜底
+  return fmt ? (fmt.grammar ?? []).map((e) => e.name) : [];
 }
 
 /** 指定格式的生效"不重要元素"集（绑定优先；未绑定 = 空集） */

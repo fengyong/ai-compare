@@ -4,4 +4,4 @@ import type { CompareRulesSpec } from "./CompareRulesSpec";
 /**
  * 生效规则（全部字段具值；引擎解析 Global→Kind→Session→FormatBinding 后的产物）
  */
-export type EffectiveRulesSpec = { compare: CompareRulesSpec, unimportantElements: Array<string>, };
+export type EffectiveRulesSpec = { compare: CompareRulesSpec, unimportantElements?: Array<string>, };

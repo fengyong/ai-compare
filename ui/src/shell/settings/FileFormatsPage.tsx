@@ -4,8 +4,11 @@ import { S } from '../../strings';
 import {
   effectiveFormats,
   exportFormatPack,
+  grammarOf,
   importFormatPack,
+  itemsOf,
   maskListText,
+  masksOf,
   newCustomFormat,
   parseMaskList,
   removeCustom,
@@ -96,7 +99,7 @@ export function FileFormatsPage({ value, onChange }: Props) {
         <tbody>
           {formats.map((f, i) => (
             <FormatRow
-              key={`${f.id}:${f.enabled ? 'on' : 'off'}:${maskListText(f.masks)}`}
+              key={`${f.id}:${f.enabled ? 'on' : 'off'}:${maskListText(masksOf(f))}`}
               format={f}
               order={i + 1}
               shadowed={shadowed.has(f.id)}
@@ -153,7 +156,7 @@ function FormatRow({
   onSaveCustom(fmt: FileFormatSpec): void;
 }) {
   const isBuiltin = format.id.startsWith('builtin-');
-  const [masksText, setMasksText] = useState(maskListText(format.masks));
+  const [masksText, setMasksText] = useState(maskListText(masksOf(format)));
   const [editing, setEditing] = useState(false);
 
   const commitMasks = () => {
@@ -230,7 +233,9 @@ function FormatRow({
           )}
         </td>
         <td className="aic-formats-elements" style={st.elementsCell}>
-          {format.grammar.map((el) => el.name).join('、') || '—'}
+          {grammarOf(format)
+            .map((el) => el.name)
+            .join('、') || '—'}
         </td>
         <td style={st.formatsTd}>
           {!isBuiltin && (
@@ -271,8 +276,8 @@ function CustomGrammarEditor({
       className="aic-grammar-editor"
       style={{ display: 'flex', flexDirection: 'column', gap: 6, padding: '4px 0' }}
     >
-      {format.grammar.map((el, i) => {
-        const item = el.items[0];
+      {grammarOf(format).map((el, i) => {
+        const item = itemsOf(el)[0];
         const kind = item?.kind ?? 'delimited';
         return (
           <div className="aic-grammar-row" key={i} style={st.grammarRow}>

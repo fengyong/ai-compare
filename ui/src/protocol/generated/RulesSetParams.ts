@@ -11,8 +11,8 @@ layer: RuleLayerSpec,
 /**
  * 同时更新的格式绑定（全量替换）
  */
-formatBindings: Array<RuleFormatBindingSpec>, 
+formatBindings?: Array<RuleFormatBindingSpec>, 
 /**
  * formatBindings 缺省时是否清空既有绑定（false = 不动绑定）
  */
-clearFormatBindings: boolean, };
+clearFormatBindings?: boolean, };

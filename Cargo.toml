@@ -37,7 +37,7 @@ thiserror = "2"
 tempfile = "3"
 # ts-rs：协议类型 -> TypeScript 导出（docs/03 §3.1.12 M23 生成管线）
 # 成员 crate 以 optional 引用（feature "ts"）；no-serde-warn 静默无法解析的 serde 属性提示
-ts-rs = { version = "10", features = ["serde-compat", "no-serde-warnings"] }
+ts-rs = { version = "12", features = ["serde-compat", "no-serde-warnings"] }
 
 [profile.release]
 lto = "thin"

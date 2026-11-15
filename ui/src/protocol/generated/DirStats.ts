@@ -7,8 +7,8 @@ export type DirStats = { total: number, same: number, quickDiff: number, content
 /**
  * P2：聚合出差异的目录数（0 时省略，旧载荷字节级兼容）
  */
-dirDiff: number, 
+dirDiff?: number, 
 /**
  * R3-16：基于规则比较判"仅不重要差异"的行数（0 时省略，旧载荷字节级兼容）
  */
-similar: number, };
+similar?: number, };

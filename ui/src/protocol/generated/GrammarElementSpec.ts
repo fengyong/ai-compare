@@ -8,4 +8,4 @@ export type GrammarElementSpec = { name: string,
 /**
  * 元素级"此元素区分大小写"（项级缺省的兜底）
  */
-caseSensitive: boolean, items: Array<GrammarItemSpec>, };
+caseSensitive?: boolean, items?: Array<GrammarItemSpec>, };

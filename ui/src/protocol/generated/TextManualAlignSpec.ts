@@ -10,24 +10,24 @@ export type TextManualAlignSpec = {
 /**
  * 手动对齐锚点（强制并排）
  */
-alignAnchors: Array<TextAlignAnchor>, 
+alignAnchors?: Array<TextAlignAnchor>, 
 /**
  * 隔离：这些行区间从不对齐（独立成 Delete/Insert 块）
  */
-isolate: Array<SideLineRange>, 
+isolate?: Array<SideLineRange>, 
 /**
  * 从不对齐重要差异：重要差异行显示为"添加 + 删除"而非"更改"
  */
-neverAlignImportant: boolean, 
+neverAlignImportant?: boolean, 
 /**
  * 偏斜容差（0 = 引擎默认值）
  */
-skewTolerance: number, 
+skewTolerance?: number, 
 /**
  * 接近度匹配（对被等值段分隔的 删除+插入 块做窗口重 diff）
  */
-proximityMatch: boolean, 
+proximityMatch?: boolean, 
 /**
  * 手动忽略：与这些区间重叠的差异 section 标记为 Ignored
  */
-ignore: Array<SideLineRange>, };
+ignore?: Array<SideLineRange>, };

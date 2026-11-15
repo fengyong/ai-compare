@@ -31,6 +31,30 @@ export interface FileFormatsState {
 }
 
 // ---------------------------------------------------------------------------
+// 协议字段读取（D1A：零值省略字段在线上会缺键，读取侧必须按空值兜底）
+// ---------------------------------------------------------------------------
+//
+// `FileFormatSpec.masks/description/grammar/tabStops/...`、
+// `GrammarElementSpec.items`、`GrammarItemSpec.tokens` 在 serde 侧都是
+// `default + skip_serializing_if`（0/空时省略键）。生成的 TS 因此是可选键，
+// 直接读属性会得到 `undefined`。这里集中兜底，避免每处 `?? []` 重复。
+
+/** 掩码列表（缺键 = 空列表） */
+export function masksOf(f: FileFormatSpec): string[] {
+  return f.masks ?? [];
+}
+
+/** 语法元素列表（缺键 = 空列表） */
+export function grammarOf(f: FileFormatSpec): GrammarElementSpec[] {
+  return f.grammar ?? [];
+}
+
+/** 语法项列表（缺键 = 空列表） */
+export function itemsOf(el: GrammarElementSpec): GrammarItemSpec[] {
+  return el.items ?? [];
+}
+
+// ---------------------------------------------------------------------------
 // 语法项便捷构造（内置目录与"新增格式"默认元素用）
 // ---------------------------------------------------------------------------
 
@@ -496,8 +520,9 @@ export function firstMatchingFormat(
   fileName: string,
 ): FileFormatSpec | null {
   for (const f of formats) {
-    if (!f.enabled || f.masks.length === 0) continue;
-    if (f.masks.some((m) => maskMatches(m, fileName))) return f;
+    const masks = masksOf(f);
+    if (!f.enabled || masks.length === 0) continue;
+    if (masks.some((m) => maskMatches(m, fileName))) return f;
   }
   return null;
 }
@@ -521,13 +546,15 @@ export function shadowedFormatIds(formats: FileFormatSpec[]): Set<string> {
   const out = new Set<string>();
   for (let i = 0; i < formats.length; i++) {
     const f = formats[i];
-    if (!f.enabled || f.masks.length === 0) continue;
+    const masks = masksOf(f);
+    if (!f.enabled || masks.length === 0) continue;
     const shadowed = formats.slice(0, i).some((earlier) => {
-      if (!earlier.enabled || earlier.masks.length === 0) return false;
-      return earlier.masks.some((m) => {
+      const earlierMasks = masksOf(earlier);
+      if (!earlier.enabled || earlierMasks.length === 0) return false;
+      return earlierMasks.some((m) => {
         const t = m.trim();
         if (t === '*.*' || t === '*') return true;
-        return f.masks.some((o) => o.trim() === t);
+        return masks.some((o) => o.trim() === t);
       });
     });
     if (shadowed) out.add(f.id);
@@ -589,15 +616,16 @@ export function updateCustomElement(
     ...state,
     custom: state.custom.map((f) => {
       if (f.id !== formatId) return f;
-      const grammar = f.grammar.map((el, i) => {
+      const grammar = grammarOf(f).map((el, i) => {
         if (i !== elementIndex) return el;
-        const item = el.items[0] ?? lineCommentItem('');
+        const items = itemsOf(el);
+        const item = items[0] ?? lineCommentItem('');
         const nextItem: GrammarItemSpec = {
           ...item,
           kind: patch.kind ?? item.kind,
           pattern: patch.pattern ?? item.pattern,
         };
-        return { ...el, name: patch.name ?? el.name, items: [nextItem, ...el.items.slice(1)] };
+        return { ...el, name: patch.name ?? el.name, items: [nextItem, ...items.slice(1)] };
       });
       return { ...f, grammar };
     }),
@@ -680,10 +708,11 @@ export function exportFormatPack(state: FileFormatsState): string {
 /** 保存前校验（返回错误列表；空 = 合法） */
 export function validateFormatSpec(fmt: FileFormatSpec): string[] {
   const errors: string[] = [];
+  const masks = masksOf(fmt);
   if (!fmt.id.trim()) errors.push('格式 id 不能为空');
   if (fmt.id.startsWith('builtin-')) errors.push('自定义格式 id 不能以 builtin- 开头');
-  if (fmt.masks.length === 0) errors.push('至少需要一个掩码（空掩码不匹配任何文件）');
-  for (const m of fmt.masks) {
+  if (masks.length === 0) errors.push('至少需要一个掩码（空掩码不匹配任何文件）');
+  for (const m of masks) {
     if (!m.trim()) errors.push('掩码不能为空白项');
     else if (/[\r\n]/.test(m)) errors.push('掩码不能包含换行');
   }

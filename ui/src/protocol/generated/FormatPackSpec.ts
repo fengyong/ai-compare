@@ -8,4 +8,4 @@ export type FormatPackSpec = {
 /**
  * 载体版本（当前 1）
  */
-version: number, kind: string, formats: Array<FileFormatSpec>, };
+version: number, kind: string, formats?: Array<FileFormatSpec>, };

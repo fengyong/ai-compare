@@ -3,4 +3,4 @@
 /**
  * 格式绑定（format_id → 元素勾选；解析时最后应用）
  */
-export type RuleFormatBindingSpec = { formatId: string, unimportantElements: Array<string>, };
+export type RuleFormatBindingSpec = { formatId: string, unimportantElements?: Array<string>, };

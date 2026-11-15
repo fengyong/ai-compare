@@ -6,7 +6,7 @@ export type DirMergePlanParams = { sessionId: string, target: DirMergeTarget,
 /**
  * rel 路径 -> 显式决策
  */
-decisions: { [key in string]?: DirMergeDecision }, 
+decisions: { [key in string]: DirMergeDecision }, 
 /**
  * target=output 时的第三输出目录（必需；其余目标忽略）
  */

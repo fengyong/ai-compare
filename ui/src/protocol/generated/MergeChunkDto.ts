@@ -27,8 +27,11 @@ conflictRows?: Array<MergeConflictRowDto>,
 conflictUnimportant?: boolean, 
 /**
  * 三方行内容（空区间省略；UI 三窗格直接消费）
+ *
+ * `serde(default) + skip_serializing_if` => 生成的 TS 为可选键（D1A）：
+ * 空区间时键不出现，读取侧必须按 `undefined` 处理。
  */
-baseLines: Array<string> | undefined, leftLines: Array<string> | undefined, rightLines: Array<string> | undefined, 
+baseLines?: Array<string>, leftLines?: Array<string>, rightLines?: Array<string>, 
 /**
  * 决策状态：decided = 有显式决策；auto_resolved = 自动采用（favor/iu）；
  * unresolved = 冲突未决

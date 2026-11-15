@@ -2515,7 +2515,9 @@ class InvalidParams extends RpcErr {
 // ---------------- 目录模型生成（确定性） ----------------
 
 function computeStats(rows: DirRow[]): DirStats {
-  const stats: DirStats = {
+  // 局部累计器不标 DirStats：`dirDiff` / `similar` 在协议里是零值省略键（D1A），
+  // 标上生成类型会让累加逻辑到处判 undefined；返回值仍是 DirStats。
+  const stats = {
     total: rows.length,
     same: 0,
     quickDiff: 0,

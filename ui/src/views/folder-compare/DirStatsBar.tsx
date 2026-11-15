@@ -32,10 +32,11 @@ export function DirStatsBar({ snapshot }: { snapshot: DirStatsSnapshot }) {
           <i className="aic-dot diff" />
           <b>{formatCount(stats.quickDiff)}</b> {S.folder.stats.quickDiff}
         </span>
-        {stats.similar > 0 && (
+        {/* D1A：similar 是「零值省略键」的协议字段，缺键即 0 */}
+        {(stats.similar ?? 0) > 0 && (
           <span className="aic-stat-chip" title={S.folder.status.similar}>
             <i className="aic-dot diff" />
-            <b>{formatCount(stats.similar)}</b> {S.folder.stats.similar}
+            <b>{formatCount(stats.similar ?? 0)}</b> {S.folder.stats.similar}
           </span>
         )}
         <span className="aic-stat-chip">

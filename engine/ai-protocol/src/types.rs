@@ -1621,14 +1621,14 @@ pub struct MergeChunkDto {
     #[cfg_attr(feature = "ts", ts(optional))]
     pub conflict_unimportant: Option<bool>,
     /// 三方行内容（空区间省略；UI 三窗格直接消费）
+    ///
+    /// `serde(default) + skip_serializing_if` => 生成的 TS 为可选键（D1A）：
+    /// 空区间时键不出现，读取侧必须按 `undefined` 处理。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    #[cfg_attr(feature = "ts", ts(type = "Array<string> | undefined"))]
     pub base_lines: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    #[cfg_attr(feature = "ts", ts(type = "Array<string> | undefined"))]
     pub left_lines: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    #[cfg_attr(feature = "ts", ts(type = "Array<string> | undefined"))]
     pub right_lines: Vec<String>,
     /// 决策状态：decided = 有显式决策；auto_resolved = 自动采用（favor/iu）；
     /// unresolved = 冲突未决

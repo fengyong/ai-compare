@@ -21,7 +21,7 @@ appended: Array<Section>, done: boolean, summary: DiffSummary,
 /**
  * P3：事件类别（缺省/省略 = Append；Append 事件序列化时省略，旧载荷字节级不变）
  */
-event: TextSectionEventKind, 
+event?: TextSectionEventKind, 
 /**
  * P3：Replace 事件——被替换的 section id 闭区间 [start, end]
  */
