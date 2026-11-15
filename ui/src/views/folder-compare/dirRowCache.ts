@@ -7,6 +7,8 @@ import type {
   ScanState,
 } from '../../protocol/types';
 import { subscribeDirDelta } from '../../ipc/engineProcess';
+import type { DirSortSpec } from './dirTree';
+import type { PaneSelections, PaneSide } from './dirPanes';
 
 /**
  * 目录会话的 UI 侧行缓存（docs/03 §6.3："UI 仅窗口 + 计数"）。
@@ -26,6 +28,25 @@ export interface DirStatsSnapshot {
   total: number;
   /** 扫描失败的路径（R3-09：读不到 ≠ 相同，必须让用户看见） */
   scanErrors: readonly DirScanIssue[];
+}
+
+/**
+ * 文件夹视图的持久 UI 偏好（R3-28）。挂在会话缓存层——与 marks 同生命周期：
+ * 切换标签会卸载视图组件，但会话缓存存活，重挂时据此 rehydrate，展开/平铺/
+ * 过滤/排序/选择不再丢失（BC 标签往返保留视图状态）。仅视图偏好，不含瞬态
+ * 对话框/菜单/执行反馈；会话关闭随 releaseDirCache 一并释放。
+ */
+export interface DirViewState {
+  expanded: ReadonlySet<string>;
+  flat: boolean;
+  suppress: boolean;
+  displayPreset: string;
+  filterText: string;
+  appliedFilterText: string;
+  sortSpec: DirSortSpec | null;
+  markOnly: boolean;
+  paneSel: PaneSelections;
+  activeSide: PaneSide;
 }
 
 const zeroStats = (): DirStats => ({
@@ -56,6 +77,7 @@ export class DirRowCache {
   private version = 0;
   private readonly listeners = new Set<() => void>();
   private openPromise: Promise<void> | null = null;
+  private viewState: DirViewState | null = null;
 
   constructor(sessionId: string) {
     this.sessionId = sessionId;
@@ -122,6 +144,16 @@ export class DirRowCache {
       }
     }
     if (changed) this.bump();
+  }
+
+  // ---- R3-28：视图偏好（会话缓存层持久；不推版本号——不改行数据，避免无谓重渲染） ----
+
+  getViewState(): DirViewState | null {
+    return this.viewState;
+  }
+
+  setViewState(state: DirViewState): void {
+    this.viewState = state;
   }
 
   /** dir/open 应答到达：行数终值与扫描态（delta 批次推完后 rev 与之对齐） */
