@@ -579,6 +579,7 @@ mod tests {
         cancels: &Arc<CancelRegistry>,
         method: &str,
         id: ai_protocol::RequestId,
+        params: Option<serde_json::Value>,
     ) -> Vec<Outbound> {
         let (tx, mut rx) = mpsc::unbounded_channel::<Outbound>();
         let flag = cancels.register(&id.cancel_key());
@@ -586,7 +587,7 @@ mod tests {
             jsonrpc: ai_protocol::JSONRPC_VERSION.to_string(),
             id,
             method: method.to_string(),
-            params: None,
+            params,
         };
         process_request(req, clone_ctx(ctx), Arc::clone(cancels), flag, tx).await;
         let mut out = Vec::new();
@@ -608,7 +609,14 @@ mod tests {
     async fn handler_panic_is_answered_as_internal_error() {
         let ctx = HandlerCtx::new(crate::batch::DEFAULT_MAX_BATCH_ROWS);
         let cancels = Arc::new(CancelRegistry::new());
-        let out = call(&ctx, &cancels, "test/panic", ai_protocol::RequestId::Number(7)).await;
+        let out = call(
+            &ctx,
+            &cancels,
+            "test/panic",
+            ai_protocol::RequestId::Number(7),
+            None,
+        )
+        .await;
         let v = response_json(&out);
         assert_eq!(v["id"], 7, "必须回显原请求 id");
         assert_eq!(v["error"]["code"], codes::INTERNAL_ERROR);
@@ -622,10 +630,24 @@ mod tests {
         // 仍须能正常服务后续请求（会话锁未被毒化、注册表未泄漏）。
         let ctx = HandlerCtx::new(crate::batch::DEFAULT_MAX_BATCH_ROWS);
         let cancels = Arc::new(CancelRegistry::new());
-        let bad = call(&ctx, &cancels, "test/panic", ai_protocol::RequestId::Number(1)).await;
+        let bad = call(
+            &ctx,
+            &cancels,
+            "test/panic",
+            ai_protocol::RequestId::Number(1),
+            None,
+        )
+        .await;
         assert_eq!(response_json(&bad)["error"]["code"], codes::INTERNAL_ERROR);
 
-        let good = call(&ctx, &cancels, "initialize", ai_protocol::RequestId::Number(2)).await;
+        let good = call(
+            &ctx,
+            &cancels,
+            "initialize",
+            ai_protocol::RequestId::Number(2),
+            Some(serde_json::json!({"clientInfo": {"name": "t"}, "protocolVersion": "1.0"})),
+        )
+        .await;
         let v = response_json(&good);
         assert_eq!(v["id"], 2);
         assert_eq!(v["result"]["capabilities"]["textCompare"], true);

@@ -22,7 +22,7 @@ deltaBatching: boolean,
 maxDeltaBatchRows: number, 
 /**
  * P3：text/lines 行内容分页入口（大内容按需分页，docs/03 §2.3.2）
- * 可选字段（缺省 true）：旧引擎载荷不含该字段时按 true 解析
+ * 可选字段（缺省 None）：旧引擎载荷不含该字段 = 不支持该能力，不得假定为 true
  */
 linesRead?: boolean, 
 /**
@@ -39,38 +39,38 @@ dirFilters: boolean,
 dirOperate: boolean, 
 /**
  * P7：三向文本合并入口（text/merge3/* 四方法）
- * 可选字段（缺省 true）：旧引擎载荷不含该字段时按 true 解析
+ * 可选字段（缺省 None）：旧引擎载荷不含该字段 = 不支持该能力，不得假定为 true
  */
 threeWayMerge?: boolean, 
 /**
  * P9：表格比较入口（table/open|sections）
- * 可选字段（缺省 true）：旧引擎载荷不含该字段时按 true 解析
+ * 可选字段（缺省 None）：旧引擎载荷不含该字段 = 不支持该能力，不得假定为 true
  */
 tableCompare?: boolean, 
 /**
  * P9：十六进制比较入口（hex/open|bytes 分页）
- * 可选字段（缺省 true）：旧引擎载荷不含该字段时按 true 解析
+ * 可选字段（缺省 None）：旧引擎载荷不含该字段 = 不支持该能力，不得假定为 true
  */
 hexCompare?: boolean, 
 /**
  * P9：补丁应用入口（text/patch/apply）
- * 可选字段（缺省 true）：旧引擎载荷不含该字段时按 true 解析
+ * 可选字段（缺省 None）：旧引擎载荷不含该字段 = 不支持该能力，不得假定为 true
  */
 patchApply?: boolean, 
 /**
  * P6 提案合入：dir/execute 文件操作执行（dryRun + 执行 + rescan delta）
- * 可选字段（缺省 true）：旧引擎载荷不含该字段时按 true 解析
+ * 可选字段（缺省 None）：旧引擎载荷不含该字段 = 不支持该能力，不得假定为 true
  */
 dirExecute?: boolean, 
 /**
  * P10：文件格式与规则体系入口（formats/list|save|load、rules/get|set、
  * text/open rules、dir/open formatAware）
- * 可选字段（缺省 true）：旧引擎载荷不含该字段时按 true 解析
+ * 可选字段（缺省 None）：旧引擎载荷不含该字段 = 不支持该能力，不得假定为 true
  */
 formatRules?: boolean, 
 /**
  * P11：报告生成入口（report/generate；FR-RPT 布局族）
- * 可选字段（缺省 true）：旧引擎载荷不含该字段时按 true 解析
+ * 可选字段（缺省 None）：旧引擎载荷不含该字段 = 不支持该能力，不得假定为 true
  */
 reports?: boolean, 
 /**

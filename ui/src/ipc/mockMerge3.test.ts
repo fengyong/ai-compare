@@ -63,7 +63,7 @@ describe('MockEngine P7：text/merge3/open + sections', () => {
         expect(c[side].start).toBe(cursor);
         expect(c[side].end).toBeGreaterThanOrEqual(c[side].start);
         cursor = c[side].end;
-        expect(c[`${side}Lines`].length).toBe(c[side].end - c[side].start);
+        expect((c[`${side}Lines`] ?? []).length).toBe(c[side].end - c[side].start);
       }
       expect(cursor).toBe(side === 'base' ? 10 : 11);
     }

@@ -113,6 +113,6 @@ pub mod method {
     pub const CANCEL: &str = "$/cancel";
 }
 
-/// TS 生成入口：`cargo test -p ai-protocol` 触发（见 ts_export 模块内的测试）。
+/// TS 再生成入口：`cargo test -p ai-protocol --features ts -- --ignored regenerate_ui_bindings`。
 #[cfg(feature = "ts")]
 pub use ts_export::export_all_to_ui;

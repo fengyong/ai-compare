@@ -67,7 +67,7 @@ pub async fn dispatch(
     out: tokio::sync::mpsc::UnboundedSender<crate::server::Outbound>,
 ) -> Result<Handled, RpcErrorObject> {
     match method {
-        ai_protocol::method::INITIALIZE => initialize(),
+        ai_protocol::method::INITIALIZE => initialize(params),
         ai_protocol::method::DIR_OPEN => dir_open(params, ctx, cancel, out).await,
         ai_protocol::method::DIR_EXPAND => dir_expand(params, ctx, out).await,
         ai_protocol::method::DIR_FILTER => dir_filter(params, ctx, out).await,
@@ -114,7 +114,33 @@ pub async fn dispatch(
     }
 }
 
-fn initialize() -> Result<Handled, RpcErrorObject> {
+fn initialize(params: Option<serde_json::Value>) -> Result<Handled, RpcErrorObject> {
+    // 解析并校验客户端协议版本：major 不兼容直接拒绝，不再无条件握手
+    let raw = params.ok_or_else(|| RpcErrorObject {
+        code: codes::INVALID_PARAMS,
+        message: "initialize 缺少 params".to_string(),
+        data: None,
+    })?;
+    let p: ai_protocol::InitializeParams =
+        serde_json::from_value(raw).map_err(|e| RpcErrorObject {
+            code: codes::INVALID_PARAMS,
+            message: format!("initialize params 非法: {e}"),
+            data: None,
+        })?;
+    let major = |v: &str| v.split('.').next().unwrap_or("").parse::<u32>().ok();
+    if major(&p.protocol_version).is_none()
+        || major(&p.protocol_version) != major(ai_protocol::PROTOCOL_VERSION)
+    {
+        return Err(RpcErrorObject {
+            code: codes::INVALID_PARAMS,
+            message: format!(
+                "协议版本不兼容: client={} server={}",
+                p.protocol_version,
+                ai_protocol::PROTOCOL_VERSION
+            ),
+            data: None,
+        });
+    }
     let result = ai_protocol::InitializeResult {
         protocol_version: ai_protocol::PROTOCOL_VERSION.to_string(),
         engine: ai_protocol::EngineInfo {
@@ -4824,8 +4850,23 @@ mod p10_tests {
 
     #[tokio::test]
     async fn initialize_reports_format_rules_capability() {
-        let v = value_of(initialize()).await;
+        let params = Some(json!({"clientInfo": {"name": "t"}, "protocolVersion": "1.0"}));
+        let v = value_of(initialize(params)).await;
         assert_eq!(v["capabilities"]["formatRules"], true);
+    }
+
+    #[test]
+    fn initialize_rejects_incompatible_protocol_version() {
+        let bad = Some(json!({"clientInfo": {"name": "t"}, "protocolVersion": "2.0"}));
+        assert_eq!(initialize(bad).unwrap_err().code, codes::INVALID_PARAMS);
+        assert_eq!(initialize(None).unwrap_err().code, codes::INVALID_PARAMS);
+        let malformed = Some(json!({"clientInfo": {"name": "t"}, "protocolVersion": "x"}));
+        assert_eq!(
+            initialize(malformed).unwrap_err().code,
+            codes::INVALID_PARAMS
+        );
+        let ok = Some(json!({"clientInfo": {"name": "t"}, "protocolVersion": "1.0"}));
+        assert!(initialize(ok).is_ok());
     }
 }
 
@@ -5111,7 +5152,8 @@ mod p11_report_tests {
 
     #[tokio::test]
     async fn initialize_reports_reports_capability() {
-        let v = value_of(initialize()).await;
+        let params = Some(json!({"clientInfo": {"name": "t"}, "protocolVersion": "1.0"}));
+        let v = value_of(initialize(params)).await;
         assert_eq!(v["capabilities"]["reports"], true);
     }
 }
@@ -5189,7 +5231,8 @@ mod dir_merge_tests {
     #[tokio::test]
     async fn dir_merge_capability_and_methods_registered() {
         let c = ctx();
-        let v = value_of(initialize()).await;
+        let params = Some(json!({"clientInfo": {"name": "t"}, "protocolVersion": "1.0"}));
+        let v = value_of(initialize(params)).await;
         assert_eq!(v["capabilities"]["dirMerge"], true, "R3-07 能力位 dirMerge");
 
         // 三个方法都必须已注册（修复前 dispatch 无入口 -> -32601）

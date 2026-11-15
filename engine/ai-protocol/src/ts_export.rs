@@ -5,7 +5,8 @@
 //! - [`export_all_to_ui`]：显式逐类型触发导出，并把 `generated/*.ts` 拷贝到
 //!   仓库根 `ui/src/protocol/generated/`（UI 线消费；协议演进只加不改不删）。
 //!
-//! 入口测试：`export_ts_bindings`（`cargo test -p ai-protocol` 即更新生成物）。
+//! 入口测试：`generated_bindings_match_ui`（clean-tree 漂移校验，不写生产树）；
+//! 再生成走 `cargo test -p ai-protocol -- --ignored regenerate_ui_bindings`。
 
 use std::path::PathBuf;
 use ts_rs::TS;
@@ -16,12 +17,12 @@ fn ui_generated_dir() -> PathBuf {
         .join("../../ui/src/protocol/generated")
 }
 
-/// 导出全部协议类型并同步到 UI 侧目录，返回生成的文件数。
+/// 逐类型导出到 ts-rs 的 `bindings/` scratch 目录（gitignored，不碰生产树）。
 ///
 /// 注：`TS::export()` 写入 ts-rs 默认的 `bindings/` 目录（`export_to` 属性
-/// 只影响其隐藏导出测试）；此处显式逐类型导出后统一拷贝到 UI 侧。
-pub fn export_all_to_ui() -> Result<usize, Box<dyn std::error::Error>> {
-    // 1. 逐类型显式导出（顺序确定，不依赖 ts-rs 生成的隐藏测试的执行顺序）
+/// 只影响其隐藏导出测试）。
+fn export_to_bindings() -> Result<(), Box<dyn std::error::Error>> {
+    // 逐类型显式导出（顺序确定，不依赖 ts-rs 生成的隐藏测试的执行顺序）
     use crate::types::*;
     RequestId::export()?;
     EntryKind::export()?;
@@ -214,8 +215,13 @@ pub fn export_all_to_ui() -> Result<usize, Box<dyn std::error::Error>> {
     ReportGenerateParams::export()?;
     ReportGenerateResult::export()?;
     crate::error::RpcErrorObject::export()?;
+    Ok(())
+}
 
-    // 2. 拷贝到 UI 侧
+/// 导出全部协议类型并同步到 UI 侧 tracked 目录，返回生成的文件数。
+/// 仅手动再生成入口（`regenerate_ui_bindings`，#[ignore]）调用；普通测试不写生产树。
+pub fn export_all_to_ui() -> Result<usize, Box<dyn std::error::Error>> {
+    export_to_bindings()?;
     let bindings = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("bindings");
     let ui_dir = ui_generated_dir();
     std::fs::create_dir_all(&ui_dir)?;
@@ -236,24 +242,39 @@ pub fn export_all_to_ui() -> Result<usize, Box<dyn std::error::Error>> {
 mod tests {
     use super::*;
 
-    /// 生成/更新 ui/src/protocol/generated/*.ts（UI 线的类型契约）
+    /// clean-tree 漂移校验：导出到 bindings/ scratch 后与 tracked UI generated 逐字节比对。
+    /// 不写生产树；rust 类型改了但没再生成 UI 契约时这里变红。
     #[test]
-    fn export_ts_bindings() {
-        let n = export_all_to_ui().expect("TS 导出失败");
-        assert!(n >= 139, "应导出全部协议类型（P10 formats/rules + P11 report），实际 {n}");
+    fn generated_bindings_match_ui() {
+        export_to_bindings().expect("TS 导出失败");
+        let bindings = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("bindings");
         let ui_dir = ui_generated_dir();
-        assert!(ui_dir.join("DirDelta.ts").exists(), "DirDelta.ts 应存在");
-        assert!(ui_dir.join("Section.ts").exists(), "Section.ts 应存在");
-        assert!(ui_dir.join("DirExecuteResult.ts").exists(), "DirExecuteResult.ts 应存在");
-        assert!(ui_dir.join("TableRowDto.ts").exists(), "TableRowDto.ts 应存在");
-        assert!(ui_dir.join("HexLineDto.ts").exists(), "HexLineDto.ts 应存在");
-        assert!(ui_dir.join("FileFormatSpec.ts").exists(), "FileFormatSpec.ts 应存在");
-        assert!(ui_dir.join("RulesGetResult.ts").exists(), "RulesGetResult.ts 应存在");
-        assert!(ui_dir.join("ReportGenerateParams.ts").exists(), "ReportGenerateParams.ts 应存在");
-        assert!(ui_dir.join("ReportGenerateResult.ts").exists(), "ReportGenerateResult.ts 应存在");
+        let mut n = 0usize;
+        for entry in std::fs::read_dir(&bindings).expect("bindings 目录") {
+            let entry = entry.expect("read_dir");
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("ts") {
+                continue;
+            }
+            let name = entry.file_name();
+            let label = name.to_string_lossy();
+            let fresh = std::fs::read_to_string(&path).expect("读 bindings");
+            let old = std::fs::read_to_string(ui_dir.join(&name))
+                .unwrap_or_else(|_| panic!("UI generated 缺 {label}（需再生成）"));
+            assert_eq!(fresh, old, "{label} 与 UI generated 漂移（需再生成）");
+            n += 1;
+        }
         assert!(
-            ui_dir.join("MergeSaveResult.ts").exists(),
-            "MergeSaveResult.ts 应存在（R3-20）"
+            n >= 139,
+            "应导出全部协议类型（P10 formats/rules + P11 report），实际 {n}"
         );
+    }
+
+    /// 手动再生成 UI 契约：cargo test -p ai-protocol -- --ignored regenerate_ui_bindings
+    #[test]
+    #[ignore]
+    fn regenerate_ui_bindings() {
+        let n = export_all_to_ui().expect("TS 导出失败");
+        assert!(n >= 139, "应导出全部协议类型，实际 {n}");
     }
 }
