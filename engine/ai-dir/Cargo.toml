@@ -13,7 +13,9 @@ ai-vfs = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 # SQLite stat/hash 持久缓存（ADR-004；bundled 免系统依赖，MIT/公有领域许可）
-rusqlite = { version = "0.32", features = ["bundled"] }
+# 0.41 / libsqlite3-sys 0.39 起 bundled SQLite >= 3.54.0，修复
+# RUSTSEC-2026-0459（CVE-2026-119375）；0.32 捆绑 3.46 受影响。
+rusqlite = { version = "0.41", features = ["bundled"] }
 
 [dev-dependencies]
 tempfile = { workspace = true }

@@ -16,14 +16,17 @@ members = [
 version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
-rust-version = "1.88"
+# 1.89：rusqlite 0.41 / libsqlite3-sys 0.39（修复 RUSTSEC-2026-0459）的 MSRV
+rust-version = "1.89"
 
 [workspace.dependencies]
 # 内部 crates（ai-engine 为 bin 包，按路径直接构建，不经 workspace 依赖引用）
-ai-protocol = { path = "engine/ai-protocol" }
-ai-core = { path = "engine/ai-core" }
-ai-vfs = { path = "engine/ai-vfs" }
-ai-dir = { path = "engine/ai-dir" }
+# 显式写 version：cargo metadata 对无版本的 path 依赖给出 req="*"，会被
+# cargo-deny 的 wildcards = "deny" 判为通配依赖（R3-26 真实修复）。
+ai-protocol = { path = "engine/ai-protocol", version = "0.1.0" }
+ai-core = { path = "engine/ai-core", version = "0.1.0" }
+ai-vfs = { path = "engine/ai-vfs", version = "0.1.0" }
+ai-dir = { path = "engine/ai-dir", version = "0.1.0" }
 
 # 外部依赖（全部 MIT/Apache-2.0 兼容许可，禁止 GPL 链接依赖，见 deny.toml）
 serde = { version = "1", features = ["derive"] }

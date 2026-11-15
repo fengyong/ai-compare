@@ -588,3 +588,48 @@
 - 请求本身仍可无界排队（串行链为每个在途请求建 task 与 CancelRegistry 条目），本工作包只收敛**出站**队列，未改请求准入。
 - 满载策略选的是「等待 + 有记录地放弃（仅退出时）」，未实现 delta 合并；若后续需要合并，须自行维护 rev / hasMore / removals 顺序与最终状态收敛。
 - 批次 4（CI / rustfmt / cargo-deny）待办；`manualAlign` 异名合并、R3-21 剩余 `Option<T>` TS 可选性仍未修。
+
+## HY4 批次 4：R3-26 CI + rustfmt + cargo-deny（2026-11-15，自主工作模式）
+
+依据 `HY4-NEXT-ROUND-2026-11-15.md` §5.1 / §8 批次 4。按指导拆成三个独立提交，格式化不夹带行为修改。基线 `5106e9b`（引擎 1029/0、UI 756/0、壳 18/0）。
+
+### 提交 1 `5ac002f`：先让 CI 跑现有稳定门禁
+
+- 新增 `.github/workflows/ci.yml`：`rust` / `tauri` / `ui` 三个 job，覆盖根 workspace（`--locked`）、Tauri 独立 workspace（`--locked`）、UI + 真实引擎 E2E；固定 `RUSTUP_TOOLCHAIN=1.100.0`（优先于仓库 `rust-toolchain.toml` 的 stable 通道）、Node 26.8.1、pnpm 12.18.0；`pnpm install --frozen-lockfile`；clippy 一律 `-D warnings`。
+- `deny.toml` 迁移：cargo-deny 0.20.2 已移除 `licenses.deny`（PR #611），旧的 24 行 GPL/AGPL/LGPL/MPL 黑名单会让 `cargo deny check` 在配置校验阶段直接失败。`version = 2` 的 `allow` 本身就是白名单，未列出即拒绝，删除冗余字段不改变管控强度。
+
+### 提交 2 `167831d`：`cargo fmt --all` 独立机械变更
+
+- 根 workspace + Tauri 独立 workspace 全量 rustfmt，仅 75 个 `.rs` 文件的格式变化（12737 插入 / 3075 删除），不含行为、依赖、协议改动。
+- 格式化后两处 `cargo fmt --all -- --check` 均 0 diff；引擎 1029/0、clippy 零警、协议 drift 通过、Tauri 18/0、`e2e:engine` / `verify:demo` 通过。连续 3 次全量 Rust 测试均通过。
+- **如实记录**：曾在「同一命令连续执行两次 `cargo test --workspace`」时观察到一次 `engine_exits_after_stdin_eof_without_session` 偶发失败；单跑 5/5、`protocol_conformance` 全套 16/16、连续 3 次全量均通过。疑似多测试目标并发触发 `ensure_engine_fresh` 重建引擎二进制的时序竞态，未定位到确定根因，**不作为已修复项**。
+
+### 提交 3：cargo-deny 真实问题修复 + CI 补 fmt/deny 门禁
+
+- 安装 `cargo-deny v0.20.2` 并执行 `cargo deny check`，处理三个真实问题：
+  1. `licenses.deny` 已废弃（提交 1 修复）；
+  2. `advisories FAILED`：`libsqlite3-sys 0.30.1`（经 `rusqlite 0.32` + `bundled`）捆绑 SQLite < 3.54.0，命中 **RUSTSEC-2026-0459 / CVE-2026-119375**。升级 `rusqlite` 到 `0.41`（`libsqlite3-sys 0.39`，捆绑 SQLite 3.54.1），`ai-dir` 缓存库 154/0 全绿；workspace `rust-version` 从 1.88 校准为依赖真实 MSRV 1.89。
+  3. `bans FAILED`：`wildcards = "deny"` 把 `[workspace.dependencies]` 中无版本的内部 path 依赖（cargo metadata `req="*"`）判为通配依赖。给 `ai-protocol` / `ai-core` / `ai-vfs` / `ai-dir` 显式写 `version = "0.1.0"` 消除误判，不放宽 `wildcards`。
+- 最终 `cargo deny check`：**advisories ok / bans ok / licenses ok / sources ok**（仅余配置允许的 `duplicate` 与 `license-not-encountered` warn，非新引入错误）。
+- CI 新增：rust job 的 `cargo fmt --all -- --check`、tauri job 的 fmt check、独立 `deny` job（`taiki-e/install-action@v2` 固定 `cargo-deny@0.20.2` + `cargo deny check`）。
+
+### 全量门禁（本次实测，提交前复跑，全部用 `--locked`）
+
+引擎 `cargo test --locked --workspace` **1029/0**；clippy `-D warnings` 零警；协议 drift 通过；根/Tauri fmt check 均 0 diff；Tauri 独立 workspace **18/0** + clippy 零警；`cargo deny check` 四项 ok；UI `pnpm test` **756/0**（72 文件）、`lint` / `build` / `format:check` / `e2e:engine` / `verify:demo` 全绿；CI YAML 经 Ruby YAML 解析校验（4 jobs、3 triggers）。
+
+### 仍未验证 / 未完成
+
+- **CI 未在真实 GitHub Actions runner 上执行**：本机无 runner，只保证工作流命令与本地实测门禁一一对应，**不声称 CI 已跑绿**。特别是 Linux 上 Tauri 的 `apt` 系统依赖步骤、`taiki-e/install-action@v2` 的 `cargo-deny@0.20.2` 版本语法均未在 runner 验证。
+- **§5.2 关键组件 / 真实桌面故事测试未开始**：当前 UI 无 `@testing-library/react` / jsdom 组件测试环境；本机无法驱动真实 Tauri WebView 做 GUI 自动化。按指导不得把 Vitest 或协议 E2E 改名为 GUI E2E，故保留下方人工桌面验收清单，全部标注「未实测」。
+- `manualAlign` 异名合并、R3-21 剩余 `Option<T>` TS 可选性专项仍未修；R3-23 CSP、R3-24 发行、R3-25 重构按指导各为专项，未并入本批次。
+
+### 人工桌面验收清单（未实测，需在真实 macOS `.app` 上逐条执行）
+
+| # | 用户故事 | 人工步骤 | 期望 |
+| --- | --- | --- | --- |
+| 1 | 文本编辑 → dirty → 关闭拦截 → 保存 → dirty 清除 | 打开文本比较、改动任一侧、点关闭标签、在弹窗取消、保存、再点关闭 | 关闭被拦截；保存后 dirty 标记消失且可正常关闭；磁盘字节与编码不变 |
+| 2 | 平铺目录 → 同步预览 → 确认 → 真实路径执行 | 平铺打开含重名子目录的两侧、选镜像策略、看预览路径、确认 | 预览显示真实路径而非 `x.txt#1` 类显示 id；落盘文件在正确子目录 |
+| 3 | table/hex 标签切换 → 不重复 open | 表格会话反复切换 table ↔ hex | 无重复 `table/open` / `hex/open`，无幽灵会话 |
+| 4 | 保存/恢复各会话类型 | 分别打开 text/dir/table/hex/merge3 后保存并重启应用恢复 | 各类型会话与视图状态正确恢复 |
+| 5 | 目录视图状态切标签后保留 | 目录比较里展开/过滤/对齐后切到别的标签再切回 | 展开层级、过滤条件、对齐状态保留 |
+| 6 | 同步运行中取消 | 大目录同步执行中点「取消」 | 后续批次不再发出、在途批次被中断、无残留半成品文件 |
