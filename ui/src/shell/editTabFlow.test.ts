@@ -241,6 +241,37 @@ describe('D2 关闭保护与保存分流', () => {
     expect(useShell.getState().findTab(tab.id)!.tab.contentDirty?.left).toBe(false);
   });
 
+  it('A0 保存期间又有编辑：关闭被中断，标签保留（新输入不得静默丢失）', async () => {
+    const tab = await openAndDirty();
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    mockSaveText.mockImplementation(async () => {
+      await gate;
+      return {
+        sessionId: SID,
+        saved: [{ side: 'left', path: '/tmp/a.txt', bytes: 3, lineCount: 1 }],
+        rev: 1,
+        leftModified: false,
+        rightModified: false,
+      } as never;
+    });
+
+    await useShell.getState().closeTab(tab.id);
+    const pending = useShell.getState().resolveCloseGuard('save');
+    await vi.waitFor(() => expect(mockSaveText).toHaveBeenCalled());
+
+    // 保存应答回来之前，用户又敲了内容
+    getEditDoc(SID)!.lines = ['edited', 'again'];
+    release();
+    await pending;
+
+    expect(useShell.getState().windows[0].tabs.some((t) => t.id === tab.id)).toBe(true);
+    expect(useShell.getState().findTab(tab.id)!.tab.contentDirty?.left).toBe(true);
+    expect(useShell.getState().notice).toContain('保存期间');
+  });
+
   it('保存失败：关闭被中断，标签与内容保留（不静默丢弃）', async () => {
     const tab = await openAndDirty();
     mockSaveText.mockRejectedValue(new Error('磁盘只读'));

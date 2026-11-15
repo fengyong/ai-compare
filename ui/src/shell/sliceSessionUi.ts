@@ -291,7 +291,9 @@ export const createSessionSlice: StateCreator<ShellStore, [], [], SessionSlice> 
       if (res.retargeted) get().retargetEditPath(tabId, res.path);
       get().markContentDirty(tabId, { left: isDocDirty(doc), right: false });
       get().setNotice(savedNotice(res));
-      return true;
+      // A0：保存是异步的，期间可能又有输入（尚未落盘）。此时关闭会静默丢弃，
+      // 因此按"未落盘"处理：保留标签，让用户再确认一次。
+      return !res.stillDirty;
     }
     const sessionId = tab?.text?.sessionId;
     const dirty = tab?.contentDirty;

@@ -626,6 +626,8 @@ export const S = {
     readonlyBadge: '只读',
     diverged: '编辑器与引擎内容无法对齐，保存已阻止（请重新打开文件）',
     saveOk: '已保存',
+    // A0：保存期间又有输入时不得谎报"全部已保存"
+    saveStillDirty: '已保存，但保存期间的新编辑尚未落盘',
     saveOkBackup: '已保存（备份 .bak）',
     saveFail: '保存失败',
     saveUnsupported: '引擎不支持保存（text/save 缺失）：编辑仍未落盘',

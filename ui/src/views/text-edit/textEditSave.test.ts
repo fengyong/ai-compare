@@ -9,7 +9,8 @@ vi.mock('../../ipc/engineProcess', async (importOriginal) => {
 });
 
 import { editText, saveText } from '../../ipc/engineProcess';
-import { newEditDoc, type EditDoc } from './editModel';
+import { isDocDirty, newEditDoc, type EditDoc } from './editModel';
+import { S } from '../../strings';
 import { describeSaveError, saveEditDoc, savedNotice } from './textEditSave';
 
 const mockEdit = vi.mocked(editText);
@@ -71,6 +72,8 @@ function saveResult(entry: Partial<TextSaveResult['saved'][number]> = {}): TextS
 beforeEach(() => {
   mockEdit.mockReset();
   mockSave.mockReset();
+  // 缺省应答（个别用例按需覆盖）：避免"没配 mock 就拿到 undefined"的假失败
+  mockSave.mockResolvedValue(saveResult());
 });
 
 describe('text-edit/textEditSave 落盘', () => {
@@ -109,6 +112,79 @@ describe('text-edit/textEditSave 落盘', () => {
     expect(res.retargeted).toBe(true);
     expect(doc.path).toBe('/tmp/b.txt');
     expect(doc.name).toBe('b.txt');
+  });
+
+  it('A0 保存竞态：保存期间的输入不被记为已保存，仍脏且继续收敛', async () => {
+    const table = installEngine(['a']);
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    mockSave.mockImplementation(async () => {
+      await gate; // 模拟落盘慢/应答滞后：期间用户继续输入
+      return saveResult();
+    });
+
+    const doc = docOf(['a']);
+    doc.lines = ['b']; // 本次要保存的内容
+    const pending = saveEditDoc(doc);
+    await vi.waitFor(() => expect(mockSave).toHaveBeenCalled());
+
+    doc.lines = ['c']; // 保存期间用户又改了
+    release();
+    const res = await pending;
+
+    expect(res.ok).toBe(true);
+    expect(res.stillDirty).toBe(true);
+    // 文件里是 b；savedLines 只能记 b —— 记成 c 就是"假报已保存"
+    expect(doc.savedLines).toEqual(['b']);
+    expect(isDocDirty(doc)).toBe(true);
+    // 新内容自动继续收敛进引擎（用户不必为竞态再点一次保存）
+    await vi.waitFor(() => expect(table).toEqual(['c']));
+    expect(savedNotice(res)).toContain(S.edit.saveStillDirty);
+  });
+
+  it('A0 连续保存：文档锁串行，后一次写入更新后的内容', async () => {
+    const table = installEngine(['a']);
+    const doc = docOf(['a']);
+    doc.lines = ['b'];
+    const first = saveEditDoc(doc); // 不 await，立刻再点一次保存
+    doc.lines = ['c'];
+    const second = saveEditDoc(doc);
+    const [r1, r2] = await Promise.all([first, second]);
+
+    expect(r1.ok && r2.ok).toBe(true);
+    expect(mockSave).toHaveBeenCalledTimes(2);
+    // 后一次落盘的是 c，且模型如实记录 c
+    expect(table).toEqual(['c']);
+    expect(doc.savedLines).toEqual(['c']);
+    expect(isDocDirty(doc)).toBe(false);
+  });
+
+  it('A0 另存为期间编辑：路径按应答改指，内容仍脏', async () => {
+    installEngine(['a']);
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    mockSave.mockImplementation(async () => {
+      await gate;
+      return saveResult({ path: '/tmp/out.txt' });
+    });
+    const doc = docOf(['a']);
+    doc.lines = ['b'];
+    const pending = saveEditDoc(doc, { path: '/tmp/out.txt' });
+    await vi.waitFor(() => expect(mockSave).toHaveBeenCalled());
+    doc.lines = ['b', 'new'];
+    release();
+    const res = await pending;
+
+    expect(res.ok).toBe(true);
+    expect(res.retargeted).toBe(true);
+    expect(res.path).toBe('/tmp/out.txt');
+    expect(doc.path).toBe('/tmp/out.txt');
+    expect(doc.savedLines).toEqual(['b']);
+    expect(isDocDirty(doc)).toBe(true);
   });
 
   it('保存失败（编码无法表示 413）：保留脏、不改目标、提示编码原因', async () => {

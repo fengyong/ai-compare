@@ -275,6 +275,7 @@ export function TextEditView({ tab }: { tab: Tab }) {
           return;
         }
         if (res.retargeted) retargetEditPath(tab.id, res.path);
+        // A0：脏标记只由"文件是否等于 UI 最新内容"决定——保存期间的新编辑仍脏
         markContentDirty(tab.id, { left: isDocDirty(doc), right: false });
         setNotice(savedNotice(res));
         bump((v) => v + 1);

@@ -137,15 +137,24 @@ const MAX_SYNC_ROUNDS = 4;
  * 由调用方阻止保存（宁可报错，也不把陈旧内容写盘）。
  */
 export async function syncDocToEngine(doc: EditDoc, io: EditSyncIO): Promise<SyncOutcome> {
-  // 同一文档的同步必须串行：并发两次会以同一快照算出同一区间并重复应用
-  // （第二次坐标已过期 → 内容错位）。所有调用方（编辑防抖/保存/卸载冲刷/关闭守卫）
-  // 共用这条链，调用方无需自己排他。
-  const prev = syncChains.get(doc) ?? Promise.resolve();
-  const next = prev.then(
-    () => runSync(doc, io),
-    () => runSync(doc, io),
-  );
-  syncChains.set(
+  return queueDocOp(doc, () => runSync(doc, io));
+}
+
+/**
+ * 每文档一条**引擎操作队列**：同一文档的所有引擎写操作（增量同步、收敛、落盘）
+ * 必须串行。
+ *
+ * 只串行同步还不够——"收敛后落盘"如果中间能被别的写入穿插，落盘内容与
+ * `savedLines` 记录就会错配（文件是新的、模型以为存的是旧的，或反之）。
+ * 因此队列对所有 `text/edit`/`text/save` 调用统一排他：入队即原子。
+ *
+ * 队列不吞异常（出错的那次调用照常 reject），但链本身永远向下一步推进，
+ * 一次失败不会把后续操作永久卡死。
+ */
+export function queueDocOp<T>(doc: EditDoc, op: () => Promise<T>): Promise<T> {
+  const prev = docQueues.get(doc) ?? Promise.resolve();
+  const next = prev.then(op, op);
+  docQueues.set(
     doc,
     next.then(
       () => undefined,
@@ -155,8 +164,18 @@ export async function syncDocToEngine(doc: EditDoc, io: EditSyncIO): Promise<Syn
   return next;
 }
 
-/** 每文档一条同步链（WeakMap：文档被回收即释放） */
-const syncChains = new WeakMap<EditDoc, Promise<void>>();
+/** 每文档一条操作链（WeakMap：文档被回收即释放） */
+const docQueues = new WeakMap<EditDoc, Promise<void>>();
+
+/**
+ * 在**已持有文档锁**的临界区内执行收敛（保存等需要"收敛+落盘"原子的调用方用）。
+ *
+ * 直接调用 `syncDocToEngine` 会二次入队 → 自我等待。因此保存流程必须用这个
+ * 内部版本，并且只能在 `queueDocOp` 回调里调用。
+ */
+export async function convergeDocInLock(doc: EditDoc, io: EditSyncIO): Promise<SyncOutcome> {
+  return runSync(doc, io);
+}
 
 async function runSync(doc: EditDoc, io: EditSyncIO): Promise<SyncOutcome> {
   doc.diverged = false;
