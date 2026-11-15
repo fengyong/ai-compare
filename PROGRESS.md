@@ -38,7 +38,7 @@
 
 ## 当前阶段与断点
 
-**当前**：M4 V2.0（docs/04 P12~P14）——P0 需求全量闭环、桌面体验版（`.app`/`.dmg`，引擎随包）已可交付；第三轮深度 review（R3，输入第三方报告 `REVIEW-2026-11-15.md` 26 项 + 自查新增 R3-27/28）已收尾：可达缺陷全部修复，架构/契约/发行/工具级不确信项按「不确信就记录待决」登记（REVIEW.md §8）。最新门禁与交付状态见文末「第三轮 review（R3）收尾」节。
+**当前**：M4 V2.0（docs/04 P12~P14）——P0 需求全量闭环、桌面体验版（`.app`/`.dmg`，引擎随包）已可交付；第三轮深度 review（R3，输入第三方报告 `REVIEW-2026-11-15.md` 26 项 + 自查新增 R3-27/28）已收尾：可达缺陷全部修复，架构/契约/发行/工具级不确信项按「不确信就记录待决」登记（REVIEW.md §8）。**全格式演示数据集已交付**（「填充示例路径」落盘两侧各 47 个多格式文件，覆盖全部 8 类视图，经真实引擎 38 项断言验收；见文末「全格式演示数据集」节）。最新门禁与交付状态见文末「第三轮 review（R3）收尾」与「全格式演示数据集」节。
 
 **下一步（断点恢复入口）**：
 1. 待用户拍板的契约级决策（REVIEW.md §7.7 / §8.2）：CLI 退出码 BC-vs-GNU、重要性回传 RPC、合并 EOL 语义；R3 待决项——u64→bigint 类型收敛、取消粒度/出站背压架构、CSP 信任边界、跨平台发行/公证/README/LICENSE、巨型文件重构、rustfmt 全量债务/cargo-deny 执行点。
@@ -377,3 +377,22 @@
 
 > 本条目取代上文「最新交付状态（2026-11-14 21:5x，HEAD `fe04624`，引擎 822 / UI 477）」过期快照；当前代码 HEAD `7c4f809`，门禁 987 / 15 / 729。文档校准（REVIEW.md §8.3 + 本条目）随同一 docs 提交落盘。
 - 2026-11-15 09:3x：**远程仓库建立**（用户指令，参照 ai-snap 配置）：github.com/fengyong/ai-compare（PUBLIC，SSH alias github-fengyong）已推 main（含 README 门面）；gh active 账号切至 fengyong；此后所有提交记得 `git push`
+
+## 全格式演示数据集 + 体验版重装（2026-11-15 10:0x；用户指令「示例目录内容很简单不足以验证功能，构造更全面的测试数据供体验，多文件格式等」，覆盖度选「全格式覆盖」）
+
+**动机**：旧「填充示例路径」仅落盘 6+5 个纯文本文件，无法体验图片/表格/hex/zip/编码/合并等视图。本轮扩为**两侧各 47 个多格式文件**，覆盖全部 8 类视图与四种差异状态。
+
+**交付（代码 HEAD `5146718`，分项提交）**：
+- `4b2a995` 资产生成器 `scripts/gen-demo-assets.mjs` → `ui/src/lib/demoAssets.ts`（14 个 base64 二进制资产，确定性再生成）：PNG logo 左/右（内容差异）、banner 左/右（尺寸差异 120x40 vs 160x40）、icon（相同）、only-left；ZIP 左/右（含改名 b.txt→c.txt）；GB18030 中文左/右；UTF-16LE+BOM 中文左/右；二进制 blob 左/右（offset 100..120 差异）。`demoAssets.ts` 列入 `.prettierignore`（与 protocol/generated 同口径，生成数据排除 prettier、仍受 tsc 检查）。
+- `8d8720f` `demoSeed.ts` 全格式重写：文本/代码（rs/py/ts/css/html/json/xml/yaml/toml/ini/sql/log/sh/Makefile/LICENSE）、表格（csv/tsv/tab）、图片（png）、zip、hex（dat/bin/o）、编码（GB18030/UTF-16）、行尾/BOM/Unicode 变体、嵌套深层/空目录(.gitkeep)/隐藏(.env/.gitignore/.hidden)、四态 + 改名候选、merge3/{base,left,right}.md（name 冲突 + mode/retry 单侧改）、大文件 large/big.txt（4000 行右侧 3 处改动）、DEMO-GUIDE.md 逐视图指引。`DemoFileSpec` 增 `asset?`，`decodeAsset` 经 atob 还原字节，`seedDemoDirs` 签名改 `KvFileStore & BinaryFileStore`（二进制走 `writeBinaryFile`，写前先删含 .bak）。
+- `30497d0` 验收 harness `ui/scripts/verify-demo-assets.mjs`（`npm run verify:demo`）：从已提交 demoAssets.ts 解析精确字节落盘，逐视图驱动 ai-engine，**38 项断言**；UTF-16 资产由英文改中文（贴近真实 CJK 场景）。
+- `5146718` 修正 DEMO-GUIDE 两处不实描述：差异导航非「Ctrl+Down」（实为工具栏「下一处差异」按钮；文件夹差异文件遍历才是 Ctrl+Alt+Down/Up）；编码条改为「打开即自动检测，也可手动覆盖」。
+- 壳/前端二进制写能力（前置）：`7009f0d` `settings_write_bytes`（confined 原子写，复用 settings_write 内核）+ 3 回归；`f737742` `BinaryFileStore` 接口 + Tauri/Memory 实现 + 3 回归。
+
+**门禁（全量复验，全绿）**：引擎 `cargo test --workspace` **987/0** + clippy 零警；壳独立 workspace **18/0**（含二进制写 3 测试）+ clippy 零警；协议 drift `generated_bindings_match_ui` 通过；UI `tsc -b` 0 错、`vitest` **746/0**（72 文件）、`lint`/`build`/`format:check` 全绿；`e2e:engine` 全过；**`verify:demo` 38/38**（picture 内容差异 361px/91.19% + 尺寸差异 + 全同；hex 差异定位 100..120；table 数据行左2/右3；zip!readme.txt 路由 + 归档目录改名四态；GB18030 自动检测 GBK + UTF-16LE+BOM 自动检测均解出中文且 BOM 不进首行；merge3 1 冲突 + 可自动合并块；CRLF/BOM/Unicode；dir 混合格式四态）。
+
+**体验版重装**：`bash scripts/build-app.sh --dmg` 重打包（含修正后指南）→ `ai-compare.app` + DMG `ai-compare_0.1.0_aarch64-apple-darwin.dmg`（6605323 B）；旧包先 `cp` 备份 `/tmp/ai-compare-old-20261115-095917.app`、再 `mv` 移至 `/tmp/ai-compare.app.prev-20261115-100251`（均保留未删），新包覆盖 `/Applications/ai-compare.app`。**在安装版上实测**：codesign `valid on disk` + `satisfies its Designated Requirement`；主二进制 5433072 B、随包引擎 9118736 B（均 Nov 15 10:02）；**随包引擎跑 `verify:demo` 38/38 全过**（release 与 installed 两份引擎均验，证 release 模式 parity）；GUI `open` 进程存活（PID 73946）无崩溃报告。**按钮路径已排险**：`settings_write_bytes` 已注册 invoke_handler（lib.rs:504），与 `settings_app_dirs` 共用 `app_dirs_raw` 的 base，`confine_within` 接受 `<base>/demo/...` 子目录，原子内核与文本写共享（已测）。**诚实边界**：安装版 Tauri WKWebView 无法被现有 CDP 基建驱动，故「填充示例路径」按钮的真实点击落盘未在真实 WebView 自动化点测；以「seeder 单测 21 项 + 壳二进制命令测试 + 资产引擎验收 38 项 + 命令注册/共享 base/confine 排险」组合验证，未声称在真实 WebView 点过按钮。
+
+**体验入口**：主页「填充示例路径」→ 自动填左右路径 →「开始比较」；落盘根 `<应用数据目录>/demo/project-v1|project-v2`，内含 `DEMO-GUIDE.md` 逐视图指引（zip 用 `zip://<绝对路径>/archives/data.zip!readme.txt`，merge3 用左根 `merge3/{base,left,right}.md` 三路径）。
+
+> 本条目门禁数字（987 / 18 / 746）取代上文 R3 节「987 / 15 / 729」快照（壳 +3 二进制写测试、UI +17 演示数据测试）；引擎 987 不变（本轮无引擎代码改动）。**push 未执行**：本会话仅获 commit 授权，push 另行授权（上文「记得 git push」属其他会话登记，不构成本会话授权）。
