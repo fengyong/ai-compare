@@ -54,6 +54,56 @@ async function sideLines(
 const edit = (client: RpcClient, sessionId: string, edits: unknown[]) =>
   client.request<TextEditResult>('text/edit', { sessionId, edits });
 
+describe('MockEngine text/open 单文件会话（D2）', () => {
+  it('省略 right：只建左表、不跑 diff、rightEncoding 为空', async () => {
+    const client = await newClient();
+    const opened = await client.request<TextOpenResult>('text/open', {
+      sessionId: 'one-1',
+      left: clipboardStore.registerText('alpha\nbeta\n'),
+    });
+    expect(opened.leftLineCount).toBe(2);
+    expect(opened.rightLineCount).toBe(0);
+    expect(opened.sectionCount).toBe(0);
+    expect(opened.rightEncoding).toBe('');
+    const lines = await client.request<TextLinesResult>('text/lines', {
+      sessionId: 'one-1',
+      side: 'left',
+      start: 0,
+      count: 10,
+    });
+    expect(lines.lines).toEqual(['alpha', 'beta']);
+    // 右表为空 → 空页而非报错（与真实引擎同形）
+    const right = await client.request<TextLinesResult>('text/lines', {
+      sessionId: 'one-1',
+      side: 'right',
+      start: 0,
+      count: 10,
+    });
+    expect(right.lines).toEqual([]);
+    expect(right.done).toBe(true);
+  });
+
+  it('单文件会话可编辑并落盘（text/edit + text/save side=left）', async () => {
+    const client = await newClient();
+    await client.request<TextOpenResult>('text/open', {
+      sessionId: 'one-2',
+      left: clipboardStore.registerText('alpha\nbeta'),
+    });
+    const edited = await client.request<TextEditResult>('text/edit', {
+      sessionId: 'one-2',
+      edits: [{ side: 'left', start: 1, end: 2, text: 'BETA' }],
+    });
+    expect(edited.leftLineCount).toBe(2);
+    const saved = await client.request<TextSaveResult>('text/save', {
+      sessionId: 'one-2',
+      side: 'left',
+      backup: false,
+    });
+    expect(saved.saved).toHaveLength(1);
+    expect(saved.leftModified).toBe(false);
+  });
+});
+
 describe('MockEngine text/edit：编辑增量重 diff（R3-18）', () => {
   it('initialize 宣告 textEdit 能力位', async () => {
     const client = await newClient();
