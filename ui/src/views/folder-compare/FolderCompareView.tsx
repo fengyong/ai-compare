@@ -188,21 +188,22 @@ export function FolderCompareView({ tab }: { tab: Tab }) {
   // sessionId 由客户端分配（生成协议 DirOpenParams），标签创建时即确定；
   // delta 前送在 dir/open 之前挂好，无应答/首批通知的竞态
   const cache = ensureDirCacheAttached(folder.sessionId!);
+  // R3-28：视图偏好从会话缓存 rehydrate（切换标签卸载视图不丢；首次为 null → 默认）
+  const savedView = cache.getViewState();
 
   const [error, setError] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
   // 两侧独立选择集 + 活动窗格（FR-DIR-003/050）
-  const [paneSel, setPaneSel] = useState<PaneSelections>({
-    left: emptySelection,
-    right: emptySelection,
-  });
-  const [activeSide, setActiveSide] = useState<PaneSide>('left');
-  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
-  const [flat, setFlat] = useState(false);
-  const [suppress, setSuppress] = useState(false);
-  const [displayPreset, setDisplayPreset] = useState('all');
-  const [filterText, setFilterText] = useState('');
-  const [appliedFilterText, setAppliedFilterText] = useState('');
+  const [paneSel, setPaneSel] = useState<PaneSelections>(
+    savedView?.paneSel ?? { left: emptySelection, right: emptySelection },
+  );
+  const [activeSide, setActiveSide] = useState<PaneSide>(savedView?.activeSide ?? 'left');
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(savedView?.expanded ?? new Set());
+  const [flat, setFlat] = useState(savedView?.flat ?? false);
+  const [suppress, setSuppress] = useState(savedView?.suppress ?? false);
+  const [displayPreset, setDisplayPreset] = useState(savedView?.displayPreset ?? 'all');
+  const [filterText, setFilterText] = useState(savedView?.filterText ?? '');
+  const [appliedFilterText, setAppliedFilterText] = useState(savedView?.appliedFilterText ?? '');
   const [execReport, setExecReport] = useState<ExecReport | null>(null);
   const [showDetail, setShowDetail] = useState(false);
   const [running, setRunning] = useState<number | null>(null);
@@ -212,8 +213,8 @@ export function FolderCompareView({ tab }: { tab: Tab }) {
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; rowId: string } | null>(null);
   // ---- P6b：编辑菜单 / 标记过滤 / 表头排序 / 批量重命名 / 快速比较 ----
   const [editMenuOpen, setEditMenuOpen] = useState(false);
-  const [markOnly, setMarkOnly] = useState(false);
-  const [sortSpec, setSortSpec] = useState<DirSortSpec | null>(null);
+  const [markOnly, setMarkOnly] = useState(savedView?.markOnly ?? false);
+  const [sortSpec, setSortSpec] = useState<DirSortSpec | null>(savedView?.sortSpec ?? null);
   const [batchRenameState, setBatchRenameState] = useState<BatchRenameDialogState | null>(null);
   const [quickCompareState, setQuickCompareState] = useState<QuickCompareDialogState | null>(null);
   const [contentCompareState, setContentCompareState] = useState<ContentCompareDialogState | null>(
@@ -230,6 +231,35 @@ export function FolderCompareView({ tab }: { tab: Tab }) {
   // 标记集（会话缓存层持久；toggle/setMarks 推版本号触发重渲染）
   const marks = cache.getMarks();
   const markCount = cache.getMarkCount();
+
+  // R3-28：视图偏好回写会话缓存（切换标签卸载视图前持久；不推版本号，无谓重渲染）。
+  // 仅视图偏好，不含瞬态对话框/执行反馈；会话关闭随 releaseDirCache 一并释放。
+  useLayoutEffect(() => {
+    cache.setViewState({
+      expanded,
+      flat,
+      suppress,
+      displayPreset,
+      filterText,
+      appliedFilterText,
+      sortSpec,
+      markOnly,
+      paneSel,
+      activeSide,
+    });
+  }, [
+    cache,
+    expanded,
+    flat,
+    suppress,
+    displayPreset,
+    filterText,
+    appliedFilterText,
+    sortSpec,
+    markOnly,
+    paneSel,
+    activeSide,
+  ]);
 
   // ---- 会话建立（ensureOpened 幂等：StrictMode 双调用安全；P6 惰性会话） ----
   useEffect(() => {

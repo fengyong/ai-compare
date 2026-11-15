@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { DirDelta, DirRow } from '../../protocol/types';
-import { DirRowCache } from './dirRowCache';
+import { DirRowCache, type DirViewState } from './dirRowCache';
+import { emptySelection } from './dirSelection';
 
 /** 目录行缓存：dir/delta 合并语义（upsert 按行 id 幂等 / removals / stats） */
 const row = (id: string, over: Partial<DirRow> = {}): DirRow => ({
@@ -223,5 +224,61 @@ describe('DirRowCache scanErrors', () => {
     expect(c.getStats().scanErrors).toEqual([{ path: 'sub', message: 'EIO' }]);
     c.applyDelta(delta({ upserts: [] }));
     expect(c.getStats().scanErrors).toEqual([]);
+  });
+});
+
+/**
+ * R3-28：视图偏好挂会话缓存层（切换标签卸载视图组件，但缓存存活，重挂据此 rehydrate）。
+ * 仅视图偏好，不含瞬态对话框；不改行数据，故不推版本号（避免无谓重渲染）。
+ */
+describe('DirRowCache viewState', () => {
+  const viewState = (over: Partial<DirViewState> = {}): DirViewState => ({
+    expanded: new Set(['sub']),
+    flat: true,
+    suppress: false,
+    displayPreset: 'all',
+    filterText: '*.rs',
+    appliedFilterText: '*.rs',
+    sortSpec: { key: 'name', dir: 1 },
+    markOnly: false,
+    paneSel: { left: emptySelection, right: emptySelection },
+    activeSide: 'right',
+    ...over,
+  });
+
+  it('首次为 null（视图据默认值初始化）', () => {
+    expect(new DirRowCache('s1').getViewState()).toBeNull();
+  });
+
+  it('setViewState/getViewState 往返保留全部偏好字段', () => {
+    const c = new DirRowCache('s1');
+    const vs = viewState();
+    c.setViewState(vs);
+    const got = c.getViewState();
+    expect(got).toBe(vs); // 同一引用：视图重挂直接读回
+    expect(got?.flat).toBe(true);
+    expect(got?.expanded.has('sub')).toBe(true);
+    expect(got?.appliedFilterText).toBe('*.rs');
+    expect(got?.sortSpec).toEqual({ key: 'name', dir: 1 });
+    expect(got?.activeSide).toBe('right');
+  });
+
+  it('再次写入覆盖旧值（最新偏好生效）', () => {
+    const c = new DirRowCache('s1');
+    c.setViewState(viewState({ flat: true, markOnly: false }));
+    c.setViewState(viewState({ flat: false, markOnly: true }));
+    expect(c.getViewState()?.flat).toBe(false);
+    expect(c.getViewState()?.markOnly).toBe(true);
+  });
+
+  it('写视图偏好不推版本号（不改行数据，避免无谓重渲染）', () => {
+    const c = new DirRowCache('s1');
+    const versions: number[] = [];
+    c.subscribe(() => versions.push(c.getSnapshot()));
+    const v0 = c.getSnapshot();
+    c.setViewState(viewState());
+    c.setViewState(viewState({ flat: false }));
+    expect(c.getSnapshot()).toBe(v0);
+    expect(versions.length).toBe(0);
   });
 });
