@@ -52,7 +52,11 @@ if [ ! -f "$ENGINE_SRC" ]; then
 fi
 cp "$ENGINE_SRC" "$APP/Contents/MacOS/ai-engine"
 chmod +x "$APP/Contents/MacOS/ai-engine"
-codesign --force --deep --sign - "$APP" >/dev/null 2>&1 || true
+# 签名失败必须loud：旧实现 `|| true` 吞掉失败，会产出未签名/签名失效的 .app。
+# macOS 的 TCC（文件/屏幕录制等权限）按签名标识认对象，签名缺失或失效会让
+# 重装后权限静默认错对象（R3-24）。set -euo pipefail 下任一步失败即中止打包。
+codesign --force --deep --sign - "$APP"
+codesign --verify --strict "$APP"
 
 echo
 echo "✅ 完成：$APP"
