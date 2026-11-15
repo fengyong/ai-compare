@@ -9,7 +9,13 @@
  * - 结果报告文本导出（FR-SYNC 报告/日志需求）。
  */
 
-import type { DirExecuteOp, DirRow, PlannedOperation, PlannedOpKind } from '../../protocol/types';
+import type {
+  DirExecuteOp,
+  DirExecuteResult,
+  DirRow,
+  PlannedOperation,
+  PlannedOpKind,
+} from '../../protocol/types';
 import { plannedToOp } from '../folder-compare/dirOps';
 
 /** 同步策略（UI 面；与引擎 SyncStrategy 同语义） */
@@ -422,18 +428,15 @@ export interface SyncExecReport {
   failed: number;
   total: number;
   cancelled: boolean;
-  details: { kind: string; path: string; status: string; detail: string | null }[];
+  /** 明细（`detail` 是零值省略字段：失败/跳过原因可能缺键，见协议 D1A） */
+  details: { kind: string; path: string; status: string; detail?: string }[];
 }
 
 /** 由 dir/execute 结果聚合同步报告（dryRun 明细计为 skipped 展示） */
-export function reportFromExecute(result: {
-  total: number;
-  succeeded: { op: DirExecuteOp; detail: string | null }[];
-  failed: { op: DirExecuteOp; status: string; detail: string | null }[];
-  skipped: { op: DirExecuteOp; status: string; detail: string | null }[];
-  cancelled: boolean;
-  dryRun: boolean;
-}): SyncExecReport {
+export function reportFromExecute(
+  // D1B：参数不再手写镜像，直接取生成协议类型（sessionId 与聚合无关，故省略）
+  result: Omit<DirExecuteResult, 'sessionId'>,
+): SyncExecReport {
   const classify = (op: DirExecuteOp): 'copied' | 'deleted' | 'touched' => {
     if (op.kind === 'delete') return 'deleted';
     if (op.kind === 'touch') return 'touched';

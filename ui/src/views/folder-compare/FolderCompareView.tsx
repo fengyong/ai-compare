@@ -125,7 +125,8 @@ interface ExecReport {
   ok: number;
   failed: number;
   skipped: number;
-  details: { status: string; kind: string; path: string; detail: string | null }[];
+  /** 明细（detail 是零值省略字段：成功项通常没有该键） */
+  details: { status: string; kind: string; path: string; detail?: string }[];
 }
 
 /** P6b 标记角标橙色（BC 标记惯例；CSS 归 theme/global.css（他线独占），内联样式） */
@@ -1248,7 +1249,9 @@ export function FolderCompareView({ tab }: { tab: Tab }) {
               {execReport.details.map((d, i) => (
                 <div key={`${d.path}-${i}`}>
                   <span className={`st-${d.status}`}>{d.status}</span>{' '}
-                  {S.folder.opsDetailItem('', d.kind, d.path, d.detail).replace('[undefined] ', '')}
+                  {S.folder
+                    .opsDetailItem('', d.kind, d.path, d.detail ?? null)
+                    .replace('[undefined] ', '')}
                 </div>
               ))}
             </div>

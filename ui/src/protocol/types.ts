@@ -242,65 +242,24 @@ export const DEFAULT_DIR_CRITERIA: CompareCriteria = {
 export type SemanticCleanup = 'none' | 'dmp';
 
 /* ============================================================
- * 3. P6 提案：dir/execute 文件操作执行协议（UI 本地先行）
+ * 3. dir/execute 文件操作执行协议（生成类型为唯一来源；D1B）
  * ============================================================
  *
- * ai-dir 引擎侧执行层已落地（engine/ai-dir/src/execute.rs：
- * execute_planned_operations / execute_ops，含 dry_run/护栏/部分成功语义），
- * 但 ai-protocol/ai-engine 归并行 P7 独占，RPC 入口待主会话协调合入。
- * 本地类型与提议的引擎 DTO 同形（见 P6 交付报告"协议/RPC 变更清单"）：
+ * 引擎已落地该 RPC：协议类型在 engine/ai-protocol（`ts(export)` 生成），
+ * 执行层在 engine/ai-dir/src/execute.rs（dry_run / 护栏 / 部分成功语义），
+ * RPC 入口 engine/ai-engine/src/handlers.rs。
  *
  *   dir/execute { sessionId, ops, dryRun? } →
  *     { sessionId, total, succeeded[], failed[], skipped[], dryRun, cancelled }
  *
- * mock 引擎已同形实现（浏览器可演示）；真实引擎合入后 UI 零改动切换。
+ * D1B：此处原有 5 个手写「提案镜像」，与生成类型已发生形态漂移
+ * （`detail` 被写成必填可空、`targetSide`/`targetPath`/`newName` 被写成
+ * `| null`、缺少 `DirExecuteOpKind` 命名），现全部以生成类型为准。
  */
 
-/** 执行级操作（对齐 ai-dir execute::FileOp；serde 形态取协议友好展开式） */
-export type DirExecuteOp = {
-  /** 动作类别（ai-dir FileOp::Copy/Move/Rename/Delete/Touch/Mkdir） */
-  kind: 'copy' | 'move' | 'rename' | 'delete' | 'touch' | 'mkdir';
-  /** rel 路径（POSIX 风格；rename 为源路径） */
-  path: string;
-  /** copy/move 的源侧；delete/touch/mkdir/rename 的操作侧 */
-  side: 'left' | 'right';
-  /** copy/move 目标侧（缺省 = 对侧） */
-  targetSide?: 'left' | 'right' | null;
-  /**
-   * R3-03：copy/move 的**目标侧真实 rel**（手动对齐左右异名、平铺模式下
-   * 与 path 不同）；touch(mtimeMs=0) 时作为取时间戳的对侧 rel。
-   * 缺省 = path（旧引擎/树形同路径兼容）。
-   */
-  targetPath?: string | null;
-  /** rename 新名称（仅 rename） */
-  newName?: string | null;
-  /** touch 目标 mtime（epoch ms；0/缺省 = 取对侧时间戳） */
-  mtimeMs?: number | null;
-};
-
-export type DirExecuteParams = {
-  sessionId: string;
-  ops: DirExecuteOp[];
-  /** 试运行：只校验不落盘，返回将执行清单（可对拍） */
-  dryRun?: boolean | null;
-};
-
-export type DirExecuteOpStatus = 'succeeded' | 'failed' | 'skipped';
-
-export type DirExecuteOpResult = {
-  op: DirExecuteOp;
-  status: DirExecuteOpStatus;
-  /** 失败原因 / 跳过原因 / dry_run 说明 */
-  detail: string | null;
-};
-
-/** dir/execute 应答（部分成功语义：成功/失败/跳过三清单，OP-002） */
-export type DirExecuteResult = {
-  sessionId: string;
-  total: number;
-  succeeded: DirExecuteOpResult[];
-  failed: DirExecuteOpResult[];
-  skipped: DirExecuteOpResult[];
-  dryRun: boolean;
-  cancelled: boolean;
-};
+export type { DirExecuteOp } from './generated/DirExecuteOp';
+export type { DirExecuteOpKind } from './generated/DirExecuteOpKind';
+export type { DirExecuteParams } from './generated/DirExecuteParams';
+export type { DirExecuteOpStatus } from './generated/DirExecuteOpStatus';
+export type { DirExecuteOpResult } from './generated/DirExecuteOpResult';
+export type { DirExecuteResult } from './generated/DirExecuteResult';

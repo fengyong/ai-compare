@@ -9,10 +9,10 @@
  * （超限降级为整行不匹配，对齐 docs/03 §6.2 的降级策略语义）。
  */
 
-export interface CharRange {
-  start: number;
-  end: number;
-}
+// D1B：字符区间是协议类型（text/inlineDiff 的 InlineSpanDto 同口径），
+// 不再本地重复声明——引擎侧形状变更必须在此处显式暴露。
+import type { CharRange } from '../protocol/types';
+export type { CharRange };
 
 export interface InlinePair {
   left?: CharRange;

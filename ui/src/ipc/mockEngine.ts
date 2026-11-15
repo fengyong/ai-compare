@@ -708,7 +708,7 @@ export class MockEngine {
               if (!row.left && !row.right) removed.add(row.id);
             }
             touched.add(row.id);
-            succeeded.push({ op, status: 'succeeded', detail: null });
+            succeeded.push({ op, status: 'succeeded' });
             break;
           }
           case 'delete': {
@@ -723,7 +723,7 @@ export class MockEngine {
             } else {
               touched.add(row.id);
             }
-            succeeded.push({ op, status: 'succeeded', detail: null });
+            succeeded.push({ op, status: 'succeeded' });
             break;
           }
           case 'rename': {
@@ -761,7 +761,7 @@ export class MockEngine {
             row.name = op.newName;
             syncSidePaths(row);
             touched.add(row.id);
-            succeeded.push({ op, status: 'succeeded', detail: null });
+            succeeded.push({ op, status: 'succeeded' });
             break;
           }
           case 'touch': {
@@ -777,7 +777,7 @@ export class MockEngine {
             row[op.side]!.mtimeMs = mtime;
             recomputeRowStatus(row);
             touched.add(row.id);
-            succeeded.push({ op, status: 'succeeded', detail: null });
+            succeeded.push({ op, status: 'succeeded' });
             break;
           }
           case 'mkdir': {
@@ -800,7 +800,7 @@ export class MockEngine {
             };
             s.treeRows.push(created);
             touched.add(created.id);
-            succeeded.push({ op, status: 'succeeded', detail: null });
+            succeeded.push({ op, status: 'succeeded' });
             break;
           }
         }

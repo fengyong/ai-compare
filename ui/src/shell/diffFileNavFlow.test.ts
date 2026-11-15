@@ -140,7 +140,12 @@ function seedChildModel(): void {
 
 function execResult(ops: DirExecuteParams['ops'], failed = false): DirExecuteResult {
   const item = (status: 'succeeded' | 'failed') =>
-    ops.map((op) => ({ op, status, detail: status === 'failed' ? '磁盘只读' : null }));
+    ops.map((op) => ({
+      op,
+      status,
+      // detail 为零值省略字段：成功项不带该键（与引擎输出一致）
+      ...(status === 'failed' ? { detail: '磁盘只读' } : {}),
+    }));
   return {
     sessionId: PARENT_SID,
     total: ops.length,

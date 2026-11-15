@@ -245,8 +245,11 @@ describe('folder-sync/syncPlan 结果报告聚合与导出', () => {
     const report = reportFromExecute({
       total: 3,
       succeeded: [
-        { op: { kind: 'copy', path: 'a.txt', side: 'left', targetSide: 'right' }, detail: null },
-        { op: { kind: 'delete', path: 'b.txt', side: 'right' }, detail: null },
+        {
+          op: { kind: 'copy', path: 'a.txt', side: 'left', targetSide: 'right' },
+          status: 'succeeded',
+        },
+        { op: { kind: 'delete', path: 'b.txt', side: 'right' }, status: 'succeeded' },
       ],
       failed: [
         {
@@ -299,7 +302,7 @@ describe('folder-sync/syncPlan 结果报告聚合与导出', () => {
       total: 5,
       cancelled: false,
       details: [
-        { kind: 'copy', path: 'a.txt', status: 'copied', detail: null },
+        { kind: 'copy', path: 'a.txt', status: 'copied' },
         { kind: 'delete', path: 'b.txt', status: 'failed', detail: '目标不存在' },
       ],
     };

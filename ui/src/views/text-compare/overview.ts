@@ -17,7 +17,9 @@ export interface OverviewSeg {
   color: OverviewColor;
 }
 
-export type Importance = 'important' | 'unimportant' | 'ignored';
+// D1B：Importance 是协议类型（Section.importance），不再本地重复声明。
+import type { Importance } from '../../protocol/types';
+export type { Importance };
 
 /** 行状态 → 概览色 */
 export function colorForRow(status: AlignedRow['status'], importance: Importance): OverviewColor {

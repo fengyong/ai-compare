@@ -126,9 +126,7 @@ beforeEach(() => {
   mockExecuteOperations.mockResolvedValue({
     sessionId: SID,
     total: 1,
-    succeeded: [
-      { op: { kind: 'copy', path: 'a.txt', side: 'left' }, status: 'succeeded', detail: null },
-    ],
+    succeeded: [{ op: { kind: 'copy', path: 'a.txt', side: 'left' }, status: 'succeeded' }],
     failed: [],
     skipped: [],
     dryRun: false,

@@ -32,7 +32,9 @@ import type { BookmarkMap } from './bookmarks';
  * - 语法高亮：Lezer 语言包（langPacks 按需加载）+ 暗色 HighlightStyle（对齐色板）
  */
 
-export type Importance = 'important' | 'unimportant' | 'ignored';
+// D1B：Importance 是协议类型（Section.importance），不再本地重复声明。
+import type { Importance } from '../../protocol/types';
+export type { Importance };
 
 /** 单个查找命中（对齐文档行坐标） */
 export interface FindMark {
