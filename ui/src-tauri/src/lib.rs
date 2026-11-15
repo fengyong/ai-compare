@@ -13,7 +13,7 @@
 //! 找不到引擎时 `engine_start` 返回带指引的错误文案，前端展示优雅降级横幅
 //! （可重试或切内置演示引擎）。
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::Mutex;
 
@@ -145,11 +145,19 @@ fn engine_start(
 
     let resolved = match path {
         Some(p) => {
-            let pb = PathBuf::from(&p);
-            if pb.is_file() {
-                pb
+            // R3-23：调用方传入的任意路径只在 debug 构建生效（dev/测试约定）。
+            // release 包强制走 resolve_engine_path（随包引擎），避免 WebView 被
+            // 注入后借 engine_start 启动任意本地可执行文件。前端正常调用不传 path。
+            if cfg!(debug_assertions) {
+                let pb = PathBuf::from(&p);
+                if pb.is_file() {
+                    pb
+                } else {
+                    return Err(format!("指定的引擎路径不存在: {p}"));
+                }
             } else {
-                return Err(format!("指定的引擎路径不存在: {p}"));
+                eprintln!("[engine] release 构建忽略调用方引擎路径，改用随包引擎: {p}");
+                resolve_engine_path()?
             }
         }
         None => resolve_engine_path()?,
@@ -286,18 +294,23 @@ fn default_base_dir() -> PathBuf {
     PathBuf::from(".")
 }
 
-/// 设置目录探测：exe 旁 portable.ini / ai-compare.ini → 便携模式（base = exe 目录）
-#[tauri::command]
-fn settings_app_dirs() -> Result<AppDirsInfo, String> {
-    let exe_dir = exe_dir()?;
-    let portable = PORTABLE_MARKERS
-        .iter()
-        .any(|name| exe_dir.join(name).is_file());
-    let base_dir = if portable {
-        exe_dir.clone()
+/// 设置目录推导（便携感知）：返回 (base_dir, exe_dir, portable)。
+/// base_dir 是设置文件唯一允许落盘的根（R3-23 命令面收敛的依据）。
+fn app_dirs_raw() -> Result<(PathBuf, PathBuf, bool), String> {
+    let exe = exe_dir()?;
+    let portable = PORTABLE_MARKERS.iter().any(|name| exe.join(name).is_file());
+    let base = if portable {
+        exe.clone()
     } else {
         default_base_dir()
     };
+    Ok((base, exe, portable))
+}
+
+/// 设置目录探测：exe 旁 portable.ini / ai-compare.ini → 便携模式（base = exe 目录）
+#[tauri::command]
+fn settings_app_dirs() -> Result<AppDirsInfo, String> {
+    let (base_dir, exe_dir, portable) = app_dirs_raw()?;
     std::fs::create_dir_all(&base_dir).map_err(|e| format!("创建设置目录失败: {e}"))?;
     Ok(AppDirsInfo {
         base_dir: base_dir.display().to_string(),
@@ -306,9 +319,62 @@ fn settings_app_dirs() -> Result<AppDirsInfo, String> {
     })
 }
 
+/// 把 IPC 传入的路径收敛到 base 内（R3-23）：拒绝绝对越界、`..` 穿越与符号链接逃逸。
+/// 前端合法路径恒为 `<base>/<固定文件名>` 或 `<base>/clipboard/<name>`，均在 base 内。
+fn confine_within(path: &str, base: &Path) -> Result<PathBuf, String> {
+    std::fs::create_dir_all(base).map_err(|e| format!("创建设置目录失败: {e}"))?;
+    let real_base = std::fs::canonicalize(base).map_err(|e| format!("解析设置目录失败: {e}"))?;
+    let pb = PathBuf::from(path);
+    let abs = if pb.is_absolute() {
+        pb
+    } else {
+        real_base.join(pb)
+    };
+    if abs
+        .components()
+        .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        return Err(format!("设置路径越界（禁止 .. 穿越）: {path}"));
+    }
+    let canon = canonicalize_lenient(&abs)?;
+    if canon.starts_with(&real_base) {
+        Ok(canon)
+    } else {
+        Err(format!("设置路径越界（仅限应用设置目录）: {path}"))
+    }
+}
+
+/// canonicalize 要求路径存在，而写入新文件时目标尚不存在：向上取最近的存在祖先
+/// 做 canonicalize（解析符号链接），再补回不存在的尾部（尾部已无 `..`，不会逃逸）。
+fn canonicalize_lenient(path: &Path) -> Result<PathBuf, String> {
+    let mut existing = path.to_path_buf();
+    let mut tail: Vec<std::ffi::OsString> = Vec::new();
+    while !existing.exists() {
+        match existing.file_name() {
+            Some(name) => {
+                tail.push(name.to_os_string());
+                existing.pop();
+            }
+            None => break,
+        }
+    }
+    let mut canon = std::fs::canonicalize(&existing)
+        .map_err(|e| format!("解析设置路径失败（{}）: {e}", existing.display()))?;
+    for comp in tail.iter().rev() {
+        canon.push(comp);
+    }
+    Ok(canon)
+}
+
 /// 读取设置文件（不存在 → found=false；不做解析，损坏交给前端恢复层）
 #[tauri::command]
 fn settings_read(path: String) -> Result<SettingsReadResult, String> {
+    let (base, _, _) = app_dirs_raw()?;
+    let confined = confine_within(&path, &base)?;
+    settings_read_inner(confined.display().to_string())
+}
+
+fn settings_read_inner(path: String) -> Result<SettingsReadResult, String> {
     match std::fs::read_to_string(&path) {
         Ok(contents) => Ok(SettingsReadResult {
             found: true,
@@ -336,6 +402,12 @@ struct SettingsReadResult {
 /// 临时名带 pid + 进程内序号：同进程并发写不再共用一个 tmp 路径。
 #[tauri::command]
 fn settings_write(path: String, contents: String) -> Result<(), String> {
+    let (base, _, _) = app_dirs_raw()?;
+    let confined = confine_within(&path, &base)?;
+    settings_write_inner(confined.display().to_string(), contents)
+}
+
+fn settings_write_inner(path: String, contents: String) -> Result<(), String> {
     use std::io::Write;
     use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -387,6 +459,12 @@ fn settings_write(path: String, contents: String) -> Result<(), String> {
 /// 否则"删除会话"会静默失败而 UI 以为已删（R3-13）。
 #[tauri::command]
 fn settings_delete(path: String) -> Result<(), String> {
+    let (base, _, _) = app_dirs_raw()?;
+    let confined = confine_within(&path, &base)?;
+    settings_delete_inner(confined.display().to_string())
+}
+
+fn settings_delete_inner(path: String) -> Result<(), String> {
     for p in [path.clone(), format!("{path}.bak")] {
         match std::fs::remove_file(&p) {
             Ok(()) => {}
@@ -446,8 +524,8 @@ mod tests {
     fn settings_write_creates_parent_dirs_and_readable_content() {
         let dir = tempfile::tempdir().unwrap();
         let p = dir.path().join("nested/deep/sessions.json");
-        settings_write(p.display().to_string(), "{\"v\":1}".into()).unwrap();
-        let r = settings_read(p.display().to_string()).unwrap();
+        settings_write_inner(p.display().to_string(), "{\"v\":1}".into()).unwrap();
+        let r = settings_read_inner(p.display().to_string()).unwrap();
         assert!(r.found);
         assert_eq!(r.contents.as_deref(), Some("{\"v\":1}"));
         // 首次写入无旧值 → 不产生 .bak
@@ -458,12 +536,12 @@ mod tests {
     fn settings_write_backs_up_previous_content() {
         let dir = tempfile::tempdir().unwrap();
         let p = dir.path().join("s.json");
-        settings_write(p.display().to_string(), "v1".into()).unwrap();
-        settings_write(p.display().to_string(), "v2".into()).unwrap();
+        settings_write_inner(p.display().to_string(), "v1".into()).unwrap();
+        settings_write_inner(p.display().to_string(), "v2".into()).unwrap();
         assert_eq!(read(&p).as_deref(), Some("v2"));
         assert_eq!(read(&p.with_extension("json.bak")).as_deref(), Some("v1"));
         // 第三次写：.bak 跟进到 v2，且不留临时文件
-        settings_write(p.display().to_string(), "v3".into()).unwrap();
+        settings_write_inner(p.display().to_string(), "v3".into()).unwrap();
         assert_eq!(read(&p.with_extension("json.bak")).as_deref(), Some("v2"));
         assert_eq!(entries(dir.path()), vec!["s.json", "s.json.bak"]);
     }
@@ -478,11 +556,11 @@ mod tests {
 
         let dir = tempfile::tempdir().unwrap();
         let p = dir.path().join("s.json");
-        settings_write(p.display().to_string(), "v1".into()).unwrap();
-        settings_write(p.display().to_string(), "v2".into()).unwrap();
+        settings_write_inner(p.display().to_string(), "v1".into()).unwrap();
+        settings_write_inner(p.display().to_string(), "v2".into()).unwrap();
         std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o555)).unwrap();
 
-        let res = settings_write(p.display().to_string(), "v3".into());
+        let res = settings_write_inner(p.display().to_string(), "v3".into());
 
         std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
         assert!(res.is_err(), "只读目录写入必须报错，实际: {res:?}");
@@ -504,13 +582,13 @@ mod tests {
     fn settings_write_reports_replace_failure_and_cleans_tmp() {
         let dir = tempfile::tempdir().unwrap();
         let p = dir.path().join("s.json");
-        settings_write(p.display().to_string(), "v1".into()).unwrap();
-        settings_write(p.display().to_string(), "v2".into()).unwrap();
+        settings_write_inner(p.display().to_string(), "v1".into()).unwrap();
+        settings_write_inner(p.display().to_string(), "v2".into()).unwrap();
         std::fs::remove_file(&p).unwrap();
         std::fs::create_dir(&p).unwrap();
         std::fs::write(p.join("blocker"), "x").unwrap();
 
-        let res = settings_write(p.display().to_string(), "v3".into());
+        let res = settings_write_inner(p.display().to_string(), "v3".into());
         assert!(res.is_err(), "实际: {res:?}");
         // .bak 仍是上一次的旧值；父目录无 tmp 残留
         assert_eq!(read(&p.with_extension("json.bak")).as_deref(), Some("v1"));
@@ -522,12 +600,12 @@ mod tests {
     fn settings_write_concurrent_writes_do_not_collide() {
         let dir = tempfile::tempdir().unwrap();
         let p = dir.path().join("s.json");
-        settings_write(p.display().to_string(), "seed".into()).unwrap();
+        settings_write_inner(p.display().to_string(), "seed".into()).unwrap();
         let path = p.display().to_string();
         let handles: Vec<_> = (0..8)
             .map(|i| {
                 let path = path.clone();
-                std::thread::spawn(move || settings_write(path, format!("writer-{i}")))
+                std::thread::spawn(move || settings_write_inner(path, format!("writer-{i}")))
             })
             .collect();
         for h in handles {
@@ -549,12 +627,12 @@ mod tests {
     fn settings_delete_removes_primary_and_backup_idempotently() {
         let dir = tempfile::tempdir().unwrap();
         let p = dir.path().join("s.json");
-        settings_write(p.display().to_string(), "v1".into()).unwrap();
-        settings_write(p.display().to_string(), "v2".into()).unwrap();
-        settings_delete(p.display().to_string()).unwrap();
+        settings_write_inner(p.display().to_string(), "v1".into()).unwrap();
+        settings_write_inner(p.display().to_string(), "v2".into()).unwrap();
+        settings_delete_inner(p.display().to_string()).unwrap();
         assert_eq!(entries(dir.path()), Vec::<String>::new());
         // 再删一次仍成功（不存在 = 幂等）
-        settings_delete(p.display().to_string()).unwrap();
+        settings_delete_inner(p.display().to_string()).unwrap();
     }
 
     /// 删除失败必须上抛（旧实现 `let _ =` 吞掉全部错误）。
@@ -563,11 +641,11 @@ mod tests {
     fn settings_delete_reports_errors() {
         let dir = tempfile::tempdir().unwrap();
         let p = dir.path().join("s.json");
-        settings_write(p.display().to_string(), "v1".into()).unwrap();
+        settings_write_inner(p.display().to_string(), "v1".into()).unwrap();
         let bak = p.with_extension("json.bak");
         std::fs::create_dir(&bak).unwrap();
         std::fs::write(bak.join("blocker"), "x").unwrap();
-        let res = settings_delete(p.display().to_string());
+        let res = settings_delete_inner(p.display().to_string());
         assert!(res.is_err(), "实际: {res:?}");
         assert!(res.unwrap_err().contains("s.json.bak"));
     }
@@ -575,7 +653,7 @@ mod tests {
     #[test]
     fn settings_read_missing_file_is_not_found() {
         let dir = tempfile::tempdir().unwrap();
-        let r = settings_read(dir.path().join("nope.json").display().to_string()).unwrap();
+        let r = settings_read_inner(dir.path().join("nope.json").display().to_string()).unwrap();
         assert!(!r.found);
         assert!(r.contents.is_none());
     }
@@ -588,8 +666,8 @@ mod tests {
     fn settings_write_replace_failure_after_backup_keeps_primary() {
         let dir = tempfile::tempdir().unwrap();
         let p = dir.path().join("s.json");
-        settings_write(p.display().to_string(), "v1".into()).unwrap();
-        settings_write(p.display().to_string(), "v2".into()).unwrap();
+        settings_write_inner(p.display().to_string(), "v1".into()).unwrap();
+        settings_write_inner(p.display().to_string(), "v2".into()).unwrap();
         let flag = |on: bool| {
             let st = std::process::Command::new("chflags")
                 .arg(if on { "uchg" } else { "nouchg" })
@@ -599,7 +677,7 @@ mod tests {
             assert!(st.success(), "chflags 执行失败");
         };
         flag(true);
-        let res = settings_write(p.display().to_string(), "v3".into());
+        let res = settings_write_inner(p.display().to_string(), "v3".into());
         flag(false);
 
         assert!(
@@ -628,9 +706,9 @@ mod tests {
 
         let dir = tempfile::tempdir().unwrap();
         let p = dir.path().join("s.json");
-        settings_write(p.display().to_string(), "old-content-longer".into()).unwrap();
+        settings_write_inner(p.display().to_string(), "old-content-longer".into()).unwrap();
         let mut held = std::fs::File::open(&p).unwrap();
-        settings_write(p.display().to_string(), "new".into()).unwrap();
+        settings_write_inner(p.display().to_string(), "new".into()).unwrap();
 
         let mut seen = String::new();
         held.seek(SeekFrom::Start(0)).unwrap();
@@ -639,5 +717,66 @@ mod tests {
             seen, "old-content-longer",
             "已打开的读句柄看到了新内容 → 不是原子替换"
         );
+    }
+
+    // ---- R3-23：设置命令面收敛（confine_within 是纯边界逻辑，命令仅做委托）----
+
+    #[test]
+    fn confine_allows_files_and_nested_dirs_within_base() {
+        let base = tempfile::tempdir().unwrap();
+        let real_base = std::fs::canonicalize(base.path()).unwrap();
+        // 直接子文件（尚不存在）与嵌套子目录文件（clipboard/ 尚不存在）都允许
+        let f = confine_within(
+            &base.path().join("sessions.json").display().to_string(),
+            base.path(),
+        )
+        .unwrap();
+        assert_eq!(f, real_base.join("sessions.json"));
+        let nested = base.path().join("clipboard/clip-1.txt");
+        let n = confine_within(&nested.display().to_string(), base.path()).unwrap();
+        assert_eq!(n, real_base.join("clipboard/clip-1.txt"));
+    }
+
+    #[test]
+    fn confine_relative_path_resolves_under_base() {
+        let base = tempfile::tempdir().unwrap();
+        let got = confine_within("sessions.json", base.path()).unwrap();
+        assert_eq!(
+            got,
+            std::fs::canonicalize(base.path())
+                .unwrap()
+                .join("sessions.json")
+        );
+    }
+
+    #[test]
+    fn confine_rejects_absolute_path_outside_base() {
+        let base = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let p = outside.path().join("secret.json");
+        let res = confine_within(&p.display().to_string(), base.path());
+        assert!(res.is_err(), "base 外绝对路径必须被拒绝，实际: {res:?}");
+    }
+
+    #[test]
+    fn confine_rejects_parent_traversal() {
+        let base = tempfile::tempdir().unwrap();
+        let escape = base.path().join("../outside.json");
+        let res = confine_within(&escape.display().to_string(), base.path());
+        assert!(res.is_err(), ".. 穿越必须被拒绝，实际: {res:?}");
+        let abs = confine_within("/tmp/../etc/passwd", base.path());
+        assert!(abs.is_err(), "绝对路径中的 .. 也必须被拒绝，实际: {abs:?}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn confine_rejects_symlink_escape() {
+        let base = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(outside.path().join("secret.json"), "x").unwrap();
+        let link = base.path().join("evil");
+        std::os::unix::fs::symlink(outside.path(), &link).unwrap();
+        let res = confine_within(&link.join("secret.json").display().to_string(), base.path());
+        assert!(res.is_err(), "符号链接逃逸必须被拒绝，实际: {res:?}");
     }
 }
