@@ -223,7 +223,6 @@ export const DEFAULT_DIR_CRITERIA: CompareCriteria = {
   ignoreTzHour: false,
   compareCase: true,
   compareAttributes: false,
-  attributeLetters: null,
   unixMeta: false,
 };
 

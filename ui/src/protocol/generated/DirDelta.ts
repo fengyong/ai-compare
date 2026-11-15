@@ -16,7 +16,7 @@ rev: number, upserts: Array<DirRow>,
 /**
  * 被移除的行 id（P0 全量扫描不产生，字段为增量刷新预留）
  */
-removals: Array<string>, stats: DirStats, progress: ScanProgress | null, batch: BatchInfo, 
+removals: Array<string>, stats: DirStats, progress?: ScanProgress, batch: BatchInfo, 
 /**
  * 扫描错误（目录不可读等）。始终序列化（空为 []），使生成的 TS 必填
  * Array 类型与线上 JSON 一致 —— 省略键会让 TS 类型说谎（R3-21）。

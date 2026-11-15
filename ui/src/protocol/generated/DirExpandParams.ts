@@ -11,4 +11,4 @@ path: string,
 /**
  * 展开层级（1 = 直接子项，缺省 1）
  */
-depth: number | null, };
+depth?: number, };

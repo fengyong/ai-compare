@@ -14,24 +14,24 @@ delimiter?: string,
 /**
  * 首行为表头（缺省 true）
  */
-hasHeader: boolean | null, 
+hasHeader?: boolean, 
 /**
  * 键列集（0 起物理列下标；空 = 无键）
  */
-keyColumns: Array<number> | null, columnAlign: TableColumnAlign | null, rowAlign: TableRowAlign | null, 
+keyColumns?: Array<number>, columnAlign?: TableColumnAlign, rowAlign?: TableRowAlign, 
 /**
  * 偏斜容差（缺省 5；0 = 不允许偏斜补配）
  */
-skewTolerance: number | null, 
+skewTolerance?: number, 
 /**
  * 大小写不重要（FR-TBL-003 文本列）
  */
-caseUnimportant: boolean | null, 
+caseUnimportant?: boolean, 
 /**
  * 空白语义（FR-TBL-003 空白三类；缺省 Significant）
  */
-whitespace: WhitespaceMode | null, 
+whitespace?: WhitespaceMode, 
 /**
  * 数值容差（P10 预留；数值列两值相差 ≤ 容差判不重要）
  */
-numericTolerance: number | null, };
+numericTolerance?: number, };

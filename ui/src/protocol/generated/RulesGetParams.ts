@@ -4,8 +4,8 @@ export type RulesGetParams = {
 /**
  * 生效解析的会话类型（如 "text-compare"）
  */
-kind: string | null, 
+kind?: string, 
 /**
  * 生效解析的会话 id
  */
-sessionId: string | null, };
+sessionId?: string, };

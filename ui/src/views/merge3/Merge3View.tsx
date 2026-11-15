@@ -311,9 +311,9 @@ export function Merge3View({ tab }: { tab: Merge3Tab }) {
     let disposed = false;
     void (async () => {
       try {
-        const r = await merge3OpenIdempotent({ sessionId, base, left, right, options: null });
+        const r = await merge3OpenIdempotent({ sessionId, base, left, right });
         if (disposed) return;
-        trackSession(sessionId, 'merge3', { base, left, right, options: null });
+        trackSession(sessionId, 'merge3', { base, left, right });
         setOpened(r);
         const all = await loadSections();
         if (!disposed) setChunks(all);
@@ -355,7 +355,7 @@ export function Merge3View({ tab }: { tab: Merge3Tab }) {
 
   const decideAll = (action: MergeDecisionKind) => {
     const ids = chunks.filter((c) => c.unresolved).map((c) => c.id);
-    void applyDecisions(ids.map((chunkId) => ({ chunkId, action, text: null })));
+    void applyDecisions(ids.map((chunkId) => ({ chunkId, action, text: undefined })));
   };
 
   const visible = useMemo(() => filterChunks(chunks, filter), [chunks, filter]);
@@ -533,7 +533,9 @@ export function Merge3View({ tab }: { tab: Merge3Tab }) {
                 <button
                   key={a}
                   disabled={busy}
-                  onClick={() => void applyDecisions([{ chunkId: c.id, action: a, text: null }])}
+                  onClick={() =>
+                    void applyDecisions([{ chunkId: c.id, action: a, text: undefined }])
+                  }
                 >
                   {decisionLabel(a)}
                 </button>

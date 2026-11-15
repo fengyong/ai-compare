@@ -9,11 +9,11 @@ export type TableRowDto = { kind: TableRowKind,
 /**
  * 左侧数据行号（0 起；Added 时省略）
  */
-left: number | null, 
+left?: number, 
 /**
  * 右侧数据行号（Removed 时省略）
  */
-right: number | null, 
+right?: number, 
 /**
  * 行整体重要性（红点 = true）
  */

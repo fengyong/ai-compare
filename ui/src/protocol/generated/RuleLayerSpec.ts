@@ -4,8 +4,8 @@ import type { CompareRulesSpec } from "./CompareRulesSpec";
 /**
  * 一层规则（compare 整体覆盖语义；元素集整体覆盖语义）
  */
-export type RuleLayerSpec = { compare: CompareRulesSpec | null, 
+export type RuleLayerSpec = { compare?: CompareRulesSpec, 
 /**
  * 不重要语法元素名（引用格式层；None = 不覆盖）
  */
-unimportantElements: Array<string> | null, };
+unimportantElements?: Array<string>, };

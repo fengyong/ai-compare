@@ -13,8 +13,8 @@ const row = (id: string, over: Partial<DirRow> = {}): DirRow => ({
   id,
   name: id,
   kind: 'file',
-  left: { size: 1, mtimeMs: 0, attribute: null, unixMode: 0, uid: 0, gid: 0 },
-  right: { size: 1, mtimeMs: 0, attribute: null, unixMode: 0, uid: 0, gid: 0 },
+  left: { size: 1, mtimeMs: 0, unixMode: 0, uid: 0, gid: 0 },
+  right: { size: 1, mtimeMs: 0, unixMode: 0, uid: 0, gid: 0 },
   status: 'same',
   hasChildren: false,
   hidden: false,
@@ -53,8 +53,8 @@ describe('isContentComparable / compareTargetIds', () => {
   it('只有两侧都存在的文件行可比较（目录行与孤立项跳过）', () => {
     expect(isContentComparable(row('a.txt'))).toBe(true);
     expect(isContentComparable(row('d', { kind: 'dir' }))).toBe(false);
-    expect(isContentComparable(row('l.txt', { right: null }))).toBe(false);
-    expect(isContentComparable(row('r.txt', { left: null }))).toBe(false);
+    expect(isContentComparable(row('l.txt', { right: undefined }))).toBe(false);
+    expect(isContentComparable(row('r.txt', { left: undefined }))).toBe(false);
   });
 
   it('按选择集过滤，未选中的行不参与', () => {
@@ -62,7 +62,7 @@ describe('isContentComparable / compareTargetIds', () => {
       row('a.txt'),
       row('b.txt'),
       row('d', { kind: 'dir' }),
-      row('l.txt', { right: null }),
+      row('l.txt', { right: undefined }),
     ];
     expect(compareTargetIds(rows, new Set(['a.txt', 'b.txt', 'd', 'l.txt']))).toEqual([
       'a.txt',
@@ -76,11 +76,11 @@ describe('isContentComparable / compareTargetIds', () => {
 });
 
 describe('buildCompareContentParams', () => {
-  it('未指定方法 → null（引擎按会话判据取默认）', () => {
+  it('未指定方法 → 不传该键（R3-21：引擎按会话判据取默认）', () => {
     expect(buildCompareContentParams('s1', ['a.txt'])).toEqual({
       sessionId: 's1',
       ids: ['a.txt'],
-      method: null,
+      method: undefined,
     });
   });
 

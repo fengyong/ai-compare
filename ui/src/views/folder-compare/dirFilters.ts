@@ -113,7 +113,7 @@ export function parseMaskInput(text: string, caseSensitive = false): NameFilterS
     excludeFiles: [],
     includeDirs: [],
     excludeDirs: [],
-    caseSensitive: caseSensitive ? true : null,
+    caseSensitive: caseSensitive ? true : undefined,
   };
   const trimmed = text.trim();
   if (!trimmed) return spec;
@@ -316,7 +316,7 @@ export function displayFilterPreset(name: string): DisplayFilterSpec {
 }
 
 /** 侧信息缺失工具（类型收窄） */
-export function sideOf(row: DirRow, side: 'left' | 'right'): SideInfo | null {
+export function sideOf(row: DirRow, side: 'left' | 'right'): SideInfo | undefined {
   return side === 'left' ? row.left : row.right;
 }
 

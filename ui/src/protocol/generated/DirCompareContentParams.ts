@@ -12,4 +12,4 @@ ids: Array<string>,
 /**
  * 缺省用会话 criteria.contentMethod；显式给出则本次覆盖（不改会话判据）
  */
-method: ContentCompareMethod | null, };
+method?: ContentCompareMethod, };

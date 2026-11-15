@@ -3,4 +3,4 @@
 /**
  * 扫描进度
  */
-export type ScanProgress = { scanned: number, total: number | null, };
+export type ScanProgress = { scanned: number, total?: number, };

@@ -83,10 +83,10 @@ describe('lineDiffCore：编辑重 diff 的客户端降级路径', () => {
     expect(sections[0].left).toEqual({ start: 0, end: 1 });
   });
 
-  it('toSections：insert/delete 的空侧为 null', () => {
+  it('toSections：insert/delete 的空侧缺省（R3-21：可选字段，键省略）', () => {
     const sections = toSections(diffLinesOps(['a'], ['a', 'b']));
     expect(sections.map((s) => s.kind)).toEqual(['equal', 'insert']);
-    expect(sections[1].left).toBeNull();
+    expect(sections[1].left).toBeUndefined();
     expect(sections[1].right).toEqual({ start: 1, end: 2 });
   });
 

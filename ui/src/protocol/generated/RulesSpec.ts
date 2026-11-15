@@ -4,8 +4,8 @@
  * 会话 open 携带的规则覆盖（text/open params.rules；None = 引擎默认，
  * 字段级缺省 = 引擎缺省；unimportantElements 缺省 = 不启用语法折叠）
  */
-export type RulesSpec = { leadingWsUnimportant: boolean | null, embeddedWsUnimportant: boolean | null, trailingWsUnimportant: boolean | null, caseUnimportant: boolean | null, eolStyleUnimportant: boolean | null, encodingUnimportant: boolean | null, 
+export type RulesSpec = { leadingWsUnimportant?: boolean, embeddedWsUnimportant?: boolean, trailingWsUnimportant?: boolean, caseUnimportant?: boolean, eolStyleUnimportant?: boolean, encodingUnimportant?: boolean, 
 /**
  * 不重要语法元素名（None = 不启用语法折叠；空集 = 显式无折叠元素）
  */
-unimportantElements: Array<string> | null, };
+unimportantElements?: Array<string>, };

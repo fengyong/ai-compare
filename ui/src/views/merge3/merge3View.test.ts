@@ -30,7 +30,7 @@ function mk(origin: MergeChunkOrigin, extra: Partial<MergeChunkDto> = {}): Merge
     leftLines: ['l'],
     rightLines: ['r'],
     decided: false,
-    decision: null,
+    decision: undefined,
     autoResolved: false,
     unresolved: false,
     outputLines: ['o'],

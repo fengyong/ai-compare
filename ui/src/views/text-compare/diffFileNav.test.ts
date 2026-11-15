@@ -7,8 +7,8 @@ const row = (id: string, over: Partial<DirRow> = {}): DirRow => ({
   id,
   name: id.split('/').pop() ?? id,
   kind: 'file',
-  left: { size: 1, mtimeMs: 0, attribute: null, unixMode: 0, uid: 0, gid: 0 },
-  right: { size: 1, mtimeMs: 0, attribute: null, unixMode: 0, uid: 0, gid: 0 },
+  left: { size: 1, mtimeMs: 0, unixMode: 0, uid: 0, gid: 0 },
+  right: { size: 1, mtimeMs: 0, unixMode: 0, uid: 0, gid: 0 },
   status: 'contentDiff',
   hasChildren: false,
   hidden: false,
@@ -30,8 +30,8 @@ describe('orderedDiffFileRows', () => {
       row('same.txt', { status: 'same' }),
       row('unknown.txt', { status: 'unknown' }),
       row('dir', { kind: 'dir', status: 'dirDiff' }),
-      row('left-only.txt', { status: 'leftOnly', right: null, rightPath: undefined }),
-      row('right-only.txt', { status: 'rightOnly', left: null, leftPath: undefined }),
+      row('left-only.txt', { status: 'leftOnly', right: undefined, rightPath: undefined }),
+      row('right-only.txt', { status: 'rightOnly', left: undefined, leftPath: undefined }),
     ];
     expect(ids(orderedDiffFileRows(rows))).toEqual(['pair.txt', 'quick.txt', 'similar.txt']);
   });

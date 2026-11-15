@@ -10,12 +10,12 @@ export type SyncRule = {
 /**
  * 名称掩码（FR-FLT 语义；None = 匹配任意名称）
  */
-nameMask: string | null, 
+nameMask?: string, 
 /**
  * 匹配指定行状态；None = 任意状态
  */
-status: DirEntryStatus | null, 
+status?: DirEntryStatus, 
 /**
  * 要求某侧较新（按 mtime；None = 不约束）
  */
-newer: RuleSide | null, action: RuleAction, };
+newer?: RuleSide, action: RuleAction, };

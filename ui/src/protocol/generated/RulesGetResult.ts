@@ -11,4 +11,4 @@ effective: EffectiveRulesSpec,
 /**
  * 三层原始层（供 UI 作用域下拉回显）
  */
-global: RuleLayerSpec, kind: RuleLayerSpec | null, session: RuleLayerSpec | null, formatBindings: Array<RuleFormatBindingSpec>, };
+global: RuleLayerSpec, kind?: RuleLayerSpec, session?: RuleLayerSpec, formatBindings: Array<RuleFormatBindingSpec>, };

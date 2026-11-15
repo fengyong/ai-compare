@@ -356,7 +356,6 @@ export const createTabsSlice: StateCreator<ShellStore, [], [], TabsSlice> = (set
         sessionId,
         left: leftPath,
         right: rightPath,
-        options: null,
         rules: effectiveRulesFor(leftPath, rightPath),
       });
       const id = nextTabId('text');
@@ -425,7 +424,6 @@ export const createTabsSlice: StateCreator<ShellStore, [], [], TabsSlice> = (set
         sessionId,
         left,
         right,
-        options: null,
         rules: effectiveRulesFor(left, right),
       });
       const id = nextTabId('text');
@@ -527,7 +525,6 @@ export const createTabsSlice: StateCreator<ShellStore, [], [], TabsSlice> = (set
         sessionId,
         left,
         right,
-        options: null,
         rules: effectiveRulesFor(left, right),
       });
     } catch (err) {

@@ -7,4 +7,4 @@ export type MergeConflictRowDto = {
 /**
  * 左侧行号（全表坐标；None = 该行仅右侧存在）
  */
-left: number | null, right: number | null, unimportant: boolean, };
+left?: number, right?: number, unimportant: boolean, };

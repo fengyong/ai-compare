@@ -8,8 +8,8 @@ const row = (id: string, over: Partial<DirRow> = {}): DirRow => ({
   id,
   name: id.split('/').pop() ?? id,
   kind: 'file',
-  left: { size: 1, mtimeMs: 0, attribute: null, unixMode: 0, uid: 0, gid: 0 },
-  right: { size: 1, mtimeMs: 0, attribute: null, unixMode: 0, uid: 0, gid: 0 },
+  left: { size: 1, mtimeMs: 0, unixMode: 0, uid: 0, gid: 0 },
+  right: { size: 1, mtimeMs: 0, unixMode: 0, uid: 0, gid: 0 },
   status: 'same',
   hasChildren: false,
   hidden: false,
@@ -176,7 +176,7 @@ describe('DirRowCache marks', () => {
       upserts: [row('a.txt'), row('b.txt')],
       removals: [],
       stats: null,
-      progress: null,
+      progress: undefined,
     } as unknown as DirDelta);
     c.toggleMark('a.txt');
     c.toggleMark('b.txt');
@@ -185,7 +185,7 @@ describe('DirRowCache marks', () => {
       upserts: [],
       removals: ['a.txt'],
       stats: null,
-      progress: null,
+      progress: undefined,
     } as unknown as DirDelta);
     expect(c.isMarked('a.txt')).toBe(false);
     expect(c.isMarked('b.txt')).toBe(true);

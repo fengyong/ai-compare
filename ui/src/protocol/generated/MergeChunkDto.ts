@@ -33,7 +33,7 @@ baseLines: Array<string> | undefined, leftLines: Array<string> | undefined, righ
  * 决策状态：decided = 有显式决策；auto_resolved = 自动采用（favor/iu）；
  * unresolved = 冲突未决
  */
-decided: boolean, decision: MergeDecisionKind | null, autoResolved: boolean, unresolved: boolean, 
+decided: boolean, decision?: MergeDecisionKind, autoResolved: boolean, unresolved: boolean, 
 /**
  * 当前合成输出行（决策/策略生效后）
  */

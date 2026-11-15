@@ -8,7 +8,7 @@ export type GrammarItemSpec = { kind: GrammarItemKind,
 /**
  * text：匹配串（regex=true 时为轻量正则子集）
  */
-pattern: string | null, 
+pattern?: string, 
 /**
  * list：token 集
  */
@@ -16,11 +16,11 @@ tokens: Array<string>,
 /**
  * delimited：起始/结束分隔符
  */
-start: string | null, end: string | null, 
+start?: string, end?: string, 
 /**
  * delimited：转义字符（单字符）
  */
-escape: string | null, 
+escape?: string, 
 /**
  * delimited：起始命中后到行尾（无 end 时语义）
  */
@@ -28,15 +28,15 @@ toEol: boolean, regex: boolean, caseSensitive: boolean,
 /**
  * column：起始列（1 起）
  */
-from: number | null, 
+from?: number, 
 /**
  * column：结束列（1 起闭区间；None = 到行尾）
  */
-to: number | null, 
+to?: number, 
 /**
  * rowTitle：标题行数（含首行）
  */
-lines: number | null, 
+lines?: number, 
 /**
  * rowTitle："或第 1 行"处理首页
  */

@@ -11,4 +11,4 @@ code: number, message: string,
 /**
  * 结构化附加信息（本地化由 UI 完成：引擎只上报 (code, params)，docs/03 §6.7）
  */
-data: unknown, };
+data?: unknown, };

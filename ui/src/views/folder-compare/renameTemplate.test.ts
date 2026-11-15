@@ -101,13 +101,13 @@ describe('renameTemplate', () => {
   // ---------------- 批量计划与冲突拦截 ----------------
 
   function row(id: string, name = id.split('/').pop() ?? id): DirRow {
-    const side = { size: 1, mtimeMs: 1, attribute: null, unixMode: 0, uid: 0, gid: 0 };
+    const side = { size: 1, mtimeMs: 1, unixMode: 0, uid: 0, gid: 0 };
     return {
       id,
       name,
       kind: 'file',
       left: side,
-      right: null,
+      right: undefined,
       status: 'leftOnly',
       hasChildren: false,
       hidden: false,
@@ -260,9 +260,9 @@ describe('renameTemplate', () => {
     const r1 = row('old_a.txt');
     const r2 = {
       ...row('old_b.txt'),
-      left: null,
+      left: undefined,
       leftPath: undefined,
-      right: { size: 1, mtimeMs: 1, attribute: null, unixMode: 0, uid: 0, gid: 0 },
+      right: { size: 1, mtimeMs: 1, unixMode: 0, uid: 0, gid: 0 },
       rightPath: 'old_b.txt',
     };
     const plan = planRenames({ rows: [r1, r2], allRows: [r1, r2], mode: 'regex', dos, regex });

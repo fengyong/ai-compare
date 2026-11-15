@@ -12,23 +12,23 @@ export type Merge3OptionsSpec = {
 /**
  * 两路 base↔side diff 的行对齐算法（缺省 Standard）
  */
-algo: LineAlignAlgo | null, 
+algo?: LineAlignAlgo, 
 /**
  * 骨架空白语义（缺省 Significant）
  */
-whitespace: WhitespaceMode | null, ignoreCase: boolean | null, 
+whitespace?: WhitespaceMode, ignoreCase?: boolean, 
 /**
  * 行尾风格不参与骨架比较（缺省 true，docs/03 §6.1）
  */
-ignoreEolStyle: boolean | null, 
+ignoreEolStyle?: boolean, 
 /**
  * 冲突窗口（FR-TMRG-003 N 行分隔；缺省 None = 仅更改不同的行）
  */
-conflictWindow: number | null, 
+conflictWindow?: number, 
 /**
  * 受惠侧（不重要冲突自动从受惠侧采用）
  */
-favor: MergeFavorSide | null, 
+favor?: MergeFavorSide, 
 /**
  * 忽略不重要差异（/iu）：不重要冲突不升级为未决冲突
  */
@@ -36,8 +36,8 @@ ignoreUnimportant?: boolean,
 /**
  * 重要性模型（FR-TXT-010 上协议面，作用于冲突子对齐与不重要冲突判定）
  */
-importance: ImportanceOptionsSpec | null, 
+importance?: ImportanceOptionsSpec, 
 /**
  * 未决冲突默认策略（auto_merge；plain 输出模式使用）
  */
-conflictDefault: MergeConflictDefault | null, };
+conflictDefault?: MergeConflictDefault, };

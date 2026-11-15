@@ -44,7 +44,7 @@ async function openSession(method?: ContentCompareMethod) {
 }
 
 const pairedFiles = (rows: DirRow[]) =>
-  rows.filter((r) => r.kind === 'file' && r.left !== null && r.right !== null);
+  rows.filter((r) => r.kind === 'file' && r.left != null && r.right != null);
 
 const compare = (client: RpcClient, ids: string[], method?: ContentCompareMethod) =>
   client.request<DirCompareContentResult>('dir/compareContent', {

@@ -14,15 +14,12 @@ export function parentRescanParams(
   parentFolderSessionId: string | null | undefined,
 ): DirFilterParams | null {
   if (!parentFolderSessionId) return null;
-  // 过滤器/显示/平铺全传 null = 不改动父会话现有设置（引擎按 is_some 门控），
+  // 过滤器/显示/平铺一律不传 = 不改动父会话现有设置（引擎按 is_some 门控），
   // 只要求重扫；传当前值反而会把子会话无从得知的父设置覆盖掉。
   return {
     sessionId: parentFolderSessionId,
-    nameFilter: null,
-    otherFilter: null,
-    displayFilter: null,
-    suppress: null,
-    flat: null,
+    suppress: undefined,
+    flat: undefined,
     rescan: true,
   };
 }

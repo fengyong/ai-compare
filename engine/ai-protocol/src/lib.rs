@@ -14,6 +14,9 @@
 //! 协议演进规则：**只加不改不删** + `initialize` 版本协商（semver 协议版本）。
 
 pub mod error;
+/// R3-21 协议形状契约（仅测试：静态检查 + 三态语义）。
+#[cfg(test)]
+pub mod option_shape;
 pub mod safe_int;
 #[cfg(feature = "ts")]
 pub mod ts_export;

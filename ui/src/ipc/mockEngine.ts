@@ -613,8 +613,9 @@ export class MockEngine {
     const targets = rows.filter(
       (r) =>
         r.kind === 'file' &&
-        r.left !== null &&
-        r.right !== null &&
+        // R3-21：侧元数据为可选字段（缺键 = 该侧不存在），null/undefined 都要排除
+        r.left != null &&
+        r.right != null &&
         (wanted === null || wanted.has(r.id)),
     );
     const results: DirContentCompareRow[] = targets.map((row) => {
@@ -702,7 +703,7 @@ export class MockEngine {
               touched.add(targetRow.id);
             }
             if (op.kind === 'move') {
-              row[op.side] = null;
+              row[op.side] = undefined;
               recomputeRowStatus(row);
               if (!row.left && !row.right) removed.add(row.id);
             }
@@ -715,7 +716,7 @@ export class MockEngine {
               failed.push({ op, status: 'failed', detail: `目标不存在（${op.side}）: ${op.path}` });
               break;
             }
-            row[op.side] = null;
+            row[op.side] = undefined;
             recomputeRowStatus(row);
             if (!row.left && !row.right) {
               removed.add(row.id);
@@ -788,8 +789,8 @@ export class MockEngine {
               id: op.path,
               name: op.path.split('/').pop() ?? op.path,
               kind: 'dir',
-              left: op.side === 'left' ? mockSideInfo() : null,
-              right: op.side === 'right' ? mockSideInfo() : null,
+              left: op.side === 'left' ? mockSideInfo() : undefined,
+              right: op.side === 'right' ? mockSideInfo() : undefined,
               status: op.side === 'left' ? 'leftOnly' : 'rightOnly',
               hasChildren: false,
               hidden: false,
@@ -1554,9 +1555,15 @@ export class MockEngine {
     }
     let changed = false;
     for (const d of list) {
-      const next: MergeDecisionDto = { chunkId: d.chunkId, action: d.action, text: d.text ?? null };
+      const next: MergeDecisionDto = {
+        chunkId: d.chunkId,
+        action: d.action,
+        text: d.text ?? undefined,
+      };
       const prev = s.decisions.get(d.chunkId);
-      if (!prev || prev.action !== next.action || (prev.text ?? null) !== next.text) {
+      // R3-21：text 是可选字段（缺键 = 无文本），两侧必须同样归一化，
+      // 否则 null 与 undefined 混用会把「内容未变」误判成「决策变更」。
+      if (!prev || prev.action !== next.action || (prev.text ?? null) !== (next.text ?? null)) {
         s.decisions.set(d.chunkId, next);
         changed = true;
       }
@@ -1614,8 +1621,8 @@ export class MockEngine {
     const s = this.requireMerge3(p.sessionId);
     const out = this.merge3Output({
       sessionId: p.sessionId,
-      mode: p.mode ?? null,
-      markerStyle: p.markerStyle ?? null,
+      mode: p.mode ?? undefined,
+      markerStyle: p.markerStyle ?? undefined,
     });
     let backupPath: string | undefined;
     if (p.backup !== false) {
@@ -1825,8 +1832,8 @@ function deriveFlatRows(s: MockDirSession): DirRow[] {
         id,
         name,
         kind: 'file',
-        left: l?.info ?? null,
-        right: r?.info ?? null,
+        left: l?.info ?? undefined,
+        right: r?.info ?? undefined,
         status,
         hasChildren: false,
         hidden: false,
@@ -1896,7 +1903,7 @@ function recomputeRowStatus(row: DirRow): void {
 }
 
 function mockSideInfo(): SideInfo {
-  return { size: 0, mtimeMs: Date.now(), attribute: null, unixMode: 0, uid: 0, gid: 0 };
+  return { size: 0, mtimeMs: Date.now(), unixMode: 0, uid: 0, gid: 0 };
 }
 
 /** mock 树行两侧同名（id 即 rel）：侧存在性/行地址变化后同步真实路径 */
@@ -1967,7 +1974,7 @@ function mockPlanOperations(
         displayPath: targetPath ?? operationPath ?? sourcePath,
       });
     };
-    const mt = (info: SideInfo | null) => info?.mtimeMs ?? 0;
+    const mt = (info: SideInfo | undefined) => info?.mtimeMs ?? 0;
     switch (row.status) {
       case 'leftOnly':
         if (preset === 'mirrorLeftToRight' || preset === 'updateLeftToRight')
@@ -2109,7 +2116,6 @@ function buildMergeModel(base: string, left: string, right: string): DirMergeRow
     size,
     // mtime 保留随机相位（不参与分类判定；演示列表展示用）
     mtimeMs: now - Math.floor(rand() * 30 * day),
-    attribute: null,
     unixMode: 0,
     uid: 0,
     gid: 0,
@@ -2560,12 +2566,11 @@ function pickStatus(rand: () => number): DirEntryStatus {
   return 'dirSame';
 }
 
-function sideInfo(rand: () => number, missing: boolean): SideInfo | null {
-  if (missing) return null;
+function sideInfo(rand: () => number, missing: boolean): SideInfo | undefined {
+  if (missing) return undefined;
   return {
     size: Math.floor(rand() * 4_000_000),
     mtimeMs: Date.now() - Math.floor(rand() * 90 * 24 * 3600 * 1000),
-    attribute: null,
     unixMode: 0,
     uid: 0,
     gid: 0,
@@ -2752,7 +2757,7 @@ function genTextPair(seed: string): GenTextPairResult {
       sections.push({
         id: secId++,
         kind,
-        left: null,
+        left: undefined,
         right: { start: sr, end: ri },
         important: 'important',
         inline: 'notComputed',
@@ -2766,7 +2771,7 @@ function genTextPair(seed: string): GenTextPairResult {
         id: secId++,
         kind,
         left: { start: sl, end: li },
-        right: null,
+        right: undefined,
         important: 'important',
         inline: 'notComputed',
       });
@@ -3044,7 +3049,7 @@ function deriveMergeChunk(
     leftLines: t.leftLines,
     rightLines: t.rightLines,
     decided: d !== undefined,
-    decision: d?.action ?? null,
+    decision: d?.action ?? undefined,
     autoResolved: t.autoResolved,
     unresolved: t.origin === 'conflict' && d === undefined && !t.autoResolved,
     outputLines: d ? merge3OutputForDecision(t, d) : [...t.defaultOutput],

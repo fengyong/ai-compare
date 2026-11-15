@@ -6,20 +6,20 @@ import type { OtherFilterSpec } from "./OtherFilterSpec";
 /**
  * dir/filter 参数：设置/更新三类过滤器（名称与其他过滤变更触发重扫）
  */
-export type DirFilterParams = { sessionId: string, nameFilter: NameFilterSpec | null, otherFilter: OtherFilterSpec | null, 
+export type DirFilterParams = { sessionId: string, nameFilter?: NameFilterSpec, otherFilter?: OtherFilterSpec, 
 /**
  * 显示过滤器（只影响显示不影响状态判定）
  */
-displayFilter: DisplayFilterSpec | null, 
+displayFilter?: DisplayFilterSpec, 
 /**
  * 抑制过滤器（FR-DIR-035）：true 时被隐藏行以 suppressed 标记可见
  */
-suppress: boolean | null, 
+suppress?: boolean, 
 /**
  * 平铺模式切换（FR-DIR-021）
  */
-flat: boolean | null, 
+flat?: boolean, 
 /**
  * 强制重扫（右键「刷新」）：文件系统可能已被外部改动，与过滤器是否变化无关
  */
-rescan: boolean | null, };
+rescan?: boolean, };

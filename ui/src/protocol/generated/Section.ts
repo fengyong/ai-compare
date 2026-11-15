@@ -7,4 +7,4 @@ import type { SectionKind } from "./SectionKind";
 /**
  * diff section（不可变；UI 侧概览条/导航/编辑器三处共享消费）
  */
-export type Section = { id: number, kind: SectionKind, left: LineRange | null, right: LineRange | null, important: Importance, inline: InlineState, };
+export type Section = { id: number, kind: SectionKind, left?: LineRange, right?: LineRange, important: Importance, inline: InlineState, };

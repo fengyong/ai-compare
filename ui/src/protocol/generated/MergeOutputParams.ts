@@ -9,8 +9,8 @@ export type MergeOutputParams = { sessionId: string,
 /**
  * 缺省 Plain
  */
-mode: MergeOutputMode | null, 
+mode?: MergeOutputMode, 
 /**
  * Marker 模式的 marker 风格（缺省 Merge，git merge-file 同形）
  */
-markerStyle: MergeMarkerStyle | null, };
+markerStyle?: MergeMarkerStyle, };

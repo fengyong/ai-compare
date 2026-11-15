@@ -19,9 +19,14 @@ export function contentCompareSupported(caps: EngineCapabilities | null | undefi
   return caps?.dirCompareContent === true;
 }
 
-/** 只有两侧都存在的文件行能比较内容（目录行/孤立项跳过，BC 语义） */
+/**
+ * 只有两侧都存在的文件行能比较内容（目录行/孤立项跳过，BC 语义）。
+ *
+ * R3-21：侧元数据在协议里是**可选字段**（缺键 = 该侧不存在），因此这里
+ * 必须同时排除 null 与 undefined —— 只判 null 会把「缺侧」误判成「有侧」。
+ */
 export function isContentComparable(row: DirRow): boolean {
-  return row.kind === 'file' && row.left !== null && row.right !== null;
+  return row.kind === 'file' && row.left != null && row.right != null;
 }
 
 /**
@@ -35,9 +40,9 @@ export function compareTargetIds(rows: readonly DirRow[], selected: ReadonlySet<
 export function buildCompareContentParams(
   sessionId: string,
   ids: readonly string[],
-  method?: ContentCompareMethod | null,
+  method?: ContentCompareMethod,
 ): DirCompareContentParams {
-  return { sessionId, ids: [...ids], method: method ?? null };
+  return { sessionId, ids: [...ids], method };
 }
 
 export const RESULT_LABELS: Record<ContentCompareResult, string> = {

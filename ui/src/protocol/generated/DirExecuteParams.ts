@@ -5,4 +5,4 @@ export type DirExecuteParams = { sessionId: string, ops: Array<DirExecuteOp>,
 /**
  * 试运行：只校验不落盘，返回将执行清单（可对拍）
  */
-dryRun: boolean | null, };
+dryRun?: boolean, };

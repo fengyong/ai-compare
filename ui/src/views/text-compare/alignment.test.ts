@@ -7,8 +7,8 @@ import type { Section } from '../../protocol/types';
  */
 
 const sec = (s: Partial<Section> & { id: number; kind: Section['kind'] }): Section => ({
-  left: null,
-  right: null,
+  left: undefined,
+  right: undefined,
   important: 'important',
   inline: 'notComputed',
   ...s,
@@ -26,8 +26,8 @@ function sampleSections(): Section[] {
   return [
     sec({ id: 0, kind: 'equal', left: { start: 0, end: 3 }, right: { start: 0, end: 3 } }),
     sec({ id: 1, kind: 'change', left: { start: 3, end: 6 }, right: { start: 3, end: 7 } }),
-    sec({ id: 2, kind: 'delete', left: { start: 6, end: 8 }, right: null }),
-    sec({ id: 3, kind: 'insert', left: null, right: { start: 7, end: 10 } }),
+    sec({ id: 2, kind: 'delete', left: { start: 6, end: 8 }, right: undefined }),
+    sec({ id: 3, kind: 'insert', left: undefined, right: { start: 7, end: 10 } }),
     sec({ id: 4, kind: 'equal', left: { start: 8, end: 10 }, right: { start: 10, end: 12 } }),
   ];
 }

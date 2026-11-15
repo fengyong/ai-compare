@@ -11,4 +11,4 @@ includeFiles: Array<string>, excludeFiles: Array<string>, includeDirs: Array<str
 /**
  * 掩码大小写敏感（BC 名称过滤器默认不敏感）
  */
-caseSensitive: boolean | null, };
+caseSensitive?: boolean, };

@@ -10,16 +10,16 @@ export type SideInfo = { size: number, mtimeMs: number,
 /**
  * DOS 属性字母串（如 "rh"：只读+隐藏；compare_attributes 开启时填充）
  */
-attribute: string | null, 
+attribute?: string, 
 /**
  * Unix 权限位（st_mode 低 12 位；unix_meta 开启时填充）
  */
-unixMode: number, 
+unixMode?: number, 
 /**
  * Unix 所有者 id（unix_meta 开启时填充）
  */
-uid: number, 
+uid?: number, 
 /**
  * Unix 组 id（unix_meta 开启时填充）
  */
-gid: number, };
+gid?: number, };

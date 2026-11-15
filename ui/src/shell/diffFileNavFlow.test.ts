@@ -33,8 +33,8 @@ const row = (id: string, over: Partial<DirRow> = {}): DirRow => ({
   id,
   name: id,
   kind: 'file',
-  left: { size: 1, mtimeMs: 0, attribute: null, unixMode: 0, uid: 0, gid: 0 },
-  right: { size: 1, mtimeMs: 0, attribute: null, unixMode: 0, uid: 0, gid: 0 },
+  left: { size: 1, mtimeMs: 0, unixMode: 0, uid: 0, gid: 0 },
+  right: { size: 1, mtimeMs: 0, unixMode: 0, uid: 0, gid: 0 },
   status: 'contentDiff',
   hasChildren: false,
   hidden: false,
@@ -63,7 +63,7 @@ function seedRows(rows: DirRow[]): void {
       dirDiff: 0,
       similar: 0,
     },
-    progress: null,
+    progress: undefined,
     batch: { index: 0, hasMore: false },
     scanErrors: [],
   };
@@ -291,12 +291,10 @@ describe('navigateDiffFile（FR-DIR-071）', () => {
     ]);
     expect(filtered).toEqual([
       {
+        // R3-21：可选字段缺省 = 不传（不再显式传 null）
         sessionId: PARENT_SID,
-        nameFilter: null,
-        otherFilter: null,
-        displayFilter: null,
-        suppress: null,
-        flat: null,
+        suppress: undefined,
+        flat: undefined,
         rescan: true,
       },
     ]);

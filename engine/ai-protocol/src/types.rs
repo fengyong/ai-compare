@@ -152,17 +152,18 @@ pub struct SideInfo {
     pub mtime_ms: u64,
     /// DOS 属性字母串（如 "rh"：只读+隐藏；compare_attributes 开启时填充）
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub attribute: Option<String>,
     /// Unix 权限位（st_mode 低 12 位；unix_meta 开启时填充）
-    #[cfg_attr(feature = "ts", ts(type = "number"))]
+    #[cfg_attr(feature = "ts", ts(optional, type = "number"))]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unix_mode: Option<u32>,
     /// Unix 所有者 id（unix_meta 开启时填充）
-    #[cfg_attr(feature = "ts", ts(type = "number"))]
+    #[cfg_attr(feature = "ts", ts(optional, type = "number"))]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub uid: Option<u32>,
     /// Unix 组 id（unix_meta 开启时填充）
-    #[cfg_attr(feature = "ts", ts(type = "number"))]
+    #[cfg_attr(feature = "ts", ts(optional, type = "number"))]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gid: Option<u32>,
 }
@@ -209,6 +210,7 @@ pub struct CompareCriteria {
     pub compare_attributes: bool,
     /// 参与比较的属性字母集（如 "rhs"）；None = 全部已知位参与
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub attribute_letters: Option<String>,
     /// 比较 Unix 元数据（权限位/uid/gid）（FR-DIR-010；默认关，可配置开关）
     #[serde(default)]
@@ -295,6 +297,7 @@ pub struct DirCompareContentParams {
     pub ids: Vec<String>,
     /// 缺省用会话 criteria.contentMethod；显式给出则本次覆盖（不改会话判据）
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub method: Option<ContentCompareMethod>,
 }
 
@@ -375,6 +378,7 @@ pub struct CharRange {
 pub struct ClientInfo {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub version: Option<String>,
 }
 
@@ -549,27 +553,34 @@ pub struct DirOpenParams {
     pub right: String,
     /// 扫描深度：None = 全递归；1 = 仅顶层（P0 默认）
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub depth: Option<u32>,
     pub criteria: CompareCriteria,
     /// P2（ADR-004）：惰性 + 后台扫描。true = dir/open 立即应答顶层（可滚动），
     /// 后台 tokio 任务继续全量扫描并推进 dir/delta / dir/progress；
     /// false/缺省 = P0 行为（同步扫完再应答，scanState=completed）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub lazy_scan: Option<bool>,
     /// P2：平铺模式（FR-DIR-021 忽略文件夹结构）：按文件名跨目录对齐
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub flat: Option<bool>,
     /// P2：文件/目录名称过滤器（FR-DIR-031，引擎侧求值）
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub name_filter: Option<NameFilterSpec>,
     /// P2：其他过滤器（FR-DIR-032：日期/大小/内容/属性/Unix 类型）
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub other_filter: Option<OtherFilterSpec>,
     /// P2：显示过滤器（FR-DIR-033：只影响显示不影响状态判定）
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub display_filter: Option<DisplayFilterSpec>,
     /// P2：手动对齐对（FR-DIR-022；rel 路径对）
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub manual_align: Option<Vec<ManualAlignPair>>,
     /// P10：格式感知（文本 vs 二进制按格式表 + 内容嗅探判定）。
     /// true 时引擎在 dir/open 首批 delta 的 DirRow 上注入 `fileKind`
@@ -658,8 +669,10 @@ pub struct DirRow {
     pub name: String,
     pub kind: EntryKind,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub left: Option<SideInfo>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub right: Option<SideInfo>,
     pub status: DirEntryStatus,
     /// 有子节点的目录为 true（展开由后续 dir/expand 提供，P0 预留）
@@ -727,6 +740,7 @@ pub fn is_zero_u32(v: &u32) -> bool {
 pub struct ScanProgress {
     pub scanned: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub total: Option<u32>,
 }
 
@@ -757,6 +771,7 @@ pub struct DirDelta {
     pub removals: Vec<String>,
     pub stats: DirStats,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub progress: Option<ScanProgress>,
     pub batch: BatchInfo,
     /// 扫描错误（目录不可读等）。始终序列化（空为 []），使生成的 TS 必填
@@ -830,6 +845,7 @@ pub struct TextOpenParams {
     pub right: String,
     /// 缺省用引擎默认选项（docs/03 §6.1：忽略行尾风格）
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub options: Option<TextDiffOptions>,
     /// P3：重要性模型（FR-TXT-010 上协议面；缺省 = 引擎默认：
     /// 行尾风格与纯编码差异不重要，其余重要）
@@ -936,8 +952,10 @@ pub struct Section {
     pub id: u32,
     pub kind: SectionKind,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub left: Option<LineRange>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub right: Option<LineRange>,
     pub important: Importance,
     pub inline: InlineState,
@@ -1466,20 +1484,26 @@ pub enum MergeMarkerStyle {
 pub struct Merge3OptionsSpec {
     /// 两路 base↔side diff 的行对齐算法（缺省 Standard）
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub algo: Option<LineAlignAlgo>,
     /// 骨架空白语义（缺省 Significant）
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub whitespace: Option<WhitespaceMode>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub ignore_case: Option<bool>,
     /// 行尾风格不参与骨架比较（缺省 true，docs/03 §6.1）
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub ignore_eol_style: Option<bool>,
     /// 冲突窗口（FR-TMRG-003 N 行分隔；缺省 None = 仅更改不同的行）
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub conflict_window: Option<u32>,
     /// 受惠侧（不重要冲突自动从受惠侧采用）
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub favor: Option<MergeFavorSide>,
     /// 忽略不重要差异（/iu）：不重要冲突不升级为未决冲突
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1487,9 +1511,11 @@ pub struct Merge3OptionsSpec {
     pub ignore_unimportant: Option<bool>,
     /// 重要性模型（FR-TXT-010 上协议面，作用于冲突子对齐与不重要冲突判定）
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub importance: Option<ImportanceOptionsSpec>,
     /// 未决冲突默认策略（auto_merge；plain 输出模式使用）
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub conflict_default: Option<MergeConflictDefault>,
 }
 
@@ -1505,6 +1531,7 @@ pub struct MergeOpenParams {
     pub left: String,
     pub right: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub options: Option<Merge3OptionsSpec>,
 }
 
@@ -1546,8 +1573,10 @@ pub struct MergeSectionsParams {
 pub struct MergeConflictRowDto {
     /// 左侧行号（全表坐标；None = 该行仅右侧存在）
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub left: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub right: Option<u32>,
     pub unimportant: bool,
 }
@@ -1605,6 +1634,7 @@ pub struct MergeChunkDto {
     /// unresolved = 冲突未决
     pub decided: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub decision: Option<MergeDecisionKind>,
     pub auto_resolved: bool,
     pub unresolved: bool,
@@ -1639,6 +1669,7 @@ pub struct MergeDecisionDto {
     pub action: MergeDecisionKind,
     /// Manual 动作的编辑文本（按 \n 分行）
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub text: Option<String>,
 }
 
@@ -1689,9 +1720,11 @@ pub struct MergeOutputParams {
     pub session_id: String,
     /// 缺省 Plain
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub mode: Option<MergeOutputMode>,
     /// Marker 模式的 marker 风格（缺省 Merge，git merge-file 同形）
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub marker_style: Option<MergeMarkerStyle>,
 }
 
@@ -1806,25 +1839,33 @@ pub struct TableOptionsSpec {
     pub delimiter: Option<String>,
     /// 首行为表头（缺省 true）
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub has_header: Option<bool>,
     /// 键列集（0 起物理列下标；空 = 无键）
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub key_columns: Option<Vec<u32>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub column_align: Option<TableColumnAlign>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub row_align: Option<TableRowAlign>,
     /// 偏斜容差（缺省 5；0 = 不允许偏斜补配）
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub skew_tolerance: Option<u32>,
     /// 大小写不重要（FR-TBL-003 文本列）
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub case_unimportant: Option<bool>,
     /// 空白语义（FR-TBL-003 空白三类；缺省 Significant）
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub whitespace: Option<WhitespaceMode>,
     /// 数值容差（P10 预留；数值列两值相差 ≤ 容差判不重要）
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub numeric_tolerance: Option<f64>,
 }
 
@@ -1837,6 +1878,7 @@ pub struct TableOpenParams {
     pub left: String,
     pub right: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub options: Option<TableOptionsSpec>,
 }
 
@@ -1860,8 +1902,10 @@ pub struct TableColumnInfo {
     pub name: String,
     pub ty: TableColumnType,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub left: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub right: Option<u32>,
 }
 
@@ -1939,8 +1983,10 @@ pub enum TableCellStatus {
 #[serde(rename_all = "camelCase")]
 pub struct TableCellDto {
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub left: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub right: Option<String>,
     pub status: TableCellStatus,
 }
@@ -1954,9 +2000,11 @@ pub struct TableRowDto {
     pub kind: TableRowKind,
     /// 左侧数据行号（0 起；Added 时省略）
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub left: Option<u32>,
     /// 右侧数据行号（Removed 时省略）
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub right: Option<u32>,
     /// 行整体重要性（红点 = true）
     pub important: bool,
@@ -2004,8 +2052,10 @@ pub enum HexAlignMode {
 pub struct HexOptionsSpec {
     /// 分块大小（字节）
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub chunk_size: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub align_mode: Option<HexAlignMode>,
 }
 
@@ -2018,6 +2068,7 @@ pub struct HexOpenParams {
     pub left: String,
     pub right: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub options: Option<HexOptionsSpec>,
 }
 
@@ -2064,9 +2115,11 @@ pub struct HexOpenResult {
 pub struct PictureOptionsSpec {
     /// 每通道容差（0-255；缺省 8）
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub tolerance: Option<u16>,
     /// 差异聚合块边长（像素；缺省 32）
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub block: Option<u32>,
 }
 
@@ -2079,6 +2132,7 @@ pub struct PictureOpenParams {
     pub left: String,
     pub right: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub options: Option<PictureOptionsSpec>,
 }
 
@@ -2183,12 +2237,15 @@ pub struct PatchApplyParams {
     pub root: String,
     /// 试运行：只校验不落盘
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub dry_run: Option<bool>,
     /// 模糊上下文匹配层数（缺省 3；0 = 仅精确）
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub fuzz: Option<u32>,
     /// CRLF 容忍（缺省 true；false 时补丁行行尾风格须与目标一致）
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub crlf_tolerant: Option<bool>,
 }
 
@@ -2222,6 +2279,7 @@ pub struct PatchFileResultDto {
     pub offset_applied: i64,
     /// 失败/跳过原因
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub detail: Option<String>,
 }
 
@@ -2270,6 +2328,7 @@ pub struct DirExecuteOp {
     pub side: DiffSide,
     /// copy/move 目标侧（缺省 = 对侧）
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub target_side: Option<DiffSide>,
     /// R3-03：copy/move 的**目标侧真实 rel**（手动对齐左右异名时与 path 不同）；
     /// touch(mtimeMs=0) 时作为取时间戳的对侧 rel。缺省 = path（旧客户端兼容）。
@@ -2278,6 +2337,7 @@ pub struct DirExecuteOp {
     pub target_path: Option<String>,
     /// rename 新名称（仅 rename）
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub new_name: Option<String>,
     /// touch 目标 mtime（epoch ms；0/缺省 = 取对侧时间戳）
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2294,6 +2354,7 @@ pub struct DirExecuteParams {
     pub ops: Vec<DirExecuteOp>,
     /// 试运行：只校验不落盘，返回将执行清单（可对拍）
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub dry_run: Option<bool>,
 }
 
@@ -2316,6 +2377,7 @@ pub struct DirExecuteOpResult {
     pub status: DirExecuteOpStatus,
     /// 失败原因 / 跳过原因 / dry_run 说明
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub detail: Option<String>,
 }
 
@@ -2644,17 +2706,21 @@ pub struct GrammarItemSpec {
     pub kind: GrammarItemKind,
     /// text：匹配串（regex=true 时为轻量正则子集）
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub pattern: Option<String>,
     /// list：token 集
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tokens: Vec<String>,
     /// delimited：起始/结束分隔符
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub start: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub end: Option<String>,
     /// delimited：转义字符（单字符）
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub escape: Option<String>,
     /// delimited：起始命中后到行尾（无 end 时语义）
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -2665,12 +2731,15 @@ pub struct GrammarItemSpec {
     pub case_sensitive: bool,
     /// column：起始列（1 起）
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub from: Option<u32>,
     /// column：结束列（1 起闭区间；None = 到行尾）
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub to: Option<u32>,
     /// rowTitle：标题行数（含首行）
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub lines: Option<u32>,
     /// rowTitle："或第 1 行"处理首页
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -2813,16 +2882,22 @@ pub struct FormatsLoadResult {
 #[serde(rename_all = "camelCase", default)]
 pub struct CompareRulesSpec {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub leading_ws_unimportant: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub embedded_ws_unimportant: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub trailing_ws_unimportant: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub case_unimportant: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub eol_style_unimportant: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub encoding_unimportant: Option<bool>,
 }
 
@@ -2833,9 +2908,11 @@ pub struct CompareRulesSpec {
 #[serde(rename_all = "camelCase", default)]
 pub struct RuleLayerSpec {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub compare: Option<CompareRulesSpec>,
     /// 不重要语法元素名（引用格式层；None = 不覆盖）
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub unimportant_elements: Option<Vec<String>>,
 }
 
@@ -2883,9 +2960,11 @@ pub enum RuleScope {
 pub struct RulesGetParams {
     /// 生效解析的会话类型（如 "text-compare"）
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub kind: Option<String>,
     /// 生效解析的会话 id
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub session_id: Option<String>,
 }
 
@@ -2899,8 +2978,10 @@ pub struct RulesGetResult {
     /// 三层原始层（供 UI 作用域下拉回显）
     pub global: RuleLayerSpec,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub kind: Option<RuleLayerSpec>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub session: Option<RuleLayerSpec>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub format_bindings: Vec<RuleFormatBindingSpec>,
@@ -2913,8 +2994,10 @@ pub struct RulesGetResult {
 pub struct RulesSetParams {
     pub scope: RuleScope,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub kind: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub session_id: Option<String>,
     /// 要写入的层（None 字段 = 清除该层该项覆盖）
     #[serde(default)]
@@ -2944,19 +3027,26 @@ pub struct RulesSetResult {
 #[serde(rename_all = "camelCase", default)]
 pub struct RulesSpec {
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub leading_ws_unimportant: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub embedded_ws_unimportant: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub trailing_ws_unimportant: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub case_unimportant: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub eol_style_unimportant: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub encoding_unimportant: Option<bool>,
     /// 不重要语法元素名（None = 不启用语法折叠；空集 = 显式无折叠元素）
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub unimportant_elements: Option<Vec<String>>,
 }
 
@@ -3045,6 +3135,7 @@ pub struct NameFilterSpec {
     pub exclude_dirs: Vec<String>,
     /// 掩码大小写敏感（BC 名称过滤器默认不敏感）
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub case_sensitive: Option<bool>,
 }
 
@@ -3075,24 +3166,31 @@ pub struct OtherFilterSpec {
     pub max_size: Option<u64>,
     /// 仅保留内容包含该串的文件（UTF-8 前缀读）
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub contains: Option<String>,
     /// 仅保留内容不包含该串的文件
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub not_contains: Option<String>,
     /// DOS 属性字母集：须已设置全部字母（如 "r"）
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub attrs_include: Option<String>,
     /// DOS 属性字母集：须未设置任一字母
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub attrs_exclude: Option<String>,
     /// Unix 文件类型字母集：须包含其中之一（b/c/l/p/r/s）
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub unix_types_include: Option<String>,
     /// Unix 文件类型字母集：排除命中的类型
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub unix_types_exclude: Option<String>,
     /// 排除受保护的操作系统文件（BC 默认 true；非 Windows 平台近似为跳过无读权限文件）
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub exclude_protected_os_files: Option<bool>,
 }
 
@@ -3160,6 +3258,7 @@ pub struct DirExpandParams {
     pub path: String,
     /// 展开层级（1 = 直接子项，缺省 1）
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub depth: Option<u32>,
 }
 
@@ -3175,6 +3274,7 @@ pub struct DirExpandResult {
     pub new_rows: u32,
     pub stats: DirStats,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub progress: Option<ScanProgress>,
 }
 
@@ -3186,20 +3286,26 @@ pub struct DirExpandResult {
 pub struct DirFilterParams {
     pub session_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub name_filter: Option<NameFilterSpec>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub other_filter: Option<OtherFilterSpec>,
     /// 显示过滤器（只影响显示不影响状态判定）
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub display_filter: Option<DisplayFilterSpec>,
     /// 抑制过滤器（FR-DIR-035）：true 时被隐藏行以 suppressed 标记可见
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub suppress: Option<bool>,
     /// 平铺模式切换（FR-DIR-021）
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub flat: Option<bool>,
     /// 强制重扫（右键「刷新」）：文件系统可能已被外部改动，与过滤器是否变化无关
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub rescan: Option<bool>,
 }
 
@@ -3227,12 +3333,15 @@ pub struct DirAlignParams {
     pub session_id: String,
     /// 对齐：左 rel 路径（与 right 同时出现）
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub left: Option<String>,
     /// 对齐：右 rel 路径
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub right: Option<String>,
     /// 解除对齐：涉及该 rel 路径的全部配对
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub unalign: Option<String>,
 }
 
@@ -3330,12 +3439,15 @@ impl From<RuleAction> for Option<PlannedOpKind> {
 pub struct SyncRule {
     /// 名称掩码（FR-FLT 语义；None = 匹配任意名称）
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub name_mask: Option<String>,
     /// 匹配指定行状态；None = 任意状态
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub status: Option<DirEntryStatus>,
     /// 要求某侧较新（按 mtime；None = 不约束）
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub newer: Option<RuleSide>,
     pub action: RuleAction,
 }
@@ -3349,12 +3461,15 @@ pub struct DirOperateParams {
     pub session_id: String,
     /// 预设（与 rules 二选一；都未给 = 空计划）
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub preset: Option<SyncPreset>,
     /// 自定义规则（按序首条命中生效；无命中 = 跳过）
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub rules: Option<Vec<SyncRule>>,
     /// 选中行 id 集合（None/空 = 全部行）
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub paths: Option<Vec<String>>,
 }
 
@@ -3442,6 +3557,7 @@ pub struct DirProgressEvent {
     pub scanned: u32,
     /// 总量估算（后台扫描期随展开修正；完成后等于实际总数）
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
     pub total_estimate: Option<u32>,
 }
 

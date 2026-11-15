@@ -37,17 +37,11 @@ export interface FileFormatsState {
 export function lineCommentItem(start: string): GrammarItemSpec {
   return {
     kind: 'delimited',
-    pattern: null,
     tokens: [],
     start,
-    end: null,
-    escape: null,
     toEol: true,
     regex: false,
     caseSensitive: false,
-    from: null,
-    to: null,
-    lines: null,
     orFirstLine: false,
   };
 }
@@ -309,14 +303,9 @@ export const BUILTIN_FORMAT_CATALOG: FileFormatSpec[] = [
           kind: 'rowTitle',
           pattern: '\\f.*',
           tokens: [],
-          start: null,
-          end: null,
-          escape: null,
           toEol: false,
           regex: false,
           caseSensitive: false,
-          from: null,
-          to: null,
           lines: 2,
           orFirstLine: true,
         },

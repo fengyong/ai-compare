@@ -27,14 +27,12 @@ const tableArgs = (sessionId: string) => ({
   sessionId,
   left: '/demo/a.csv',
   right: '/demo/b.csv',
-  options: null,
 });
 
 const hexArgs = (sessionId: string) => ({
   sessionId,
   left: '/demo/a.bin',
   right: '/demo/b.bin',
-  options: null,
 });
 
 const pictureArgs = (sessionId: string, tolerance = 8) => ({
@@ -49,7 +47,6 @@ const merge3Args = (sessionId: string) => ({
   base: '/demo/base.txt',
   left: '/demo/left.txt',
   right: '/demo/right.txt',
-  options: null,
 });
 
 describe('重复 open 的 411 复现（R3-10）', () => {

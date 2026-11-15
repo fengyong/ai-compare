@@ -4,4 +4,4 @@ import type { TableColumnType } from "./TableColumnType";
 /**
  * 比较列（显示"比较列"而非物理列：FR-TBL-001；单侧列对侧下标为 None）
  */
-export type TableColumnInfo = { name: string, ty: TableColumnType, left: number | null, right: number | null, };
+export type TableColumnInfo = { name: string, ty: TableColumnType, left?: number, right?: number, };

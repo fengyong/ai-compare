@@ -21,33 +21,33 @@ left: string, right: string,
 /**
  * 扫描深度：None = 全递归；1 = 仅顶层（P0 默认）
  */
-depth: number | null, criteria: CompareCriteria, 
+depth?: number, criteria: CompareCriteria, 
 /**
  * P2（ADR-004）：惰性 + 后台扫描。true = dir/open 立即应答顶层（可滚动），
  * 后台 tokio 任务继续全量扫描并推进 dir/delta / dir/progress；
  * false/缺省 = P0 行为（同步扫完再应答，scanState=completed）。
  */
-lazyScan: boolean | null, 
+lazyScan?: boolean, 
 /**
  * P2：平铺模式（FR-DIR-021 忽略文件夹结构）：按文件名跨目录对齐
  */
-flat: boolean | null, 
+flat?: boolean, 
 /**
  * P2：文件/目录名称过滤器（FR-DIR-031，引擎侧求值）
  */
-nameFilter: NameFilterSpec | null, 
+nameFilter?: NameFilterSpec, 
 /**
  * P2：其他过滤器（FR-DIR-032：日期/大小/内容/属性/Unix 类型）
  */
-otherFilter: OtherFilterSpec | null, 
+otherFilter?: OtherFilterSpec, 
 /**
  * P2：显示过滤器（FR-DIR-033：只影响显示不影响状态判定）
  */
-displayFilter: DisplayFilterSpec | null, 
+displayFilter?: DisplayFilterSpec, 
 /**
  * P2：手动对齐对（FR-DIR-022；rel 路径对）
  */
-manualAlign: Array<ManualAlignPair> | null, 
+manualAlign?: Array<ManualAlignPair>, 
 /**
  * P10：格式感知（文本 vs 二进制按格式表 + 内容嗅探判定）。
  * true 时引擎在 dir/open 首批 delta 的 DirRow 上注入 `fileKind`

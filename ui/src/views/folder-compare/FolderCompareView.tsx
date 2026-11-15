@@ -278,11 +278,6 @@ export function FolderCompareView({ tab }: { tab: Tab }) {
           rules,
           // P6：惰性会话 —— 顶层立即应答，目录展开经 dir/expand 惰性补推
           lazyScan: true,
-          flat: null,
-          nameFilter: null,
-          otherFilter: null,
-          displayFilter: null,
-          manualAlign: null,
         }),
       )
       .then(() => {
@@ -294,11 +289,6 @@ export function FolderCompareView({ tab }: { tab: Tab }) {
             criteria,
             rules,
             lazyScan: true,
-            flat: null,
-            nameFilter: null,
-            otherFilter: null,
-            displayFilter: null,
-            manualAlign: null,
           });
           setReady(true);
           setError(null);
@@ -443,11 +433,10 @@ export function FolderCompareView({ tab }: { tab: Tab }) {
       const result = await filterDir({
         sessionId: cache.sessionId,
         nameFilter: parseMaskInput(nextFilterText),
-        otherFilter: null,
         displayFilter: df,
         suppress: nextSuppress,
         flat: nextFlat,
-        rescan: patch?.rescan ?? null,
+        rescan: patch?.rescan ?? undefined,
       });
       setNotice(S.folder.filterResult(result.visibleRows, result.hiddenRows));
     } catch (err: unknown) {
@@ -653,11 +642,10 @@ export function FolderCompareView({ tab }: { tab: Tab }) {
   // ---- 同步预设（dir/operate 计划预览 -> 确认执行） ----
   const openPreset = async (preset: SyncPreset): Promise<void> => {
     try {
-      const paths = selectedCount > 0 ? [...selection.selected] : null;
+      const paths = selectedCount > 0 ? [...selection.selected] : undefined;
       const result = await planOperations({
         sessionId: cache.sessionId,
         preset,
-        rules: null,
         paths,
       });
       setPlanState({

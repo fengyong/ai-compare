@@ -6,4 +6,4 @@ export type DirExpandResult = { sessionId: string, rev: number,
 /**
  * 本次展开新增可见行数
  */
-newRows: number, stats: DirStats, progress: ScanProgress | null, };
+newRows: number, stats: DirStats, progress?: ScanProgress, };

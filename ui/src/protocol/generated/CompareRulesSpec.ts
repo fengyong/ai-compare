@@ -3,4 +3,4 @@
 /**
  * 比较规则开关（部分形态：None = 该项不覆盖/回落继承；FR-TXT-010）
  */
-export type CompareRulesSpec = { leadingWsUnimportant: boolean | null, embeddedWsUnimportant: boolean | null, trailingWsUnimportant: boolean | null, caseUnimportant: boolean | null, eolStyleUnimportant: boolean | null, encodingUnimportant: boolean | null, };
+export type CompareRulesSpec = { leadingWsUnimportant?: boolean, embeddedWsUnimportant?: boolean, trailingWsUnimportant?: boolean, caseUnimportant?: boolean, eolStyleUnimportant?: boolean, encodingUnimportant?: boolean, };

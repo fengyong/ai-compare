@@ -15,12 +15,12 @@ root: string,
 /**
  * 试运行：只校验不落盘
  */
-dryRun: boolean | null, 
+dryRun?: boolean, 
 /**
  * 模糊上下文匹配层数（缺省 3；0 = 仅精确）
  */
-fuzz: number | null, 
+fuzz?: number, 
 /**
  * CRLF 容忍（缺省 true；false 时补丁行行尾风格须与目标一致）
  */
-crlfTolerant: boolean | null, };
+crlfTolerant?: boolean, };

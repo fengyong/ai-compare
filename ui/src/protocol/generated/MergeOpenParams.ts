@@ -8,4 +8,4 @@ export type MergeOpenParams = { sessionId: string,
 /**
  * 公共祖先（中间文件；可为空文件）
  */
-base: string, left: string, right: string, options: Merge3OptionsSpec | null, };
+base: string, left: string, right: string, options?: Merge3OptionsSpec, };

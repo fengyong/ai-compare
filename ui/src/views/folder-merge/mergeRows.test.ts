@@ -38,10 +38,7 @@ function mrow(
     kind,
     base: opts.base ?? null,
     left:
-      opts.left ??
-      (kind === 'dir'
-        ? { size: 0, mtimeMs: seq, attribute: null, unixMode: 0, uid: 0, gid: 0 }
-        : null),
+      opts.left ?? (kind === 'dir' ? { size: 0, mtimeMs: seq, unixMode: 0, uid: 0, gid: 0 } : null),
     right: opts.right ?? null,
     category: opts.category ?? 'same',
     rowState: opts.rowState ?? 'same',
@@ -61,14 +58,14 @@ function mixedRows(): DirMergeRow[] {
       category: 'conflict',
       rowState: 'conflict',
       conflictLeaf: true,
-      left: { size: 1, mtimeMs: 1, attribute: null, unixMode: 0, uid: 0, gid: 0 },
-      right: { size: 2, mtimeMs: 2, attribute: null, unixMode: 0, uid: 0, gid: 0 },
+      left: { size: 1, mtimeMs: 1, unixMode: 0, uid: 0, gid: 0 },
+      right: { size: 2, mtimeMs: 2, unixMode: 0, uid: 0, gid: 0 },
     }),
     mrow('d/lc', { parent: 'd', category: 'leftChanged', rowState: 'auto' }),
     mrow('lo', {
       category: 'leftOnly',
       rowState: 'orphan',
-      left: { size: 3, mtimeMs: 3, attribute: null, unixMode: 0, uid: 0, gid: 0 },
+      left: { size: 3, mtimeMs: 3, unixMode: 0, uid: 0, gid: 0 },
     }),
     mrow('rc', { category: 'rightChanged', rowState: 'auto' }),
     mrow('same', { category: 'same', rowState: 'same' }),

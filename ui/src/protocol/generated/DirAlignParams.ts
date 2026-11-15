@@ -7,12 +7,12 @@ export type DirAlignParams = { sessionId: string,
 /**
  * 对齐：左 rel 路径（与 right 同时出现）
  */
-left: string | null, 
+left?: string, 
 /**
  * 对齐：右 rel 路径
  */
-right: string | null, 
+right?: string, 
 /**
  * 解除对齐：涉及该 rel 路径的全部配对
  */
-unalign: string | null, };
+unalign?: string, };

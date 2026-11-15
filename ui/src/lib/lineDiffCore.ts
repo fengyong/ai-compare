@@ -194,7 +194,7 @@ export function toSections(ops: DiffOp[]): Section[] {
       sections.push({
         id: id++,
         kind: 'insert',
-        left: null,
+        left: undefined,
         right: { start: op.bStart, end: op.bEnd },
         important: 'important',
         inline: 'notComputed',
@@ -204,7 +204,7 @@ export function toSections(ops: DiffOp[]): Section[] {
         id: id++,
         kind: 'delete',
         left: { start: op.aStart, end: op.aEnd },
-        right: null,
+        right: undefined,
         important: 'important',
         inline: 'notComputed',
       });

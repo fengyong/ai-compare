@@ -17,7 +17,7 @@ side: DiffSide,
 /**
  * copy/move 目标侧（缺省 = 对侧）
  */
-targetSide: DiffSide | null, 
+targetSide?: DiffSide, 
 /**
  * R3-03：copy/move 的**目标侧真实 rel**（手动对齐左右异名时与 path 不同）；
  * touch(mtimeMs=0) 时作为取时间戳的对侧 rel。缺省 = path（旧客户端兼容）。
@@ -26,7 +26,7 @@ targetPath?: string,
 /**
  * rename 新名称（仅 rename）
  */
-newName: string | null, 
+newName?: string, 
 /**
  * touch 目标 mtime（epoch ms；0/缺省 = 取对侧时间戳）
  */

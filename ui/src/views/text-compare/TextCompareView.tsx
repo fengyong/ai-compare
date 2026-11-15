@@ -207,8 +207,8 @@ export function TextCompareView({ tab }: { tab: Tab }) {
       const targets = model.sections.filter(
         (s) =>
           s.kind === 'change' &&
-          s.left !== null &&
-          s.right !== null &&
+          s.left !== undefined &&
+          s.right !== undefined &&
           s.left.end - s.left.start <= 400,
       );
       // 每个替换段一次懒计算 RPC（mock 同步、真实引擎缓存在会话侧）
@@ -569,7 +569,6 @@ export function TextCompareView({ tab }: { tab: Tab }) {
           sessionId: text.sessionId,
           left: text.left.path,
           right: text.right.path,
-          options: null,
           rules,
         })
           .then((opened) => loadTextSession(opened, text.left.path, text.right.path))
@@ -584,7 +583,6 @@ export function TextCompareView({ tab }: { tab: Tab }) {
         trackSession(text.sessionId, 'text', {
           left: text.left.path,
           right: text.right.path,
-          options: null,
           rules,
         });
         const model = newTextSessionModel({
@@ -929,7 +927,6 @@ export function TextCompareView({ tab }: { tab: Tab }) {
           sessionId: model.sessionId,
           left: model.leftPath,
           right: model.rightPath,
-          options: null,
           rules,
           encoding,
         });
@@ -957,7 +954,6 @@ export function TextCompareView({ tab }: { tab: Tab }) {
         trackSession(model.sessionId, 'text', {
           left: model.leftPath,
           right: model.rightPath,
-          options: null,
           rules,
           encoding: encodingParam(enc),
         });

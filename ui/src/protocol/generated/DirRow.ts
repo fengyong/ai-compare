@@ -12,7 +12,7 @@ export type DirRow = {
  * `name` / `name#i`，手动对齐时左右异名 —— 均不是文件地址**。
  * 寻址一律用 left_path / right_path。
  */
-id: string, name: string, kind: EntryKind, left: SideInfo | null, right: SideInfo | null, status: DirEntryStatus, 
+id: string, name: string, kind: EntryKind, left?: SideInfo, right?: SideInfo, status: DirEntryStatus, 
 /**
  * 有子节点的目录为 true（展开由后续 dir/expand 提供，P0 预留）
  */

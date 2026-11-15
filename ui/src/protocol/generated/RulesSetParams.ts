@@ -3,7 +3,7 @@ import type { RuleFormatBindingSpec } from "./RuleFormatBindingSpec";
 import type { RuleLayerSpec } from "./RuleLayerSpec";
 import type { RuleScope } from "./RuleScope";
 
-export type RulesSetParams = { scope: RuleScope, kind: string | null, sessionId: string | null, 
+export type RulesSetParams = { scope: RuleScope, kind?: string, sessionId?: string, 
 /**
  * 要写入的层（None 字段 = 清除该层该项覆盖）
  */

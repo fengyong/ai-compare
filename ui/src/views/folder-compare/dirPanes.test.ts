@@ -12,13 +12,13 @@ import {
 } from './dirPanes';
 
 function row(id: string, left: boolean, right: boolean): DirRow {
-  const side = { size: 10, mtimeMs: 1, attribute: null, unixMode: 0, uid: 0, gid: 0 };
+  const side = { size: 10, mtimeMs: 1, unixMode: 0, uid: 0, gid: 0 };
   return {
     id,
     name: id,
     kind: 'file',
-    left: left ? side : null,
-    right: right ? side : null,
+    left: left ? side : undefined,
+    right: right ? side : undefined,
     status: left && right ? 'same' : left ? 'leftOnly' : 'rightOnly',
     hasChildren: false,
     hidden: false,

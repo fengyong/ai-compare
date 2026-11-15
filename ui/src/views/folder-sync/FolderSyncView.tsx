@@ -84,14 +84,9 @@ export function FolderSyncView({ tab }: { tab: Tab }) {
           sessionId: cache.sessionId,
           left: folder.left,
           right: folder.right,
-          depth: null,
           criteria: DEFAULT_DIR_CRITERIA,
           lazyScan: true,
           flat: false,
-          nameFilter: null,
-          otherFilter: null,
-          displayFilter: null,
-          manualAlign: null,
         }),
       )
       .then(() => {
@@ -99,14 +94,9 @@ export function FolderSyncView({ tab }: { tab: Tab }) {
           trackSession(cache.sessionId, 'dir', {
             left: folder.left,
             right: folder.right,
-            depth: null,
             criteria: DEFAULT_DIR_CRITERIA,
             lazyScan: true,
             flat: false,
-            nameFilter: null,
-            otherFilter: null,
-            displayFilter: null,
-            manualAlign: null,
           });
           setReady(true);
           setError(null);
@@ -134,8 +124,6 @@ export function FolderSyncView({ tab }: { tab: Tab }) {
       const result = await planOperations({
         sessionId: cache.sessionId,
         preset,
-        rules: null,
-        paths: null,
       });
       const base = applyStrategyToPlan(result.plan, visibleRows, strategy);
       setBasePlan(base);

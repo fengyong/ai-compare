@@ -7,8 +7,8 @@ export type PictureOptionsSpec = {
 /**
  * 每通道容差（0-255；缺省 8）
  */
-tolerance: number | null, 
+tolerance?: number, 
 /**
  * 差异聚合块边长（像素；缺省 32）
  */
-block: number | null, };
+block?: number, };

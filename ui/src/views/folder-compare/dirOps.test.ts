@@ -13,9 +13,11 @@ import {
 } from './dirOps';
 
 function row(partial: Partial<DirRow> & { id: string }): DirRow {
-  const side = { size: 1, mtimeMs: 1, attribute: null, unixMode: 0, uid: 0, gid: 0 };
-  const left = partial.left !== undefined ? partial.left : side;
-  const right = partial.right !== undefined ? partial.right : side;
+  const side = { size: 1, mtimeMs: 1, unixMode: 0, uid: 0, gid: 0 };
+  // R3-21：侧元数据是可选字段（缺键 = 该侧不存在），必须用 `in` 区分
+  // 「未指定」与「显式缺侧」，不能用 ?? / !== undefined（会把缺侧补成有侧）。
+  const left = 'left' in partial ? partial.left : side;
+  const right = 'right' in partial ? partial.right : side;
   return {
     id: partial.id,
     name: partial.name ?? partial.id.split('/').pop()!,
@@ -31,7 +33,7 @@ function row(partial: Partial<DirRow> & { id: string }): DirRow {
   };
 }
 
-const noSide = null;
+const noSide = undefined;
 
 describe('dirOps：批次构造（FR-DIR-060 文件夹语义）', () => {
   const rows = [

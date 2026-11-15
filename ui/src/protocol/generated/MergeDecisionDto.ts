@@ -8,4 +8,4 @@ export type MergeDecisionDto = { chunkId: number, action: MergeDecisionKind,
 /**
  * Manual 动作的编辑文本（按 \n 分行）
  */
-text: string | null, };
+text?: string, };

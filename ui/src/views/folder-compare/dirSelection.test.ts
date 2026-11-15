@@ -126,9 +126,7 @@ describe('dirSelection edit commands', () => {
     kind: DirRow['kind'] = 'file',
   ): DirRow {
     const side = (mtime: number | null) =>
-      mtime === null
-        ? null
-        : { size: 1, mtimeMs: mtime, attribute: null, unixMode: 0, uid: 0, gid: 0 };
+      mtime === null ? undefined : { size: 1, mtimeMs: mtime, unixMode: 0, uid: 0, gid: 0 };
     return {
       id,
       name: id.split('/').pop() ?? id,

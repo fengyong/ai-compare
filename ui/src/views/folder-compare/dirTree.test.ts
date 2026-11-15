@@ -11,7 +11,7 @@ import {
 } from './dirTree';
 
 function dirRow(id: string, kind: DirRow['kind'] = 'file', hidden = false): DirRow {
-  const side = { size: 1, mtimeMs: 1, attribute: null, unixMode: 0, uid: 0, gid: 0 };
+  const side = { size: 1, mtimeMs: 1, unixMode: 0, uid: 0, gid: 0 };
   return {
     id,
     name: id.split('/').pop() ?? id,
@@ -91,7 +91,6 @@ describe('dirTree 表头排序', () => {
   const side = (size: number, mtimeMs: number) => ({
     size,
     mtimeMs,
-    attribute: null,
     unixMode: 0,
     uid: 0,
     gid: 0,
@@ -105,8 +104,8 @@ describe('dirTree 表头排序', () => {
     id,
     name: id.split('/').pop() ?? id,
     kind: 'file',
-    left: missing === 'left' ? null : side(size, mtimeMs),
-    right: missing === 'right' ? null : side(size, mtimeMs),
+    left: missing === 'left' ? undefined : side(size, mtimeMs),
+    right: missing === 'right' ? undefined : side(size, mtimeMs),
     status: 'same',
     hasChildren: false,
     hidden: false,

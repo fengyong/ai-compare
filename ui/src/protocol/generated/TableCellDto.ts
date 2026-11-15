@@ -4,4 +4,4 @@ import type { TableCellStatus } from "./TableCellStatus";
 /**
  * 单元格 diff（单侧列对侧值为 None）
  */
-export type TableCellDto = { left: string | null, right: string | null, status: TableCellStatus, };
+export type TableCellDto = { left?: string, right?: string, status: TableCellStatus, };

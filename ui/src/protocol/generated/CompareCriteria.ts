@@ -38,7 +38,7 @@ compareAttributes: boolean,
 /**
  * 参与比较的属性字母集（如 "rhs"）；None = 全部已知位参与
  */
-attributeLetters: string | null, 
+attributeLetters?: string, 
 /**
  * 比较 Unix 元数据（权限位/uid/gid）（FR-DIR-010；默认关，可配置开关）
  */

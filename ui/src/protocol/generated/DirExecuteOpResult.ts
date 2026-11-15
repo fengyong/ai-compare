@@ -6,4 +6,4 @@ export type DirExecuteOpResult = { op: DirExecuteOp, status: DirExecuteOpStatus,
 /**
  * 失败原因 / 跳过原因 / dry_run 说明
  */
-detail: string | null, };
+detail?: string, };

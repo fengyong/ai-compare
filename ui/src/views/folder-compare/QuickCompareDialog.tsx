@@ -49,7 +49,7 @@ function crossRowSides(rows: readonly DirRow[]): { a: PairSide; b: PairSide } {
   return { a, b };
 }
 
-function toSide(info: SideInfo | null, label: string, name = ''): PairSide {
+function toSide(info: SideInfo | undefined, label: string, name = ''): PairSide {
   return { label, name, size: info?.size ?? null, mtimeMs: info?.mtimeMs ?? null };
 }
 

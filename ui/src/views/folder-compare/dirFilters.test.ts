@@ -14,14 +14,12 @@ import {
 function row(partial: Partial<DirRow> & { id: string }): DirRow {
   const size = 10;
   const mtime = 1000;
+  // R3-21：侧元数据是可选字段（缺键 = 该侧不存在），用 `in` 区分
+  // 「未指定」与「显式缺侧」。
   const left =
-    partial.left !== undefined
-      ? partial.left
-      : { size, mtimeMs: mtime, attribute: null, unixMode: 0, uid: 0, gid: 0 };
+    'left' in partial ? partial.left : { size, mtimeMs: mtime, unixMode: 0, uid: 0, gid: 0 };
   const right =
-    partial.right !== undefined
-      ? partial.right
-      : { size, mtimeMs: mtime, attribute: null, unixMode: 0, uid: 0, gid: 0 };
+    'right' in partial ? partial.right : { size, mtimeMs: mtime, unixMode: 0, uid: 0, gid: 0 };
   return {
     id: partial.id,
     name: partial.name ?? partial.id,
@@ -67,7 +65,7 @@ describe('dirFilters：名称过滤器输入解析（FR-DIR-031）', () => {
     expect(spec.excludeFiles).toEqual(['*.log']);
     expect(spec.excludeDirs).toEqual(['build']);
     expect(spec.includeDirs).toEqual([]);
-    expect(spec.caseSensitive).toBeNull();
+    expect(spec.caseSensitive).toBeUndefined();
   });
 
   it('空输入 = 无过滤', () => {
@@ -122,12 +120,12 @@ describe('dirFilters：显示过滤器（FR-DIR-033，与引擎同口径）', ()
     const lNewer = row({
       id: 'x',
       status: 'quickDiff',
-      right: { size: 1, mtimeMs: 0, attribute: null, unixMode: 0, uid: 0, gid: 0 },
+      right: { size: 1, mtimeMs: 0, unixMode: 0, uid: 0, gid: 0 },
     });
     const rNewer = row({
       id: 'x',
       status: 'quickDiff',
-      left: { size: 1, mtimeMs: 0, attribute: null, unixMode: 0, uid: 0, gid: 0 },
+      left: { size: 1, mtimeMs: 0, unixMode: 0, uid: 0, gid: 0 },
     });
     expect(displayVisible(lNewer, displayFilterPreset('leftNewer'))).toBe(true);
     expect(displayVisible(lNewer, displayFilterPreset('rightNewer'))).toBe(false);
@@ -135,7 +133,7 @@ describe('dirFilters：显示过滤器（FR-DIR-033，与引擎同口径）', ()
   });
 
   it('孤立项由 showLeftOnly/showRightOnly 控制', () => {
-    const lo = row({ id: 'x', status: 'leftOnly', right: null });
+    const lo = row({ id: 'x', status: 'leftOnly', right: undefined });
     expect(displayVisible(lo, displayFilterPreset('leftOnly'))).toBe(true);
     expect(displayVisible(lo, displayFilterPreset('rightOnly'))).toBe(false);
   });

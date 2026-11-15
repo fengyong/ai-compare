@@ -43,7 +43,7 @@ pub struct RpcErrorObject {
     pub message: String,
     /// 结构化附加信息（本地化由 UI 完成：引擎只上报 (code, params)，docs/03 §6.7）
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(feature = "ts", ts(type = "unknown"))]
+    #[cfg_attr(feature = "ts", ts(optional, type = "unknown"))]
     pub data: Option<serde_json::Value>,
 }
 

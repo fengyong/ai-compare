@@ -12,4 +12,4 @@ scanned: number,
 /**
  * 总量估算（后台扫描期随展开修正；完成后等于实际总数）
  */
-totalEstimate: number | null, };
+totalEstimate?: number, };

@@ -8,7 +8,7 @@ export type TextOpenParams = { sessionId: string, left: string, right: string,
 /**
  * 缺省用引擎默认选项（docs/03 §6.1：忽略行尾风格）
  */
-options: TextDiffOptions | null, 
+options?: TextDiffOptions, 
 /**
  * P3：重要性模型（FR-TXT-010 上协议面；缺省 = 引擎默认：
  * 行尾风格与纯编码差异不重要，其余重要）

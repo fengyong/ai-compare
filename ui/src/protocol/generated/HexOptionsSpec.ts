@@ -8,4 +8,4 @@ export type HexOptionsSpec = {
 /**
  * 分块大小（字节）
  */
-chunkSize: number | null, alignMode: HexAlignMode | null, };
+chunkSize?: number, alignMode?: HexAlignMode, };

@@ -9,12 +9,12 @@ export type DirOperateParams = { sessionId: string,
 /**
  * 预设（与 rules 二选一；都未给 = 空计划）
  */
-preset: SyncPreset | null, 
+preset?: SyncPreset, 
 /**
  * 自定义规则（按序首条命中生效；无命中 = 跳过）
  */
-rules: Array<SyncRule> | null, 
+rules?: Array<SyncRule>, 
 /**
  * 选中行 id 集合（None/空 = 全部行）
  */
-paths: Array<string> | null, };
+paths?: Array<string>, };

@@ -15,14 +15,15 @@ describe('parentWriteback（R3-17：子会话保存 → 父目录行回传）', 
     expect(p!.rescan).toBe(true);
   });
 
-  it('过滤器/显示/抑制/平铺全为 null：不得覆盖父会话现有设置', () => {
+  it('过滤器/显示/抑制/平铺一律不传：不得覆盖父会话现有设置', () => {
     const p = parentRescanParams('dir-parent-1')!;
-    // 引擎 dir/filter 按 is_some 门控：null = 不改动。子会话无从得知父会话的
+    // 引擎 dir/filter 按 is_some 门控：不传 = 不改动。子会话无从得知父会话的
     // 过滤器与显示设置，传具体值会把它们悄悄重置。
-    expect(p.nameFilter).toBeNull();
-    expect(p.otherFilter).toBeNull();
-    expect(p.displayFilter).toBeNull();
-    expect(p.suppress).toBeNull();
-    expect(p.flat).toBeNull();
+    // R3-21：这些字段在协议里是可选字段（缺键 = 不改动），不再是显式 null。
+    expect(p.nameFilter).toBeUndefined();
+    expect(p.otherFilter).toBeUndefined();
+    expect(p.displayFilter).toBeUndefined();
+    expect(p.suppress).toBeUndefined();
+    expect(p.flat).toBeUndefined();
   });
 });

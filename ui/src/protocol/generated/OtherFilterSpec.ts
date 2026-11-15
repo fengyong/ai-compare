@@ -26,28 +26,28 @@ maxSize?: number | null,
 /**
  * 仅保留内容包含该串的文件（UTF-8 前缀读）
  */
-contains: string | null, 
+contains?: string, 
 /**
  * 仅保留内容不包含该串的文件
  */
-notContains: string | null, 
+notContains?: string, 
 /**
  * DOS 属性字母集：须已设置全部字母（如 "r"）
  */
-attrsInclude: string | null, 
+attrsInclude?: string, 
 /**
  * DOS 属性字母集：须未设置任一字母
  */
-attrsExclude: string | null, 
+attrsExclude?: string, 
 /**
  * Unix 文件类型字母集：须包含其中之一（b/c/l/p/r/s）
  */
-unixTypesInclude: string | null, 
+unixTypesInclude?: string, 
 /**
  * Unix 文件类型字母集：排除命中的类型
  */
-unixTypesExclude: string | null, 
+unixTypesExclude?: string, 
 /**
  * 排除受保护的操作系统文件（BC 默认 true；非 Windows 平台近似为跳过无读权限文件）
  */
-excludeProtectedOsFiles: boolean | null, };
+excludeProtectedOsFiles?: boolean, };

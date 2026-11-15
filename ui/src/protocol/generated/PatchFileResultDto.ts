@@ -16,4 +16,4 @@ offsetApplied: number,
 /**
  * 失败/跳过原因
  */
-detail: string | null, };
+detail?: string, };
