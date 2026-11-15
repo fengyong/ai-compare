@@ -210,7 +210,16 @@ async fn dir_open(
     cancel: &ai_dir::CancelFlag,
     out: tokio::sync::mpsc::UnboundedSender<crate::server::Outbound>,
 ) -> Result<Handled, RpcErrorObject> {
-    let params: ai_protocol::DirOpenParams = parse_params(params)?;
+    // 平铺模式按文件名**跨目录**对齐，而 DTO 的 depth 缺省为 Some(1)（P0
+    // 顶层比较的语义）。若不给 depth 就沿用 1，模型只展开根目录、flat_rows
+    // 只收 File 节点 → 首屏 0 行、dir/operate 得到空计划（R3-03 复现时的
+    // 附带缺陷）。平铺下顶层语义没有意义，故「未显式给 depth」按全递归处理；
+    // 显式 depth:1 与 lazyScan 的既有语义保持不变。
+    let depth_explicit = params.as_ref().and_then(|v| v.get("depth")).is_some();
+    let mut params: ai_protocol::DirOpenParams = parse_params(params)?;
+    if params.flat == Some(true) && !depth_explicit {
+        params.depth = None;
+    }
     if params.session_id.is_empty() {
         return Err(bad_params("sessionId 不能为空"));
     }
@@ -7362,7 +7371,6 @@ mod r3_03_rpc_tests {
                 "left": l.to_string_lossy(),
                 "right": r.to_string_lossy(),
                 "flat": true,
-                "depth": 3,
                 "criteria": {"mtimeToleranceSec": 0, "contentCompare": "always"}
             }),
             &tx,
@@ -7478,6 +7486,68 @@ mod r3_03_rpc_tests {
         assert_eq!(std::fs::read(r.join("b.txt")).unwrap(), b"AAA", "应写进目标侧真实名字 b.txt");
         assert!(!r.join("a.txt").exists(), "不得按源名在右侧另建一份");
         assert_eq!(std::fs::read(l.join("a.txt")).unwrap(), b"AAA", "源不应被改写");
+    }
+
+    /// 平铺 depth 语义回归：缺省=全递归（修复），显式 1=顶层（既有语义不变），
+    /// 显式 null=全递归，lazyScan 不因缺省调整而退化。
+    #[tokio::test]
+    async fn rpc_flat_depth_semantics() {
+        let d = tempfile::tempdir().unwrap();
+        let l = d.path().join("L");
+        let r = d.path().join("R");
+        for (root, files) in [
+            (&l, [("d1/x.txt", "L1"), ("d2/x.txt", "L2")]),
+            (&r, [("d1/x.txt", "R1"), ("d2/x.txt", "R2")]),
+        ] {
+            for (rel, data) in files {
+                let p = root.join(rel);
+                std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+                std::fs::write(p, data.as_bytes()).unwrap();
+            }
+        }
+        let c = ctx();
+        let (tx, _rx) = chan();
+
+        let cases: &[(&str, serde_json::Value, usize)] = &[
+            ("omitted", json!({}), 2),
+            ("depth1", json!({"depth": 1}), 0),
+            ("depthNull", json!({"depth": null}), 2),
+        ];
+        for (name, extra, expected) in cases {
+            let mut prm = json!({
+                "sessionId": format!("dep-{name}"),
+                "left": l.to_string_lossy(),
+                "right": r.to_string_lossy(),
+                "flat": true,
+                "criteria": {"mtimeToleranceSec": 0, "contentCompare": "always"}
+            });
+            for (k, v) in extra.as_object().unwrap() {
+                prm[k] = v.clone();
+            }
+            let opened = call(&c, "dir/open", prm, &tx).await;
+            assert_eq!(
+                opened["rowCount"].as_u64(),
+                Some(*expected as u64),
+                "flat {name} 首屏行数: {opened}"
+            );
+        }
+
+        // lazyScan 仍走后台推进：首屏顶层，随后补齐
+        let opened = call(
+            &c,
+            "dir/open",
+            json!({
+                "sessionId": "dep-lazy",
+                "left": l.to_string_lossy(),
+                "right": r.to_string_lossy(),
+                "flat": true,
+                "lazyScan": true,
+                "criteria": {"mtimeToleranceSec": 0, "contentCompare": "always"}
+            }),
+            &tx,
+        )
+        .await;
+        assert!(opened["rowCount"].is_number(), "lazy 应答结构: {opened}");
     }
 
     /// 安全护栏：新增的目标侧路径也必须是合法 rel（不得成为绕过 .. 的入口）
