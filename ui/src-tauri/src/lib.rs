@@ -407,7 +407,22 @@ fn settings_write(path: String, contents: String) -> Result<(), String> {
     settings_write_inner(confined.display().to_string(), contents)
 }
 
+/// 原子写二进制文件（演示数据落盘用）：与 settings_write 共用同一安全收敛
+/// （confine_within，仅限应用设置目录）与同一原子写核心，只是字节来源是
+/// Vec<u8> 而非 UTF-8 字符串——图片/ZIP/非 UTF-8 编码等非文本资产无法用字符串
+/// 接口表达（任意字节序列未必是合法 UTF-8）。
+#[tauri::command]
+fn settings_write_bytes(path: String, contents: Vec<u8>) -> Result<(), String> {
+    let (base, _, _) = app_dirs_raw()?;
+    let confined = confine_within(&path, &base)?;
+    settings_write_bytes_inner(confined.display().to_string(), contents)
+}
+
 fn settings_write_inner(path: String, contents: String) -> Result<(), String> {
+    settings_write_bytes_inner(path, contents.into_bytes())
+}
+
+fn settings_write_bytes_inner(path: String, contents: Vec<u8>) -> Result<(), String> {
     use std::io::Write;
     use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -433,7 +448,7 @@ fn settings_write_inner(path: String, contents: String) -> Result<(), String> {
 
     let result = (|| -> std::io::Result<()> {
         let mut f = std::fs::File::create(&tmp)?;
-        f.write_all(contents.as_bytes())?;
+        f.write_all(&contents)?;
         // 落盘耐久性：rename 之前 tmp 内容必须已刷到介质，否则掉电后
         // 目录项指向一个空/半截文件（文档承诺的"原子写"不含这一步就不成立）
         f.sync_all()?;
@@ -486,6 +501,7 @@ pub fn run() {
             settings_app_dirs,
             settings_read,
             settings_write,
+            settings_write_bytes,
             settings_delete
         ])
         .build(tauri::generate_context!())
@@ -717,6 +733,43 @@ mod tests {
             seen, "old-content-longer",
             "已打开的读句柄看到了新内容 → 不是原子替换"
         );
+    }
+
+    // ---- 二进制写（演示数据资产：图片/ZIP/非 UTF-8 编码）----
+
+    /// 非 UTF-8 字节必须精确落盘（PNG 签名含 0x89/0x1A 等 >127 字节，字符串接口
+    /// 无法表达）；同时验证建父目录。若误走 UTF-8 字符串路径，0xFF/0xFE 会被改写。
+    #[test]
+    fn settings_write_bytes_writes_exact_non_utf8_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("nested/img.png");
+        let bytes: Vec<u8> = vec![0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0xFF, 0x00, 0xFE];
+        settings_write_bytes_inner(p.display().to_string(), bytes.clone()).unwrap();
+        assert_eq!(std::fs::read(&p).unwrap(), bytes, "字节被改写（疑似走了 UTF-8 字符串路径）");
+        assert_eq!(entries(p.parent().unwrap()), vec!["img.png"]);
+    }
+
+    /// 二进制写复用同一原子核心：覆盖产生 .bak（旧字节）、无 tmp 残留。
+    #[test]
+    fn settings_write_bytes_backs_up_previous_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("blob.dat");
+        settings_write_bytes_inner(p.display().to_string(), vec![0x00, 0x01, 0x02]).unwrap();
+        settings_write_bytes_inner(p.display().to_string(), vec![0x03, 0x04]).unwrap();
+        assert_eq!(std::fs::read(&p).unwrap(), vec![0x03, 0x04]);
+        assert_eq!(std::fs::read(p.with_extension("dat.bak")).unwrap(), vec![0x00, 0x01, 0x02]);
+        assert_eq!(entries(dir.path()), vec!["blob.dat", "blob.dat.bak"]);
+    }
+
+    /// 文本写委托二进制核心后行为不变（UTF-8 往返一致）。
+    #[test]
+    fn settings_write_text_and_bytes_share_core() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("s.txt");
+        settings_write_inner(p.display().to_string(), "héllo\n".into()).unwrap();
+        assert_eq!(std::fs::read(&p).unwrap(), "héllo\n".as_bytes());
+        settings_write_bytes_inner(p.display().to_string(), "héllo\n".as_bytes().to_vec()).unwrap();
+        assert_eq!(read(&p).as_deref(), Some("héllo\n"));
     }
 
     // ---- R3-23：设置命令面收敛（confine_within 是纯边界逻辑，命令仅做委托）----
