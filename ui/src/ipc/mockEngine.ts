@@ -385,6 +385,8 @@ export class MockEngine {
         mergeSave: true,
         // R3-16：dir/compareContent 已同形实现（三方式 + 五态结果）
         dirCompareContent: true,
+        // D2：text/open 省略 right 的单文件编辑会话
+        textOpenOne: true,
       },
       license: { proUnlocked: true },
     };
@@ -1029,6 +1031,8 @@ export class MockEngine {
       throw new RpcErr(CODE.SESSION_EXISTS, `会话已存在: ${p.sessionId}`);
     }
     const encoding = resolveMockEncoding(p.encoding);
+    // D2：省略 right = 单文件编辑会话（不建右表、不跑 diff）
+    const single = p.right === undefined;
     const seed = baseName(p.left ?? '') || baseName(p.right ?? '') || 'file';
     // 队列 4：clipboard://N 规格（FR-CLIP-004）在 mock 下直接取剪贴板历史文本，
     // 使浏览器 dev 的演示数据与真实剪贴板内容一致（Tauri 侧已物化为临时文件）。
@@ -1041,28 +1045,31 @@ export class MockEngine {
             rightSpec !== null ? (clipboardStore.getText(rightSpec) ?? '') : '',
           )
         : genTextPair(seed);
-    const summary = summarize(gen.sections);
+    const effective = single
+      ? { leftLines: gen.leftLines, rightLines: [] as string[], sections: [] as Section[] }
+      : gen;
+    const summary = summarize(effective.sections);
     this.textSessions.set(p.sessionId, {
       id: p.sessionId,
-      leftLines: gen.leftLines,
-      rightLines: gen.rightLines,
-      sections: gen.sections,
+      leftLines: effective.leftLines,
+      rightLines: effective.rightLines,
+      sections: effective.sections,
       summary,
       rev: 0,
       leftPath: p.left ?? '',
       rightPath: p.right ?? '',
       modified: { left: false, right: false },
     });
-    this.files.set(p.left ?? '', mockTextOf(gen.leftLines));
-    this.files.set(p.right ?? '', mockTextOf(gen.rightLines));
+    if (p.left) this.files.set(p.left, mockTextOf(effective.leftLines));
+    if (p.right) this.files.set(p.right, mockTextOf(effective.rightLines));
     return {
       sessionId: p.sessionId,
-      leftLineCount: gen.leftLines.length,
-      rightLineCount: gen.rightLines.length,
-      sectionCount: gen.sections.length,
+      leftLineCount: effective.leftLines.length,
+      rightLineCount: effective.rightLines.length,
+      sectionCount: effective.sections.length,
       summary,
       leftEncoding: encoding,
-      rightEncoding: encoding,
+      rightEncoding: single ? '' : encoding,
     };
   }
 

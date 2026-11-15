@@ -17,6 +17,7 @@ import { ClipboardHistoryPanel } from '../views/home/ClipboardHistoryPanel';
 import { ReportDialog } from '../views/report/ReportDialog';
 import type { Tab } from './store';
 import { TextCompareView } from '../views/text-compare/TextCompareView';
+import { TextEditView } from '../views/text-edit/TextEditView';
 import { applyTheme } from '../theme/palette';
 import { sessionService } from '../session/service';
 import {
@@ -179,6 +180,9 @@ export function AppShell() {
         )}
         {activeTab?.kind === 'text' && activeTab.text && (
           <TextCompareView key={activeTab.id} tab={activeTab} />
+        )}
+        {activeTab?.kind === 'edit' && activeTab.edit && (
+          <TextEditView key={activeTab.id} tab={activeTab} />
         )}
         {activeTab?.kind === 'sync' && activeTab.sync && (
           <FolderSyncView key={activeTab.id} tab={activeTab} />

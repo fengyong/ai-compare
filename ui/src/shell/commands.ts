@@ -8,6 +8,7 @@ import {
   comparePathWithClipboard,
 } from './clipboardActions';
 import { activeTextView } from '../views/text-compare/textViewBus';
+import { activeEditView } from '../views/text-edit/editViewBus';
 import { activeFolderView } from '../views/folder-compare/folderViewBus';
 
 /**
@@ -17,6 +18,8 @@ import { activeFolderView } from '../views/folder-compare/folderViewBus';
  * 书签等）经视图总线（folderViewBus / textViewBus）调用视图内真实操作——选择集
  * 与光标是视图内状态，不提升到全局 store。
  */
+
+import type { Tab } from './shellState';
 
 export type CommandCategory = '会话' | '搜索' | '视图' | '窗口' | '工具';
 
@@ -35,8 +38,8 @@ export interface CommandDef {
 
 /** 命令运行上下文 = ViewCtx + 活动标签信息（壳在每次触发时构建） */
 export interface CommandContext extends ViewCtx {
-  activeTabKind:
-    'home' | 'folder' | 'text' | 'sync' | 'merge' | 'merge3' | 'picture' | 'table' | 'hex' | null;
+  /** 直接取 Tab['kind']：新增视图类型不再需要两处同步联合 */
+  activeTabKind: Tab['kind'] | null;
   activeTabId: string | null;
 }
 
@@ -405,6 +408,42 @@ export function registerBuiltinCommands(reg: CommandRegistry): void {
     category: '会话',
     when: textWhen,
     run: () => activeTextView()?.saveFileAs(),
+  });
+
+  // D2：独立文本编辑（单文件）。
+  // 键位说明：Ctrl+S 已被 session.save 占用（静态冲突检测不看 when 门控），
+  // 因此编辑标签的 Ctrl+S 由 saveSessionForTab 分流到「保存文件」，
+  // 这里只登记无默认键的命令入口 + 未被占用的 Ctrl+F。
+  const editWhen = (ctx: CommandContext) => ctx.activeTabKind === 'edit';
+  reg.register({
+    id: 'edit.find',
+    title: '查找替换（文本编辑）',
+    category: '视图',
+    defaultKeys: 'Ctrl+F',
+    when: editWhen,
+    run: () => activeEditView()?.openFind(),
+  });
+  reg.register({
+    id: 'edit.toggleWrap',
+    title: '自动换行（文本编辑）',
+    category: '视图',
+    when: editWhen,
+    run: () => activeEditView()?.toggleWrap(),
+  });
+  reg.register({
+    id: 'edit.saveFile',
+    title: '保存文件（文本编辑）',
+    category: '会话',
+    phaseNote: 'FR-EDIT-001：Ctrl+S 在编辑标签上即保存文件（由会话保存分流）',
+    when: editWhen,
+    run: () => activeEditView()?.saveFile(),
+  });
+  reg.register({
+    id: 'edit.saveFileAs',
+    title: '另存文件为（文本编辑）',
+    category: '会话',
+    when: editWhen,
+    run: () => activeEditView()?.saveFileAs(),
   });
 
   reg.register({

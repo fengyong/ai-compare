@@ -8,6 +8,7 @@ import {
   pickDiffTarget,
 } from '../views/text-compare/diffFileNav';
 import { parentRescanParams } from '../views/text-compare/parentWriteback';
+import { deleteEditDoc } from '../views/text-edit/editModel';
 import { deleteTextSession } from '../views/text-compare/textModel';
 import { basename, joinPath } from '../lib/env';
 import { S } from '../strings';
@@ -346,6 +347,73 @@ export const createTabsSlice: StateCreator<ShellStore, [], [], TabsSlice> = (set
         activeWindowId: opts.windowId ? targetId : st.activeWindowId,
       };
     });
+  },
+
+  /**
+   * 独立文本编辑（D2 / FR-EDIT-001）。
+   *
+   * 与 `openTextTab` 的差别：只有一个文件。新引擎 `text/open` 省略 right
+   * （单文件会话：不建右表、不跑 diff）；旧引擎没有 `textOpenOne` 能力位时
+   * 退回"同路径双开"——行为等价（左表内容一致），只是多一次读盘 + 一次
+   * identical diff。降级在这里发生，视图层不必感知引擎版本。
+   */
+  async openEditTab(path, opts: OpenTabOpts = {}) {
+    try {
+      const caps = engine.getEngineCapabilities();
+      const single = caps?.textOpenOne === true;
+      const sessionId = engine.newSessionId('text');
+      const params = single ? { sessionId, left: path } : { sessionId, left: path, right: path };
+      const opened = await engine.openText(params);
+      engine.trackSession(sessionId, 'text', { left: path, ...(single ? {} : { right: path }) });
+      const name = basename(path);
+      const id = nextTabId('edit');
+      const tab: Tab = {
+        id,
+        kind: 'edit',
+        title: `${name}（${S.tab.editTitleSuffix}）`,
+        edit: {
+          sessionId,
+          path,
+          name,
+          encoding: opened.leftEncoding,
+          lineCount: opened.leftLineCount,
+        },
+        sessionLink: opts.sessionLink,
+      };
+      set((st) => {
+        const targetId = opts.windowId ?? st.activeWindowId;
+        const activate = opts.activate !== false;
+        return {
+          windows: st.windows.map((w) =>
+            w.id === targetId
+              ? {
+                  ...w,
+                  tabs: [...w.tabs, tab],
+                  activeTabId: activate ? id : w.activeTabId,
+                  title: activate ? tab.title : w.title,
+                }
+              : w,
+          ),
+          activeWindowId: opts.windowId ? targetId : st.activeWindowId,
+        };
+      });
+    } catch (err) {
+      get().setNotice(`${S.edit.openFail}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  },
+
+  /** 另存为后改指编辑目标（标题、关闭守卫与下次缺省保存都用这一处结果） */
+  retargetEditPath(tabId, path) {
+    set((st) => ({
+      windows: st.windows.map((w) => {
+        const tabs = w.tabs.map((t) => {
+          if (t.id !== tabId || !t.edit) return t;
+          const edit = { ...t.edit, path, name: basename(path) };
+          return { ...t, edit, title: `${edit.name}（${S.tab.editTitleSuffix}）` };
+        });
+        return { ...w, tabs, title: titleOf(w.activeTabId, tabs) };
+      }),
+    }));
   },
 
   /** 独立文本比较（主页"文本比较"大按钮入口） */
@@ -700,6 +768,7 @@ export const createTabsSlice: StateCreator<ShellStore, [], [], TabsSlice> = (set
  */
 const TAB_SESSION_KINDS = [
   'text',
+  'edit',
   'folder',
   'sync',
   'picture',
@@ -751,5 +820,9 @@ export async function cleanupTabEngines(tab: Tab): Promise<void> {
   // 否则关闭后仍留有陈旧模型，且缓存只增不减（R3-05）
   if (tab.text?.sessionId) {
     deleteTextSession(tab.text.sessionId);
+  }
+  // 编辑视图的会话级模型（内容/引擎快照）同样随标签释放
+  if (tab.edit?.sessionId) {
+    deleteEditDoc(tab.edit.sessionId);
   }
 }

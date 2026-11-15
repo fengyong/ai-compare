@@ -4,9 +4,11 @@ import { S } from '../strings';
 import type { SessionSlice, ShellStore } from './shellState';
 import { sessionIdOfTab } from '../views/report/reportModel';
 import { nextToolbarLayout } from './menuModel';
-import { closeGuardKind, firstPendingGuard, remainingSides } from './closeGuard';
+import { closeGuardKind, firstPendingGuard, hasContentEdits, remainingSides } from './closeGuard';
 import { applySavedEntries, runTextSave, saveRequestsFor } from '../views/text-compare/textSave';
 import { getTextSession } from '../views/text-compare/textModel';
+import { getEditDoc, isDocDirty } from '../views/text-edit/editModel';
+import { saveEditDoc, savedNotice } from '../views/text-edit/textEditSave';
 import { sessionKindOfTab, specsOfTab } from './sessionSpecs';
 import * as engine from '../ipc/engineProcess';
 
@@ -41,6 +43,10 @@ export const createSessionSlice: StateCreator<ShellStore, [], [], SessionSlice> 
       case 'text-compare':
         await get().openTextTab(left, right, { sessionLink: link });
         break;
+      case 'text-edit':
+        // D2：单文件会话只有 left 位
+        await get().openEditTab(left, { sessionLink: link });
+        break;
       case 'folder-sync':
         get().openFolderSyncTab(left, right, { sessionLink: link });
         break;
@@ -68,6 +74,11 @@ export const createSessionSlice: StateCreator<ShellStore, [], [], SessionSlice> 
     const found = get().findTab(tabId);
     if (!found) return;
     const tab = found.tab;
+    // D2：编辑标签有未落盘内容时，"保存"（Ctrl+S）的直觉语义是保存文件
+    if (tab.kind === 'edit' && hasContentEdits(tab)) {
+      await get().saveContentForTab(tabId);
+      return;
+    }
     if (tab.sessionLink) {
       if (tab.sessionLink.locked) {
         get().setNotice(`${S.session.lockedSaveDenied}「${tab.sessionLink.name}」`);
@@ -265,6 +276,23 @@ export const createSessionSlice: StateCreator<ShellStore, [], [], SessionSlice> 
 
   async saveContentForTab(tabId) {
     const tab = get().findTab(tabId)?.tab;
+    // D2：独立文本编辑（单文件）——先收敛引擎再落盘，失败保留编辑内容
+    if (tab?.kind === 'edit' && tab.edit) {
+      const doc = getEditDoc(tab.edit.sessionId);
+      if (!doc) {
+        get().setNotice(S.edit.loadFail);
+        return false;
+      }
+      const res = await saveEditDoc(doc, { backup: true });
+      if (!res.ok) {
+        get().setNotice(res.message);
+        return false;
+      }
+      if (res.retargeted) get().retargetEditPath(tabId, res.path);
+      get().markContentDirty(tabId, { left: isDocDirty(doc), right: false });
+      get().setNotice(savedNotice(res));
+      return true;
+    }
     const sessionId = tab?.text?.sessionId;
     const dirty = tab?.contentDirty;
     if (!tab || !sessionId || !dirty) return true;

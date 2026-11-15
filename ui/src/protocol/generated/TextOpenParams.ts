@@ -4,7 +4,18 @@ import type { RulesSpec } from "./RulesSpec";
 import type { TextDiffOptions } from "./TextDiffOptions";
 import type { TextManualAlignSpec } from "./TextManualAlignSpec";
 
-export type TextOpenParams = { sessionId: string, left: string, right: string, 
+export type TextOpenParams = { sessionId: string, left: string, 
+/**
+ * 右侧路径。**省略 = 单文件编辑会话**（D2/FR-EDIT-001）：引擎只建左侧
+ * 行表、不跑 diff，`sections` 恒空、`rightLineCount`/`rightEncoding` 为
+ * 0/空串；`text/lines`（side=left）、`text/edit`、`text/save`（side=left）
+ * 照常可用，编码/BOM/行尾仍由引擎权威保留。
+ *
+ * 兼容：旧客户端始终携带该字段（比较会话），行为完全不变；新客户端省略
+ * 该字段前必须先确认 `capabilities.textOpenOne`（旧引擎收到缺省 right 会
+ * 按空路径解析而报 412）。
+ */
+right?: string, 
 /**
  * 缺省用引擎默认选项（docs/03 §6.1：忽略行尾风格）
  */

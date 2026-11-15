@@ -27,6 +27,7 @@ export function HomeView() {
   const openMerge3Tab = useShell((st) => st.openMerge3Tab);
   const openFolderMergeTab = useShell((st) => st.openFolderMergeTab);
   const openTextTab = useShell((st) => st.openTextTab);
+  const openEditTab = useShell((st) => st.openEditTab);
   const setNotice = useShell((st) => st.setNotice);
   const [showPanel, setShowPanel] = useState(
     () => sessionService.getUiState().showSessionPanel !== false,
@@ -111,6 +112,12 @@ export function HomeView() {
       else setNotice(S.home.textPathRequired);
       return;
     }
+    // D2：独立文本编辑只要一个文件（取左路径输入框）
+    if (kind === 'text-edit') {
+      if (left.trim()) void openEditTab(left.trim());
+      else setNotice(S.home.textPathRequired);
+      return;
+    }
     // P8：文件夹同步复用左右两路径；文件夹合并三路 base 取「基准路径」输入，留空以左路径兼作
     if (kind === 'hex-compare') {
       if (left.trim() && right.trim()) openHexTab(left.trim(), right.trim());
@@ -151,6 +158,15 @@ export function HomeView() {
     e.stopPropagation();
     setDragOver(false);
     const paths = await extractPathsFromDataTransfer(e.dataTransfer);
+    // D2：文本编辑只取第一个文件（拖入多文件时不猜"打开哪一个集合"）
+    if (kind === 'text-edit') {
+      const first = paths[0];
+      if (first) {
+        setLeft(first);
+        void openEditTab(first);
+      } else setNotice(S.home.textPathRequired);
+      return;
+    }
     const pair = pickTwoPaths(paths);
     if (pair.left) setLeft(pair.left);
     if (pair.right) setRight(pair.right);

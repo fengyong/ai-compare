@@ -20,7 +20,9 @@ export type SessionKind =
   | 'picture-compare'
   | 'folder-sync'
   | 'folder-merge'
-  | 'text-merge';
+  | 'text-merge'
+  /** D2：独立文本编辑（单文件，FR-EDIT-001 第一阶段） */
+  | 'text-edit';
 
 export const SESSION_KINDS: readonly SessionKind[] = [
   'folder-compare',
@@ -31,6 +33,7 @@ export const SESSION_KINDS: readonly SessionKind[] = [
   'folder-sync',
   'folder-merge',
   'text-merge',
+  'text-edit',
 ];
 
 export function isSessionKind(v: unknown): v is SessionKind {
@@ -55,6 +58,7 @@ export const KIND_META: Record<SessionKind, KindMeta> = {
   'folder-sync': { title: '文件夹同步', icon: '🔄', phase: 'P8', implemented: true },
   'folder-merge': { title: '文件夹合并', icon: '🔀', phase: 'P8', implemented: true },
   'text-merge': { title: '文本合并', icon: '🧩', phase: 'P7/P14', implemented: true },
+  'text-edit': { title: '文本编辑', icon: '✏️', phase: 'D2/FR-EDIT-001', implemented: true },
 };
 
 /** 设置作用域（FR-SES-006 四选项 + 子会话专属两项） */

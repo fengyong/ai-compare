@@ -199,6 +199,8 @@ fn initialize(params: Option<serde_json::Value>) -> Result<Handled, RpcErrorObje
             merge_save: Some(true),
             // R3-16：手动内容比较入口开放（dir/compareContent）
             dir_compare_content: Some(true),
+            // D2：单文件编辑会话（text/open 省略 right）
+            text_open_one: Some(true),
             dir_background_scan: true,
             dir_filters: true,
             dir_operate: true,
@@ -779,7 +781,13 @@ async fn text_open(
         return Err(bad_params("sessionId 不能为空"));
     }
     let left_path = VfsPath::parse(&params.left).map_err(|e| mapping::vfs_error_to_rpc(&e))?;
-    let right_path = VfsPath::parse(&params.right).map_err(|e| mapping::vfs_error_to_rpc(&e))?;
+    // D2：right 省略 = 单文件编辑会话。只读左文件、不建右表、不跑 diff——
+    // 编辑器不需要「另一侧」，也不该为它付一次读盘 + 一次对齐的代价。
+    let single_side = params.right.is_none();
+    let right_path = match params.right.as_deref() {
+        Some(r) => Some(VfsPath::parse(r).map_err(|e| mapping::vfs_error_to_rpc(&e))?),
+        None => None,
+    };
     let opts_dto = params.options.clone().unwrap_or_default();
 
     let left_dec = ctx
@@ -787,14 +795,21 @@ async fn text_open(
         .read_file_decoded(&left_path, params.encoding.as_deref())
         .await
         .map_err(|e| mapping::vfs_error_to_rpc(&e))?;
-    let right_dec = ctx
-        .vfs
-        .read_file_decoded(&right_path, params.encoding.as_deref())
-        .await
-        .map_err(|e| mapping::vfs_error_to_rpc(&e))?;
+    let right_dec = match &right_path {
+        Some(p) => Some(
+            ctx.vfs
+                .read_file_decoded(p, params.encoding.as_deref())
+                .await
+                .map_err(|e| mapping::vfs_error_to_rpc(&e))?,
+        ),
+        None => None,
+    };
 
     let lt = LineTable::from_text(&left_dec.text);
-    let rt = LineTable::from_text(&right_dec.text);
+    let rt = match &right_dec {
+        Some(d) => LineTable::from_text(&d.text),
+        None => LineTable::default(),
+    };
 
     // P3：骨架选项 + 重要性模型 + 手动对齐（无新参数时与 P0 diff_text 行为一致）
     let mut config = ai_core::DiffConfig {
@@ -814,7 +829,7 @@ async fn text_open(
             let reg = ctx.formats.lock().await;
             let fname = left_path
                 .file_name()
-                .or_else(|| right_path.file_name())
+                .or_else(|| right_path.as_ref().and_then(|p| p.file_name()))
                 .unwrap_or_default();
             if let Some(fmt) = reg.detect(fname, &[]) {
                 let effective = ai_core::EffectiveRules {
@@ -826,37 +841,55 @@ async fn text_open(
         }
     }
     if let Some(spec) = &params.manual {
-        config.manual = mapping::manual_from_dto(spec);
-        config
-            .manual
-            .validate(lt.len() as u32, rt.len() as u32)
-            .map_err(|e| ai_protocol::error_object(codes::INVALID_PARAMS, format!("{e}")))?;
+        // 单文件会话没有「另一侧」，手动对齐锚点无从生效：忽略而不是报错
+        if !single_side {
+            config.manual = mapping::manual_from_dto(spec);
+            config
+                .manual
+                .validate(lt.len() as u32, rt.len() as u32)
+                .map_err(|e| ai_protocol::error_object(codes::INVALID_PARAMS, format!("{e}")))?;
+        }
     }
 
-    let keyed = ai_core::diff_config(&lt, &rt, &config)
-        .map_err(|e| ai_protocol::error_object(codes::INVALID_PARAMS, format!("{e}")))?;
-    let out = keyed.output;
+    let (sections, summary) = if single_side {
+        (Vec::new(), ai_core::DiffSummary::default())
+    } else {
+        let keyed = ai_core::diff_config(&lt, &rt, &config)
+            .map_err(|e| ai_protocol::error_object(codes::INVALID_PARAMS, format!("{e}")))?;
+        (keyed.output.sections, keyed.output.summary)
+    };
 
     let left_line_count = u32::try_from(lt.len()).unwrap_or(u32::MAX);
     let right_line_count = u32::try_from(rt.len()).unwrap_or(u32::MAX);
-    let section_count = u32::try_from(out.sections.len()).unwrap_or(u32::MAX);
-    let summary = mapping::summary_to_dto(&out.summary);
+    let section_count = u32::try_from(sections.len()).unwrap_or(u32::MAX);
 
     {
         let mut sessions = ctx.sessions.lock().await;
         sessions.insert(
             params.session_id.clone(),
             Session::Text(TextSessionData {
-                sections: out.sections,
-                summary: out.summary,
+                sections,
+                summary,
                 left: lt,
                 right: rt,
                 config,
-                labels: (params.left.clone(), params.right.clone()),
+                labels: (
+                    params.left.clone(),
+                    params.right.clone().unwrap_or_default(),
+                ),
                 rev: 0,
+                single_side,
                 encodings: (
                     SideEncoding::from_decoded(&left_dec),
-                    SideEncoding::from_decoded(&right_dec),
+                    match &right_dec {
+                        Some(d) => SideEncoding::from_decoded(d),
+                        // 不存在的右侧：空标签 + 无 BOM，任何误写都会因编码标签
+                        // 非法而失败（不会静默把文件写成 UTF-8）
+                        None => SideEncoding {
+                            label: String::new(),
+                            bom: ai_vfs::Bom::None,
+                        },
+                    },
                 ),
                 modified: (false, false),
             }),
@@ -868,9 +901,12 @@ async fn text_open(
         left_line_count,
         right_line_count,
         section_count,
-        summary,
+        summary: mapping::summary_to_dto(&summary),
         left_encoding: left_dec.encoding.to_string(),
-        right_encoding: right_dec.encoding.to_string(),
+        right_encoding: right_dec
+            .as_ref()
+            .map(|d| d.encoding.to_string())
+            .unwrap_or_default(),
     };
     Ok(Handled::Value(
         serde_json::to_value(&result).expect("text/open 结果可序列化"),
@@ -942,12 +978,17 @@ async fn text_edit(
             }
         }
 
-        // 4. 引擎权威重 diff
-        let keyed = ai_core::diff_config(&data.left, &data.right, &config)
-            .map_err(|e| ai_protocol::error_object(codes::INVALID_PARAMS, format!("{e}")))?;
+        // 4. 引擎权威重 diff（单文件会话无「另一侧」，跳过）
         data.config = config;
-        data.sections = keyed.output.sections;
-        data.summary = keyed.output.summary;
+        if data.single_side {
+            data.sections = Vec::new();
+            data.summary = ai_core::DiffSummary::default();
+        } else {
+            let keyed = ai_core::diff_config(&data.left, &data.right, &data.config)
+                .map_err(|e| ai_protocol::error_object(codes::INVALID_PARAMS, format!("{e}")))?;
+            data.sections = keyed.output.sections;
+            data.summary = keyed.output.summary;
+        }
         data.rev += 1;
 
         Ok(ai_protocol::TextEditResult {
@@ -6013,6 +6054,242 @@ mod p10_tests {
             v2["sections"][1]["important"], "important",
             "无规则 = 注释差异重要（行为不变）"
         );
+    }
+
+    // ---- D2：单文件编辑会话（text/open 省略 right）----
+    //
+    // 编辑器只需要「一份文件」，不该为不存在的另一侧付读盘 + 对齐代价；
+    // 但编码/BOM/行尾/末行换行仍必须由引擎权威保留（FR-EDIT-001/FR-TXT-013）。
+
+    /// 单侧打开：只建左表、不跑 diff；左右分页与 sections 的退化形状
+    #[tokio::test]
+    async fn text_open_single_side_builds_only_left_table() {
+        let c = ctx();
+        let dir = tempfile::tempdir().unwrap();
+        let f = dir.path().join("a.txt");
+        std::fs::write(&f, b"one\ntwo\n").unwrap();
+        let path = f.to_string_lossy().to_string();
+        let v = value_of(text_open(Some(json!({"sessionId":"one","left":path})), &c).await).await;
+        assert_eq!(v["leftLineCount"], 2);
+        assert_eq!(v["rightLineCount"], 0, "单侧会话不建右表");
+        assert_eq!(v["sectionCount"], 0, "单侧会话不跑 diff");
+        assert_eq!(v["leftEncoding"], "UTF-8");
+        assert_eq!(v["rightEncoding"], "", "没有右侧就没有编码标签");
+        drop(dir);
+
+        let lines = value_of(
+            text_lines(
+                Some(json!({"sessionId":"one","side":"left","start":0,"count":10})),
+                &c,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(lines["lines"], json!(["one", "two"]));
+        assert_eq!(lines["done"], true);
+
+        let right = value_of(
+            text_lines(
+                Some(json!({"sessionId":"one","side":"right","start":0,"count":10})),
+                &c,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(right["lines"], json!([]), "右表为空 -> 空页而非报错");
+        assert_eq!(right["done"], true);
+
+        let (tx, _rx) = chan();
+        let secs = value_of(
+            text_sections(
+                Some(json!({"sessionId":"one","offset":0,"count":10})),
+                &c,
+                tx,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(secs["sections"].as_array().unwrap().len(), 0);
+
+        // 编辑：跳过重 diff（否则每次落笔都要把整表对齐到空表）
+        let e = value_of(
+            text_edit(
+                Some(json!({"sessionId":"one","edits":[{"side":"left","start":2,"text":"three"}]})),
+                &c,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(e["rev"], 1);
+        assert_eq!(e["leftLineCount"], 3);
+        assert_eq!(e["rightLineCount"], 0);
+        assert_eq!(e["sectionCount"], 0);
+        assert_eq!(e["sections"].as_array().unwrap().len(), 0);
+    }
+
+    /// 单侧保存：GB18030 + CRLF + 末行无换行 原样回写，且备份是原字节
+    #[tokio::test]
+    async fn text_open_single_side_save_preserves_gb18030_crlf_and_no_trailing_eol() {
+        let c = ctx();
+        let dir = tempfile::tempdir().unwrap();
+        let f = dir.path().join("gb.txt");
+        let original = ai_vfs::encode_text("中文一\r\n中文二", "gb18030", ai_vfs::Bom::None)
+            .expect("GB18030 可表示");
+        std::fs::write(&f, &original).unwrap();
+        let path = f.to_string_lossy().to_string();
+
+        let v = value_of(
+            text_open(
+                Some(json!({"sessionId":"gb","left":path,"encoding":"gb18030"})),
+                &c,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(v["leftLineCount"], 2);
+
+        // 改写第二行（UI 行数组不含行尾符；引擎按参考行风格补 CRLF）
+        let _ = value_of(
+            text_edit(
+                Some(json!({"sessionId":"gb","edits":[{"side":"left","start":1,"end":2,"text":"中文三"}]})),
+                &c,
+            )
+            .await,
+        )
+        .await;
+
+        let saved =
+            value_of(text_save(Some(json!({"sessionId":"gb","side":"left"})), &c).await).await;
+        assert_eq!(saved["leftModified"], false, "落盘后清未保存标记");
+        assert_eq!(saved["saved"][0]["path"], path);
+        assert_eq!(
+            saved["saved"][0]["backupPath"],
+            format!("{path}.bak"),
+            "缺省开启备份"
+        );
+
+        // 落盘字节：仍是 GB18030、仍是 CRLF、仍无末行换行
+        let expected =
+            ai_vfs::encode_text("中文一\r\n中文三", "gb18030", ai_vfs::Bom::None).unwrap();
+        let bytes = std::fs::read(&f).unwrap();
+        assert_eq!(bytes, expected, "编码/行尾/末行换行必须原样保留");
+        // 备份保存的是编辑前字节（可回滚）
+        assert_eq!(std::fs::read(format!("{path}.bak")).unwrap(), original);
+        drop(dir);
+    }
+
+    /// 单侧保存：UTF-16LE + BOM 签名不被静默改成 UTF-8
+    #[tokio::test]
+    async fn text_open_single_side_save_keeps_utf16le_bom() {
+        let c = ctx();
+        let dir = tempfile::tempdir().unwrap();
+        let f = dir.path().join("u16.txt");
+        let original = ai_vfs::encode_text("alpha\nbeta\n", "utf-16le", ai_vfs::Bom::Utf16Le)
+            .expect("UTF-16LE 可表示");
+        assert_eq!(
+            &original[..2],
+            &[0xFF, 0xFE],
+            "前置条件：文件带 UTF-16LE BOM"
+        );
+        std::fs::write(&f, &original).unwrap();
+        let path = f.to_string_lossy().to_string();
+
+        // 不给 encoding：靠 BOM 自动识别
+        let v = value_of(text_open(Some(json!({"sessionId":"u16","left":path})), &c).await).await;
+        assert_eq!(v["leftEncoding"], "UTF-16LE");
+
+        let lines = value_of(
+            text_lines(
+                Some(json!({"sessionId":"u16","side":"left","start":0,"count":10})),
+                &c,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(lines["lines"], json!(["alpha", "beta"]));
+
+        let _ = value_of(
+            text_edit(
+                Some(json!({"sessionId":"u16","edits":[{"side":"left","start":1,"end":2,"text":"BETA"}]})),
+                &c,
+            )
+            .await,
+        )
+        .await;
+        let _ = value_of(
+            text_save(
+                Some(json!({"sessionId":"u16","side":"left","backup":false})),
+                &c,
+            )
+            .await,
+        )
+        .await;
+
+        let bytes = std::fs::read(&f).unwrap();
+        assert_eq!(&bytes[..2], &[0xFF, 0xFE], "BOM 必须保留");
+        let dec = ai_vfs::decode_text(&bytes, None).expect("仍是合法 UTF-16LE");
+        assert_eq!(dec.text, "alpha\nBETA\n");
+        assert!(
+            !dir.path().join("u16.txt.bak").exists(),
+            "backup=false 不备份"
+        );
+    }
+
+    /// 单侧保存到新路径（另存为）：目标字节正确、原文件不动、标签改指
+    #[tokio::test]
+    async fn text_open_single_side_save_as_retargets_and_keeps_original() {
+        let c = ctx();
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("src.txt");
+        std::fs::write(&src, b"keep me\n").unwrap();
+        let src_path = src.to_string_lossy().to_string();
+        let dst_path = dir.path().join("copy.txt").to_string_lossy().to_string();
+
+        let _ =
+            value_of(text_open(Some(json!({"sessionId":"as","left":src_path})), &c).await).await;
+        let _ = value_of(
+            text_edit(
+                Some(json!({"sessionId":"as","edits":[{"side":"left","start":0,"end":1,"text":"edited"}]})),
+                &c,
+            )
+            .await,
+        )
+        .await;
+        let saved = value_of(
+            text_save(
+                Some(json!({"sessionId":"as","side":"left","leftPath":dst_path})),
+                &c,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(saved["saved"][0]["path"], dst_path);
+        assert_eq!(std::fs::read(&dst_path).unwrap(), b"edited\n");
+        assert_eq!(
+            std::fs::read(&src).unwrap(),
+            b"keep me\n",
+            "另存为不得改动源文件"
+        );
+
+        // 标签已改指：再次编辑后按缺省目标保存会写新路径
+        let _ = value_of(
+            text_edit(
+                Some(json!({"sessionId":"as","edits":[{"side":"left","start":0,"end":1,"text":"again"}]})),
+                &c,
+            )
+            .await,
+        )
+        .await;
+        let _ = value_of(
+            text_save(
+                Some(json!({"sessionId":"as","side":"left","backup":false})),
+                &c,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(std::fs::read(&dst_path).unwrap(), b"again\n");
+        assert_eq!(std::fs::read(&src).unwrap(), b"keep me\n");
     }
 
     // ---- dir/open formatAware ----

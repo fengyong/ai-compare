@@ -368,6 +368,7 @@ function kindName(kind: SessionKind): string {
     'folder-sync': '文件夹同步',
     'folder-merge': '文件夹合并',
     'text-merge': '文本合并',
+    'text-edit': '文本编辑',
   };
   return meta[kind];
 }

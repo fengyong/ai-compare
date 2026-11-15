@@ -141,6 +141,13 @@ export function createDefaultRegistry(): ViewRegistry {
       caps: { panes: 2, editable: false, reports: false, layoutSwitch: true },
       commands: [],
     },
+    // D2：独立文本编辑（单文件；与 text-compare 共用 text/* 能力，但只有一个窗格）
+    {
+      kind: 'text-edit',
+      order: 9,
+      caps: { panes: 1, editable: true, reports: false, layoutSwitch: false },
+      commands: ['session.save', 'session.saveAs', 'edit.saveFile', 'edit.saveFileAs', 'edit.find'],
+    },
     // 队列 3：三向文本合并（FR-TMRG-001~007；消费 P7 的 text/merge3/* 四方法）
     {
       kind: 'text-merge',

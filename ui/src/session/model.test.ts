@@ -13,11 +13,12 @@ import {
 } from './model';
 
 describe('session/model', () => {
-  it('会话类型齐备且元信息标注阶段（队列 3 起八类）', () => {
-    expect(SESSION_KINDS).toHaveLength(8);
+  it('会话类型齐备且元信息标注阶段（D2 起九类）', () => {
+    expect(SESSION_KINDS).toHaveLength(9);
     for (const k of SESSION_KINDS) {
       expect(KIND_META[k].title).toBeTruthy();
-      expect(KIND_META[k].phase).toMatch(/^P\d/);
+      // 阶段代号：P 开头为里程碑，D 开头为交付工作包（D2 = 独立文本编辑）
+      expect(KIND_META[k].phase).toMatch(/^(P\d|D\d)/);
     }
     expect(KIND_META['folder-compare'].implemented).toBe(true);
     expect(KIND_META['table-compare'].implemented).toBe(true);
@@ -28,6 +29,9 @@ describe('session/model', () => {
     // 队列 3：三向文本合并视图接入后置为已实现
     expect(KIND_META['text-merge'].implemented).toBe(true);
     expect(SESSION_KINDS).toContain('text-merge');
+    // D2：独立文本编辑（单文件）
+    expect(SESSION_KINDS).toContain('text-edit');
+    expect(KIND_META['text-edit'].implemented).toBe(true);
   });
 
   it('isSessionKind 判定', () => {

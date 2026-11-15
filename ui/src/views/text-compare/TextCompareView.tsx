@@ -1158,6 +1158,19 @@ export function TextCompareView({ tab }: { tab: Tab }) {
         >
           {S.text.saveFileAs}
         </button>
+        <button
+          className="nav"
+          onClick={() => {
+            // D2：把当前活动窗格的文件交给独立文本编辑视图（单文件，不参与比较）
+            const target = activeSideRef.current === 'right' ? model.rightPath : model.leftPath;
+            if (!target) return;
+            void useShell.getState().openEditTab(target);
+          }}
+          disabled={saving}
+          title={S.text.openInEditorHint}
+        >
+          {S.text.openInEditor}
+        </button>
         <button className="nav" onClick={() => setFindOpen((v) => !v)} title={S.text.find}>
           {S.text.find}
         </button>

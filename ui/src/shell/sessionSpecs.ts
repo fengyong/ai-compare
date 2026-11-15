@@ -13,6 +13,8 @@ export function sessionKindOfTab(kind: Tab['kind']): SessionKind {
   switch (kind) {
     case 'text':
       return 'text-compare';
+    case 'edit':
+      return 'text-edit';
     case 'sync':
       return 'folder-sync';
     case 'merge':
@@ -45,6 +47,8 @@ export function specsOfTab(tab: Tab): SessionSpecs {
     return { base: tab.merge3.base, left: tab.merge3.left, right: tab.merge3.right };
   if (tab.kind === 'text' && tab.text)
     return { left: tab.text.left.path, right: tab.text.right.path };
+  // D2：单文件会话只有左位；right 落空串（specs 归一化允许）
+  if (tab.kind === 'edit' && tab.edit) return { left: tab.edit.path, right: '' };
   return { left: '', right: '' };
 }
 

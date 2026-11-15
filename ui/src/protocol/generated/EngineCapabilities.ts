@@ -117,4 +117,9 @@ mergeSave?: boolean,
  * R3-16：手动内容比较（dir/compareContent，三方式 + 五态结果）。
  * 缺省 **false**（旧引擎无此入口，UI 应隐藏"比较内容"命令）。
  */
-dirCompareContent?: boolean, };
+dirCompareContent?: boolean, 
+/**
+ * D2：`text/open` 省略 `right` 的单文件编辑会话（只建左表、不跑 diff）。
+ * 缺省 **false**：旧引擎会把缺省 right 当空路径报 412，UI 不得假定支持。
+ */
+textOpenOne?: boolean, };

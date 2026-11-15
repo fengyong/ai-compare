@@ -2529,3 +2529,100 @@ input:focus {
   min-width: 18px;
   padding: 0 3px;
 }
+
+/* ------------------------------------------------------------------
+ * D2：独立文本编辑视图（FR-EDIT-001 第一阶段）
+ * 单窗格：工具栏（文件名/脏点/编码徽标/保存/另存/备份/撤销重做/换行/查找）
+ * + 编辑区（CM6 占满剩余高度）+ 状态栏（行数/光标/编码/行尾口径）
+ * ------------------------------------------------------------------ */
+.aic-edit-view {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+.aic-edit-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px;
+  border-bottom: 1px solid var(--aic-border);
+  background: var(--aic-bg-panel);
+  flex: none;
+}
+.aic-edit-toolbar button {
+  font-size: 12px;
+}
+.aic-edit-toolbar button:disabled {
+  opacity: 0.5;
+}
+.aic-edit-name {
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+.aic-edit-dirty {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--aic-accent);
+  flex: none;
+}
+.aic-edit-badge {
+  font-size: 11px;
+  padding: 1px 6px;
+  border: 1px solid var(--aic-border);
+  border-radius: 8px;
+  color: var(--aic-text-dim);
+  white-space: nowrap;
+}
+.aic-edit-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--aic-text-dim);
+}
+.aic-edit-spacer {
+  flex: 1;
+}
+.aic-edit-host {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+}
+.aic-edit-host .cm-editor {
+  flex: 1;
+  min-height: 0;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 13px;
+}
+.aic-edit-host .cm-scroller {
+  overflow: auto;
+}
+.aic-edit-loading,
+.aic-edit-error {
+  padding: 6px 12px;
+  font-size: 12px;
+}
+.aic-edit-error {
+  color: var(--aic-status-unscanned);
+  border-bottom: 1px solid var(--aic-border);
+}
+.aic-edit-status {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 3px 12px;
+  border-top: 1px solid var(--aic-border);
+  background: var(--aic-bg-panel);
+  font-size: 11px;
+  color: var(--aic-text-dim);
+  flex: none;
+}
+.aic-edit-error-inline {
+  color: var(--aic-status-unscanned);
+}
+.aic-edit-find {
+  border-bottom: 1px solid var(--aic-border);
+}

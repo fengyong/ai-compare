@@ -767,6 +767,19 @@ export function FolderCompareView({ tab }: { tab: Tab }) {
         });
       },
     });
+    items.push({
+      // D2：单文件编辑入口。地址必须取 leftPath/rightPath——平铺模式的 id 是
+      // 显示消歧名、手动对齐时左右异名，都不能当文件地址（R3-03）。
+      label: S.folder.ctxOpenInEditor,
+      disabled: !row || row.kind !== 'file' || (!row.leftPath && !row.rightPath),
+      onSelect: () => {
+        if (!row) return;
+        const rel = row.leftPath ?? row.rightPath;
+        if (!rel) return;
+        const base = trimSlash(row.leftPath ? folder.left : folder.right);
+        void useShell.getState().openEditTab(`${base}/${rel}`);
+      },
+    });
     items.push({ label: S.folder.ctxRefresh, onSelect: () => void applyFilters({ rescan: true }) });
     return items;
   };

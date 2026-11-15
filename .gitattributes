@@ -1,0 +1,6 @@
+# ts-rs 生成的协议绑定在「字段后跟文档注释」时会在行尾留一个空格
+# （整个 generated/ 目录一致，98 个文件皆有）；这是生成器的既有输出，
+# 由 `cargo test -p ai-protocol --features ts -- --ignored regenerate_ui_bindings`
+# 逐字节复现，drift 测试亦按字节比对。手工改这些空格会让再生成必然失败，
+# 因此只对生成目录关闭「行尾空白」检查，其余源码照旧。
+ui/src/protocol/generated/*.ts whitespace=-trailing-space

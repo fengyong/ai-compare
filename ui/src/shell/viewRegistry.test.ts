@@ -3,7 +3,7 @@ import { createDefaultRegistry, createViewCtx, setNoticeSink, ViewRegistry } fro
 import type { SessionService } from '../session/service';
 
 describe('shell/viewRegistry 视图插件注册表', () => {
-  it('默认注册表：home + 八类会话类型，按 order 排序', () => {
+  it('默认注册表：home + 九类会话类型，按 order 排序', () => {
     const reg = createDefaultRegistry();
     const list = reg.listByOrder();
     expect(list.map((p) => p.id)).toEqual([
@@ -16,6 +16,8 @@ describe('shell/viewRegistry 视图插件注册表', () => {
       'hex-compare',
       'picture-compare',
       'text-merge',
+      // D2：独立文本编辑（单窗格）
+      'text-edit',
     ]);
     expect(reg.get('home')?.title).toBe('主页');
   });
@@ -47,7 +49,11 @@ describe('shell/viewRegistry 视图插件注册表', () => {
       'hex-compare',
       'picture-compare',
       'text-merge',
+      'text-edit',
     ]);
+    // D2：单文件编辑只有一个窗格且可编辑
+    expect(reg.get('text-edit')!.capabilities.panes).toBe(1);
+    expect(reg.get('text-edit')!.capabilities.editable).toBe(true);
     // P8 同步/合并视图能力声明：同步双窗格、合并三窗格，reports 面开放
     expect(reg.get('folder-sync')!.capabilities.reports).toBe(true);
     expect(reg.get('folder-merge')!.capabilities.panes).toBe(3);

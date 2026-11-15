@@ -22,6 +22,8 @@ export type ReportKind = Tab['kind'];
 export const LAYOUTS_BY_KIND: Record<ReportKind, readonly ReportLayout[]> = {
   home: [],
   text: ['sideBySide', 'summary', 'interleaved', 'patch', 'csv', 'xml', 'html', 'stats'],
+  // D2：单文件编辑与文本比较共用布局族（report/generate 按会话句柄取内容）
+  edit: ['summary', 'stats', 'html'],
   table: ['sideBySide', 'summary', 'interleaved', 'csv', 'xml', 'html', 'stats'],
   hex: ['sideBySide', 'summary', 'interleaved', 'xml', 'html', 'stats'],
   folder: ['sideBySide', 'summary', 'xml', 'tree', 'list', 'stats', 'html'],
@@ -187,6 +189,7 @@ export function sessionIdOfTab(tab: Tab): string | null {
   const keys: Partial<Record<ReportKind, string>> = {
     folder: 'folder',
     text: 'text',
+    edit: 'edit',
     sync: 'sync',
     merge: 'merge',
     merge3: 'merge3',

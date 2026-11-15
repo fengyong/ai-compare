@@ -73,6 +73,24 @@ export interface MergeTabData {
   sessionId: string;
 }
 
+/**
+ * 独立文本编辑标签数据（D2，FR-EDIT-001）。
+ *
+ * 引擎会话是 text 会话（`text/open` 省略 right 的单文件会话）；打开时把编码与
+ * 行数一并记下，视图重挂载不必重新 open（引擎是内容权威，行内容仍走 text/lines）。
+ */
+export interface EditTabData {
+  sessionId: string;
+  /** 当前落盘目标（另存为改指） */
+  path: string;
+  /** 显示名（basename；随另存为更新） */
+  name: string;
+  /** 打开时引擎检测到的编码标签 */
+  encoding: string;
+  /** 打开时的左侧行数（text/lines 分页拉取用） */
+  lineCount: number;
+}
+
 export interface TextTabData {
   sessionId: string;
   left: FileRef;
@@ -95,7 +113,8 @@ export interface SessionLink {
 export interface Tab {
   id: string;
   /** home 主页 / folder 目录比较 / text 文本比较 / sync 文件夹同步 / merge 文件夹合并（P8）/ merge3 三向文本合并（P7） */
-  kind: 'home' | 'folder' | 'text' | 'sync' | 'merge' | 'merge3' | 'picture' | 'table' | 'hex';
+  kind:
+    'home' | 'folder' | 'text' | 'edit' | 'sync' | 'merge' | 'merge3' | 'picture' | 'table' | 'hex';
   title: string;
   /** 固定标签（右键菜单"固定"，FR-WIN-001） */
   pinned?: boolean;
@@ -106,6 +125,7 @@ export interface Tab {
   sessionLink?: SessionLink;
   folder?: FolderTabData;
   text?: TextTabData;
+  edit?: EditTabData;
   sync?: SyncTabData;
   picture?: PictureTabData;
   table?: TableTabData;
@@ -163,6 +183,13 @@ export interface TabsSlice {
   openFolderMergeTab(base: string, left: string, right: string, opts?: OpenTabOpts): void;
   /** 独立文本比较（主页文本大按钮入口；子会话路径见 openChild） */
   openTextTab(leftPath: string, rightPath: string, opts?: OpenTabOpts): Promise<void>;
+  /**
+   * 独立文本编辑（D2：主页「文本编辑」大按钮 / 目录与文本视图「用文本编辑打开」）。
+   * 单文件会话：`text/open` 省略 right（旧引擎退回同路径双开）。
+   */
+  openEditTab(path: string, opts?: OpenTabOpts): Promise<void>;
+  /** 另存为后改指编辑目标（标题与关闭守卫据此取正确落盘目标） */
+  retargetEditPath(tabId: string, path: string): void;
   /** 双击目录行 → 按格式列表选型打开子会话（FR-DIR-070 / FR-SEL-001：文本/表格/十六进制/图片） */
   openChild(
     parentTabId: string,

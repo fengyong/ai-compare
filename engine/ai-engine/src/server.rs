@@ -71,6 +71,10 @@ pub struct TextSessionData {
     pub encodings: (SideEncoding, SideEncoding),
     /// R3-04：两侧是否有未落盘编辑（text/edit 置位，text/save 落盘后清除）
     pub modified: (bool, bool),
+    /// D2：单文件编辑会话（`text/open` 省略 `right`）。此时不跑 diff——
+    /// `sections`/`summary` 恒空，`text/edit` 跳过重 diff（编辑器不消费
+    /// sections，避免每次落笔都对空表做一遍对齐）。
+    pub single_side: bool,
 }
 
 /// 三向合并会话数据（P7，text/merge3/*）

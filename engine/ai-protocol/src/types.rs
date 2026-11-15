@@ -503,6 +503,11 @@ pub struct EngineCapabilities {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub dir_compare_content: Option<bool>,
+    /// D2：`text/open` 省略 `right` 的单文件编辑会话（只建左表、不跑 diff）。
+    /// 缺省 **false**：旧引擎会把缺省 right 当空路径报 412，UI 不得假定支持。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub text_open_one: Option<bool>,
 }
 
 /// 许可能力（ADR-009：开源/自用默认全能力；字段为后续门控留位）
@@ -842,7 +847,17 @@ impl Default for TextDiffOptions {
 pub struct TextOpenParams {
     pub session_id: String,
     pub left: String,
-    pub right: String,
+    /// 右侧路径。**省略 = 单文件编辑会话**（D2/FR-EDIT-001）：引擎只建左侧
+    /// 行表、不跑 diff，`sections` 恒空、`rightLineCount`/`rightEncoding` 为
+    /// 0/空串；`text/lines`（side=left）、`text/edit`、`text/save`（side=left）
+    /// 照常可用，编码/BOM/行尾仍由引擎权威保留。
+    ///
+    /// 兼容：旧客户端始终携带该字段（比较会话），行为完全不变；新客户端省略
+    /// 该字段前必须先确认 `capabilities.textOpenOne`（旧引擎收到缺省 right 会
+    /// 按空路径解析而报 412）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub right: Option<String>,
     /// 缺省用引擎默认选项（docs/03 §6.1：忽略行尾风格）
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts", ts(optional))]
@@ -4014,6 +4029,7 @@ mod tests {
             text_save: Some(true),
             merge_save: Some(true),
             dir_compare_content: Some(true),
+            text_open_one: Some(true),
             format_rules: None,
         };
         let s = serde_json::to_string(&c).unwrap();
@@ -4376,6 +4392,7 @@ mod tests {
             text_save: None,
             merge_save: None,
             dir_compare_content: None,
+            text_open_one: None,
         };
         let s = serde_json::to_string(&c).unwrap();
         assert!(
@@ -4557,6 +4574,7 @@ mod tests {
             text_save: Some(true),
             merge_save: Some(true),
             dir_compare_content: Some(true),
+            text_open_one: Some(true),
         };
         let s = serde_json::to_string(&c).unwrap();
         assert!(s.contains("threeWayMerge"));
