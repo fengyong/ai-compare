@@ -382,6 +382,81 @@ fn golden_merge_outputs() {
     harness::assert_matches_snapshot("merge3_outputs", &path, &pretty).expect("merge golden 一致");
 }
 
+#[test]
+fn golden_then_eof_outputs() {
+    // CORE-03：Then 类决策 × EOF 无尾换行专册——接缝补多数行尾、次段末行
+    // 保留原 EOF 语义、空次段不凭空补换行（git 无 Then 语义，不进活体对拍）
+    let cases: Vec<Corpus> = vec![
+        Corpus {
+            name: "then_left_no_newline",
+            base: "a\nb\n",
+            left: "a\nL",
+            right: "a\nb\nR\n",
+            eof_no_newline: true,
+            ambiguous: false,
+            window: None,
+        },
+        Corpus {
+            name: "then_right_no_newline",
+            base: "a\nb\n",
+            left: "a\nL\n",
+            right: "a\nb\nR",
+            eof_no_newline: true,
+            ambiguous: false,
+            window: None,
+        },
+        Corpus {
+            name: "then_both_no_newline",
+            base: "a\nb\n",
+            left: "a\nL",
+            right: "a\nR",
+            eof_no_newline: true,
+            ambiguous: false,
+            window: None,
+        },
+        Corpus {
+            name: "then_empty_second",
+            base: "a\nb\n",
+            left: "a\nL",
+            right: "a\n",
+            eof_no_newline: true,
+            ambiguous: false,
+            window: None,
+        },
+        Corpus {
+            name: "then_crlf_majority",
+            base: "a\r\nb\r\n",
+            left: "a\r\nL",
+            right: "a\r\nb\r\nR\r\n",
+            eof_no_newline: true,
+            ambiguous: false,
+            window: None,
+        },
+    ];
+    let mut snapshot = serde_json::json!({
+        "modes": ["thenLeftRight", "thenRightLeft"],
+        "corpora": {}
+    });
+    for c in &cases {
+        let base = LineTable::from_text(c.base);
+        let left = LineTable::from_text(c.left);
+        let right = LineTable::from_text(c.right);
+        let model = merge3(&base, &left, &right, &window_opts(c));
+        assert_eq!(model.conflict_count(), 1, "{}: 应为单冲突语料", c.name);
+        snapshot["corpora"][c.name] = serde_json::json!({
+            "base": c.base, "left": c.left, "right": c.right,
+            "thenLeftRight": our_auto(c, UnresolvedPolicy::TakeLeftThenRight),
+            "thenRightLeft": our_auto(c, UnresolvedPolicy::TakeRightThenLeft),
+        });
+    }
+    let pretty = serde_json::to_string_pretty(&snapshot).unwrap();
+    let path = harness::test_data_dir()
+        .join("merge3_matrix")
+        .join("then_eof_outputs.golden.json");
+    harness::assert_matches_snapshot("then_eof_outputs", &path, &pretty)
+        .expect("Then×EOF golden 一致");
+}
+
 // ---------------------------------------------------------------------------
 // 2. 活体对拍：GNU diff3 -m / git merge-file
 // ---------------------------------------------------------------------------

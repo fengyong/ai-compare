@@ -1,0 +1,43 @@
+{
+  "corpora": {
+    "then_both_no_newline": {
+      "base": "a\nb\n",
+      "left": "a\nL",
+      "right": "a\nR",
+      "thenLeftRight": "a\nL\nR",
+      "thenRightLeft": "a\nR\nL"
+    },
+    "then_crlf_majority": {
+      "base": "a\r\nb\r\n",
+      "left": "a\r\nL",
+      "right": "a\r\nb\r\nR\r\n",
+      "thenLeftRight": "a\r\nL\r\nb\r\nR\r\n",
+      "thenRightLeft": "a\r\nb\r\nR\r\nL"
+    },
+    "then_empty_second": {
+      "base": "a\nb\n",
+      "left": "a\nL",
+      "right": "a\n",
+      "thenLeftRight": "a\nL",
+      "thenRightLeft": "a\nL"
+    },
+    "then_left_no_newline": {
+      "base": "a\nb\n",
+      "left": "a\nL",
+      "right": "a\nb\nR\n",
+      "thenLeftRight": "a\nL\nb\nR\n",
+      "thenRightLeft": "a\nb\nR\nL"
+    },
+    "then_right_no_newline": {
+      "base": "a\nb\n",
+      "left": "a\nL\n",
+      "right": "a\nb\nR",
+      "thenLeftRight": "a\nL\nb\nR",
+      "thenRightLeft": "a\nb\nR\nL\n"
+    }
+  },
+  "modes": [
+    "thenLeftRight",
+    "thenRightLeft"
+  ]
+}

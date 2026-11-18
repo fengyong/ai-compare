@@ -856,12 +856,26 @@ pub fn synthesize(
                             push_lines(&mut parts, base, c.base.start, c.base.end)
                         }
                         UnresolvedPolicy::TakeLeftThenRight => {
-                            push_lines(&mut parts, left, c.left.start, c.left.end);
-                            push_lines(&mut parts, right, c.right.start, c.right.end);
+                            push_then(
+                                &mut parts,
+                                base,
+                                left,
+                                right,
+                                c,
+                                (left, c.left),
+                                (right, c.right),
+                            );
                         }
                         UnresolvedPolicy::TakeRightThenLeft => {
-                            push_lines(&mut parts, right, c.right.start, c.right.end);
-                            push_lines(&mut parts, left, c.left.start, c.left.end);
+                            push_then(
+                                &mut parts,
+                                base,
+                                left,
+                                right,
+                                c,
+                                (right, c.right),
+                                (left, c.left),
+                            );
                         }
                         UnresolvedPolicy::Markers(m) => {
                             push_markers(&mut parts, base, left, right, c, m);
@@ -904,12 +918,26 @@ fn push_decision(
         MergeDecision::TakeRight => push_lines(parts, right, c.right.start, c.right.end),
         MergeDecision::TakeBase => push_lines(parts, base, c.base.start, c.base.end),
         MergeDecision::TakeLeftThenRight => {
-            push_lines(parts, left, c.left.start, c.left.end);
-            push_lines(parts, right, c.right.start, c.right.end);
+            push_then(
+                parts,
+                base,
+                left,
+                right,
+                c,
+                (left, c.left),
+                (right, c.right),
+            );
         }
         MergeDecision::TakeRightThenLeft => {
-            push_lines(parts, right, c.right.start, c.right.end);
-            push_lines(parts, left, c.left.start, c.left.end);
+            push_then(
+                parts,
+                base,
+                left,
+                right,
+                c,
+                (right, c.right),
+                (left, c.left),
+            );
         }
         MergeDecision::Manual(lines) => push_manual(parts, left, right, base, c, lines),
     }
@@ -1023,6 +1051,33 @@ fn push_lines_forced(
         };
         parts.push((e.text.clone(), ending));
     }
+}
+
+/// Then 类决策的两段拼接：首段末行无行尾且次段非空时，接缝补多数行尾
+/// （与 R2-N4 marker 路径同口径），否则两段融合成一行（CORE-03）。
+/// 次段末行保留原行尾——文件级尾换行语义不变；次段为空时不补（Then 退化为
+/// 单侧采用，不得凭空加尾换行）。
+fn push_then(
+    parts: &mut Vec<(String, LineEnding)>,
+    base: &LineTable,
+    left: &LineTable,
+    right: &LineTable,
+    c: &MergeChunk,
+    first: (&LineTable, LineRange),
+    second: (&LineTable, LineRange),
+) {
+    let (ft, fr) = first;
+    let (st, sr) = second;
+    let seam = fr.end > fr.start
+        && sr.end > sr.start
+        && ft.line((fr.end - 1) as usize).ending == LineEnding::None;
+    if seam {
+        let eol = marker_ending(base, left, right, c);
+        push_lines_forced(parts, ft, fr.start, fr.end, eol);
+    } else {
+        push_lines(parts, ft, fr.start, fr.end);
+    }
+    push_lines(parts, st, sr.start, sr.end);
 }
 
 fn join_parts(parts: &[(String, LineEnding)]) -> String {
@@ -1317,6 +1372,80 @@ mod tests {
             &marker_policy(MarkerStyle::Diff3),
         );
         assert_eq!(out.text, "a\nLEFT\nRIGHT\nc\n");
+    }
+
+    #[test]
+    fn then_decision_eof_seam_no_fusion() {
+        // CORE-03：左段末行无尾换行时，Then 拼接不得把两段融合成一行；
+        // 接缝补多数行尾（R2-N4 marker 同口径），次段末行保留原 EOF 语义。
+        let base = t("a\nb\n");
+        let left = t("a\nL"); // 无尾换行
+        let right = t("a\nb\nR\n");
+        let m = merge3(&base, &left, &right, &opts());
+        assert_eq!(m.conflict_count(), 1);
+
+        let then_lr = SynthesizeOptions {
+            unresolved: UnresolvedPolicy::TakeLeftThenRight,
+        };
+        let out = synthesize(&m, &base, &left, &right, &HashMap::new(), &then_lr);
+        assert_eq!(out.text, "a\nL\nb\nR\n", "未决策略路径");
+
+        let then_rl = SynthesizeOptions {
+            unresolved: UnresolvedPolicy::TakeRightThenLeft,
+        };
+        let out = synthesize(&m, &base, &left, &right, &HashMap::new(), &then_rl);
+        assert_eq!(out.text, "a\nb\nR\nL", "右先左后：末行 L 保留无尾换行");
+
+        let mut d = HashMap::new();
+        d.insert(1u32, MergeDecision::TakeLeftThenRight);
+        let out = synthesize(
+            &m,
+            &base,
+            &left,
+            &right,
+            &d,
+            &marker_policy(MarkerStyle::Diff3),
+        );
+        assert_eq!(out.text, "a\nL\nb\nR\n", "显式决策路径");
+        d.insert(1u32, MergeDecision::TakeRightThenLeft);
+        let out = synthesize(
+            &m,
+            &base,
+            &left,
+            &right,
+            &d,
+            &marker_policy(MarkerStyle::Diff3),
+        );
+        assert_eq!(out.text, "a\nb\nR\nL");
+    }
+
+    #[test]
+    fn then_empty_second_segment_keeps_eof() {
+        // 次段为空（右删冲突行）：Then 退化为单侧采用，不得凭空补尾换行
+        let base = t("a\nb\n");
+        let left = t("a\nL");
+        let right = t("a\n");
+        let m = merge3(&base, &left, &right, &opts());
+        assert_eq!(m.conflict_count(), 1);
+        let then_lr = SynthesizeOptions {
+            unresolved: UnresolvedPolicy::TakeLeftThenRight,
+        };
+        let out = synthesize(&m, &base, &left, &right, &HashMap::new(), &then_lr);
+        assert_eq!(out.text, "a\nL");
+    }
+
+    #[test]
+    fn then_seam_uses_majority_crlf() {
+        // 接缝行尾取冲突块多数行尾（CRLF），与 marker 路径一致
+        let base = t("a\r\nb\r\n");
+        let left = t("a\r\nL");
+        let right = t("a\r\nb\r\nR\r\n");
+        let m = merge3(&base, &left, &right, &opts());
+        let then_lr = SynthesizeOptions {
+            unresolved: UnresolvedPolicy::TakeLeftThenRight,
+        };
+        let out = synthesize(&m, &base, &left, &right, &HashMap::new(), &then_lr);
+        assert_eq!(out.text, "a\r\nL\r\nb\r\nR\r\n");
     }
 
     #[test]
