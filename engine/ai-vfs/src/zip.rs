@@ -719,8 +719,14 @@ impl ZipState {
         Err(VfsError::NotFound { path: name })
     }
 
-    /// 重打包字节流（deflate level 6；重算全部 CRC；显式目录条目一并写出）
-    fn to_bytes(&self) -> Vec<u8> {
+    /// 重打包字节流（deflate level 6；重算全部 CRC；显式目录条目一并写出）。
+    ///
+    /// 非 ZIP64 上限写前守卫（SEC-02）：条目数/名长 ≤ u16::MAX，尺寸/压缩
+    /// 尺寸/偏移/中心目录 ≤ u32::MAX。超限返回 Unsupported 且零字节产出——
+    /// `as` 截断会字段回绕产出损坏归档，而 persist 随后 rename 覆盖唯一副本。
+    fn to_bytes(&self) -> Result<Vec<u8>, VfsError> {
+        let limit =
+            |what: &str| VfsError::Unsupported(format!("结果超出非 ZIP64 上限（{what}），未写盘"));
         let mut body = Vec::new();
         let mut cd = Vec::new();
         let mut offsets = Vec::new();
@@ -733,12 +739,29 @@ impl ZipState {
             }
         }
         out_names.sort();
+        if out_names.len() > usize::from(u16::MAX) {
+            return Err(limit("条目数 > 65535"));
+        }
         for (name, is_dir) in &out_names {
+            let stored_name = if *is_dir {
+                format!("{name}/")
+            } else {
+                name.clone()
+            };
+            if stored_name.len() > usize::from(u16::MAX) {
+                return Err(limit("条目名长度 > 65535"));
+            }
             let (crc, size, payload): (u32, u64, Vec<u8>) = if *is_dir {
                 (crc32(&[]), 0, Vec::new())
             } else {
                 let e = &self.entries[name];
+                if e.data.len() > u32::MAX as usize || e.size > u64::from(u32::MAX) {
+                    return Err(limit("条目尺寸 > 4GiB"));
+                }
                 let compressed = miniz_oxide::deflate::compress_to_vec(&e.data, 6);
+                if compressed.len() > u32::MAX as usize {
+                    return Err(limit("压缩尺寸 > 4GiB"));
+                }
                 (e.crc32, e.data.len() as u64, compressed)
             };
             let (mtime_ms, _unix_mode) = if *is_dir {
@@ -748,11 +771,9 @@ impl ZipState {
                 (self.entries[name].mtime_ms, self.entries[name].unix_mode)
             };
             let (dos_time, dos_date) = epoch_ms_to_dos(mtime_ms);
-            let stored_name = if *is_dir {
-                format!("{name}/")
-            } else {
-                name.clone()
-            };
+            if body.len() > u32::MAX as usize {
+                return Err(limit("本地头偏移 > 4GiB"));
+            }
             offsets.push(body.len() as u32);
             body.extend_from_slice(&SIG_LFH.to_le_bytes());
             body.extend_from_slice(&20u16.to_le_bytes()); // version needed
@@ -821,6 +842,9 @@ impl ZipState {
             cd.extend_from_slice(stored_name.as_bytes());
         }
         let mut out = body;
+        if out.len() > u32::MAX as usize || cd.len() > u32::MAX as usize {
+            return Err(limit("中心目录尺寸/偏移 > 4GiB"));
+        }
         let cd_offset = out.len() as u32;
         out.extend_from_slice(&cd);
         out.extend_from_slice(&SIG_EOCD.to_le_bytes());
@@ -831,7 +855,7 @@ impl ZipState {
         out.extend_from_slice(&(cd.len() as u32).to_le_bytes());
         out.extend_from_slice(&cd_offset.to_le_bytes());
         out.extend_from_slice(&0u16.to_le_bytes()); // comment
-        out
+        Ok(out)
     }
 }
 
@@ -900,8 +924,8 @@ impl ZipFsMut {
         Ok(fs)
     }
 
-    /// 写回字节流（调用方负责落盘）
-    pub fn to_bytes(&self) -> Vec<u8> {
+    /// 写回字节流（调用方负责落盘）；超出非 ZIP64 上限返回 Unsupported（SEC-02）
+    pub fn to_bytes(&self) -> Result<Vec<u8>, VfsError> {
         self.state.read().expect("zip 状态锁中毒").to_bytes()
     }
 
@@ -912,7 +936,7 @@ impl ZipFsMut {
     /// 调用方报错后重试或另存即可（不回滚用户意图）。
     fn persist(&self) -> Result<(), VfsError> {
         match &self.archive {
-            Some(path) => atomic_write(path, &self.to_bytes()),
+            Some(path) => atomic_write(path, &self.to_bytes()?),
             None => Ok(()),
         }
     }
@@ -1330,7 +1354,7 @@ mod tests {
             ("sub/deep/x.bin", &[1, 2, 3, 4, 5]),
         ]);
         let fs = ZipFsMut::from_bytes_writable(&src).unwrap();
-        let out = fs.to_bytes();
+        let out = fs.to_bytes().unwrap();
         // 回读：条目集合一致、内容一致（deflate 压缩体由只读 ZipFs 按需解压验证）
         let reparsed = ZipFs::from_bytes(&out).unwrap();
         let hello = VfsPath::parse("/hello.txt").unwrap();
@@ -1362,7 +1386,7 @@ mod tests {
         fs.write_file_bytes(&VfsPath::parse("/a.txt").unwrap(), b"newer")
             .await
             .unwrap();
-        let out = fs.to_bytes();
+        let out = fs.to_bytes().unwrap();
         let re = parse_central_directory(&out).unwrap();
         let a = re.iter().find(|e| e.name == "a.txt").unwrap();
         assert_eq!(a.size, 5);
@@ -1390,7 +1414,7 @@ mod tests {
             .await
             .unwrap();
         fs.mkdir(&VfsPath::parse("/empty").unwrap()).await.unwrap();
-        let out = fs.to_bytes();
+        let out = fs.to_bytes().unwrap();
         let re = parse_central_directory(&out).unwrap();
         assert!(re.iter().any(|e| e.name == "docs/notes/a.md"));
         let empty = re
@@ -1474,7 +1498,7 @@ mod tests {
             1
         );
         // 回写后一致
-        let out = fs.to_bytes();
+        let out = fs.to_bytes().unwrap();
         let re = parse_central_directory(&out).unwrap();
         assert!(re.iter().any(|e| e.name == "top/sub/c.txt"));
         assert!(!re.iter().any(|e| e.name.starts_with("dir/")));
@@ -1532,7 +1556,7 @@ mod tests {
             Err(VfsError::NotFound { .. })
         ));
         // 全删后回写为空归档（EOCD 仍合法）
-        let out = fs.to_bytes();
+        let out = fs.to_bytes().unwrap();
         assert!(parse_central_directory(&out).unwrap().is_empty());
     }
 
@@ -1643,7 +1667,7 @@ mod tests {
         let m = ZipFsMut::from_bytes_writable(&out).unwrap();
         assert_eq!(m.read_file_bytes(&p).await.unwrap(), payload);
         m.write_file_bytes(&p, b"rewritten").await.unwrap();
-        let re = parse_central_directory(&m.to_bytes()).unwrap();
+        let re = parse_central_directory(&m.to_bytes().unwrap()).unwrap();
         let e = re.iter().find(|e| e.name == "z.bin").unwrap();
         assert_eq!(e.size, 9);
         assert_eq!(e.crc32, crc32(b"rewritten"));
@@ -1677,7 +1701,7 @@ mod tests {
         let st = fs.stat(&VfsPath::parse("/x/y.txt").unwrap()).await.unwrap();
         assert_eq!(st.size, 10);
         // to_bytes 与写入面一致
-        let re = parse_central_directory(&fs.to_bytes()).unwrap();
+        let re = parse_central_directory(&fs.to_bytes().unwrap()).unwrap();
         assert!(re.iter().any(|e| e.name == "x/y.txt"));
     }
 
@@ -1819,5 +1843,75 @@ mod tests {
         held.seek(SeekFrom::Start(0)).unwrap();
         held.read_to_end(&mut seen).unwrap();
         assert_eq!(seen, original, "已打开的读句柄看到了新内容 → 不是原子替换");
+    }
+
+    // ---------------- SEC-02：非 ZIP64 上限写前守卫 ----------------
+
+    /// 条目数 > 65535：RPC 返回 Unsupported，归档字节与操作前逐字节一致。
+    /// 边界：恰 65535 条必须可写（防过度守卫）。
+    #[tokio::test]
+    async fn to_bytes_rejects_entry_count_overflow_archive_untouched() {
+        let fs = ZipFsMut::empty();
+        for i in 0..u32::from(u16::MAX) {
+            fs.write_file_bytes(&VfsPath::parse(&format!("/f{i}")).unwrap(), b"x")
+                .await
+                .unwrap();
+        }
+        let at_limit = fs.to_bytes().expect("恰 65535 条应可写");
+        let dir = tempfile::tempdir().unwrap();
+        let zip_path = dir.path().join("count.zip");
+        std::fs::write(&zip_path, &at_limit).unwrap();
+        let fs = ZipFsMut::from_file(&zip_path).unwrap();
+        let err = fs
+            .write_file_bytes(&VfsPath::parse("/overflow").unwrap(), b"x")
+            .await
+            .unwrap_err();
+        assert!(matches!(err, VfsError::Unsupported(_)), "实际: {err:?}");
+        assert_eq!(
+            std::fs::read(&zip_path).unwrap(),
+            at_limit,
+            "超限时归档必须逐字节不变"
+        );
+    }
+
+    /// 条目名 > 65535 字节：同样拒绝写且归档不变；恰 65535 可写。
+    #[tokio::test]
+    async fn to_bytes_rejects_name_length_overflow_archive_untouched() {
+        let dir = tempfile::tempdir().unwrap();
+        let zip_path = dir.path().join("name.zip");
+        let original = build_zip(&[("a.txt", b"A")]);
+        std::fs::write(&zip_path, &original).unwrap();
+        let fs = ZipFsMut::from_file(&zip_path).unwrap();
+        // 边界：恰 65535 字节名可写（先做——被拒写入会留在内存模型里）
+        let ok_name = "a".repeat(usize::from(u16::MAX));
+        fs.write_file_bytes(&VfsPath::parse(&format!("/{ok_name}")).unwrap(), b"x")
+            .await
+            .unwrap();
+        let after_ok = std::fs::read(&zip_path).unwrap();
+        let long = "a".repeat(usize::from(u16::MAX) + 1);
+        let err = fs
+            .write_file_bytes(&VfsPath::parse(&format!("/{long}")).unwrap(), b"x")
+            .await
+            .unwrap_err();
+        assert!(matches!(err, VfsError::Unsupported(_)), "实际: {err:?}");
+        assert_eq!(std::fs::read(&zip_path).unwrap(), after_ok);
+    }
+
+    /// 尺寸字段 > u32::MAX：守卫拒绝。>4GiB 真实数据无法在单测分配，
+    /// 以 size 字段注入（守卫同时检查 data.len() 与 size 两个口径）。
+    #[test]
+    fn to_bytes_rejects_size_overflow() {
+        let mut st = ZipState::default();
+        st.entries.insert(
+            "big.bin".to_string(),
+            ZipEntryMut {
+                size: u64::from(u32::MAX) + 1,
+                crc32: 0,
+                mtime_ms: 0,
+                unix_mode: None,
+                data: b"x".to_vec(),
+            },
+        );
+        assert!(matches!(st.to_bytes(), Err(VfsError::Unsupported(_))));
     }
 }
