@@ -968,8 +968,6 @@ enum PatchEntry {
     /// 左侧上下文行：Equal 对齐行携带右下标 Some(r)（无换行标记双侧判定用）；
     /// ignore-unimportant 折叠行为 None
     SameLeft(u32, Option<u32>),
-    /// 右侧上下文行（ignore-unimportant 折叠的插入行；计数与 SameLeft 同）
-    SameRight(u32),
     Left(u32),
     Right(u32),
 }
@@ -977,7 +975,7 @@ enum PatchEntry {
 impl PatchEntry {
     /// 是否为上下文（计数同时消耗左右两侧行号）
     fn is_context(self) -> bool {
-        matches!(self, PatchEntry::SameLeft(_, _) | PatchEntry::SameRight(_))
+        matches!(self, PatchEntry::SameLeft(_, _))
     }
 }
 
@@ -996,7 +994,6 @@ fn patch_no_newline_marker(
             (l as usize == last_left && snap.left_no_trailing_newline)
                 || r.is_some_and(|r| r as usize == last_right && snap.right_no_trailing_newline)
         }
-        PatchEntry::SameRight(r) => r as usize == last_right && snap.right_no_trailing_newline,
         PatchEntry::Left(l) => l as usize == last_left && snap.left_no_trailing_newline,
         PatchEntry::Right(r) => r as usize == last_right && snap.right_no_trailing_newline,
     };
@@ -1021,15 +1018,12 @@ fn build_patch_script(snap: &TextSnapshot, opts: &ReportOptions) -> Vec<PatchEnt
                 let l = s.left.expect("Change/Delete 必有左区间");
                 let r = s.right;
                 if fold(s) {
-                    // ignore-unimportant：整段折为上下文（左行优先，多余右行补右上下文；
-                    // 语义：不重要变更不记入补丁，P2-29：保留真实区间不丢行）
+                    // ignore-unimportant：不重要变更不记入补丁。补丁结果 =
+                    // 右文件撤销不重要差异 → 折叠段在结果中就是左行，只以
+                    // 左行作上下文（CORE-02：右行不属于结果文件，若当两侧
+                    // 上下文会产出对两侧都不成立的补丁）。
                     for i in l.start..l.end {
                         script.push(PatchEntry::SameLeft(i, None));
-                    }
-                    if let Some(r) = r {
-                        for i in r.start..r.end {
-                            script.push(PatchEntry::SameRight(i));
-                        }
                     }
                     continue;
                 }
@@ -1046,9 +1040,8 @@ fn build_patch_script(snap: &TextSnapshot, opts: &ReportOptions) -> Vec<PatchEnt
             SectionKind::Insert => {
                 let r = s.right.expect("Insert 必有右区间");
                 if fold(s) {
-                    for i in r.start..r.end {
-                        script.push(PatchEntry::SameRight(i));
-                    }
+                    // 折叠的插入在结果中不存在（撤销插入）：不贡献任何行，
+                    // 后续重要段的 +侧行号按结果文件计（CORE-02）。
                     continue;
                 }
                 for i in r.start..r.end {
@@ -1117,7 +1110,7 @@ fn render_unified_patch(
         let (mut lb, mut rb) = (0u32, 0u32);
         for e in &script[..hs] {
             match e {
-                PatchEntry::SameLeft(..) | PatchEntry::SameRight(_) => {
+                PatchEntry::SameLeft(..) => {
                     lb += 1;
                     rb += 1;
                 }
@@ -1128,7 +1121,7 @@ fn render_unified_patch(
         let (mut lc, mut rc) = (0u32, 0u32);
         for e in &script[hs..he] {
             match e {
-                PatchEntry::SameLeft(..) | PatchEntry::SameRight(_) => {
+                PatchEntry::SameLeft(..) => {
                     lc += 1;
                     rc += 1;
                 }
@@ -1145,9 +1138,6 @@ fn render_unified_patch(
             match e {
                 PatchEntry::SameLeft(i, _) => {
                     out.push_str(&format!(" {}\n", snap.left_lines[*i as usize]))
-                }
-                PatchEntry::SameRight(i) => {
-                    out.push_str(&format!(" {}\n", snap.right_lines[*i as usize]))
                 }
                 PatchEntry::Left(i) => {
                     out.push_str(&format!("-{}\n", snap.left_lines[*i as usize]))
@@ -1177,7 +1167,7 @@ fn render_context_patch(
         let (mut lb, mut rb) = (0u32, 0u32);
         for e in &script[..hs] {
             match e {
-                PatchEntry::SameLeft(..) | PatchEntry::SameRight(_) => {
+                PatchEntry::SameLeft(..) => {
                     lb += 1;
                     rb += 1;
                 }
@@ -1188,7 +1178,7 @@ fn render_context_patch(
         let (mut lc, mut rc) = (0u32, 0u32);
         for e in &script[hs..he] {
             match e {
-                PatchEntry::SameLeft(..) | PatchEntry::SameRight(_) => {
+                PatchEntry::SameLeft(..) => {
                     lc += 1;
                     rc += 1;
                 }
@@ -1208,11 +1198,9 @@ fn render_context_patch(
         out.push_str(&format!("*** {lhead} ****\n"));
         for e in &script[hs..he] {
             match e {
-                // 上下文：左块显左行（SameRight 为折叠的右侧行，右块显之）
                 PatchEntry::SameLeft(i, _) => {
                     out.push_str(&format!("  {}\n", snap.left_lines[*i as usize]))
                 }
-                PatchEntry::SameRight(_) => {}
                 PatchEntry::Left(i) => {
                     out.push_str(&format!("! {}\n", snap.left_lines[*i as usize]))
                 }
@@ -1230,9 +1218,6 @@ fn render_context_patch(
         for e in &script[hs..he] {
             match e {
                 PatchEntry::SameLeft(..) => {}
-                PatchEntry::SameRight(i) => {
-                    out.push_str(&format!("  {}\n", snap.right_lines[*i as usize]))
-                }
                 PatchEntry::Right(i) => {
                     out.push_str(&format!("! {}\n", snap.right_lines[*i as usize]))
                 }
@@ -3446,44 +3431,75 @@ mod tests {
 
     #[test]
     fn ignore_unimportant_patch_keeps_all_lines() {
-        // P2-29 回归：折叠不重要差异时 Insert 不丢行、坐标自洽
+        // CORE-02 回归（取代 P2-29 旧口径）：补丁结果 = 右文件撤销不重要差异，
+        // 折叠 Change 以左行作上下文，折叠 Insert 不贡献行；产出必须是可应用补丁。
         let a = "one\nTWO\nthree\nfour\n";
-        let mut snap = text_snap(a, "one\n2\nthree\nfour\nfive\n");
-        for sec in snap.sections.iter_mut() {
-            if sec.kind != SectionKind::Equal {
-                sec.important = Importance::Unimportant;
+        let b = "one\n2\nthree\nfour\nfive\n";
+        // fold_change=true 折叠 Change(TWO→2)，否则折叠 Insert(five)
+        let make_snap = |fold_change: bool| {
+            let mut snap = text_snap(a, b);
+            let mut idx = 0;
+            for sec in snap.sections.iter_mut() {
+                if sec.kind != SectionKind::Equal {
+                    let folded = (idx == 0) == fold_change;
+                    sec.important = if folded {
+                        Importance::Unimportant
+                    } else {
+                        Importance::Important
+                    };
+                    idx += 1;
+                }
             }
-        }
-        snap.unimportant_sections = 2;
-        let s = ReportSnapshot::Text(snap);
+            snap.unimportant_sections = 1;
+            ReportSnapshot::Text(snap)
+        };
         let opts = ReportOptions {
             layout: ReportLayout::Patch,
             ignore_unimportant: true,
             ..Default::default()
         };
-        let out = render_report(&s, &opts).unwrap();
+
         // 全部差异均不重要 -> patch 为空（不记入补丁）
-        assert_eq!(out, "");
-        // 部分重要：折叠段保留行且重要段正确
-        let mut snap = text_snap(a, "one\n2\nthree\nfour\nfive\n");
-        let mut unimp = 0u32;
-        for sec in snap.sections.iter_mut() {
+        let mut all = text_snap(a, b);
+        for sec in all.sections.iter_mut() {
             if sec.kind != SectionKind::Equal {
-                sec.important = if unimp == 0 {
-                    unimp += 1;
-                    Importance::Unimportant
-                } else {
-                    Importance::Important
-                };
+                sec.important = Importance::Unimportant;
             }
         }
-        snap.unimportant_sections = 1;
-        let s = ReportSnapshot::Text(snap);
-        let out = render_report(&s, &opts).unwrap();
-        // 折叠段：不重要变更不记入（右行作上下文 " 2"）；重要段（+five）照常记录
+        all.unimportant_sections = 2;
+        assert_eq!(
+            render_report(&ReportSnapshot::Text(all), &opts).unwrap(),
+            ""
+        );
+
+        // 折叠 Change：左行 TWO 作上下文，右行 2 不得出现；重要段 +five 照常记录
+        let out = render_report(&make_snap(true), &opts).unwrap();
         assert!(out.contains("+five"), "重要段照常记录: {out}");
-        assert!(out.contains(" 2\n"), "折叠段右行作上下文: {out}");
+        assert!(out.contains(" TWO\n"), "折叠段以左行作上下文: {out}");
         assert!(!out.contains("-TWO"), "不重要变更不记入: {out}");
+        assert!(!out.contains(" 2\n"), "折叠段右行不属于结果文件: {out}");
+
+        // 字节级回环：fuzz=0 精确应用到左文件，得到"右文件撤销不重要差异"
+        let strict = crate::patch::PatchApplyOptions {
+            fuzz: 0,
+            ..Default::default()
+        };
+        for (fold_change, expected) in [
+            (true, "one\nTWO\nthree\nfour\nfive\n"),
+            (false, "one\n2\nthree\nfour\n"),
+        ] {
+            let out = render_report(&make_snap(fold_change), &opts).unwrap();
+            let parsed = crate::patch::parse_patch(&out).unwrap_or_else(|e| {
+                panic!("折叠补丁必须可解析(fold_change={fold_change}): {e}\n{out}")
+            });
+            assert_eq!(parsed.files.len(), 1);
+            match crate::patch::apply_file(a, &parsed.files[0], &strict) {
+                Ok(crate::patch::ApplyOutcome::Applied { text, .. }) => {
+                    assert_eq!(text, expected, "fold_change={fold_change}\n{out}");
+                }
+                other => panic!("应用失败(fold_change={fold_change}): {other:?}\n{out}"),
+            }
+        }
     }
 
     #[test]
