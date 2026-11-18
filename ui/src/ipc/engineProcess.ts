@@ -142,6 +142,11 @@ export function untrackSession(sessionId: string): void {
   trackedSessions.delete(sessionId);
 }
 
+/** 会话是否仍被跟踪（崩溃重放会把旧句柄注销换新句柄 → 旧句柄即"已死"） */
+export function isSessionTracked(sessionId: string): boolean {
+  return trackedSessions.has(sessionId);
+}
+
 /** 当前引擎能力集（initialize 协商结果；未连接时为 null，调用方按不支持降级） */
 export function getEngineCapabilities(): EngineCapabilities | null {
   return engineCapabilities;

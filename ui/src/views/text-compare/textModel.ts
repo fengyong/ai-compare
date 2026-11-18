@@ -61,6 +61,34 @@ export function deleteTextSession(sessionId: string): void {
   cache.delete(sessionId);
 }
 
+/**
+ * 按落盘路径对找回**有未落盘编辑**的旧会话模型（崩溃重放认领，UI-01）。
+ *
+ * 引擎崩溃重放给会话换新句柄，视图按新句柄重开同一文件对（引擎内容回到
+ * 文件态），旧模型里的未保存编辑仍在缓存——按路径认领回来再整侧重放收敛。
+ * 只认领 isLive 判为"已死"的会话：同文件对可能另有活标签在编辑，不得抢它。
+ * isLive 缺省恒真 = 不传判定就不认领（安全缺省）。
+ */
+export function findDirtyTextSessionByPaths(
+  leftPath: string,
+  rightPath: string,
+  excludeSessionId?: string,
+  isLive: (sessionId: string) => boolean = () => true,
+): TextSessionModel | undefined {
+  for (const model of cache.values()) {
+    if (model.sessionId === excludeSessionId) continue;
+    if (isLive(model.sessionId)) continue;
+    if (
+      model.leftPath === leftPath &&
+      model.rightPath === rightPath &&
+      isTextModified(model)
+    ) {
+      return model;
+    }
+  }
+  return undefined;
+}
+
 /** 由引擎打开结果构建初始模型（undo 清空、编码 auto、未修改） */
 export function newTextSessionModel(init: {
   sessionId: string;

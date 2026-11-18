@@ -6,6 +6,7 @@ import {
   editText,
   filterDir,
   getEngineCapabilities,
+  isSessionTracked,
   openText,
   requestInlineDiff,
   saveText,
@@ -52,6 +53,7 @@ import {
 } from './folding';
 import {
   applySidePatches,
+  fullSideReplayOp,
   opsFromPatches,
   patchSideFromDocEdit,
   patchesFromLineReplacement,
@@ -70,6 +72,8 @@ import {
   type UndoEntry,
 } from './undoStack';
 import {
+  deleteTextSession,
+  findDirtyTextSessionByPaths,
   getTextSession,
   isTextModified,
   newTextSessionModel,
@@ -602,11 +606,33 @@ export function TextCompareView({ tab }: { tab: Tab }) {
           summary: loaded.summary,
           detectedEncoding: loaded.encodings,
         });
+        // 崩溃重放/重开同一文件对：旧（已死）会话的未落盘编辑按路径认领回来，
+        // 旧内容为 UI 真值、新引擎内容为收敛基准（UI-01，编辑视图 D2 同模式）。
+        const stale = findDirtyTextSessionByPaths(
+          text.left.path,
+          text.right.path,
+          text.sessionId,
+          isSessionTracked,
+        );
+        if (stale) {
+          model.leftLines = [...stale.leftLines];
+          model.rightLines = [...stale.rightLines];
+          model.modifiedSides = { ...stale.modifiedSides };
+          deleteTextSession(stale.sessionId);
+          useShell.getState().markContentDirty(tab.id, model.modifiedSides);
+        }
         collapsedRef.current = defaultCollapsedKeys(
           buildAlignedDocs(model.sections, model.leftLines, model.rightLines).left.rows,
           contextRowsRef.current,
         );
         await rebuildAndRender(model);
+        if (stale) {
+          // 只重放脏侧：干净侧也整侧重放会把引擎会话误标为已修改
+          const ops: TextEditOp[] = [];
+          if (model.modifiedSides.left) ops.push(fullSideReplayOp('left', model.leftLines));
+          if (model.modifiedSides.right) ops.push(fullSideReplayOp('right', model.rightLines));
+          if (ops.length > 0) await rediffAndRender(model, ops);
+        }
         if (!disposed) setReady(true);
       } catch (err) {
         if (!disposed) setError(err instanceof Error ? err.message : String(err));
