@@ -6,6 +6,7 @@
 //! 模型：连接惰性建立 + 单流复用（会话请求已串行，docs/03 §2.3）；命令失败
 //! 重连一次（服务器空闲踢线常见）。`stat` 文件走 SIZE+MDTM，目录判定以
 //! LIST 成功为准；`list_dir` MLSD 优先（RFC3659）回退 LIST+POSIX/DOS 解析；
+//! 返回行全部解析失败时报错而非空集（SEC-03：防镜像同步把非空目录判空真删）；
 //! `copy_file` 经 RETR+STOR 组合（RFC 959 无服务器端 copy）；`set_mtime`
 //! 需 MFMT 非标扩展，本实现 Unsupported（与 BC 行为差异已记录）。
 //!
@@ -234,14 +235,26 @@ impl VfsProvider for FtpFs {
             })
             .await;
         let mut out = Vec::new();
+        // SEC-03：返回行全部解析失败时必须报错，绝不返回空集——空集会被
+        // 镜像同步判为「目录已空」生成 Delete 计划真删数据（未知不当相同）。
+        let all_unparseable = |kind: &str, n: usize| {
+            VfsError::Unsupported(format!(
+                "ftp: {kind} 返回 {n} 行全部无法解析，拒绝当空目录（SEC-03）"
+            ))
+        };
         match mlsd_lines {
             Ok(lines) => {
-                for line in lines {
+                let mut parsed = 0usize;
+                for line in &lines {
                     // 12.2.1 的替代 API（FileParser）尚未落地，from_mlsx_line 为当前唯一入口
                     #[allow(deprecated)]
-                    if let Ok(f) = ListFile::from_mlsx_line(&line) {
+                    if let Ok(f) = ListFile::from_mlsx_line(line) {
+                        parsed += 1;
                         out.push(list_file_to_entry(&f));
                     }
+                }
+                if !lines.is_empty() && parsed == 0 {
+                    return Err(all_unparseable("MLSD", lines.len()));
                 }
             }
             Err(_) => {
@@ -251,18 +264,29 @@ impl VfsProvider for FtpFs {
                         Box::pin(async move { s.list(Some(&sp)).await })
                     })
                     .await?;
-                for line in lines {
+                let mut candidates = 0usize;
+                let mut parsed = 0usize;
+                for line in &lines {
+                    // ls -l 总容量行不是条目，不计入「返回行数」
+                    if line.trim_start().starts_with("total ") {
+                        continue;
+                    }
+                    candidates += 1;
                     // 同上：from_posix_line 为 12.2.1 当前入口
                     #[allow(deprecated)]
-                    let f = match ListFile::from_posix_line(&line) {
+                    let f = match ListFile::from_posix_line(line) {
                         Ok(f) => f,
-                        Err(_) => continue, // 无法识别的行（总容量行等）
+                        Err(_) => continue, // 无法识别的行（方言输出等）
                     };
+                    parsed += 1;
                     let name = f.name().to_string();
                     if name == "." || name == ".." {
                         continue;
                     }
                     out.push(list_file_to_entry(&f));
+                }
+                if candidates > 0 && parsed == 0 {
+                    return Err(all_unparseable("LIST", candidates));
                 }
             }
         }
@@ -420,5 +444,178 @@ fn list_file_to_entry(f: &ListFile) -> VfsDirEntry {
             gid: None,
             dos_attrs: 0,
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use tokio::net::TcpListener;
+
+    /// 最小伪 FTP 服务器（单控制连接 + PASV 数据连接），覆盖 suppaftp 12
+    /// 的命令序列：220 欢迎 → USER/PASS → TYPE → PASV/MLSD/LIST → 226。
+    /// `mlsd` 为 None 时 MLSD 回 500（触发 LIST 回退）；否则经数据连接返回。
+    async fn spawn_fake_ftp(list_payload: &'static str, mlsd: Option<&'static str>) -> u16 {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            let (ctrl, _) = listener.accept().await.unwrap();
+            let (rd, mut wr) = ctrl.into_split();
+            let mut lines = BufReader::new(rd).lines();
+            wr.write_all(b"220 fake\r\n").await.unwrap();
+            let mut data_listener: Option<TcpListener> = None;
+            while let Ok(Some(line)) = lines.next_line().await {
+                let cmd = line.split(' ').next().unwrap_or("").to_ascii_uppercase();
+                match cmd.as_str() {
+                    "USER" => wr.write_all(b"331 need password\r\n").await.unwrap(),
+                    "PASS" => wr.write_all(b"230 logged in\r\n").await.unwrap(),
+                    "TYPE" | "CWD" => wr.write_all(b"200 ok\r\n").await.unwrap(),
+                    "PASV" => {
+                        let dl = TcpListener::bind("127.0.0.1:0").await.unwrap();
+                        let p = dl.local_addr().unwrap().port();
+                        wr.write_all(
+                            format!(
+                                "227 Entering Passive Mode (127,0,0,1,{},{})\r\n",
+                                p >> 8,
+                                p & 0xff
+                            )
+                            .as_bytes(),
+                        )
+                        .await
+                        .unwrap();
+                        data_listener = Some(dl);
+                    }
+                    "MLSD" | "LIST" => {
+                        let payload = if cmd == "MLSD" {
+                            match mlsd {
+                                Some(p) => p,
+                                None => {
+                                    wr.write_all(b"500 unknown command\r\n").await.unwrap();
+                                    data_listener = None;
+                                    continue;
+                                }
+                            }
+                        } else {
+                            list_payload
+                        };
+                        wr.write_all(b"150 opening\r\n").await.unwrap();
+                        let dl = data_listener.take().expect("先 PASV");
+                        let (mut ds, _) = dl.accept().await.unwrap();
+                        ds.write_all(payload.as_bytes()).await.unwrap();
+                        ds.shutdown().await.unwrap();
+                        drop(ds);
+                        wr.write_all(b"226 done\r\n").await.unwrap();
+                    }
+                    "QUIT" => {
+                        wr.write_all(b"221 bye\r\n").await.unwrap();
+                        break;
+                    }
+                    _ => wr.write_all(b"500 unknown\r\n").await.unwrap(),
+                }
+            }
+        });
+        port
+    }
+
+    async fn fake_fs(list_payload: &'static str, mlsd: Option<&'static str>) -> FtpFs {
+        let port = spawn_fake_ftp(list_payload, mlsd).await;
+        FtpFs::new(
+            FtpConfig {
+                host: "127.0.0.1".into(),
+                port,
+                user: "u".into(),
+                password: "p".into(),
+            },
+            "/".into(),
+        )
+    }
+
+    /// SEC-03 验收：方言服务器 LIST 全不可解析 → 报错，绝不返回空集。
+    #[tokio::test]
+    async fn list_all_unparseable_is_error_not_empty() {
+        let fs = fake_fs("DIR0001 FILE-A\r\nDIR0002 FILE-B\r\n", None).await;
+        let err = fs
+            .list_dir(&VfsPath::parse("/").unwrap())
+            .await
+            .unwrap_err();
+        assert!(matches!(err, VfsError::Unsupported(_)), "实际: {err:?}");
+        assert!(err.to_string().contains("2"), "应带返回行数: {err}");
+    }
+
+    /// MLSD 全不可解析同样报错（不回退 LIST——MLSD 已成功返回）。
+    /// 注：suppaftp 对无 fact 行宽松收编为条目，须用非法 fact 值才触发硬失败。
+    #[tokio::test]
+    async fn mlsd_all_unparseable_is_error() {
+        let fs = fake_fs("", Some("type=bogus; a\r\ntype=weird; b\r\n")).await;
+        let err = fs
+            .list_dir(&VfsPath::parse("/").unwrap())
+            .await
+            .unwrap_err();
+        assert!(matches!(err, VfsError::Unsupported(_)), "实际: {err:?}");
+    }
+
+    /// 正常 POSIX 服务器行为不变。
+    #[tokio::test]
+    async fn list_normal_posix_unchanged() {
+        let fs = fake_fs(
+            "total 8\r\n\
+             drwxr-xr-x 2 u g 4096 Nov 18 10:00 sub\r\n\
+             -rw-r--r-- 1 u g 12 Nov 18 10:00 a.txt\r\n",
+            None,
+        )
+        .await;
+        let entries = fs.list_dir(&VfsPath::parse("/").unwrap()).await.unwrap();
+        assert_eq!(entries.len(), 2);
+        let sub = entries.iter().find(|e| e.name == "sub").unwrap();
+        assert_eq!(sub.stat.kind, EntryKind::Dir);
+        let a = entries.iter().find(|e| e.name == "a.txt").unwrap();
+        assert_eq!(a.stat.kind, EntryKind::File);
+        assert_eq!(a.stat.size, 12);
+    }
+
+    /// 正常 MLSD 服务器行为不变。
+    #[tokio::test]
+    async fn mlsd_normal_unchanged() {
+        let fs = fake_fs(
+            "",
+            Some("type=file;size=12;modify=20261118100000; a.txt\r\ntype=dir;modify=20261118100000; sub\r\n"),
+        )
+        .await;
+        let entries = fs.list_dir(&VfsPath::parse("/").unwrap()).await.unwrap();
+        assert_eq!(entries.len(), 2);
+        assert!(entries
+            .iter()
+            .any(|e| e.name == "a.txt" && e.stat.kind == EntryKind::File));
+        assert!(entries
+            .iter()
+            .any(|e| e.name == "sub" && e.stat.kind == EntryKind::Dir));
+    }
+
+    /// 空目录不误报：仅 total 行 / 空应答 / 仅 . 与 .. 都仍是 Ok(空)。
+    #[tokio::test]
+    async fn empty_dir_shapes_stay_ok() {
+        for payload in [
+            "total 0\r\n",
+            "",
+            "total 4\r\ndrwxr-xr-x 2 u g 4096 Nov 18 10:00 .\r\ndrwxr-xr-x 2 u g 4096 Nov 18 10:00 ..\r\n",
+        ] {
+            let fs = fake_fs(payload, None).await;
+            let entries = fs.list_dir(&VfsPath::parse("/").unwrap()).await.unwrap();
+            assert!(entries.is_empty(), "payload={payload:?} 应判空目录");
+        }
+    }
+
+    /// 部分行可解析时不得过度拦截：坏行跳过、好行保留。
+    #[tokio::test]
+    async fn partial_parse_keeps_good_lines() {
+        let fs = fake_fs(
+            "JUNK DIALECT LINE\r\n-rw-r--r-- 1 u g 3 Nov 18 10:00 ok.txt\r\n",
+            None,
+        )
+        .await;
+        let entries = fs.list_dir(&VfsPath::parse("/").unwrap()).await.unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name, "ok.txt");
     }
 }
