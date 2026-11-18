@@ -1,7 +1,9 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   deleteTextSession,
   findDirtyTextSessionByPaths,
+  getTextSession,
+  isTextModified,
   newTextSessionModel,
   putTextSession,
 } from './textModel';
@@ -59,5 +61,47 @@ describe('findDirtyTextSessionByPaths', () => {
   it('isLive 缺省恒真 = 不传判定就不认领（安全缺省）', () => {
     seed('s3', true);
     expect(findDirtyTextSessionByPaths(L, R)).toBeUndefined();
+  });
+});
+
+describe('putTextSession LRU 脏保护（UI-03）', () => {
+  const ids: string[] = [];
+  afterEach(() => {
+    for (const id of ids.splice(0)) deleteTextSession(id);
+  });
+
+  function seedMany(n: number, dirty: boolean, prefix: string): void {
+    for (let i = 0; i < n; i++) {
+      const id = `${prefix}${i}`;
+      ids.push(id);
+      seed(id, dirty, `/lru/${prefix}l${i}.txt`, `/lru/${prefix}r${i}.txt`);
+    }
+  }
+
+  it('25 个脏标签全部往返后仍在缓存且仍脏（淘汰跳过脏项）', () => {
+    seedMany(25, true, 'd');
+    // 往返：反序重新 put（模拟标签切换水合）
+    for (let i = 24; i >= 0; i--) {
+      seed(`d${i}`, true, `/lru/dl${i}.txt`, `/lru/dr${i}.txt`);
+    }
+    for (let i = 0; i < 25; i++) {
+      const m = getTextSession(`d${i}`);
+      expect(m, `d${i} 不得被淘汰`).toBeDefined();
+      expect(isTextModified(m!)).toBe(true);
+    }
+  });
+
+  it('脏净混合淘汰最旧干净项；全干净时 LRU 语义不变', () => {
+    seedMany(19, true, 'm');
+    seedMany(3, false, 'c');
+    // 19 脏 + 3 净 = 22 > 20 → 淘汰两个最旧干净项
+    for (let i = 0; i < 19; i++) expect(getTextSession(`m${i}`)).toBeDefined();
+    expect(getTextSession('c0')).toBeUndefined();
+    expect(getTextSession('c1')).toBeUndefined();
+    expect(getTextSession('c2')).toBeDefined();
+    for (const id of ids.splice(0)) deleteTextSession(id);
+    seedMany(25, false, 'p');
+    expect(getTextSession('p0')).toBeUndefined();
+    expect(getTextSession('p24')).toBeDefined();
   });
 });

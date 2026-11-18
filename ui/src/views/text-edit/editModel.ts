@@ -268,8 +268,14 @@ export function putEditDoc(doc: EditDoc): void {
   cache.delete(doc.sessionId);
   cache.set(doc.sessionId, doc);
   if (cache.size > CACHE_LIMIT) {
-    const oldest = cache.keys().next().value;
-    if (oldest !== undefined) cache.delete(oldest);
+    // UI-03：淘汰跳过脏项（同 textModel）——淘汰脏文档会静默丢未落盘编辑
+    for (const key of cache.keys()) {
+      const d = cache.get(key);
+      if (d && !isDocDirty(d)) {
+        cache.delete(key);
+        break;
+      }
+    }
   }
 }
 

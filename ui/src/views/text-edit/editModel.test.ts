@@ -431,4 +431,77 @@ describe('text-edit/editModel 脏判定与缓存', () => {
     deleteEditDoc('s');
     expect(getEditDoc('s')).toBeUndefined();
   });
+
+  it('LRU 淘汰跳过脏文档（UI-03）：33 个脏文档往返后仍全在且仍脏', () => {
+    const docs: EditDoc[] = [];
+    for (let i = 0; i < 33; i++) {
+      const d = newEditDoc({
+        sessionId: `lru${i}`,
+        path: `/lru/${i}.txt`,
+        name: `${i}.txt`,
+        encoding: 'UTF-8',
+        lines: ['a'],
+      });
+      d.lines = ['b'];
+      putEditDoc(d);
+      docs.push(d);
+    }
+    // 往返：反序重新 put（模拟标签切换水合）
+    for (let i = 32; i >= 0; i--) putEditDoc(docs[i]);
+    for (let i = 0; i < 33; i++) {
+      const got = getEditDoc(`lru${i}`);
+      expect(got, `lru${i} 不得被淘汰`).toBeDefined();
+      expect(isDocDirty(got!)).toBe(true);
+      deleteEditDoc(`lru${i}`);
+    }
+  });
+
+  it('脏净混合淘汰干净项；全干净时 LRU 语义不变（UI-03）', () => {
+    const dirty: EditDoc[] = [];
+    for (let i = 0; i < 31; i++) {
+      const d = newEditDoc({
+        sessionId: `mx${i}`,
+        path: `/mx/${i}.txt`,
+        name: `${i}.txt`,
+        encoding: 'UTF-8',
+        lines: ['a'],
+      });
+      d.lines = ['b'];
+      putEditDoc(d);
+      dirty.push(d);
+    }
+    for (let i = 0; i < 3; i++) {
+      putEditDoc(
+        newEditDoc({
+          sessionId: `mc${i}`,
+          path: `/mc/${i}.txt`,
+          name: `${i}.txt`,
+          encoding: 'UTF-8',
+          lines: ['a'],
+        }),
+      );
+    }
+    // 31 脏 + 3 净 = 34 > 32 → 淘汰两个最旧干净项
+    for (let i = 0; i < 31; i++) expect(getEditDoc(`mx${i}`)).toBeDefined();
+    expect(getEditDoc('mc0')).toBeUndefined();
+    expect(getEditDoc('mc1')).toBeUndefined();
+    expect(getEditDoc('mc2')).toBeDefined();
+    for (let i = 0; i < 31; i++) deleteEditDoc(`mx${i}`);
+    deleteEditDoc('mc2');
+    // 全干净：最旧淘汰
+    for (let i = 0; i < 35; i++) {
+      putEditDoc(
+        newEditDoc({
+          sessionId: `cl${i}`,
+          path: `/cl/${i}.txt`,
+          name: `${i}.txt`,
+          encoding: 'UTF-8',
+          lines: ['a'],
+        }),
+      );
+    }
+    expect(getEditDoc('cl0')).toBeUndefined();
+    expect(getEditDoc('cl34')).toBeDefined();
+    for (let i = 0; i < 35; i++) deleteEditDoc(`cl${i}`);
+  });
 });

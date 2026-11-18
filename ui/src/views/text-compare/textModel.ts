@@ -52,8 +52,15 @@ export function putTextSession(model: TextSessionModel): void {
   cache.delete(model.sessionId);
   cache.set(model.sessionId, model);
   if (cache.size > CACHE_LIMIT) {
-    const oldest = cache.keys().next().value;
-    if (oldest !== undefined) cache.delete(oldest);
+    // UI-03：淘汰跳过脏项——脏标记是关闭守卫与崩溃认领的唯一依据，
+    // 淘汰即静默丢编辑。脏项数受打开标签数天然约束，全脏时缓存暂超限。
+    for (const key of cache.keys()) {
+      const m = cache.get(key);
+      if (m && !isTextModified(m)) {
+        cache.delete(key);
+        break;
+      }
+    }
   }
 }
 
