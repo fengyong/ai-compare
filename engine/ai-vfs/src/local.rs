@@ -28,6 +28,56 @@ fn map_write_io(path: &VfsPath, err: std::io::Error) -> VfsError {
     }
 }
 
+/// 原子落盘（异步版，与 zip.rs `atomic_write` 同语义）：同目录临时文件 →
+/// write_all → fsync → rename 覆盖 → 父目录 fsync 尽力。截断直写在 IO 中途
+/// 失败会留半写主文件（SEC-01）；rename 保证读者要么见旧内容、要么见新内容。
+/// 临时名带 pid + 进程内序号，避免并发写互相覆盖；失败清掉临时文件再上抛。
+async fn atomic_write_async(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use tokio::io::AsyncWriteExt;
+
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let parent = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    let name = path.file_name().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, "path has no file name")
+    })?;
+    let tmp = parent.join(format!(
+        ".{}.tmp-{}-{}",
+        name.to_string_lossy(),
+        std::process::id(),
+        SEQ.fetch_add(1, Ordering::Relaxed)
+    ));
+
+    let result = async {
+        let mut f = tokio::fs::File::create(&tmp).await?;
+        f.write_all(bytes).await?;
+        // 覆盖已有文件时保留其权限位（rename 会带走 tmp 的默认 mode）
+        #[cfg(unix)]
+        if let Ok(meta) = tokio::fs::metadata(path).await {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = f
+                .set_permissions(std::fs::Permissions::from_mode(meta.permissions().mode()))
+                .await;
+        }
+        f.sync_all().await?;
+        tokio::fs::rename(&tmp, path).await?;
+        // rename 已成功 → 数据已可见；父目录 fsync 只为掉电后目录项仍在，
+        // 且 Windows 无法以 File 打开目录，故失败不得反过来报写入失败。
+        if let Ok(dir) = tokio::fs::File::open(parent).await {
+            let _ = dir.sync_all().await;
+        }
+        Ok::<(), std::io::Error>(())
+    }
+    .await;
+    if result.is_err() {
+        let _ = tokio::fs::remove_file(&tmp).await;
+    }
+    result
+}
+
 /// 本地只读 Provider
 #[derive(Debug, Clone, Default)]
 pub struct LocalFs {
@@ -204,7 +254,16 @@ impl VfsProvider for LocalFs {
 
     async fn write_file_bytes(&self, path: &VfsPath, data: &[u8]) -> Result<(), VfsError> {
         let fs_path = self.to_fs_path(path);
-        tokio::fs::write(&fs_path, data)
+        // 符号链接保持写穿透（写入链接目标）：原子替换会把链接本身换成
+        // 普通文件，改变文件拓扑，不属于"保存内容"的语义。
+        if let Ok(meta) = tokio::fs::symlink_metadata(&fs_path).await {
+            if meta.file_type().is_symlink() {
+                return tokio::fs::write(&fs_path, data)
+                    .await
+                    .map_err(|e| map_write_io(path, e));
+            }
+        }
+        atomic_write_async(&fs_path, data)
             .await
             .map_err(|e| map_write_io(path, e))
     }
@@ -439,6 +498,187 @@ mod tests {
             fs.mkdir(&root.join("newdir")).await,
             Err(VfsError::AlreadyExists { .. })
         ));
+        drop(dir);
+    }
+
+    /// 目录里不得残留 `.tmp-` 临时文件（SEC-01 清理义务）
+    async fn assert_no_tmp_residue(dir: &Path) {
+        let mut rd = tokio::fs::read_dir(dir).await.unwrap();
+        while let Some(e) = rd.next_entry().await.unwrap() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            assert!(!name.contains(".tmp-"), "残留临时文件: {name}");
+        }
+    }
+
+    #[tokio::test]
+    async fn write_overwrite_atomic_no_residue() {
+        let (dir, root) = setup().await;
+        let fs = LocalFs::new();
+        let p = root.join("hello.txt");
+        fs.write_file_bytes(&p, b"brand new content").await.unwrap();
+        assert_eq!(fs.read_file_bytes(&p).await.unwrap(), b"brand new content");
+        // 新建文件同样走原子路径
+        fs.write_file_bytes(&root.join("fresh.txt"), b"FRESH")
+            .await
+            .unwrap();
+        assert_eq!(
+            fs.read_file_bytes(&root.join("fresh.txt")).await.unwrap(),
+            b"FRESH"
+        );
+        assert_no_tmp_residue(dir.path()).await;
+        drop(dir);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn write_overwrite_preserves_mode() {
+        use std::os::unix::fs::PermissionsExt;
+        let (dir, root) = setup().await;
+        let fs = LocalFs::new();
+        let p = root.join("hello.txt");
+        let fs_p = dir.path().join("hello.txt");
+        tokio::fs::set_permissions(&fs_p, std::fs::Permissions::from_mode(0o640))
+            .await
+            .unwrap();
+        fs.write_file_bytes(&p, b"replaced").await.unwrap();
+        let mode = tokio::fs::metadata(&fs_p)
+            .await
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o640, "覆盖写应保留原权限位");
+        drop(dir);
+    }
+
+    #[tokio::test]
+    async fn write_create_stage_failure_keeps_original() {
+        let (dir, root) = setup().await;
+        let fs = LocalFs::new();
+        // 父路径是普通文件 → 临时文件创建必失败（任何 uid 下确定性注入）
+        let bad = root.join("hello.txt").join("child");
+        let res = fs.write_file_bytes(&bad, b"X").await;
+        assert!(res.is_err(), "创建阶段失败应上抛错误");
+        assert_eq!(
+            fs.read_file_bytes(&root.join("hello.txt")).await.unwrap(),
+            b"h\xc3\xa9llo\r\nworld\n",
+            "失败不得波及既有文件"
+        );
+        assert_no_tmp_residue(dir.path()).await;
+        drop(dir);
+    }
+
+    #[tokio::test]
+    async fn write_rename_stage_failure_cleans_tmp() {
+        let (dir, root) = setup().await;
+        let fs = LocalFs::new();
+        // 目标是非空目录 → tmp 写入成功但 rename 必失败
+        let res = fs.write_file_bytes(&root.join("sub"), b"X").await;
+        assert!(res.is_err(), "rename 阶段失败应上抛错误");
+        assert_eq!(
+            fs.stat(&root.join("sub")).await.unwrap().kind,
+            EntryKind::Dir,
+            "目录不得被替换"
+        );
+        assert_eq!(
+            fs.read_file_bytes(&root.join("sub").join("bom.txt"))
+                .await
+                .unwrap(),
+            "\u{feff}bom content".as_bytes()
+        );
+        assert_no_tmp_residue(dir.path()).await;
+        drop(dir);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn write_readonly_dir_fails_clean_keeps_old() {
+        use std::os::unix::fs::PermissionsExt;
+        let (dir, root) = setup().await;
+        // root 无视目录权限位，无法注入 → 探针确认后跳过
+        let probe = dir.path().join(".probe");
+        tokio::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o555))
+            .await
+            .unwrap();
+        let blocked = tokio::fs::File::create(&probe).await.is_err();
+        tokio::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o755))
+            .await
+            .unwrap();
+        let _ = tokio::fs::remove_file(&probe).await;
+        if !blocked {
+            return;
+        }
+        let fs = LocalFs::new();
+        let p = root.join("hello.txt");
+        let old = fs.read_file_bytes(&p).await.unwrap();
+        tokio::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o555))
+            .await
+            .unwrap();
+        let res = fs.write_file_bytes(&p, b"NEW").await;
+        tokio::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o755))
+            .await
+            .unwrap();
+        assert!(res.is_err(), "只读目录无法建 tmp，应报错而非静默直写");
+        assert_eq!(fs.read_file_bytes(&p).await.unwrap(), old, "旧内容必须完整");
+        assert_no_tmp_residue(dir.path()).await;
+        drop(dir);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn write_symlink_writes_through_keeps_link() {
+        let (dir, root) = setup().await;
+        let fs = LocalFs::new();
+        tokio::fs::write(dir.path().join("target.txt"), b"OLD")
+            .await
+            .unwrap();
+        tokio::fs::symlink("target.txt", dir.path().join("link.txt"))
+            .await
+            .unwrap();
+        fs.write_file_bytes(&root.join("link.txt"), b"VIA LINK")
+            .await
+            .unwrap();
+        let meta = tokio::fs::symlink_metadata(dir.path().join("link.txt"))
+            .await
+            .unwrap();
+        assert!(
+            meta.file_type().is_symlink(),
+            "链接本身不得被替换成普通文件"
+        );
+        assert_eq!(
+            tokio::fs::read(dir.path().join("target.txt"))
+                .await
+                .unwrap(),
+            b"VIA LINK",
+            "内容应写穿透到链接目标"
+        );
+        assert_no_tmp_residue(dir.path()).await;
+        drop(dir);
+    }
+
+    #[tokio::test]
+    async fn concurrent_writes_final_is_one_payload() {
+        let (dir, root) = setup().await;
+        let p = root.join("hello.txt");
+        let payloads: Vec<Vec<u8>> = (0..8)
+            .map(|i| format!("payload-{i}-{}", "x".repeat(i * 13)).into_bytes())
+            .collect();
+        let mut handles = Vec::new();
+        for bytes in payloads.clone() {
+            let fs = LocalFs::new();
+            let p = p.clone();
+            handles.push(tokio::spawn(async move {
+                fs.write_file_bytes(&p, &bytes).await
+            }));
+        }
+        for h in handles {
+            h.await.unwrap().unwrap();
+        }
+        let final_bytes = LocalFs::new().read_file_bytes(&p).await.unwrap();
+        assert!(
+            payloads.contains(&final_bytes),
+            "终态必须是某个完整 payload，绝不混合"
+        );
+        assert_no_tmp_residue(dir.path()).await;
         drop(dir);
     }
 
