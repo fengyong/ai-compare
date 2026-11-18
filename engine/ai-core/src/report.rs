@@ -1196,13 +1196,41 @@ fn render_context_patch(
             format!("{},{}", lb + 1, lb + lc)
         };
         out.push_str(&format!("*** {lhead} ****\n"));
-        for e in &script[hs..he] {
+        // GNU context 标记：连续改动段内左右都有行 → 两侧 "! "；
+        // 仅左（纯删除）→ 左块 "- "；仅右（纯插入）→ 右块 "+ "。
+        let seg = &script[hs..he];
+        let mut marks = vec![' '; seg.len()];
+        let mut i = 0usize;
+        while i < seg.len() {
+            if seg[i].is_context() {
+                i += 1;
+                continue;
+            }
+            let start = i;
+            let (mut has_l, mut has_r) = (false, false);
+            while i < seg.len() && !seg[i].is_context() {
+                match seg[i] {
+                    PatchEntry::Left(_) => has_l = true,
+                    PatchEntry::Right(_) => has_r = true,
+                    _ => {}
+                }
+                i += 1;
+            }
+            let mark = match (has_l, has_r) {
+                (true, true) => '!',
+                (true, false) => '-',
+                (false, true) => '+',
+                _ => unreachable!("改动段必含 Left 或 Right"),
+            };
+            marks[start..i].fill(mark);
+        }
+        for (k, e) in seg.iter().enumerate() {
             match e {
                 PatchEntry::SameLeft(i, _) => {
                     out.push_str(&format!("  {}\n", snap.left_lines[*i as usize]))
                 }
                 PatchEntry::Left(i) => {
-                    out.push_str(&format!("! {}\n", snap.left_lines[*i as usize]))
+                    out.push_str(&format!("{} {}\n", marks[k], snap.left_lines[*i as usize]))
                 }
                 PatchEntry::Right(_) => {}
             }
@@ -1215,11 +1243,19 @@ fn render_context_patch(
             format!("{},{}", rb + 1, rb + rc)
         };
         out.push_str(&format!("--- {rhead} ----\n"));
-        for e in &script[hs..he] {
+        // 右块同样含上下文行（缺了会被 patch(1) 拒绝）；折叠段无右下标，
+        // 结果文件中该行就是左行（CORE-02 同一口径）。
+        for (k, e) in seg.iter().enumerate() {
             match e {
-                PatchEntry::SameLeft(..) => {}
+                PatchEntry::SameLeft(i, r) => {
+                    let text = match r {
+                        Some(r) => &snap.right_lines[*r as usize],
+                        None => &snap.left_lines[*i as usize],
+                    };
+                    out.push_str(&format!("  {text}\n"));
+                }
                 PatchEntry::Right(i) => {
-                    out.push_str(&format!("! {}\n", snap.right_lines[*i as usize]))
+                    out.push_str(&format!("{} {}\n", marks[k], snap.right_lines[*i as usize]))
                 }
                 PatchEntry::Left(_) => {}
             }
@@ -1269,14 +1305,14 @@ fn render_normal_patch(snap: &TextSnapshot, script: &[PatchEntry], opts: &Report
         } else if lc == 1 {
             format!("{}", lb + 1)
         } else {
-            format!("{},{}", lb + 1, lc)
+            format!("{},{}", lb + 1, lb + lc)
         };
         let rhead = if rc == 0 {
             format!("{rb}")
         } else if rc == 1 {
             format!("{}", rb + 1)
         } else {
-            format!("{},{}", rb + 1, rc)
+            format!("{},{}", rb + 1, rb + rc)
         };
         // a / c / d 命令字
         let cmd = match (lc, rc) {
@@ -2946,6 +2982,72 @@ mod tests {
     }
 
     #[test]
+    fn context_patch_matches_gnu_shape() {
+        // GNU diff -c 形状（实测对照）：两块的上下文行都在；改动 "! "、
+        // 纯删除左块 "- "、纯插入右块 "+ "。缺右块上下文会被 patch(1) 拒绝。
+        let opts = ReportOptions {
+            layout: ReportLayout::Patch,
+            patch_style: PatchStyle::Context,
+            context_lines: 3,
+            ..Default::default()
+        };
+        let cases = [
+            (
+                "alpha\nbeta\ngamma\ndelta\n",
+                "alpha\nBETA\ngamma\ndelta\nepsilon\n",
+                "*** a.txt\n--- b.txt\n***************\n*** 1,4 ****\n  alpha\n! beta\n  gamma\n  delta\n--- 1,5 ----\n  alpha\n! BETA\n  gamma\n  delta\n+ epsilon\n",
+            ),
+            (
+                "a\nb\n",
+                "b\n",
+                "*** a.txt\n--- b.txt\n***************\n*** 1,2 ****\n- a\n  b\n--- 1 ----\n  b\n",
+            ),
+            (
+                "b\n",
+                "a\nb\n",
+                "*** a.txt\n--- b.txt\n***************\n*** 1 ****\n  b\n--- 1,2 ----\n+ a\n  b\n",
+            ),
+        ];
+        for (a, b, expected) in cases {
+            let snap = ReportSnapshot::Text(text_snap(a, b));
+            let out = render_report(&snap, &opts).unwrap();
+            assert_eq!(out, expected, "a={a:?} b={b:?}");
+        }
+    }
+
+    #[test]
+    fn context_patch_folded_change_keeps_result_context() {
+        // CORE-02 同口径：折叠的等长 Change 在右块以左行（=结果行）作上下文
+        let a = "one\nTWO\nthree\nfour\n";
+        let b = "one\n2\nthree\nfour\nfive\n";
+        let mut snap = text_snap(a, b);
+        let mut idx = 0;
+        for sec in snap.sections.iter_mut() {
+            if sec.kind != SectionKind::Equal {
+                sec.important = if idx == 0 {
+                    Importance::Unimportant
+                } else {
+                    Importance::Important
+                };
+                idx += 1;
+            }
+        }
+        snap.unimportant_sections = 1;
+        let opts = ReportOptions {
+            layout: ReportLayout::Patch,
+            patch_style: PatchStyle::Context,
+            ignore_unimportant: true,
+            context_lines: 3,
+            ..Default::default()
+        };
+        let out = render_report(&ReportSnapshot::Text(snap), &opts).unwrap();
+        assert_eq!(
+            out,
+            "*** a.txt\n--- b.txt\n***************\n*** 2,4 ****\n  TWO\n  three\n  four\n--- 2,5 ----\n  TWO\n  three\n  four\n+ five\n"
+        );
+    }
+
+    #[test]
     fn patch_identical_is_empty() {
         let snap = ReportSnapshot::Text(text_snap("x\n", "x\n"));
         let opts = ReportOptions {
@@ -3409,7 +3511,8 @@ mod tests {
         let snap = ReportSnapshot::Text(text_snap("a\nb\n", "b\n"));
         for (style, mark_a) in [
             (PatchStyle::Unified, "-a"),
-            (PatchStyle::Context, "! a"),
+            // GNU context：纯删除在左块记 "- "（不是 "! "）
+            (PatchStyle::Context, "- a"),
             (PatchStyle::Normal, "< a"),
         ] {
             let opts = ReportOptions {

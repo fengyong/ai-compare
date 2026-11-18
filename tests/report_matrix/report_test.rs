@@ -678,6 +678,71 @@ fn patch_layout_roundtrip_with_aic_diff_and_apply() {
     }
 }
 
+#[test]
+fn context_and_normal_patch_applies_with_system_patch() {
+    // FR-RPT-002 可应用性外环：context/normal 风格产物交给系统 patch(1)
+    // 真实应用（parse_patch 只覆盖 unified，此环补上另两种风格的适用性）。
+    // patch 不可用的环境跳过（与 merge3_matrix 外部工具对照同约定）。
+    if std::process::Command::new("patch")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
+        eprintln!("跳过：系统无 patch(1)");
+        return;
+    }
+    let corpora = [
+        (
+            "change",
+            "alpha\nbeta\ngamma\ndelta\n",
+            "alpha\nBETA\ngamma\ndelta\nepsilon\n",
+        ),
+        ("delete", "a\nb\nc\n", "b\nc\n"),
+        ("insert", "b\nc\n", "a\nb\nc\n"),
+        ("mixed", "a\nb\nc\nd\ne\nf\n", "a\nX\nc\nd\nY\nf\n"),
+        (
+            "multi_hunk",
+            "1\n2\n3\n4\n5\n6\n7\n8\n9\n",
+            "3\n4\n1\n2\n5\n6\n7\n8\n9\n",
+        ),
+    ];
+    for (name, a, b) in corpora {
+        for style in [ai_core::PatchStyle::Context, ai_core::PatchStyle::Normal] {
+            let snap = text_snapshot(name, a, b);
+            let opts = ReportOptions {
+                layout: ReportLayout::Patch,
+                patch_style: style,
+                context_lines: 3,
+                ..Default::default()
+            };
+            let patch_text = ai_core::render_report(&ReportSnapshot::Text(snap), &opts).unwrap();
+            let dir = tempfile::tempdir().unwrap();
+            let target = dir.path().join("target.txt");
+            let pfile = dir.path().join("p.patch");
+            std::fs::write(&target, a).unwrap();
+            std::fs::write(&pfile, &patch_text).unwrap();
+            let out = std::process::Command::new("patch")
+                .arg("-s")
+                .arg(&target)
+                .arg("-i")
+                .arg(&pfile)
+                .output()
+                .expect("patch 启动");
+            assert!(
+                out.status.success(),
+                "{name}/{style:?}: patch(1) 拒绝\n{} stderr={}",
+                patch_text,
+                String::from_utf8_lossy(&out.stderr)
+            );
+            let got = std::fs::read_to_string(&target).unwrap();
+            assert_eq!(
+                got, b,
+                "{name}/{style:?}: 应用结果 != 右侧原文\n{patch_text}"
+            );
+        }
+    }
+}
+
 /// 与 aic CLI render_unified 同构（对拍基准；git 行号约定一致）
 fn aic_style_unified(
     left_label: &str,
