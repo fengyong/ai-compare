@@ -1015,6 +1015,19 @@ async fn text_edit(
             spans.push((idx, start, end));
         }
 
+        // 1b. A3：EOF 开关的合法性必须在应用 edits 之前判定（批次原子性承诺：
+        //     任一非法则整批不落会话）。空表判定用 edits 推演后的行数 lens，
+        //     而不是当前行表——否则「删空 + 设 EOF」会先落 edits 再报错。
+        if params.right_trailing_eol.is_some() && data.single_side {
+            return Err(bad_params("单文件会话没有右侧，不能设置 rightTrailingEol"));
+        }
+        if params.left_trailing_eol == Some(true) && lens[0] == 0 {
+            return Err(bad_params("左侧没有行（空文件），无法设置末行行尾符"));
+        }
+        if params.right_trailing_eol == Some(true) && lens[1] == 0 {
+            return Err(bad_params("右侧没有行（空文件），无法设置末行行尾符"));
+        }
+
         // 2. 手动对齐锚点按新行数复核；失效则丢弃锚点（编辑优先于对齐覆盖，
         //    否则用户一旦删行就再也无法编辑）。隔离/偏斜设置保留。
         let mut config = data.config.clone();
@@ -1045,23 +1058,14 @@ async fn text_edit(
         // 3b. A3：末行 EOF 换行标记。行区间替换无法表达"去掉/补上文件末尾的
         //     换行"（末行 ending 在替换时会被继承或补风格），因此单独给开关：
         //     只有**真的改变**时才置 dirty，避免无谓的保存提示。
+        //     合法性（空表/单侧）已在 1b 前置校验，此处不再失败。
         if let Some(flag) = params.left_trailing_eol {
-            // 空表没有"末行"可以挂行尾符：明确报错，不做静默无害化
-            if flag && data.left.is_empty() {
-                return Err(bad_params("左侧没有行（空文件），无法设置末行行尾符"));
-            }
             if data.left.ends_with_eol() != flag {
                 data.left.set_ends_with_eol(flag);
                 data.modified.0 = true;
             }
         }
         if let Some(flag) = params.right_trailing_eol {
-            if data.single_side {
-                return Err(bad_params("单文件会话没有右侧，不能设置 rightTrailingEol"));
-            }
-            if flag && data.right.is_empty() {
-                return Err(bad_params("右侧没有行（空文件），无法设置末行行尾符"));
-            }
             if data.right.ends_with_eol() != flag {
                 data.right.set_ends_with_eol(flag);
                 data.modified.1 = true;
@@ -6671,6 +6675,85 @@ mod p10_tests {
             .await
             .unwrap_err();
         assert_eq!(err.code, -32602);
+        drop(dir);
+    }
+
+    /// WT-02（R4 评审 S2）：EOF 校验必须先于 edits 应用——任一非法整批不落
+    /// 会话（行表/rev/modified 全部原样），不得半应用后再报错。
+    #[tokio::test]
+    async fn text_edit_eof_validation_keeps_batch_atomic() {
+        let c = ctx();
+        let dir = tempfile::tempdir().unwrap();
+        let f = dir.path().join("a.txt");
+        std::fs::write(&f, b"a\nb\n").unwrap();
+        let p = f.to_string_lossy().to_string();
+        let _ = value_of(text_open(Some(json!({"sessionId":"at1","left":p})), &c).await).await;
+
+        // 单文件会话：合法 edits + 非法 rightTrailingEol → 400 且 edits 不落表
+        let err = text_edit(
+            Some(json!({
+                "sessionId":"at1",
+                "edits":[{"side":"left","start":0,"end":1,"text":"X"}],
+                "rightTrailingEol":true
+            })),
+            &c,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.code, -32602);
+        {
+            let sessions = c.sessions.lock().await;
+            match sessions.get("at1").unwrap() {
+                Session::Text(d) => {
+                    assert_eq!(d.left.to_text(), "a\nb\n", "edits 不得落表");
+                    assert_eq!(d.rev, 0, "rev 不得前进");
+                    assert!(!d.modified.0, "dirty 不得置位");
+                }
+                _ => panic!("不是文本会话"),
+            }
+        }
+
+        // 双侧会话：edits 把左侧删空 + leftTrailingEol:true（推演后行数为 0）
+        // → 400 且整批不落表（旧实现在应用后才发现空表，edits 已半应用）
+        let l = dir.path().join("L.txt");
+        let r = dir.path().join("R.txt");
+        std::fs::write(&l, b"a\n").unwrap();
+        std::fs::write(&r, b"b\n").unwrap();
+        let _ = value_of(
+            text_open(
+                Some(json!({
+                    "sessionId":"at2",
+                    "left":l.to_string_lossy(),
+                    "right":r.to_string_lossy()
+                })),
+                &c,
+            )
+            .await,
+        )
+        .await;
+        let err = text_edit(
+            Some(json!({
+                "sessionId":"at2",
+                "edits":[{"side":"left","start":0,"end":1,"text":""}],
+                "leftTrailingEol":true
+            })),
+            &c,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.code, -32602);
+        {
+            let sessions = c.sessions.lock().await;
+            match sessions.get("at2").unwrap() {
+                Session::Text(d) => {
+                    assert_eq!(d.left.to_text(), "a\n", "删空 edits 不得落表");
+                    assert_eq!(d.right.to_text(), "b\n");
+                    assert_eq!(d.rev, 0);
+                    assert!(!d.modified.0 && !d.modified.1);
+                }
+                _ => panic!("不是文本会话"),
+            }
+        }
         drop(dir);
     }
 
