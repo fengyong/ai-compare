@@ -98,43 +98,46 @@ function HexPane({
   const [error, setError] = useState<string | null>(null);
   const hostRef = useRef<HTMLDivElement | null>(null);
   const offsetRef = useRef(0);
-  const jumpRequested = useRef<number | null>(null);
   // 分页在途标记放 ref：loading 是 state，进 useCallback 依赖会重建闭包，
   // 而滚动回调持有的旧闭包读到恒为 false 的 loading → 并发同 offset 拉页 → 重复行 + 偏移漂移
   const inFlightRef = useRef(false);
   const doneRef = useRef(false);
+  // UI-04：分页与跳转共用请求代际。跳转/换会话会重置 offset 与列表，
+  // 在途旧请求的迟到应答若仍落地，会把旧页拼进新页（地址错位、偏移漂移）。
+  // 代际不符的应答（含错误）一律丢弃；重置方接管 inFlight 所有权。
+  const reqGenRef = useRef(0);
 
   const loadNext = useCallback(async () => {
     if (inFlightRef.current || doneRef.current) return;
     inFlightRef.current = true;
+    const g = reqGenRef.current;
     setLoading(true);
     try {
       const r = await hexBytes({ sessionId, side, offset: offsetRef.current, length: PAGE_BYTES });
+      if (g !== reqGenRef.current) return;
       setLines((prev) => [...prev, ...r.lines]);
       offsetRef.current += r.lines.length * ROW_BYTES;
       if (r.done || r.lines.length === 0) {
         doneRef.current = true;
         setDone(true);
       }
-      // 跳转请求：滚到目标行
-      if (jumpRequested.current !== null) {
-        const idx = Math.floor(jumpRequested.current / ROW_BYTES);
-        const el = hostRef.current?.querySelector(`[data-row="${idx}"]`);
-        el?.scrollIntoView({ block: 'start' });
-        jumpRequested.current = null;
-      }
     } catch (err) {
+      if (g !== reqGenRef.current) return;
       // 会话被关/传输断开：停在当前页并给出原因，不得变成未捕获 rejection
       doneRef.current = true;
       setDone(true);
       setError(err instanceof Error ? err.message : String(err));
     } finally {
-      inFlightRef.current = false;
-      setLoading(false);
+      if (g === reqGenRef.current) {
+        inFlightRef.current = false;
+        setLoading(false);
+      }
     }
   }, [sessionId, side]);
 
   useEffect(() => {
+    reqGenRef.current += 1;
+    inFlightRef.current = false;
     offsetRef.current = 0;
     doneRef.current = false;
     setLines([]);
@@ -143,31 +146,39 @@ function HexPane({
     void loadNext();
   }, [sessionId, side, gen, loadNext]);
 
-  // 偏移跳转：重置分页从对齐行首重拉
+  // 偏移跳转：重置分页从对齐行首重拉（与分页共用代际/单飞行）
   useEffect(() => {
     if (jumpTo === null) return;
     const aligned = Math.floor(jumpTo / ROW_BYTES) * ROW_BYTES;
+    reqGenRef.current += 1;
+    const g = reqGenRef.current;
+    inFlightRef.current = true;
     offsetRef.current = aligned;
     doneRef.current = false;
     setLines([]);
     setDone(false);
+    setError(null);
     void hexBytes({ sessionId, side, offset: aligned, length: PAGE_BYTES })
       .then((r) => {
+        if (g !== reqGenRef.current) return;
         setLines(r.lines);
         offsetRef.current = aligned + r.lines.length * ROW_BYTES;
         if (r.done) {
           doneRef.current = true;
           setDone(true);
         }
+        inFlightRef.current = false;
         // 已从 aligned 重拉整页，jumpTo 所在行必为本页第 0 行
         requestAnimationFrame(() => {
           hostRef.current?.querySelector('[data-row="0"]')?.scrollIntoView({ block: 'start' });
         });
       })
       .catch((err) => {
+        if (g !== reqGenRef.current) return;
         doneRef.current = true;
         setDone(true);
         setError(err instanceof Error ? err.message : String(err));
+        inFlightRef.current = false;
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [jumpTo]);
