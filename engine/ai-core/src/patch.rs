@@ -634,7 +634,10 @@ pub fn apply_file(
                     break;
                 }
             }
-            if fuzz >= opts.fuzz || expected.len() <= fuzz as usize * 2 + 1 {
+            // 下一级 fuzz 会切出空窗口（L-2(f+1) <= 0）时停止：空期望没有
+            // 任何上下文可匹配，按声明位置盲 splice 会静默损坏文件（CORE-01）。
+            // 纯插入 hunk（L=0）在 fuzz=0 即命中，不受此守卫影响。
+            if fuzz >= opts.fuzz || expected.len() <= fuzz as usize * 2 + 2 {
                 break;
             }
             fuzz += 1;
@@ -1338,6 +1341,60 @@ index bbbb..0000000\n\
             ..OPTS.clone()
         };
         assert!(apply_file("CHANGED-top\nmiddle\nctx-bottom\n", f, &strict).is_err());
+    }
+
+    /// CORE-01（R4 评审 S1）：fuzz 逐层丢上下文不得切出空窗口后按声明位置
+    /// 盲删盲插。偶数行 hunk（2/4/6）在 base_pos 足够深时，旧守卫差一允许
+    /// 空期望命中 → 无关行被静默删除且报 Applied。失败必须报错、零写盘。
+    #[test]
+    fn apply_fuzz_never_matches_empty_window() {
+        // len=2：base_pos=1，fuzz=1 即切空；文件中无任何期望上下文
+        let p2 = "--- a\n+++ b\n@@ -2,2 +2,2 @@\n ctx\n-del\n+DEL\n";
+        let f2 = &parse_patch(p2).unwrap().files[0];
+        assert!(
+            apply_file("x\ny\nz\n", f2, &OPTS).is_err(),
+            "len=2 空窗口不得盲应用（旧实现会删掉 y 报成功）"
+        );
+        // len=4：base_pos=2，fuzz=2 切空
+        let p4 = "--- a\n+++ b\n@@ -3,4 +3,4 @@\n c1\n-c2\n+C2\n c3\n c4\n";
+        let f4 = &parse_patch(p4).unwrap().files[0];
+        assert!(
+            apply_file("zzz\nyyy\nxxx\nwww\nvvv\nuuu\n", f4, &OPTS).is_err(),
+            "len=4 空窗口不得盲应用"
+        );
+        // len=6：base_pos=3，默认 fuzz=3 恰好切空
+        let p6 = "--- a\n+++ b\n@@ -4,6 +4,6 @@\n c1\n-c2\n+C2\n c3\n c4\n c5\n c6\n";
+        let f6 = &parse_patch(p6).unwrap().files[0];
+        assert!(
+            apply_file("l1\nl2\nl3\nl4\nl5\nl6\nl7\n", f6, &OPTS).is_err(),
+            "len=6 默认 fuzz=3 空窗口不得盲应用"
+        );
+        // dry_run 同样不得误报 OK
+        let dry = PatchApplyOptions {
+            dry_run: true,
+            ..OPTS.clone()
+        };
+        assert!(apply_file("x\ny\nz\n", f2, &dry).is_err());
+    }
+
+    /// CORE-01 防过度修复：len=4 hunk 的合法 fuzz=1（剩 2 行上下文仍须匹配）
+    /// 不受守卫收紧影响。
+    #[test]
+    fn apply_fuzz_len4_drops_one_each_side_still_applies() {
+        let patch = "--- a\n+++ b\n@@ -1,4 +1,4 @@\n c1\n-old\n+NEW\n c3\n c4\n";
+        let f = &parse_patch(patch).unwrap().files[0];
+        // 首行上下文被改：fuzz=1 丢首尾各一行后 [old, c3] 仍须真实命中
+        match apply_file("CHANGED\nold\nc3\nc4\n", f, &OPTS).unwrap() {
+            ApplyOutcome::Applied {
+                text, fuzz_used, ..
+            } => {
+                assert_eq!(text, "CHANGED\nNEW\nc3\nc4\n");
+                assert_eq!(fuzz_used, 1);
+            }
+            _ => panic!("应成功"),
+        }
+        // 剩余上下文也不存在 → 仍须失败（不得退化为空窗口盲插）
+        assert!(apply_file("CHANGED\nnope\nnada\nc4\n", f, &OPTS).is_err());
     }
 
     #[test]
