@@ -9,7 +9,7 @@ import { cleanup, fireEvent, render, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as MockedModule from '../../ipc/engineProcess';
 import type { EngineCapabilities } from '../../protocol/types';
-import type { Tab } from '../../shell/shellState';
+import type { HexTabData, Tab } from '../../shell/shellState';
 
 vi.mock('../../ipc/engineProcess', async (importOriginal) => {
   const actual = await importOriginal<typeof MockedModule>();
@@ -61,7 +61,7 @@ const TAB = {
   kind: 'hex',
   title: '十六进制比较：a ⇄ b',
   hex: { left: '/tmp/a.bin', right: '/tmp/b.bin', sessionId: 's-hex' },
-} as Tab & { kind: 'hex' };
+} as Tab & { kind: 'hex'; hex: HexTabData };
 
 function jump(container: HTMLElement, hexAddr: string): void {
   const input = container.querySelector('.aic-hex-jump') as HTMLInputElement;
