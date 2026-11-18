@@ -37,6 +37,7 @@ import {
   trackSession,
 } from '../../ipc/engineProcess';
 import { resetShellForTest, useShell } from '../../shell/store';
+import { S } from '../../strings';
 import { deleteEditDoc, getEditDoc, newEditDoc, putEditDoc } from './editModel';
 import { TextEditView } from './TextEditView';
 
@@ -111,23 +112,9 @@ function seedTab(tab: Tab): void {
   }));
 }
 
-/** 取得组件内部真实 CM 实例（等价用户输入入口） */
-function cmView(container: HTMLElement): EditorView {
-  const content = container.querySelector('.cm-content');
-  expect(content).toBeTruthy();
-  const view = EditorView.findFromDOM(content as HTMLElement);
-  expect(view).toBeTruthy();
-  return view as EditorView;
-}
-
-beforeEach(() => {
-  resetShellForTest();
-  // 会话级缓存与通知都是模块级状态：逐个用例清空，避免相互污染
-  deleteEditDoc(SID);
-  useShell.setState({ notice: null });
-  vi.clearAllMocks();
-  mockCaps.mockReturnValue(caps());
-  mockOpenText.mockResolvedValue({
+/** text/open 应答（A3：`leftTrailingEol` 缺省 = 旧引擎不回报） */
+function openResult(over: Record<string, unknown> = {}): never {
+  return {
     sessionId: SID,
     leftLineCount: 2,
     rightLineCount: 0,
@@ -144,7 +131,27 @@ beforeEach(() => {
     },
     leftEncoding: 'GB18030',
     rightEncoding: '',
-  } as never);
+    ...over,
+  } as never;
+}
+
+/** 取得组件内部真实 CM 实例（等价用户输入入口） */
+function cmView(container: HTMLElement): EditorView {
+  const content = container.querySelector('.cm-content');
+  expect(content).toBeTruthy();
+  const view = EditorView.findFromDOM(content as HTMLElement);
+  expect(view).toBeTruthy();
+  return view as EditorView;
+}
+
+beforeEach(() => {
+  resetShellForTest();
+  // 会话级缓存与通知都是模块级状态：逐个用例清空，避免相互污染
+  deleteEditDoc(SID);
+  useShell.setState({ notice: null });
+  vi.clearAllMocks();
+  mockCaps.mockReturnValue(caps());
+  mockOpenText.mockResolvedValue(openResult());
   mockLoadLines.mockResolvedValue(['第一行', '第二行']);
   installFakeEngine(['第一行', '第二行']);
   mockSaveText.mockResolvedValue({
@@ -284,6 +291,92 @@ describe('TextEditView 崩溃重放', () => {
     expect(doc.engineSnapshot).toEqual(['我的修改']);
     expect(getEditDoc('text-old')).toBeUndefined();
     await waitFor(() => expect(cmView(container).state.doc.toString()).toBe('我的修改'));
+  });
+});
+
+describe('TextEditView A3（末行行尾符）', () => {
+  it('引擎回报末尾有换行：文档按它构建，状态栏给出标记', async () => {
+    mockOpenText.mockResolvedValue(openResult({ leftTrailingEol: true }));
+    seedTab(editTab());
+    const { container } = render(<TextEditView tab={editTab()} />);
+
+    await waitFor(() => expect(screen.getByText(/第一行/)).toBeTruthy());
+    // "a\n" 与 "a" 都是 2 行——差别只在末行之后有没有换行
+    expect(cmView(container).state.doc.toString()).toBe('第一行\n第二行\n');
+    expect(screen.getByText(S.edit.eofOn)).toBeTruthy();
+  });
+
+  it('旧引擎不回报该字段：退回旧语义且不显示标记', async () => {
+    seedTab(editTab());
+    const { container } = render(<TextEditView tab={editTab()} />);
+
+    await waitFor(() => expect(screen.getByText(/第一行/)).toBeTruthy());
+    expect(cmView(container).state.doc.toString()).toBe('第一行\n第二行');
+    expect(screen.queryByText(S.edit.eofOn)).toBeNull();
+    expect(screen.queryByText(S.edit.eofOff)).toBeNull();
+  });
+
+  it('删掉末尾换行：只发 EOF 标记，行内容不动', async () => {
+    mockOpenText.mockResolvedValue(openResult({ leftTrailingEol: true }));
+    seedTab(editTab());
+    const { container } = render(<TextEditView tab={editTab()} />);
+    await waitFor(() => expect(cmView(container).state.doc.length).toBeGreaterThan(0));
+
+    const view = cmView(container);
+    const len = view.state.doc.length;
+    view.dispatch({ changes: { from: len - 1, to: len } }); // 删掉文件末尾那个 '\n'
+
+    await waitFor(() => expect(mockEditText).toHaveBeenCalled());
+    const params = mockEditText.mock.calls.at(-1)![0];
+    expect(params.edits).toEqual([]);
+    expect(params.leftTrailingEol).toBe(false);
+    expect(screen.getByText(S.edit.eofOff)).toBeTruthy();
+  });
+
+  it('全部替换保留末尾换行（WT-01）：尾换行文件替换后 EOF 标记不丢', async () => {
+    mockOpenText.mockResolvedValue(openResult({ leftTrailingEol: true }));
+    seedTab(editTab());
+    const { container } = render(<TextEditView tab={editTab()} />);
+    await waitFor(() => expect(cmView(container).state.doc.toString()).toBe('第一行\n第二行\n'));
+
+    // 打开查找替换条，输入 needle 与替换文本
+    fireEvent.click(screen.getByRole('button', { name: S.edit.find }));
+    fireEvent.change(screen.getByPlaceholderText(S.edit.findPlaceholder), {
+      target: { value: '第一行' },
+    });
+    fireEvent.change(screen.getByPlaceholderText(S.edit.replacePlaceholder), {
+      target: { value: '替换行' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: S.edit.replaceAll }));
+
+    // 替换命中且整篇重写后，末尾换行仍在（不得静默丢字节）
+    await waitFor(() =>
+      expect(cmView(container).state.doc.toString()).toBe('替换行\n第二行\n'),
+    );
+    expect(getEditDoc(SID)!.trailingEol).toBe(true);
+    expect(screen.getByText(S.edit.eofOn)).toBeTruthy();
+  });
+
+  it('全部替换不给无尾换行文件补换行（WT-01 反向）：EOF 标记保持 false', async () => {
+    mockOpenText.mockResolvedValue(openResult({ leftTrailingEol: false }));
+    seedTab(editTab());
+    const { container } = render(<TextEditView tab={editTab()} />);
+    await waitFor(() => expect(cmView(container).state.doc.toString()).toBe('第一行\n第二行'));
+
+    fireEvent.click(screen.getByRole('button', { name: S.edit.find }));
+    fireEvent.change(screen.getByPlaceholderText(S.edit.findPlaceholder), {
+      target: { value: '第一行' },
+    });
+    fireEvent.change(screen.getByPlaceholderText(S.edit.replacePlaceholder), {
+      target: { value: '替换行' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: S.edit.replaceAll }));
+
+    await waitFor(() =>
+      expect(cmView(container).state.doc.toString()).toBe('替换行\n第二行'),
+    );
+    expect(getEditDoc(SID)!.trailingEol).toBe(false);
+    expect(screen.getByText(S.edit.eofOff)).toBeTruthy();
   });
 });
 

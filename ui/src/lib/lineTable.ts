@@ -36,6 +36,37 @@ export function linesToEditText(lines: readonly string[]): string {
   return lines[lines.length - 1] === '' ? `${joined}\n` : joined;
 }
 
+/**
+ * A3：带 EOF 标记的**无损**换算（引擎 `LineTable` 口径）。
+ *
+ * 行数组 + `trailingEol` 才能唯一确定文件文本：
+ * - `buildDocText([], false)` = `""`（空文件）
+ * - `buildDocText([''], true)` = `"\n"`（一个空行）
+ * - `buildDocText(['a'], true)` = `"a\n"`
+ * - `buildDocText(['a'], false)` = `"a"`
+ *
+ * 与只给行数组相比，"a\n" 与 "a" 不再是同一个东西——这正是 A3 要补的表达力。
+ */
+export interface DocLines {
+  lines: string[];
+  trailingEol: boolean;
+}
+
+/** 文件文本 → (行数组, EOF 标记)。`""` 是 0 行；`"\n"` 是 1 个空行。 */
+export function parseDocText(text: string): DocLines {
+  if (text === '') return { lines: [], trailingEol: false };
+  if (text.endsWith('\n')) {
+    return { lines: text.slice(0, -1).split('\n'), trailingEol: true };
+  }
+  return { lines: text.split('\n'), trailingEol: false };
+}
+
+/** (行数组, EOF 标记) → 文件文本（`parseDocText` 的逆运算） */
+export function buildDocText(lines: readonly string[], trailingEol: boolean): string {
+  if (lines.length === 0) return '';
+  return lines.join('\n') + (trailingEol ? '\n' : '');
+}
+
 /** 行数组相等（判脏/收敛判定） */
 export function linesEqual(a: readonly string[], b: readonly string[]): boolean {
   if (a === b) return true;

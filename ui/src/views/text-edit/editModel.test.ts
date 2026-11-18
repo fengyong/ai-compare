@@ -5,6 +5,7 @@ import {
   deleteEditDoc,
   findDirtyEditDocByPath,
   docLinesOf,
+  docNeedsSync,
   editOpFor,
   getEditDoc,
   isDocDirty,
@@ -144,29 +145,36 @@ describe('text-edit/editModel 最小行区间替换', () => {
 });
 
 /** 假引擎：持有行表，按真实语义应用 text/edit */
-function fakeEngine(initial: string[]) {
+function fakeEngine(initial: string[], initialTrailing = false) {
   const table = [...initial];
   let rev = 0;
+  let trailingEol = initialTrailing;
   const calls: TextEditOp[][] = [];
-  const edit = vi.fn(async (edits: TextEditOp[]): Promise<TextEditResult | null> => {
-    calls.push(edits);
-    for (const op of edits) {
-      const end = op.end ?? table.length;
-      const parts = engineParse(op.text);
-      table.splice(op.start, end - op.start, ...parts);
-    }
-    rev += 1;
-    return {
-      sessionId: 's',
-      rev,
-      leftLineCount: table.length,
-      rightLineCount: 0,
-      sectionCount: 0,
-      summary: {},
-      sections: [],
-    } as unknown as TextEditResult;
-  });
-  return { table, edit, calls };
+  /** 每次 text/edit 的 EOF 标记（undefined = 没传，即不改） */
+  const trailingCalls: (boolean | undefined)[] = [];
+  const edit = vi.fn(
+    async (edits: TextEditOp[], trailing?: boolean): Promise<TextEditResult | null> => {
+      calls.push(edits);
+      trailingCalls.push(trailing);
+      if (trailing !== undefined) trailingEol = trailing;
+      for (const op of edits) {
+        const end = op.end ?? table.length;
+        const parts = engineParse(op.text);
+        table.splice(op.start, end - op.start, ...parts);
+      }
+      rev += 1;
+      return {
+        sessionId: 's',
+        rev,
+        leftLineCount: table.length,
+        rightLineCount: 0,
+        sectionCount: 0,
+        summary: {},
+        sections: [],
+      } as unknown as TextEditResult;
+    },
+  );
+  return { table, edit, calls, trailingCalls, trailing: () => trailingEol };
 }
 
 function docOf(lines: string[]): EditDoc {
@@ -176,6 +184,18 @@ function docOf(lines: string[]): EditDoc {
     name: 'a.txt',
     encoding: 'UTF-8',
     lines,
+  });
+}
+
+/** 带 EOF 标记的文档（A3：`trailingEol` 非 null = 引擎回报该信息） */
+function docWithEol(lines: string[], trailingEol: boolean): EditDoc {
+  return newEditDoc({
+    sessionId: 's',
+    path: '/tmp/a.txt',
+    name: 'a.txt',
+    encoding: 'UTF-8',
+    lines,
+    trailingEol,
   });
 }
 
@@ -314,6 +334,83 @@ describe('text-edit/editModel 引擎收敛', () => {
     expect(await syncDocToEngine(doc, { edit })).toBe('unsupported');
     expect(doc.engineSnapshot).toEqual(['a']);
     expect(doc.diverged).toBe(false);
+  });
+});
+
+describe('text-edit/editModel A3（末行行尾符）', () => {
+  it('newEditDoc：标记同时作为收敛基准与判脏基准', () => {
+    const doc = docWithEol(['a'], true);
+    expect(doc.trailingEol).toBe(true);
+    expect(doc.engineTrailingEol).toBe(true);
+    expect(doc.savedTrailingEol).toBe(true);
+    // 旧引擎（不回报）→ 三个字段一起为 null
+    const legacy = docOf(['a']);
+    expect(legacy.trailingEol).toBeNull();
+    expect(legacy.engineTrailingEol).toBeNull();
+    expect(legacy.savedTrailingEol).toBeNull();
+  });
+
+  it('只有 EOF 标记变化：发一次"空 edits + 标记"的 text/edit', async () => {
+    const eng = fakeEngine(['a'], true);
+    const doc = docWithEol(['a'], true);
+    doc.trailingEol = false; // 用户删掉了文件末尾那个换行
+    expect(docNeedsSync(doc)).toBe(true);
+    expect(await syncDocToEngine(doc, { edit: eng.edit })).toBe('ok');
+    expect(eng.calls).toEqual([[]]); // 行内容没动
+    expect(eng.trailingCalls).toEqual([false]);
+    expect(eng.trailing()).toBe(false);
+    expect(eng.table).toEqual(['a']);
+    expect(doc.engineTrailingEol).toBe(false);
+    expect(doc.diverged).toBe(false);
+  });
+
+  it('行内容与 EOF 标记同时变化：一次请求带 edits 与标记', async () => {
+    const eng = fakeEngine(['a'], true);
+    const doc = docWithEol(['a'], true);
+    doc.lines = ['a', 'b'];
+    doc.trailingEol = false;
+    expect(await syncDocToEngine(doc, { edit: eng.edit })).toBe('ok');
+    expect(eng.calls.length).toBe(1);
+    expect(eng.calls[0]).toEqual([{ side: 'left', start: 1, end: 1, text: 'b' }]);
+    expect(eng.trailingCalls).toEqual([false]);
+    expect(eng.table).toEqual(['a', 'b']);
+    expect(eng.trailing()).toBe(false);
+  });
+
+  it('旧引擎（null）：不猜、不回传，与升级前行为一致', async () => {
+    const eng = fakeEngine(['a']);
+    const doc = docOf(['a']);
+    expect(docNeedsSync(doc)).toBe(false);
+    expect(await syncDocToEngine(doc, { edit: eng.edit })).toBe('ok');
+    expect(eng.edit).not.toHaveBeenCalled();
+  });
+
+  it('行变了但标记未知：只发 edits，不带标记参数', async () => {
+    const eng = fakeEngine(['a']);
+    const doc = docOf(['a']);
+    doc.lines = ['b'];
+    expect(await syncDocToEngine(doc, { edit: eng.edit })).toBe('ok');
+    expect(eng.trailingCalls).toEqual([undefined]);
+    expect(eng.table).toEqual(['b']);
+  });
+
+  it('标记已一致时幂等（不再补发 edit）', async () => {
+    const eng = fakeEngine(['a'], false);
+    const doc = docWithEol(['a'], false);
+    expect(docNeedsSync(doc)).toBe(false);
+    expect(await syncDocToEngine(doc, { edit: eng.edit })).toBe('ok');
+    expect(eng.edit).not.toHaveBeenCalled();
+  });
+
+  it('isDocDirty：只在末尾增删换行也算未落盘编辑', () => {
+    const doc = docWithEol(['a'], true);
+    expect(isDocDirty(doc)).toBe(false);
+    doc.trailingEol = false;
+    expect(isDocDirty(doc)).toBe(true);
+    doc.savedTrailingEol = false; // 落盘基准跟上
+    expect(isDocDirty(doc)).toBe(false);
+    // 旧引擎没有该信息，不能凭空判脏
+    expect(isDocDirty(docOf(['a']))).toBe(false);
   });
 });
 

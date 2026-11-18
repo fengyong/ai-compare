@@ -797,6 +797,12 @@ async fn text_open(
                         summary: mapping::summary_to_dto(&t.summary),
                         left_encoding: t.encodings.0.label.clone(),
                         right_encoding: t.encodings.1.label.clone(),
+                        left_trailing_eol: Some(t.left.ends_with_eol()),
+                        right_trailing_eol: if t.single_side {
+                            None
+                        } else {
+                            Some(t.right.ends_with_eol())
+                        },
                     };
                     Ok(Handled::Value(
                         serde_json::to_value(&result).expect("text/open 结果可序列化"),
@@ -893,6 +899,9 @@ async fn text_open(
         (keyed.output.sections, keyed.output.summary)
     };
 
+    // A3：EOF 换行标记要在行表被移入会话之前取出
+    let left_trailing = lt.ends_with_eol();
+    let right_trailing = right_dec.as_ref().map(|_| rt.ends_with_eol());
     let left_line_count = u32::try_from(lt.len()).unwrap_or(u32::MAX);
     let right_line_count = u32::try_from(rt.len()).unwrap_or(u32::MAX);
     let section_count = u32::try_from(sections.len()).unwrap_or(u32::MAX);
@@ -942,6 +951,9 @@ async fn text_open(
             .as_ref()
             .map(|d| d.encoding.to_string())
             .unwrap_or_default(),
+        // A3：行数相同但字节不同的唯一来源（"a\n" vs "a"），必须回传
+        left_trailing_eol: Some(left_trailing),
+        right_trailing_eol: right_trailing,
     };
     Ok(Handled::Value(
         serde_json::to_value(&result).expect("text/open 结果可序列化"),
@@ -973,7 +985,11 @@ async fn text_edit(
     ctx: &HandlerCtx,
 ) -> Result<Handled, RpcErrorObject> {
     let params: ai_protocol::TextEditParams = parse_params(params)?;
-    if params.edits.is_empty() {
+    // A3：只有 EOF 标记变化也是合法编辑（"删掉末尾空行/补一个末尾换行"）
+    if params.edits.is_empty()
+        && params.left_trailing_eol.is_none()
+        && params.right_trailing_eol.is_none()
+    {
         return Err(bad_params("edits 不能为空"));
     }
     let result = with_text_session(&ctx.sessions, &params.session_id, |data| {
@@ -1022,6 +1038,32 @@ async fn text_edit(
             if idx == 0 {
                 data.modified.0 = true;
             } else {
+                data.modified.1 = true;
+            }
+        }
+
+        // 3b. A3：末行 EOF 换行标记。行区间替换无法表达"去掉/补上文件末尾的
+        //     换行"（末行 ending 在替换时会被继承或补风格），因此单独给开关：
+        //     只有**真的改变**时才置 dirty，避免无谓的保存提示。
+        if let Some(flag) = params.left_trailing_eol {
+            // 空表没有"末行"可以挂行尾符：明确报错，不做静默无害化
+            if flag && data.left.is_empty() {
+                return Err(bad_params("左侧没有行（空文件），无法设置末行行尾符"));
+            }
+            if data.left.ends_with_eol() != flag {
+                data.left.set_ends_with_eol(flag);
+                data.modified.0 = true;
+            }
+        }
+        if let Some(flag) = params.right_trailing_eol {
+            if data.single_side {
+                return Err(bad_params("单文件会话没有右侧，不能设置 rightTrailingEol"));
+            }
+            if flag && data.right.is_empty() {
+                return Err(bad_params("右侧没有行（空文件），无法设置末行行尾符"));
+            }
+            if data.right.ends_with_eol() != flag {
+                data.right.set_ends_with_eol(flag);
                 data.modified.1 = true;
             }
         }
@@ -6476,6 +6518,191 @@ mod p10_tests {
             .await
             .unwrap_err();
         assert_eq!(err.code, 411, "别的会话类型占用同 id 时必须 411");
+        drop(dir);
+    }
+
+    /// A3：`text/open` 回传 EOF 换行标记（行数相同、字节不同的唯一区分信息）
+    #[tokio::test]
+    async fn text_open_reports_trailing_eol_flag() {
+        let c = ctx();
+        let dir = tempfile::tempdir().unwrap();
+        let cases: [(&str, &[u8], u32, bool); 5] = [
+            ("empty", b"", 0, false),
+            ("one-lf", b"\n", 1, true),
+            ("no-lf", b"a", 1, false),
+            ("with-lf", b"a\n", 1, true),
+            ("crlf", b"a\r\nb\r\n", 2, true),
+        ];
+        for (name, bytes, lines, trailing) in cases {
+            let f = dir.path().join(name);
+            std::fs::write(&f, bytes).unwrap();
+            let p = f.to_string_lossy().to_string();
+            let v = value_of(text_open(Some(json!({"sessionId":name,"left":p})), &c).await).await;
+            assert_eq!(v["leftLineCount"], lines, "{name} 行数");
+            assert_eq!(v["leftTrailingEol"], trailing, "{name} 末行行尾符标记");
+            assert_eq!(
+                v.get("rightTrailingEol").map(|x| x.is_null()),
+                Some(true),
+                "{name} 单文件会话没有右侧标记"
+            );
+        }
+        drop(dir);
+    }
+
+    /// A3：EOF 标记可编辑（补/去文件末尾换行），并逐字节还原
+    #[tokio::test]
+    async fn text_edit_can_toggle_trailing_eol_and_saves_exact_bytes() {
+        let c = ctx();
+        let dir = tempfile::tempdir().unwrap();
+
+        // 1) 去掉末尾换行："a\r\n" → "a"
+        let f1 = dir.path().join("drop.txt");
+        std::fs::write(&f1, b"a\r\n").unwrap();
+        let p1 = f1.to_string_lossy().to_string();
+        let _ = value_of(text_open(Some(json!({"sessionId":"d1","left":p1})), &c).await).await;
+        let r = value_of(
+            text_edit(
+                Some(json!({"sessionId":"d1","edits":[],"leftTrailingEol":false})),
+                &c,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(r["leftLineCount"], 1, "行数不变，只去掉行尾符");
+        let _ = value_of(
+            text_save(
+                Some(json!({"sessionId":"d1","side":"left","backup":false})),
+                &c,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(std::fs::read(&f1).unwrap(), b"a".to_vec());
+
+        // 2) 补末尾换行且风格跟随已有行："a\r\nb" → "a\r\nb\r\n"
+        let f2 = dir.path().join("add.txt");
+        std::fs::write(&f2, b"a\r\nb").unwrap();
+        let p2 = f2.to_string_lossy().to_string();
+        let _ = value_of(text_open(Some(json!({"sessionId":"d2","left":p2})), &c).await).await;
+        let _ = value_of(
+            text_edit(
+                Some(json!({"sessionId":"d2","edits":[],"leftTrailingEol":true})),
+                &c,
+            )
+            .await,
+        )
+        .await;
+        let _ = value_of(
+            text_save(
+                Some(json!({"sessionId":"d2","side":"left","backup":false})),
+                &c,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(std::fs::read(&f2).unwrap(), b"a\r\nb\r\n".to_vec());
+
+        // 3) UTF-16LE + BOM：去掉末尾换行时 BOM 与编码不变
+        let f3 = dir.path().join("u16.txt");
+        let original = ai_vfs::encode_text("x\r\n", "utf-16le", ai_vfs::Bom::Utf16Le).unwrap();
+        std::fs::write(&f3, &original).unwrap();
+        let p3 = f3.to_string_lossy().to_string();
+        let opened = value_of(text_open(Some(json!({"sessionId":"d3","left":p3})), &c).await).await;
+        assert_eq!(opened["leftEncoding"], "UTF-16LE");
+        let _ = value_of(
+            text_edit(
+                Some(json!({"sessionId":"d3","edits":[],"leftTrailingEol":false})),
+                &c,
+            )
+            .await,
+        )
+        .await;
+        let _ = value_of(
+            text_save(
+                Some(json!({"sessionId":"d3","side":"left","backup":false})),
+                &c,
+            )
+            .await,
+        )
+        .await;
+        let expected = ai_vfs::encode_text("x", "utf-16le", ai_vfs::Bom::Utf16Le).unwrap();
+        assert_eq!(
+            std::fs::read(&f3).unwrap(),
+            expected,
+            "BOM 与 UTF-16LE 必须保留"
+        );
+
+        // 4) 重开：标记与字节一致
+        let re = value_of(text_open(Some(json!({"sessionId":"d1b","left":p1})), &c).await).await;
+        assert_eq!(re["leftTrailingEol"], false);
+        drop(dir);
+    }
+
+    /// A3：EOF 标记的非法用法要明确报错（不静默无害化）
+    #[tokio::test]
+    async fn text_edit_trailing_eol_rejects_empty_table_and_right_on_single_side() {
+        let c = ctx();
+        let dir = tempfile::tempdir().unwrap();
+        let empty = dir.path().join("empty.txt");
+        std::fs::write(&empty, b"").unwrap();
+        let pe = empty.to_string_lossy().to_string();
+        let _ = value_of(text_open(Some(json!({"sessionId":"e1","left":pe})), &c).await).await;
+
+        // 空文件没有末行 → 补行尾符必须报 400，而不是静默什么都没发生
+        let err = text_edit(
+            Some(json!({"sessionId":"e1","edits":[],"leftTrailingEol":true})),
+            &c,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.code, -32602);
+
+        // 单文件会话没有右侧
+        let err = text_edit(
+            Some(json!({"sessionId":"e1","edits":[],"rightTrailingEol":true})),
+            &c,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.code, -32602);
+
+        // 既没有 edits 也没有标记 → 仍是原来的参数错误
+        let err = text_edit(Some(json!({"sessionId":"e1","edits":[]})), &c)
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, -32602);
+        drop(dir);
+    }
+
+    /// A3：只剩 EOF 标记变化时不得重复置 dirty（幂等：第二次同值请求不改状态）
+    #[tokio::test]
+    async fn text_edit_trailing_eol_is_idempotent() {
+        let c = ctx();
+        let dir = tempfile::tempdir().unwrap();
+        let f = dir.path().join("a.txt");
+        std::fs::write(&f, b"a\n").unwrap();
+        let p = f.to_string_lossy().to_string();
+        let _ = value_of(text_open(Some(json!({"sessionId":"idem","left":p})), &c).await).await;
+        let first = value_of(
+            text_edit(
+                Some(json!({"sessionId":"idem","edits":[],"leftTrailingEol":false})),
+                &c,
+            )
+            .await,
+        )
+        .await;
+        let second = value_of(
+            text_edit(
+                Some(json!({"sessionId":"idem","edits":[],"leftTrailingEol":false})),
+                &c,
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(
+            first["rev"].as_u64().unwrap() + 1,
+            second["rev"].as_u64().unwrap()
+        );
         drop(dir);
     }
 

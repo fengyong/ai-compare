@@ -97,6 +97,63 @@ impl LineTable {
         &self.lines[i]
     }
 
+    /// 末行是否带行尾符（即文件是否以换行结束）。
+    ///
+    /// 这是"行表 ⇄ 文件字节"唯一不可由行数推出的信息：`"a\n"` 与 `"a"` 都是
+    /// 1 行，区别只在末行 ending。空表（空文件）视为 false。
+    pub fn ends_with_eol(&self) -> bool {
+        self.lines
+            .last()
+            .is_some_and(|l| l.ending != LineEnding::None)
+    }
+
+    /// 设定末行是否带行尾符（编辑器"末尾回车 / 删掉末尾空行"的落点）。
+    ///
+    /// 补行尾符时风格取表内出现最多的那一种（并列时取先出现的），
+    /// 全表都没有行尾符则用 LF——不猜平台差异，也不动其他行。
+    pub fn set_ends_with_eol(&mut self, has_eol: bool) {
+        // 先算风格再取可变借用（dominant_eol 需要整表）
+        let style = self.dominant_eol();
+        let Some(last) = self.lines.last_mut() else {
+            return;
+        };
+        if has_eol {
+            if last.ending == LineEnding::None {
+                last.ending = style;
+            }
+        } else {
+            last.ending = LineEnding::None;
+        }
+    }
+
+    /// 表内最常见行尾（忽略 None）；并列取先出现，全无则 LF
+    fn dominant_eol(&self) -> LineEnding {
+        let mut lf = 0usize;
+        let mut crlf = 0usize;
+        let mut cr = 0usize;
+        for l in &self.lines {
+            match l.ending {
+                LineEnding::Lf => lf += 1,
+                LineEnding::CrLf => crlf += 1,
+                LineEnding::Cr => cr += 1,
+                LineEnding::None => {}
+            }
+        }
+        let mut best = LineEnding::Lf;
+        let mut best_n = 0usize;
+        for (cand, n) in [
+            (LineEnding::Lf, lf),
+            (LineEnding::CrLf, crlf),
+            (LineEnding::Cr, cr),
+        ] {
+            if n > best_n {
+                best = cand;
+                best_n = n;
+            }
+        }
+        best
+    }
+
     /// 行区间文本（半开区间）
     pub fn lines_range(&self, start: usize, end: usize) -> &[LineEntry] {
         &self.lines[start..end]

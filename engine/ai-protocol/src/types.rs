@@ -919,6 +919,14 @@ pub struct TextOpenResult {
     /// UI 据此显示"当前按 X 解码"；保存由引擎按同一编码回写）
     pub left_encoding: String,
     pub right_encoding: String,
+    /// A3：该侧文件是否以行尾符结束（EOF 换行标记）。
+    ///
+    /// 行数无法表达它（`"a\n"` 与 `"a"` 都是 1 行），但保存要逐字节还原就必须
+    /// 知道。编辑器据此决定末行之后是否还有一个"幽灵空行"，以及删除末尾空行
+    /// 时是否需要真的去掉行尾符。旧引擎不返回（None）→ UI 按"未知"处理，
+    /// 不回传该侧标记（保持旧行为，不做猜测）。
+    pub left_trailing_eol: Option<bool>,
+    pub right_trailing_eol: Option<bool>,
 }
 
 /// section 类别（docs/03 §4.1 SectionKind 的双文件比较子集；Conflict 为三向合并专用）
@@ -1238,6 +1246,12 @@ pub struct TextEditOp {
 pub struct TextEditParams {
     pub session_id: String,
     pub edits: Vec<TextEditOp>,
+    /// A3：编辑后该侧末行是否带行尾符（None = 不改变）。
+    ///
+    /// 只在**与应用结果不同**时给出；用于表达"删掉最后一个空行"、
+    /// "在文件末尾补一个换行"这类行区间替换无法表达的变化。
+    pub left_trailing_eol: Option<bool>,
+    pub right_trailing_eol: Option<bool>,
 }
 
 /// text/edit 应答：引擎按会话配置重 diff 后的**权威** section 全量与统计。
@@ -4076,10 +4090,15 @@ mod tests {
             summary: DiffSummary::default(),
             left_encoding: "GBK".into(),
             right_encoding: "UTF-8".into(),
+            // A3：EOF 换行标记（None = 单文件会话没有右侧 / 旧引擎不返回）
+            left_trailing_eol: Some(true),
+            right_trailing_eol: Some(false),
         };
         let v = serde_json::to_value(&r).unwrap();
         assert_eq!(v["leftEncoding"], "GBK");
         assert_eq!(v["rightEncoding"], "UTF-8");
+        assert_eq!(v["leftTrailingEol"], true);
+        assert_eq!(v["rightTrailingEol"], false);
     }
 
     #[test]

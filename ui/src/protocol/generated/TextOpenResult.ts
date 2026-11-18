@@ -6,4 +6,13 @@ export type TextOpenResult = { sessionId: string, leftLineCount: number, rightLi
  * R3-15：两侧实际生效的编码标签（自动检测时回传检测结果，
  * UI 据此显示"当前按 X 解码"；保存由引擎按同一编码回写）
  */
-leftEncoding: string, rightEncoding: string, };
+leftEncoding: string, rightEncoding: string, 
+/**
+ * A3：该侧文件是否以行尾符结束（EOF 换行标记）。
+ *
+ * 行数无法表达它（`"a\n"` 与 `"a"` 都是 1 行），但保存要逐字节还原就必须
+ * 知道。编辑器据此决定末行之后是否还有一个"幽灵空行"，以及删除末尾空行
+ * 时是否需要真的去掉行尾符。旧引擎不返回（None）→ UI 按"未知"处理，
+ * 不回传该侧标记（保持旧行为，不做猜测）。
+ */
+leftTrailingEol: boolean | null, rightTrailingEol: boolean | null, };

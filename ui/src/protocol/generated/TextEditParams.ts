@@ -7,4 +7,11 @@ import type { TextEditOp } from "./TextEditOp";
  * 原子语义：任一编辑越界/非法则整批不落会话（引擎保持编辑前状态），
  * 调用方可原样重试或整侧重放，不会留下半 applied 的分叉状态。
  */
-export type TextEditParams = { sessionId: string, edits: Array<TextEditOp>, };
+export type TextEditParams = { sessionId: string, edits: Array<TextEditOp>, 
+/**
+ * A3：编辑后该侧末行是否带行尾符（None = 不改变）。
+ *
+ * 只在**与应用结果不同**时给出；用于表达"删掉最后一个空行"、
+ * "在文件末尾补一个换行"这类行区间替换无法表达的变化。
+ */
+leftTrailingEol: boolean | null, rightTrailingEol: boolean | null, };

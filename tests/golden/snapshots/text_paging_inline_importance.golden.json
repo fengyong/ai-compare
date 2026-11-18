@@ -52,8 +52,10 @@
     "result": {
       "leftEncoding": "UTF-8",
       "leftLineCount": 4,
+      "leftTrailingEol": true,
       "rightEncoding": "UTF-8",
       "rightLineCount": 5,
+      "rightTrailingEol": true,
       "sectionCount": 4,
       "sessionId": "t1",
       "summary": {

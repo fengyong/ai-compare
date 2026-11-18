@@ -30,6 +30,7 @@ import {
   syncDocToEngine,
   type EditDoc,
 } from './editModel';
+import { editorSyncIo } from './editIo';
 
 export interface SaveEditOptions {
   /** 覆盖前备份（缺省 true，与引擎默认一致） */
@@ -95,9 +96,7 @@ async function saveEditDocLocked(doc: EditDoc, opts: SaveEditOptions): Promise<S
   // 1) 收敛引擎内容（锁内：此后引擎 == doc.lines，直到本次落盘结束）
   let outcome: Awaited<ReturnType<typeof convergeDocInLock>>;
   try {
-    outcome = await convergeDocInLock(doc, {
-      edit: (edits) => engine.editText({ sessionId: doc.sessionId, edits }),
-    });
+    outcome = await convergeDocInLock(doc, editorSyncIo(doc.sessionId));
   } catch (err) {
     return failed(describeSaveError(err));
   }
@@ -107,6 +106,8 @@ async function saveEditDocLocked(doc: EditDoc, opts: SaveEditOptions): Promise<S
   // A0：这份快照就是**即将写盘的内容**。后面的 await 期间用户可能继续输入，
   // 但那些输入不在本次落盘里，绝不能记成"已保存"。
   const snapshot = [...doc.lines];
+  // A3：EOF 标记同属"写下去的那一份"，必须与 snapshot 一起记账
+  const snapshotTrailing = doc.trailingEol;
 
   // 2) 落盘
   let res: TextSaveResult | null;
@@ -130,14 +131,13 @@ async function saveEditDocLocked(doc: EditDoc, opts: SaveEditOptions): Promise<S
   doc.path = entry.path;
   doc.name = basename(entry.path);
   doc.savedLines = snapshot;
+  doc.savedTrailingEol = snapshotTrailing;
 
   const stillDirty = isDocDirty(doc);
   if (stillDirty) {
     // 保存期间的新输入继续送给引擎（用户不必为"保存竞态"再点一次保存才能看到
     // 引擎追上）；这不影响脏标记——文件确实还不是 UI 的最新内容。
-    void syncDocToEngine(doc, {
-      edit: (edits) => engine.editText({ sessionId: doc.sessionId, edits }),
-    }).catch(() => undefined);
+    void syncDocToEngine(doc, editorSyncIo(doc.sessionId)).catch(() => undefined);
   }
   return {
     ok: true,

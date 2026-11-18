@@ -13,9 +13,11 @@ import {
   type CompiledQuery,
 } from '../../lib/findCore';
 import { EditablePane } from './editablePane';
+import { buildDocText, parseDocText } from '../../lib/lineTable';
 import {
   deleteEditDoc,
   docLinesOf,
+  docNeedsSync,
   findDirtyEditDocByPath,
   getEditDoc,
   isDocDirty,
@@ -26,6 +28,7 @@ import {
   type EditDoc,
 } from './editModel';
 import { describeSaveError, saveEditDoc, savedNotice } from './textEditSave';
+import { editorSyncIo } from './editIo';
 import { EditFindBar, type EditFindState } from './EditFindBar';
 import { registerEditView } from './editViewBus';
 
@@ -47,6 +50,24 @@ interface FindHit {
   line: number;
   from: number;
   to: number;
+}
+
+/** 文档文本：已知 EOF 标记 → 精确还原；未知 → 退回 join（旧语义） */
+function docTextOf(doc: EditDoc): string {
+  return doc.trailingEol === null
+    ? doc.lines.join('\n')
+    : buildDocText(doc.lines, doc.trailingEol);
+}
+
+/** CM 文档文本 → 模型真值（行数组 + EOF 标记） */
+function applyDocText(doc: EditDoc, text: string): void {
+  if (doc.trailingEol === null) {
+    doc.lines = docLinesOf(text, doc.lines);
+    return;
+  }
+  const parsed = parseDocText(text);
+  doc.lines = parsed.lines;
+  doc.trailingEol = parsed.trailingEol;
 }
 
 /** 文档偏移：行数组 join('\n') 坐标系（与 CM 文档一致） */
@@ -104,9 +125,7 @@ export function TextEditView({ tab }: { tab: Tab }) {
       const doc = docRef.current;
       if (!doc || disposedRef.current) return;
       try {
-        const outcome = await syncDocToEngine(doc, {
-          edit: (edits) => engine.editText({ sessionId: doc.sessionId, edits }),
-        });
+        const outcome = await syncDocToEngine(doc, editorSyncIo(doc.sessionId));
         if (disposedRef.current) return;
         if (outcome === 'unsupported') {
           setReadOnly(true);
@@ -156,11 +175,13 @@ export function TextEditView({ tab }: { tab: Tab }) {
       const host = hostRef.current;
       if (!host) return;
       const pane = EditablePane.create(host, {
-        docText: doc.lines.join('\n'),
+        // A3：已知 EOF 标记时按它构建文档（末行之后是否还有一个空行），
+        // 否则退回旧语义（join，不假设末尾换行）
+        docText: docTextOf(doc),
         onChange: (text) => {
           const cur = docRef.current;
           if (!cur) return;
-          cur.lines = docLinesOf(text, cur.lines);
+          applyDocText(cur, text);
           markContentDirty(tab.id, { left: isDocDirty(cur), right: false });
           bump((v) => v + 1);
           scheduleSync();
@@ -215,18 +236,28 @@ export function TextEditView({ tab }: { tab: Tab }) {
         // 崩溃重放/重新打开同一文件：旧会话里的未落盘编辑按路径认领回来，
         // 引擎真值（文件内容）作为收敛基准，随后重放用户输入。
         const stale = findDirtyEditDocByPath(path, sessionId);
+        // A3：旧引擎（无 textOpenEol 能力）不回传 → null = 退回旧语义
+        const engineTrailing =
+          typeof opened.leftTrailingEol === 'boolean' ? opened.leftTrailingEol : null;
         const doc = newEditDoc({
           sessionId,
           path,
           name: edit?.name || path.split(/[\\/]/).pop() || path,
           encoding: opened.leftEncoding,
           lines: stale ? [...stale.lines] : engineLines,
+          // UI 真值优先认领旧文档（未落盘编辑含 EOF 改动）；引擎不回报则保持 null
+          trailingEol:
+            engineTrailing === null
+              ? null
+              : (stale?.trailingEol ?? engineTrailing),
         });
         if (stale) {
           doc.savedLines = [...stale.savedLines];
+          doc.savedTrailingEol = stale.savedTrailingEol;
           deleteEditDoc(stale.sessionId);
         }
         doc.engineSnapshot = [...engineLines];
+        doc.engineTrailingEol = engineTrailing;
         putEditDoc(doc);
         attach(doc, editable);
         if (isDocDirty(doc)) scheduleSync();
@@ -241,10 +272,8 @@ export function TextEditView({ tab }: { tab: Tab }) {
       // 卸载（切标签/重绑）前把待发编辑交给引擎：否则引擎侧长期落后于 UI，
       // 期间任何"按引擎内容落盘"的路径都会写出旧内容。
       const doc = docRef.current;
-      if (doc && !linesEqual(doc.engineSnapshot, doc.lines)) {
-        void syncDocToEngine(doc, {
-          edit: (edits) => engine.editText({ sessionId: doc.sessionId, edits }),
-        }).catch(() => undefined);
+      if (doc && docNeedsSync(doc)) {
+        void syncDocToEngine(doc, editorSyncIo(doc.sessionId)).catch(() => undefined);
       }
       disposedRef.current = true;
       paneRef.current?.destroy();
@@ -415,7 +444,10 @@ export function TextEditView({ tab }: { tab: Tab }) {
       (line) => replaceAllInLine(line, compiled, findState.replacement, findState.regex) ?? line,
     );
     if (linesEqual(next, doc.lines)) return;
-    const text = next.join('\n');
+    // A3：整篇重写必须带上 EOF 标记，否则尾换行被 replaceRange 抹掉，
+    // 保存时静默丢字节（与逐字编辑同一份 buildDocText 口径）
+    const text =
+      doc.trailingEol === null ? next.join('\n') : buildDocText(next, doc.trailingEol);
     pane.replaceRange(0, pane.view.state.doc.length, text);
     window.setTimeout(() => refreshFind(findState), 0);
   }, [compiledNow, findState, refreshFind]);
@@ -526,6 +558,12 @@ export function TextEditView({ tab }: { tab: Tab }) {
             <span>{S.edit.cursorAt(cursor.line, cursor.col)}</span>
             <span>{`${S.edit.encodingLabel} ${doc.encoding}`}</span>
             <span className="dim">{S.edit.eolPreserved}</span>
+            {/* A3：末行行尾符是字节级信息（"a\n" ≠ "a"），状态栏显式给出 */}
+            {doc.trailingEol !== null && (
+              <span className="dim" title={S.edit.eolPreserved}>
+                {doc.trailingEol ? S.edit.eofOn : S.edit.eofOff}
+              </span>
+            )}
             {doc.diverged && <span className="aic-edit-error-inline">{S.edit.diverged}</span>}
           </>
         ) : (

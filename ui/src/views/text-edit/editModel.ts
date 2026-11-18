@@ -16,12 +16,13 @@
  * - `linesToEditText(lines)`：末行为空时必须补一个 `'\n'`，否则引擎会把
  *   `['']`/`['a','']` 解析成 0/1 行（`from_text` 不把结尾换行当作新行）。
  *
- * ## 已知边界：文件末行换行
+ * ## A3：末行行尾符（EOF 标记）
  *
- * 引擎行表无法表达"末行为空且无行尾符"，因此**在文件末尾新增空行**时会被写成
- * 一个带行尾符的空行（`"a\nb"` 按一次 Enter → `"a\nb\n\n"`）。这是协议
- * 表达力的边界，不是本模块的换算错误：行数始终一致，保存不会丢内容，
- * 且每次回车恰好追加一个换行。视图层不对此做遮掩。
+ * 行数相同、字节不同的唯一来源是"末行有没有行尾符"（`"a\n"` 与 `"a"` 都是
+ * 1 行）。引擎在 `text/open` 回传该标记、在 `text/edit` 接受该标记的改写，
+ * 因此模型持有 `trailingEol`（UI 真值）+ `engineTrailingEol`（收敛基准）：
+ * 两者不同就补发一次"空 edits + 标记"的 `text/edit`。旧引擎不回传（`null`）
+ * 时退回旧语义（不猜、不回传），行为与升级前一致。
  */
 
 import type { TextEditOp, TextEditResult } from '../../protocol/types';
@@ -42,10 +43,22 @@ export interface EditDoc {
   engineSnapshot: string[];
   /** 上次落盘时的内容（判脏基准） */
   savedLines: string[];
+  /**
+   * A3：上次落盘时的 EOF 标记（判脏基准）。
+   * 只比 `lines` 会漏掉"只在末尾增删一个换行"——行数组不变、字节变了。
+   */
+  savedTrailingEol: boolean | null;
   /** 引擎会话版本号（text/edit 应答回填） */
   rev: number;
   /** 收敛失败（UI 与引擎内容无法对齐；保存必须被阻止，不得写陈旧内容） */
   diverged: boolean;
+  /**
+   * A3：左侧末行是否带行尾符（UI 真值）。
+   * `null` = 引擎不回报该信息（旧引擎）→ 退回"行数组 + 无尾换行"的旧语义。
+   */
+  trailingEol: boolean | null;
+  /** 引擎已确认的 EOF 标记（收敛基准；与 `trailingEol` 不同即需要一次 edit） */
+  engineTrailingEol: boolean | null;
 }
 
 // 行尾换算统一在 `lib/lineTable`（A1：单窗格与双栏比较必须共用一份，
@@ -99,7 +112,7 @@ export type SyncOutcome = 'ok' | 'unsupported' | 'mismatch';
 
 export interface EditSyncIO {
   /** text/edit；null = 引擎无此能力（编辑器必须转只读，不得允许"保存假成功"） */
-  edit(edits: TextEditOp[]): Promise<TextEditResult | null>;
+  edit(edits: TextEditOp[], trailing: boolean | undefined): Promise<TextEditResult | null>;
 }
 
 /** 收敛最多尝试的轮数（每轮 = 一次增量 + 可选一次整侧重放） */
@@ -156,24 +169,29 @@ export async function convergeDocInLock(doc: EditDoc, io: EditSyncIO): Promise<S
 async function runSync(doc: EditDoc, io: EditSyncIO): Promise<SyncOutcome> {
   doc.diverged = false;
   for (let round = 0; round < MAX_SYNC_ROUNDS; round++) {
-    if (linesEqual(doc.engineSnapshot, doc.lines)) return 'ok';
-    const span = computeLineEdit(doc.engineSnapshot, doc.lines);
-    if (span) {
-      // io.edit 的真实错误（断连/区间非法）向上抛：调用方必须看见，不得当成"已同步"
-      const res = await io.edit([editOpFor(span)]);
-      if (res === null) return 'unsupported';
-      doc.rev = res.rev;
-      if (res.leftLineCount === doc.lines.length) {
-        doc.engineSnapshot = [...doc.lines];
-        return 'ok';
-      }
+    const linesInSync = linesEqual(doc.engineSnapshot, doc.lines);
+    // 旧引擎不回报 EOF 标记（null）→ 不参与收敛判定，也不回传（不改口径）
+    const trailingInSync = doc.trailingEol === null || doc.engineTrailingEol === doc.trailingEol;
+    if (linesInSync && trailingInSync) return 'ok';
+    const span = linesInSync ? null : computeLineEdit(doc.engineSnapshot, doc.lines);
+    // 只有 EOF 标记变化时 edits 可以为空（引擎明确支持该用法）
+    const trailing = trailingInSync ? undefined : (doc.trailingEol ?? undefined);
+    // io.edit 的真实错误（断连/区间非法）向上抛：调用方必须看见，不得当成"已同步"
+    const res = await io.edit(span ? [editOpFor(span)] : [], trailing);
+    if (res === null) return 'unsupported';
+    doc.rev = res.rev;
+    if (res.leftLineCount === doc.lines.length) {
+      doc.engineSnapshot = [...doc.lines];
+      doc.engineTrailingEol = doc.trailingEol;
+      return 'ok';
     }
     // 行数不符：整侧重放一次（把引擎行表直接改写为 UI 内容）
-    const res2 = await io.edit([replayOpFor(doc.lines)]);
+    const res2 = await io.edit([replayOpFor(doc.lines)], trailing);
     if (res2 === null) return 'unsupported';
     doc.rev = res2.rev;
     if (res2.leftLineCount === doc.lines.length) {
       doc.engineSnapshot = [...doc.lines];
+      doc.engineTrailingEol = doc.trailingEol;
       return 'ok';
     }
     // 重放后仍不符：内容口径不一致，停止并标记（保存将被阻止）
@@ -202,9 +220,26 @@ export function findDirtyEditDocByPath(
   return undefined;
 }
 
-/** 是否有未落盘编辑（与引擎状态无关，只看 UI 真值） */
+/**
+ * 是否有"待同步到引擎"的变化（行内容或 EOF 标记任一不同）。
+ *
+ * 卸载冲刷等"尽力同步"入口用它判定：只看行内容会漏掉"只在末尾按了 Enter
+ * 但没敲字符"这类变化（A3）。
+ */
+export function docNeedsSync(doc: EditDoc): boolean {
+  if (!linesEqual(doc.engineSnapshot, doc.lines)) return true;
+  return doc.trailingEol !== null && doc.engineTrailingEol !== doc.trailingEol;
+}
+
+/**
+ * 是否有未落盘编辑（与引擎状态无关，只看 UI 真值）。
+ *
+ * A3：行数组 + EOF 标记都要比——否则"只删掉文件末尾那个换行"（`"a\n"` → `"a"`）
+ * 会被判成干净：标签不显示脏点、关闭不询问、`stale` 认领也不会认它。
+ */
 export function isDocDirty(doc: EditDoc): boolean {
-  return !linesEqual(doc.lines, doc.savedLines);
+  if (!linesEqual(doc.lines, doc.savedLines)) return true;
+  return doc.trailingEol !== null && doc.trailingEol !== doc.savedTrailingEol;
 }
 
 /** 视图状态栏文本（纯函数，便于测试） */
@@ -249,9 +284,12 @@ export function newEditDoc(init: {
   name: string;
   encoding: string;
   lines: string[];
+  /** A3：末行 EOF 换行标记；省略/null = 引擎不回报（旧语义） */
+  trailingEol?: boolean | null;
   rev?: number;
 }): EditDoc {
   const lines = [...init.lines];
+  const trailingEol = init.trailingEol ?? null;
   return {
     sessionId: init.sessionId,
     path: init.path,
@@ -260,7 +298,10 @@ export function newEditDoc(init: {
     lines,
     engineSnapshot: [...lines],
     savedLines: [...lines],
+    savedTrailingEol: trailingEol,
     rev: init.rev ?? 0,
     diverged: false,
+    trailingEol,
+    engineTrailingEol: trailingEol,
   };
 }

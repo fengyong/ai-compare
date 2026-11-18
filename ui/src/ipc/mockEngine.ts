@@ -151,6 +151,8 @@ interface MockTextSession {
   openParams: string;
   /** 打开时解析出的编码标签（幂等应答需要原样回传） */
   encoding: string;
+  /** A3：两侧末行是否带行尾符（mock 生成的文本总以换行结尾） */
+  trailingEol: { left: boolean; right: boolean };
 }
 
 /** P8：mock 三路合并会话（扫描行快照 + 计划/执行的落盘对象） */
@@ -1054,6 +1056,8 @@ export class MockEngine {
           summary: live.summary,
           leftEncoding: live.encoding,
           rightEncoding: live.rightPath === '' ? '' : live.encoding,
+          leftTrailingEol: live.trailingEol.left,
+          rightTrailingEol: live.rightPath === '' ? null : live.trailingEol.right,
         };
       }
       throw new RpcErr(
@@ -1095,6 +1099,8 @@ export class MockEngine {
       modified: { left: false, right: false },
       openParams,
       encoding,
+      // mock 落盘序列化总以换行结尾（见 mockTextOf）→ 非空即 true
+      trailingEol: { left: effective.leftLines.length > 0, right: true },
     });
     if (p.left) this.files.set(p.left, mockTextOf(effective.leftLines));
     if (p.right) this.files.set(p.right, mockTextOf(effective.rightLines));
@@ -1106,6 +1112,8 @@ export class MockEngine {
       summary,
       leftEncoding: encoding,
       rightEncoding: single ? '' : encoding,
+      leftTrailingEol: effective.leftLines.length > 0,
+      rightTrailingEol: single || effective.rightLines.length === 0 ? null : true,
     };
   }
 
@@ -1130,7 +1138,12 @@ export class MockEngine {
    */
   private textEdit(p: TextEditParams): TextEditResult {
     const s = this.requireText(p.sessionId);
-    if (!Array.isArray(p.edits) || p.edits.length === 0) {
+    // A3：只有 EOF 标记变化（空 edits）也是合法编辑
+    if (
+      (!Array.isArray(p.edits) || p.edits.length === 0) &&
+      p.leftTrailingEol == null &&
+      p.rightTrailingEol == null
+    ) {
       throw new InvalidParams('edits 不能为空');
     }
     const lens: Record<'left' | 'right', number> = {
@@ -1161,6 +1174,21 @@ export class MockEngine {
       const arr = sp.side === 'left' ? s.leftLines : s.rightLines;
       arr.splice(sp.start, sp.end - sp.start, ...sp.lines);
       s.modified[sp.side] = true;
+    }
+    // A3：EOF 标记（只有真的变化才置 dirty，与引擎同口径）
+    if (p.leftTrailingEol != null && s.trailingEol.left !== p.leftTrailingEol) {
+      if (p.leftTrailingEol && s.leftLines.length === 0) {
+        throw new InvalidParams('左侧没有行（空文件），无法设置末行行尾符');
+      }
+      s.trailingEol.left = p.leftTrailingEol;
+      s.modified.left = true;
+    }
+    if (p.rightTrailingEol != null && s.trailingEol.right !== p.rightTrailingEol) {
+      if (p.rightTrailingEol && s.rightLines.length === 0) {
+        throw new InvalidParams('右侧没有行（空文件），无法设置末行行尾符');
+      }
+      s.trailingEol.right = p.rightTrailingEol;
+      s.modified.right = true;
     }
     s.sections = toSections(diffLinesOps(s.leftLines, s.rightLines));
     s.summary = summarize(s.sections);

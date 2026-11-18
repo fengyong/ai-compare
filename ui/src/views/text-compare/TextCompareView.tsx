@@ -58,6 +58,7 @@ import {
   type SidePatch,
 } from './editPatch';
 import { flushEdits, newEditSyncState, type EditSyncState } from './editSync';
+import { textEditParams } from '../../protocol/editParams';
 import {
   emptyUndoState,
   popRedo,
@@ -435,7 +436,8 @@ export function TextCompareView({ tab }: { tab: Tab }) {
         editSyncRef.current.set(model.sessionId, st);
       }
       await flushEdits(st, ops, {
-        edit: (edits) => editText({ sessionId: model.sessionId, edits }),
+        // 比较视图不改 EOF 标记（末行有无行尾符由引擎行表原样保留）
+        edit: (edits) => editText(textEditParams(model.sessionId, edits)),
         lines: () => ({ left: model.leftLines, right: model.rightLines }),
         adopt: async (res) => {
           model.sections = res.sections;

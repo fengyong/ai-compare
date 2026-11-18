@@ -1116,6 +1116,118 @@ try {
   await client.request('session/close', { sessionId: 'e2e-rep-1' });
   await client.request('session/close', { sessionId: 'e2e-rep-2' });
 
+  // 3g. A3：末行行尾符（EOF 标记）—— 行数相同、字节不同的唯一来源
+  const A3 = join(dir, 'eol');
+  mkdirSync(A3, { recursive: true });
+  const a3L = join(A3, 'l.txt');
+  const a3R = join(A3, 'r.txt');
+  writeFileSync(a3L, 'a');
+  writeFileSync(a3R, 'a\n');
+  const a3Open = await client.request('text/open', {
+    sessionId: 'e2e-eol-1',
+    left: a3L,
+    right: a3R,
+  });
+  ok(
+    a3Open?.leftLineCount === 1 &&
+      a3Open?.rightLineCount === 1 &&
+      a3Open?.leftTrailingEol === false &&
+      a3Open?.rightTrailingEol === true,
+    'A3 open 回传两侧 EOF 标记（同样 1 行，字节不同）',
+    `left=${a3Open?.leftTrailingEol} right=${a3Open?.rightTrailingEol}`,
+  );
+  // 补末尾换行：空 edits + 标记也是合法编辑
+  const a3Add = await client.request('text/edit', {
+    sessionId: 'e2e-eol-1',
+    edits: [],
+    leftTrailingEol: true,
+  });
+  ok(
+    a3Add?.rev === 1 && a3Add?.leftLineCount === 1,
+    'A3 空 edits + 标记合法（行数不变）',
+    `rev=${a3Add?.rev} lines=${a3Add?.leftLineCount}`,
+  );
+  await client.request('text/save', { sessionId: 'e2e-eol-1', side: 'left', backup: false });
+  ok(
+    readFileSync(a3L, 'utf8') === 'a\n',
+    'A3 补末尾换行后落盘为 "a\\n"',
+    JSON.stringify(readFileSync(a3L, 'utf8')),
+  );
+  // 去掉末尾换行：字节必须真的少一个
+  await client.request('text/edit', {
+    sessionId: 'e2e-eol-1',
+    edits: [],
+    leftTrailingEol: false,
+  });
+  await client.request('text/save', { sessionId: 'e2e-eol-1', side: 'left', backup: false });
+  ok(
+    readFileSync(a3L, 'utf8') === 'a',
+    'A3 去掉末尾换行后落盘为 "a"（不多也不少）',
+    JSON.stringify(readFileSync(a3L, 'utf8')),
+  );
+  const a3Re = await client.request('text/open', {
+    sessionId: 'e2e-eol-2',
+    left: a3L,
+    right: a3R,
+  });
+  ok(
+    a3Re?.leftTrailingEol === false,
+    'A3 重开后标记仍为 false（保存真的动了字节）',
+    String(a3Re?.leftTrailingEol),
+  );
+  // CRLF 文件：去掉末尾换行保留其余行的风格
+  const a3Crlf = join(A3, 'crlf.txt');
+  writeFileSync(a3Crlf, 'a\r\nb\r\n');
+  const a3CrlfOpen = await client.request('text/open', {
+    sessionId: 'e2e-eol-3',
+    left: a3Crlf,
+  });
+  ok(
+    a3CrlfOpen?.leftLineCount === 2 &&
+      a3CrlfOpen?.leftTrailingEol === true &&
+      a3CrlfOpen?.rightTrailingEol === null,
+    'A3 单文件会话右侧标记为 null（没有右侧）',
+    `lines=${a3CrlfOpen?.leftLineCount} right=${a3CrlfOpen?.rightTrailingEol}`,
+  );
+  await client.request('text/edit', {
+    sessionId: 'e2e-eol-3',
+    edits: [],
+    leftTrailingEol: false,
+  });
+  await client.request('text/save', { sessionId: 'e2e-eol-3', side: 'left', backup: false });
+  ok(
+    readFileSync(a3Crlf, 'utf8') === 'a\r\nb',
+    'A3 CRLF 文件去掉末尾换行使字节为 "a\\r\\nb"（行尾风格不变）',
+    JSON.stringify(readFileSync(a3Crlf, 'utf8')),
+  );
+  // 空文件没有"末行"可挂行尾符：明确报错，不静默
+  const a3Empty = join(A3, 'empty.txt');
+  writeFileSync(a3Empty, '');
+  await client.request('text/open', { sessionId: 'e2e-eol-4', left: a3Empty });
+  let a3EmptyErr = null;
+  try {
+    await client.request('text/edit', {
+      sessionId: 'e2e-eol-4',
+      edits: [],
+      leftTrailingEol: true,
+    });
+  } catch (err) {
+    a3EmptyErr = String(err?.message ?? err);
+  }
+  ok(a3EmptyErr !== null, 'A3 空文件设末尾换行 → 报错（不静默无害化）', String(a3EmptyErr));
+  // 空 edits 且不带标记仍然拒绝（契约不变）
+  let a3BareEmptyErr = null;
+  try {
+    await client.request('text/edit', { sessionId: 'e2e-eol-4', edits: [] });
+  } catch (err) {
+    a3BareEmptyErr = String(err?.message ?? err);
+  }
+  ok(a3BareEmptyErr !== null, 'A3 空 edits 且无标记仍拒绝', String(a3BareEmptyErr));
+  await client.request('session/close', { sessionId: 'e2e-eol-1' });
+  await client.request('session/close', { sessionId: 'e2e-eol-2' });
+  await client.request('session/close', { sessionId: 'e2e-eol-3' });
+  await client.request('session/close', { sessionId: 'e2e-eol-4' });
+
   // 4. P7：三向文本合并四方法（text/merge3/open|sections|decide|output）
   const m3 = await client.request('text/merge3/open', {
     sessionId: 'e2e-merge3-1',

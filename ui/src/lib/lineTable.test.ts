@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { docLinesOf, linesEqual, linesToEditText } from './lineTable';
+import {
+  buildDocText,
+  docLinesOf,
+  linesEqual,
+  linesToEditText,
+  parseDocText,
+} from './lineTable';
 
 /**
  * 行尾换算的权威口径（A1）：这是全 UI 唯一一份"行数组 ⇄ 文档文本"实现，
@@ -84,6 +90,45 @@ describe('lib/lineTable docLinesOf', () => {
     for (const lines of cases) {
       expect(docLinesOf(lines.join('\n'), lines)).toEqual(lines);
     }
+  });
+});
+
+describe('lib/lineTable parseDocText / buildDocText（A3 EOF 标记）', () => {
+  it('空文件与"一个空行"必须区分开', () => {
+    expect(parseDocText('')).toEqual({ lines: [], trailingEol: false });
+    expect(parseDocText('\n')).toEqual({ lines: [''], trailingEol: true });
+    expect(buildDocText([], false)).toBe('');
+    expect(buildDocText([''], true)).toBe('\n');
+  });
+
+  it('同一个行数组 + 不同 EOF 标记 = 不同字节', () => {
+    expect(buildDocText(['a'], true)).toBe('a\n');
+    expect(buildDocText(['a'], false)).toBe('a');
+    expect(buildDocText(['a', 'b'], true)).toBe('a\nb\n');
+    expect(buildDocText(['a', 'b'], false)).toBe('a\nb');
+  });
+
+  it('互为逆运算（行数组 + 标记 → 文本 → 行数组 + 标记）', () => {
+    const cases = [
+      { lines: [] as string[], trailingEol: false },
+      { lines: [''], trailingEol: true },
+      { lines: ['a'], trailingEol: false },
+      { lines: ['a'], trailingEol: true },
+      { lines: ['a', ''], trailingEol: true },
+      { lines: ['a', '', 'b'], trailingEol: false },
+      { lines: ['', ''], trailingEol: true },
+    ];
+    for (const c of cases) {
+      const label = JSON.stringify(c);
+      expect(parseDocText(buildDocText(c.lines, c.trailingEol)), label).toEqual(c);
+    }
+  });
+
+  it('与引擎解析同口径：文本里的行数不受 EOF 标记影响', () => {
+    // "a\n" 与 "a" 都是 1 行——行数组看不出差别，这正是需要标记的原因
+    expect(engineParse(buildDocText(['a'], true))).toEqual(['a']);
+    expect(engineParse(buildDocText(['a'], false))).toEqual(['a']);
+    expect(parseDocText('a\n').lines).toEqual(parseDocText('a').lines);
   });
 });
 

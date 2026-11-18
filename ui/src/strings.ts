@@ -658,6 +658,9 @@ export const S = {
     cursorAt: (line: number, col: number) => `第 ${line} 行，第 ${col} 列`,
     encodingLabel: '编码',
     eolPreserved: '行尾按原文件保留',
+    // A3：末行是否有行尾符（行的总数不变，但字节会不同）
+    eofOn: '末尾有换行',
+    eofOff: '末尾无换行',
     dirtyDot: '有未保存编辑',
     savedAt: (path: string) => `已保存到 ${path}`,
   },

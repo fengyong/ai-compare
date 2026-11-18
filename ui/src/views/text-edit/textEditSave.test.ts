@@ -51,6 +51,18 @@ function docOf(lines: string[]): EditDoc {
   });
 }
 
+/** 带 EOF 标记的文档（A3：非 null = 引擎回报了末行行尾符） */
+function docWithEol(lines: string[], trailingEol: boolean): EditDoc {
+  return newEditDoc({
+    sessionId: 's',
+    path: '/tmp/a.txt',
+    name: 'a.txt',
+    encoding: 'GB18030',
+    lines,
+    trailingEol,
+  });
+}
+
 function saveResult(entry: Partial<TextSaveResult['saved'][number]> = {}): TextSaveResult {
   return {
     sessionId: 's',
@@ -245,6 +257,51 @@ describe('text-edit/textEditSave 落盘', () => {
     const res = await saveEditDoc(doc);
     expect(res.ok).toBe(false);
     expect(mockSave).not.toHaveBeenCalled();
+  });
+
+  it('A3：只改末尾换行也能落盘，并记账 savedTrailingEol', async () => {
+    const table = installEngine(['a']);
+    const doc = docWithEol(['a'], true); // 文件原本是 "a\n"
+    doc.trailingEol = false; // 用户删掉末尾那个换行
+    expect(isDocDirty(doc)).toBe(true);
+
+    const res = await saveEditDoc(doc);
+    expect(res.ok).toBe(true);
+    expect(res.stillDirty).toBe(false);
+    // 行内容没变 → 空 edits + 标记；引擎据此只改末行行尾符
+    const params = mockEdit.mock.calls[0][0];
+    expect(params.edits).toEqual([]);
+    expect(params.leftTrailingEol).toBe(false);
+    expect(table).toEqual(['a']);
+    expect(doc.savedTrailingEol).toBe(false);
+    expect(isDocDirty(doc)).toBe(false);
+  });
+
+  it('A3 保存竞态：落盘期间改末尾换行仍判脏', async () => {
+    installEngine(['a']);
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    mockSave.mockImplementation(async () => {
+      await gate;
+      return saveResult();
+    });
+
+    const doc = docWithEol(['a'], true);
+    doc.trailingEol = false; // 本次要保存的那一份
+    const pending = saveEditDoc(doc);
+    await vi.waitFor(() => expect(mockSave).toHaveBeenCalled());
+
+    doc.trailingEol = true; // 保存期间用户又把换行加回来
+    release();
+    const res = await pending;
+
+    expect(res.ok).toBe(true);
+    expect(res.stillDirty).toBe(true);
+    // 文件是"无尾换行"那份，记账必须如实
+    expect(doc.savedTrailingEol).toBe(false);
+    expect(isDocDirty(doc)).toBe(true);
   });
 
   it('describeSaveError：未知错误带出原始消息（不吞）', () => {
