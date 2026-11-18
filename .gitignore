@@ -14,3 +14,9 @@ dist/
 # IDE
 .idea/
 .vscode/
+
+# 外来工作目录（ENG-01）：ai_lair 含他项目登录态 Cookie 与 dev 签名密钥，
+# .tmp/visual 为临时产物与素材——严禁提交（仓库 origin 为 PUBLIC）
+ai_lair/
+.tmp/
+visual/
