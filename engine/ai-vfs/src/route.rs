@@ -14,7 +14,6 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 
-use crate::ftp::{split_ftp_uri, FtpFs};
 use crate::zip::ZipFsMut;
 use crate::{StatInfo, VfsCaps, VfsDirEntry, VfsError, VfsPath, VfsProvider};
 
@@ -129,8 +128,6 @@ pub struct RouteFs {
     local: Arc<dyn VfsProvider>,
     /// zip 归档实例缓存（同归档路径复用同一 ZipFsMut，跨方法状态一致）
     zips: Mutex<HashMap<String, Arc<ZipPrefixProvider>>>,
-    /// ftp/ftps 实例缓存（key = scheme://authority/root）
-    ftps: Mutex<HashMap<String, Arc<FtpFs>>>,
 }
 
 impl Default for RouteFs {
@@ -144,7 +141,6 @@ impl RouteFs {
         RouteFs {
             local: Arc::new(crate::LocalFs::new()),
             zips: Mutex::new(HashMap::new()),
-            ftps: Mutex::new(HashMap::new()),
         }
     }
 
@@ -165,17 +161,9 @@ impl RouteFs {
                 zips.insert(archive, prefixed.clone());
                 Ok(prefixed)
             }
-            Some("ftp") => {
-                let mut ftps = self.ftps.lock().expect("route ftp 缓存锁中毒");
-                let key = path.as_str().to_string();
-                if let Some(p) = ftps.get(&key) {
-                    return Ok(p.clone());
-                }
-                let (config, root) = split_ftp_uri(path.as_str())?;
-                let ftp = Arc::new(FtpFs::new(config, root));
-                ftps.insert(key, ftp.clone());
-                Ok(ftp)
-            }
+            Some("ftp") => Err(VfsError::Unsupported(
+                "ftp:// 暂不支持：远程 FTP 需真实服务器验证后交付，门控关闭以免凭据泄入命令流".into(),
+            )),
             Some("ftps") => Err(VfsError::Unsupported(
                 "ftps:// 需真实 FTPS 服务器验证，P12-c 后续批次交付".into(),
             )),
@@ -429,21 +417,27 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ftp_scheme_routes_to_real_provider() {
-        // P12-c：ftp:// 路由到 FtpFs（真实 provider）；ftps:// 仍为暂缓占位
+    async fn ftp_scheme_gated_unsupported() {
+        // ftp/ftps/sftp 统一门控为 Unsupported：不构造 provider、不发网络命令，
+        // 错误文案不回显凭据（杜绝全 URI 透传内层导致 user:pass 泄入命令流）。
         let rf = RouteFs::new();
-        assert_eq!(
-            rf.route(&VfsPath::parse("ftp://host/pub").unwrap())
-                .unwrap()
-                .scheme(),
-            "ftp"
-        );
-        let err = rf
-            .stat(&VfsPath::parse("ftps://host/pub/f.txt").unwrap())
-            .await
-            .unwrap_err();
-        assert!(matches!(err, VfsError::Unsupported(_)));
-        // provider_for_session 对 ftp 返回路由面（scheme=route）
+        for s in [
+            "ftp://u:p@host/pub",
+            "ftps://u:p@host/pub",
+            "sftp://u:p@host/pub",
+        ] {
+            let p = VfsPath::parse(s).unwrap();
+            assert!(
+                matches!(rf.route(&p), Err(VfsError::Unsupported(_))),
+                "{s} route 应门控为 Unsupported"
+            );
+            let err = rf.stat(&p).await.unwrap_err();
+            assert!(matches!(err, VfsError::Unsupported(_)), "{s} stat 应门控");
+            let msg = format!("{err}");
+            assert!(!msg.contains("u:p@"), "{s} 错误文案不应含凭据: {msg}");
+            assert!(!msg.contains(s), "{s} 错误文案不应回显完整 URI: {msg}");
+        }
+        // provider_for_session 对 ftp 仍返回路由面（scheme=route），由 route 门控
         let p = provider_for_session("ftp://host");
         assert_eq!(p.scheme(), "route");
     }
@@ -471,7 +465,7 @@ mod tests {
         let zp = VfsPath::parse(&format!("zip://{}!/a.txt", zip.display())).unwrap();
         assert!(rf.capabilities_for(&zp).has(VfsCaps::DELETE));
 
-        for s in ["ftps://h/p", "sftp://h/p"] {
+        for s in ["ftp://h/p", "ftps://h/p", "sftp://h/p"] {
             let p = VfsPath::parse(s).unwrap();
             assert!(
                 !rf.capabilities_for(&p).has(VfsCaps::DELETE),

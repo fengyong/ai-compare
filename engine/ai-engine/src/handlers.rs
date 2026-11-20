@@ -45,7 +45,7 @@ impl HandlerCtx {
         HandlerCtx {
             sessions: Arc::new(Mutex::new(HashMap::new())),
             // R3-14：路由型 provider——无 scheme 走 LocalFs（行为与之前一致），
-            // zip:// 与 ftp:// 透明可用。写能力由 capabilities_for 按路径协商。
+            // zip:// 透明可用；ftp/ftps/sftp 门控为 Unsupported。写能力由 capabilities_for 按路径协商。
             vfs: Arc::new(ai_vfs::RouteFs::new()),
             max_batch_rows,
             formats: Arc::new(Mutex::new(ai_core::FormatRegistry::builtin())),
