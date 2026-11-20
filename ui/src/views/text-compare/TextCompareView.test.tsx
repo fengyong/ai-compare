@@ -311,3 +311,54 @@ describe('TextCompareView 崩溃认领（UI-01）', () => {
     expect(useShell.getState().findTab(TAB_ID)!.tab.contentDirty).toBeUndefined();
   });
 });
+
+describe('TextCompareView 认领错误路径（UI-02）', () => {
+  it('重建未完成（在途/早退/抛出）时认领内容已先落新键缓存——删旧键不留空窗', async () => {
+    // 行内差异 RPC 停在在途：rebuildAndRender 到不了其内部 putTextSession。
+    // 跳会话早退（liveSessionRef 核对）/RPC 拒绝抛出都会把这一"未完成"态变成永久态，
+    // 故此处用闸门冻结重建，直接观测"删旧键后、写回前"缓存里是否已有认领内容。
+    let release!: (v: null) => void;
+    const gate = new Promise<null>((r) => {
+      release = r;
+    });
+    mockInline.mockReturnValue(gate);
+    seedStale({
+      leftLines: ['左一', '左二改'],
+      modifiedSides: { left: true, right: false },
+    });
+    const tab = compareTab();
+    seedTab(tab);
+    const { container } = render(<TextCompareView tab={tab} />);
+
+    // 认领块（同步）已跑完、重建已进入在途 RPC
+    await waitFor(() => expect(mockInline).toHaveBeenCalled());
+    expect(getTextSession(OLD_SID)).toBeUndefined();
+    const cached = getTextSession(NEW_SID);
+    expect(cached, '重建未完成时认领内容必须已在新键缓存').toBeDefined();
+    expect(cached!.leftLines).toEqual(['左一', '左二改']);
+    expect(cached!.modifiedSides).toEqual({ left: true, right: false });
+
+    release(null); // 放行在途 RPC，收尾让重建完成
+    await waitFor(() => expect(cmDocs(container).length).toBe(2));
+  });
+
+  it('行内差异 RPC 拒绝：降级词级兜底，认领内容照常渲染且仍在缓存（不整屏报错）', async () => {
+    // requestInlineDiff 的 getEngineClient 在 try 外，可拒绝；无 catch 时 Promise.all
+    // 抛出 → rebuildAndRender 抛出 → setError、窗格不渲染（认领内容看不到）。
+    mockInline.mockRejectedValue(new Error('engine client gone'));
+    seedStale({
+      leftLines: ['左一', '左二改'],
+      modifiedSides: { left: true, right: false },
+    });
+    const tab = compareTab();
+    seedTab(tab);
+    const { container } = render(<TextCompareView tab={tab} />);
+
+    await waitFor(() => expect(cmDocs(container).length).toBe(2));
+    await waitFor(() =>
+      expect(cmDocs(container)[0].state.doc.toString()).toContain('左二改'),
+    );
+    expect(getTextSession(OLD_SID)).toBeUndefined();
+    expect(getTextSession(NEW_SID)!.leftLines).toEqual(['左一', '左二改']);
+  });
+});

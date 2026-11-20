@@ -219,10 +219,11 @@ export function TextCompareView({ tab }: { tab: Tab }) {
       // 每个替换段一次懒计算 RPC（mock 同步、真实引擎缓存在会话侧）
       const results = await Promise.all(
         targets.map((s) =>
-          requestInlineDiff({ sessionId: model.sessionId, sectionId: s.id }).then((res) => ({
-            section: s,
-            res,
-          })),
+          requestInlineDiff({ sessionId: model.sessionId, sectionId: s.id })
+            .then((res) => ({ section: s, res }))
+            // RPC 拒绝（如 getEngineClient 失败）降级 null → 客户端词级兜底；
+            // 单段失败不得抛出整个重建（UI-02：抛出会跳过 putTextSession 丢认领编辑）。
+            .catch(() => ({ section: s, res: null })),
         ),
       );
       for (const { section, res } of results) {
@@ -618,6 +619,10 @@ export function TextCompareView({ tab }: { tab: Tab }) {
           model.leftLines = [...stale.leftLines];
           model.rightLines = [...stale.rightLines];
           model.modifiedSides = { ...stale.modifiedSides };
+          // 先落新键再删旧键：rebuildAndRender 可能因 inlineDiff 拒绝抛出、或跳会话
+          // 早退（liveSessionRef 核对）而到不了其内部 putTextSession；删旧键在前会让
+          // 认领内容两键皆空、静默丢失（UI-02）。
+          putTextSession(model);
           deleteTextSession(stale.sessionId);
           useShell.getState().markContentDirty(tab.id, model.modifiedSides);
         }
