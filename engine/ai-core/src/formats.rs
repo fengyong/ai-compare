@@ -103,6 +103,10 @@ impl SyntaxItem {
     /// 本项在 `text` 的 `pos`（字符下标）处能匹配的跨度（相对 pos 的字符长度）。
     /// None = 该位置不匹配。RowTitle/Column 为整行/位置判定，不经此扫描。
     pub fn match_len_at(&self, text: &str, pos: usize) -> Option<usize> {
+        // pos 是字符下标（调用方逐字符推进）；&str 切片须落在字符边界，
+        // 否则多字节内容（中文/emoji）会 panic。先换算第 pos 个字符的字节偏移。
+        let byte_off = text.char_indices().nth(pos).map_or(text.len(), |(b, _)| b);
+        let rest = &text[byte_off..];
         match self {
             SyntaxItem::Text {
                 pattern,
@@ -110,9 +114,9 @@ impl SyntaxItem {
                 case_sensitive,
             } => {
                 if *regex {
-                    regex_match_len(pattern, &text[pos..], *case_sensitive, false)
+                    regex_match_len(pattern, rest, *case_sensitive, false)
                 } else {
-                    literal_match_len(pattern, &text[pos..], *case_sensitive)
+                    literal_match_len(pattern, rest, *case_sensitive)
                 }
             }
             SyntaxItem::Delimited {
@@ -124,9 +128,9 @@ impl SyntaxItem {
                 case_sensitive,
             } => {
                 let start_len = if *regex {
-                    regex_match_len(start, &text[pos..], *case_sensitive, false)?
+                    regex_match_len(start, rest, *case_sensitive, false)?
                 } else {
-                    literal_match_len(start, &text[pos..], *case_sensitive)?
+                    literal_match_len(start, rest, *case_sensitive)?
                 };
                 if *to_eol {
                     return Some(text.chars().count() - pos);
@@ -167,7 +171,6 @@ impl SyntaxItem {
                 regex,
                 case_sensitive,
             } => {
-                let rest = &text[pos..];
                 tokens
                     .iter()
                     .filter_map(|t| {
@@ -1989,6 +1992,55 @@ mod tests {
         // 转义引号不终止字符串
         let m2 = unimportant_mask("s = \"a\\\"b\"; x", &g, &["字符串".into()], None);
         assert_eq!(m2, format!("s = {UNIMPORTANT_MARK}; x"));
+    }
+
+    #[test]
+    fn non_ascii_folding_no_panic() {
+        // pos 是字符下标，多字节内容（中文/emoji/组合字符）下以字符下标做
+        // 字节切片会 panic。折叠须按字符边界换算，代码骨架保留、注释/字符串内容折叠。
+        let g = c_grammar();
+        let cmt: Vec<String> = vec!["注释".into()];
+        let str_el: Vec<String> = vec!["字符串".into()];
+
+        // 多字节字符在行注释之前：注释折叠，前缀字符保留
+        assert_eq!(
+            unimportant_mask("中//a", &g, &cmt, None),
+            format!("中{UNIMPORTANT_MARK}")
+        );
+        // 仅注释内容不同的两行折叠后等价（中文注释极常见）
+        assert_eq!(
+            unimportant_mask("中//a", &g, &cmt, None),
+            unimportant_mask("中//b", &g, &cmt, None)
+        );
+        // 整行中文注释 → UnimportantText
+        assert_eq!(
+            line_classify("// 中文注释", &g, &cmt, None),
+            LineClass::UnimportantText
+        );
+        // emoji（4 字节）前缀 + 行注释
+        assert_eq!(
+            unimportant_mask("x😀//c", &g, &cmt, None),
+            format!("x😀{UNIMPORTANT_MARK}")
+        );
+        // 组合字符（e + combining acute）前缀 + 行注释
+        assert_eq!(
+            unimportant_mask("e\u{301}//c", &g, &cmt, None),
+            format!("e\u{301}{UNIMPORTANT_MARK}")
+        );
+        // 多字节块注释内容 + 前后缀
+        assert_eq!(
+            unimportant_mask("中/* 注释 */尾", &g, &cmt, None),
+            format!("中{UNIMPORTANT_MARK}尾")
+        );
+        // 字符串内容含多字节：内容折叠，骨架保留；不同多字节内容彼此等价
+        assert_eq!(
+            unimportant_mask("s = \"中文\";", &g, &str_el, None),
+            format!("s = {UNIMPORTANT_MARK};")
+        );
+        assert_eq!(
+            unimportant_mask("s = \"中文\";", &g, &str_el, None),
+            unimportant_mask("s = \"😀\";", &g, &str_el, None)
+        );
     }
 
     #[test]
