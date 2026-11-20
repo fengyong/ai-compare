@@ -577,12 +577,27 @@ pub fn apply_file(
 
     for (hidx, h) in file.hunks.iter().enumerate() {
         // 期望旧内容（上下文+删除）与新内容（上下文+新增）；had_cr 供严格行尾匹配
-        let expected: Vec<(String, bool)> = h
+        let old_side: Vec<&PatchLine> = h
             .lines
             .iter()
             .filter(|l| matches!(l.kind, PatchLineKind::Context | PatchLineKind::Delete))
+            .collect();
+        let expected: Vec<(String, bool)> = old_side
+            .iter()
             .map(|l| (l.text.clone(), l.had_cr))
             .collect();
+        // fuzz 只可忽略边缘 Context 行，绝不可丢 Delete（GNU patch 语义）：
+        // 首/尾连续 Context 计数封顶每侧可丢行数，Delete 行恒留窗口内受校验，
+        // 否则不匹配的 Delete 会被按 old_span 盲删（R5-CORE-03）。
+        let lead_ctx = old_side
+            .iter()
+            .take_while(|l| l.kind == PatchLineKind::Context)
+            .count();
+        let trail_ctx = old_side
+            .iter()
+            .rev()
+            .take_while(|l| l.kind == PatchLineKind::Context)
+            .count();
         let new_expected: Vec<(String, bool)> = h
             .lines
             .iter()
@@ -618,35 +633,42 @@ pub fn apply_file(
             ));
         }
 
-        // 位置漂移搜索（全文件）；失败后逐层模糊（丢弃首/尾 fuzz 行上下文重试）
-        let mut found: Option<(usize, u32)> = None;
+        // 位置漂移搜索（全文件）；失败后逐层模糊（仅丢首/尾边缘 Context 重试）
+        let mut found: Option<(usize, usize, u32)> = None;
         let mut fuzz = 0u32;
         loop {
-            let slice = &expected[fuzz as usize..expected.len() - fuzz as usize];
+            let drop_front = (fuzz as usize).min(lead_ctx);
+            let drop_back = (fuzz as usize).min(trail_ctx);
+            let slice = &expected[drop_front..expected.len() - drop_back];
             let window: Vec<String> = slice.iter().map(|(t, _)| t.clone()).collect();
             let window_cr: Vec<bool> = slice.iter().map(|(_, c)| *c).collect();
             if let Some(p) =
                 find_match_window(&lines, base_pos, &window, opts, usize::MAX, &window_cr)
             {
-                // 完整 hunk 落点须在文件内（前 fuzz 行上下文在 p 之前）
-                if p >= fuzz as usize && p - fuzz as usize + expected.len() <= lines.len() {
-                    found = Some((p, fuzz));
+                // 完整 hunk 落点须在文件内（前 drop_front 行上下文在 p 之前）
+                if p >= drop_front && p - drop_front + expected.len() <= lines.len() {
+                    found = Some((p, drop_front, fuzz));
                     break;
                 }
             }
-            // 下一级 fuzz 会切出空窗口（L-2(f+1) <= 0）时停止：空期望没有
-            // 任何上下文可匹配，按声明位置盲 splice 会静默损坏文件（CORE-01）。
-            // 纯插入 hunk（L=0）在 fuzz=0 即命中，不受此守卫影响。
-            if fuzz >= opts.fuzz || expected.len() <= fuzz as usize * 2 + 2 {
+            // 停止：fuzz 上限 / 两侧边缘 Context 已丢尽（再增 fuzz 窗口不变）/
+            // 下一级将切出空窗口（CORE-01：空期望无上下文可匹配，盲 splice 损文件）。
+            // 纯插入 hunk（L=0）在 fuzz=0 即命中，不受空窗口守卫影响。
+            let next_front = ((fuzz + 1) as usize).min(lead_ctx);
+            let next_back = ((fuzz + 1) as usize).min(trail_ctx);
+            if fuzz >= opts.fuzz
+                || (drop_front == lead_ctx && drop_back == trail_ctx)
+                || (!expected.is_empty() && next_front + next_back >= expected.len())
+            {
                 break;
             }
             fuzz += 1;
         }
-        let (pos, used_fuzz) = match found {
+        let (pos, front_drop, used_fuzz) = match found {
             Some(v) => v,
             None => return Err(format!("hunk #{} 无法应用：上下文不匹配", hidx + 1)),
         };
-        let full_start = pos - used_fuzz as usize;
+        let full_start = pos - front_drop;
         let old_span = expected.len(); // = context + delete（hunk 头声明的旧行数）
         let drift = full_start as i64 - base_pos as i64;
         if first_drift.is_none() && drift != 0 {
@@ -1395,6 +1417,56 @@ index bbbb..0000000\n\
         }
         // 剩余上下文也不存在 → 仍须失败（不得退化为空窗口盲插）
         assert!(apply_file("CHANGED\nnope\nnada\nc4\n", f, &OPTS).is_err());
+    }
+
+    /// R5-CORE-03（S2 盲删）：fuzz 只可丢边缘 Context，绝不可丢 Delete 行。
+    /// 边缘 Delete 与文件实内容不符时，旧实现按对称 `expected[fuzz..len-fuzz]`
+    /// 把 Delete 一并切出窗口，剩余上下文命中后按 old_span 盲删无关行报 Applied；
+    /// GNU patch 拒绝（Delete 行必须匹配）。修复后须报错、零写盘。
+    #[test]
+    fn apply_fuzz_never_drops_edge_delete() {
+        // 尾行 Delete：文件尾行实为 X（≠del-bottom），中间上下文仍命中
+        let trail = "--- a\n+++ b\n@@ -1,3 +1,2 @@\n ctx-top\n ctx-mid\n-del-bottom\n";
+        let ft = &parse_patch(trail).unwrap().files[0];
+        assert!(
+            apply_file("ctx-top\nctx-mid\nX\n", ft, &OPTS).is_err(),
+            "尾部 Delete 不匹配须拒绝，不得盲删 X"
+        );
+        // 首行 Delete：文件首行实为 X（≠del-top），其余上下文仍命中
+        let lead = "--- a\n+++ b\n@@ -1,3 +1,2 @@\n-del-top\n ctx-mid\n ctx-bottom\n";
+        let fl = &parse_patch(lead).unwrap().files[0];
+        assert!(
+            apply_file("X\nctx-mid\nctx-bottom\n", fl, &OPTS).is_err(),
+            "首部 Delete 不匹配须拒绝，不得盲删 X"
+        );
+        // dry_run 同样不得误报 OK
+        let dry = PatchApplyOptions {
+            dry_run: true,
+            ..OPTS.clone()
+        };
+        assert!(apply_file("ctx-top\nctx-mid\nX\n", ft, &dry).is_err());
+        assert!(apply_file("X\nctx-mid\nctx-bottom\n", fl, &dry).is_err());
+    }
+
+    /// R5-CORE-03 防过度修复：Delete 行真实匹配时，丢边缘 Context 的合法 fuzz
+    /// 仍须应用（Delete 不被一刀切禁止，只是不可被 fuzz 丢弃后盲删）。
+    /// 形状与 BSD/Apple patch 2.0 -F 3 对拍一致（含尾随上下文，oracle exit=0）。
+    #[test]
+    fn apply_fuzz_edge_delete_matches_still_applies() {
+        // Delete（del-bottom）真实存在，仅首行上下文被改 → fuzz=1 丢首 Context。
+        // base_pos=1（hunk 旧起 2），5 行文件使漂移搜索可达 p=2。
+        let patch =
+            "--- a\n+++ b\n@@ -2,4 +2,3 @@\n ctx-top\n ctx-mid\n-del-bottom\n ctx-tail\n";
+        let f = &parse_patch(patch).unwrap().files[0];
+        match apply_file("head\nCHANGED-top\nctx-mid\ndel-bottom\nctx-tail\n", f, &OPTS).unwrap() {
+            ApplyOutcome::Applied {
+                text, fuzz_used, ..
+            } => {
+                assert_eq!(text, "head\nCHANGED-top\nctx-mid\nctx-tail\n");
+                assert_eq!(fuzz_used, 1);
+            }
+            _ => panic!("Delete 匹配时合法 fuzz 应成功"),
+        }
     }
 
     #[test]
