@@ -233,9 +233,10 @@ export function TextEditView({ tab }: { tab: Tab }) {
           left: path,
           ...(caps?.textOpenOne ? {} : { right: path }),
         });
-        // 崩溃重放/重新打开同一文件：旧会话里的未落盘编辑按路径认领回来，
-        // 引擎真值（文件内容）作为收敛基准，随后重放用户输入。
-        const stale = findDirtyEditDocByPath(path, sessionId);
+        // 崩溃重放/重新打开同一文件：旧（已死）会话里的未落盘编辑按路径认领
+        // 回来，引擎真值（文件内容）作为收敛基准，随后重放用户输入。只认领
+        // isSessionTracked 判为已死的会话，活标签的编辑不得抢（UI-01）。
+        const stale = findDirtyEditDocByPath(path, sessionId, engine.isSessionTracked);
         // A3：旧引擎（无 textOpenEol 能力）不回传 → null = 退回旧语义
         const engineTrailing =
           typeof opened.leftTrailingEol === 'boolean' ? opened.leftTrailingEol : null;

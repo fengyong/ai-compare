@@ -208,13 +208,18 @@ async function runSync(doc: EditDoc, io: EditSyncIO): Promise<SyncOutcome> {
  * 场景：引擎崩溃后重放会给会话换新句柄，视图按新句柄重新 open 同一文件
  * （引擎内容回到文件态），此时旧文档里的未保存编辑仍在 UI 缓存中——按路径
  * 认领回来，再把它重新收敛进新会话，避免"崩溃后编辑凭空消失"。
+ * 只认领 isLive 判为"已死"的会话：同路径可能另有活标签在编辑，不得抢它
+ * （UI-01，与比较视图 findDirtyTextSessionByPaths 同模式）。
+ * isLive 缺省恒真 = 不传判定就不认领（安全缺省）。
  */
 export function findDirtyEditDocByPath(
   path: string,
   excludeSessionId?: string,
+  isLive: (sessionId: string) => boolean = () => true,
 ): EditDoc | undefined {
   for (const doc of cache.values()) {
     if (doc.sessionId === excludeSessionId) continue;
+    if (isLive(doc.sessionId)) continue;
     if (doc.path === path && isDocDirty(doc)) return doc;
   }
   return undefined;

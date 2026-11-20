@@ -302,6 +302,7 @@ describe('text-edit/editModel 引擎收敛', () => {
   });
 
   it('findDirtyEditDocByPath：只认领有未落盘编辑的同路径文档', () => {
+    const dead = () => false;
     const clean = newEditDoc({
       sessionId: 'old-clean',
       path: '/p/a.txt',
@@ -310,7 +311,7 @@ describe('text-edit/editModel 引擎收敛', () => {
       lines: ['same'],
     });
     putEditDoc(clean);
-    expect(findDirtyEditDocByPath('/p/a.txt', 'new')).toBeUndefined();
+    expect(findDirtyEditDocByPath('/p/a.txt', 'new', dead)).toBeUndefined();
 
     const dirty = newEditDoc({
       sessionId: 'old-dirty',
@@ -321,10 +322,45 @@ describe('text-edit/editModel 引擎收敛', () => {
     });
     dirty.savedLines = ['same']; // 有未落盘编辑
     putEditDoc(dirty);
-    expect(findDirtyEditDocByPath('/p/a.txt', 'new')).toBe(dirty);
-    expect(findDirtyEditDocByPath('/p/a.txt', 'old-dirty')).toBeUndefined();
+    expect(findDirtyEditDocByPath('/p/a.txt', 'new', dead)).toBe(dirty);
+    expect(findDirtyEditDocByPath('/p/a.txt', 'old-dirty', dead)).toBeUndefined();
     deleteEditDoc('old-clean');
     deleteEditDoc('old-dirty');
+  });
+
+  it('findDirtyEditDocByPath：活标签的脏文档不得抢，只认领已死会话（UI-01）', () => {
+    const dirty = newEditDoc({
+      sessionId: 'live-dirty',
+      path: '/p/b.txt',
+      name: 'b.txt',
+      encoding: 'UTF-8',
+      lines: ['edited'],
+    });
+    dirty.savedLines = ['same'];
+    putEditDoc(dirty);
+    // isLive 恒真（所有会话都活）→ 不认领
+    expect(findDirtyEditDocByPath('/p/b.txt', 'new', () => true)).toBeUndefined();
+    // 该会话仍被判活 → 不认领（不得抢活标签的编辑）
+    expect(
+      findDirtyEditDocByPath('/p/b.txt', 'new', (id) => id === 'live-dirty'),
+    ).toBeUndefined();
+    // 该会话已死（isLive 恒假）→ 认领
+    expect(findDirtyEditDocByPath('/p/b.txt', 'new', () => false)).toBe(dirty);
+    deleteEditDoc('live-dirty');
+  });
+
+  it('findDirtyEditDocByPath：isLive 缺省恒真 = 不传判定就不认领（安全缺省）', () => {
+    const dirty = newEditDoc({
+      sessionId: 'default-dirty',
+      path: '/p/c.txt',
+      name: 'c.txt',
+      encoding: 'UTF-8',
+      lines: ['edited'],
+    });
+    dirty.savedLines = ['same'];
+    putEditDoc(dirty);
+    expect(findDirtyEditDocByPath('/p/c.txt', 'new')).toBeUndefined();
+    deleteEditDoc('default-dirty');
   });
 
   it('引擎无 text/edit（null）：返回 unsupported 且不改快照', async () => {
