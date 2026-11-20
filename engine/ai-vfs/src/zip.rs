@@ -945,30 +945,22 @@ impl ZipFsMut {
 /// 原子落盘：同目录临时文件 → fsync → rename 覆盖 → 父目录 fsync。
 ///
 /// 直接 `fs::write` 全量覆盖归档时，中断会留下半个归档（原文件已毁）；
-/// 同目录 rename 保证读者要么看到旧归档、要么看到新归档。临时名带 pid +
-/// 进程内序号，避免并发写互相覆盖。失败时清掉临时文件并把 io 错误上抛。
+/// 同目录 rename 保证读者要么看到旧归档、要么看到新归档。临时名为短随机串
+/// （不含原名，防长名回归 VFS-02），以 O_EXCL 创建并碰撞重试（防符号链接
+/// 劫持 SEC-01）。失败时清掉临时文件并把 io 错误上抛。
 fn atomic_write(path: &std::path::Path, bytes: &[u8]) -> Result<(), VfsError> {
     use std::io::Write;
-    use std::sync::atomic::{AtomicU64, Ordering};
 
-    static SEQ: AtomicU64 = AtomicU64::new(0);
     let parent = path
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
         .unwrap_or_else(|| std::path::Path::new("."));
-    let name = path
-        .file_name()
-        .ok_or_else(|| VfsError::InvalidPath(path.display().to_string()))?
-        .to_string_lossy()
-        .into_owned();
-    let tmp = parent.join(format!(
-        ".{name}.tmp-{}-{}",
-        std::process::id(),
-        SEQ.fetch_add(1, Ordering::Relaxed)
-    ));
+    if path.file_name().is_none() {
+        return Err(VfsError::InvalidPath(path.display().to_string()));
+    }
+    let (tmp, mut f) = crate::atomic::create_new_tmp(parent).map_err(VfsError::Io)?;
 
     let result = (|| -> std::io::Result<()> {
-        let mut f = std::fs::File::create(&tmp)?;
         f.write_all(bytes)?;
         f.sync_all()?;
         std::fs::rename(&tmp, path)?;
@@ -1818,6 +1810,22 @@ mod tests {
                 .unwrap(),
             b"B"
         );
+    }
+
+    /// R5-VFS-02：归档原名接近 NAME_MAX（250 字节）时仍须能原子写。
+    /// 旧临时名 `.{orig}.tmp-{pid}-{seq}` 溢出 NAME_MAX → ENAMETOOLONG 失败。
+    #[test]
+    fn atomic_write_long_name_near_name_max() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("z".repeat(250));
+        atomic_write(&target, b"ZIP LONG NAME").unwrap();
+        assert_eq!(std::fs::read(&target).unwrap(), b"ZIP LONG NAME");
+        let left: Vec<String> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(left.len(), 1, "不得残留临时文件: {left:?}");
+        assert!(!left[0].contains(".tmp-"), "残留临时文件: {left:?}");
     }
 
     /// 原子替换的可观测语义：替换前已打开的读句柄仍读到完整旧归档。

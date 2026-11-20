@@ -31,28 +31,24 @@ fn map_write_io(path: &VfsPath, err: std::io::Error) -> VfsError {
 /// 原子落盘（异步版，与 zip.rs `atomic_write` 同语义）：同目录临时文件 →
 /// write_all → fsync → rename 覆盖 → 父目录 fsync 尽力。截断直写在 IO 中途
 /// 失败会留半写主文件（SEC-01）；rename 保证读者要么见旧内容、要么见新内容。
-/// 临时名带 pid + 进程内序号，避免并发写互相覆盖；失败清掉临时文件再上抛。
+/// 临时名为短随机串（不含原名，防长名回归 VFS-02），以 O_EXCL 创建并碰撞重试
+/// （防符号链接劫持 SEC-01）；失败清掉临时文件再上抛。
 async fn atomic_write_async(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    use std::sync::atomic::{AtomicU64, Ordering};
     use tokio::io::AsyncWriteExt;
 
-    static SEQ: AtomicU64 = AtomicU64::new(0);
     let parent = path
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
-    let name = path.file_name().ok_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::InvalidInput, "path has no file name")
-    })?;
-    let tmp = parent.join(format!(
-        ".{}.tmp-{}-{}",
-        name.to_string_lossy(),
-        std::process::id(),
-        SEQ.fetch_add(1, Ordering::Relaxed)
-    ));
+    if path.file_name().is_none() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "path has no file name",
+        ));
+    }
+    let (tmp, mut f) = crate::atomic::create_new_tmp_async(parent).await?;
 
     let result = async {
-        let mut f = tokio::fs::File::create(&tmp).await?;
         f.write_all(bytes).await?;
         // 覆盖已有文件时保留其权限位（rename 会带走 tmp 的默认 mode）
         #[cfg(unix)]
@@ -677,6 +673,22 @@ mod tests {
         assert!(
             payloads.contains(&final_bytes),
             "终态必须是某个完整 payload，绝不混合"
+        );
+        assert_no_tmp_residue(dir.path()).await;
+        drop(dir);
+    }
+
+    /// R5-VFS-02：原名接近 NAME_MAX（250 字节）时仍须能原子写。
+    /// 旧临时名 `.{orig}.tmp-{pid}-{seq}` 溢出 NAME_MAX → ENAMETOOLONG 失败。
+    #[tokio::test]
+    async fn write_long_name_near_name_max() {
+        let (dir, root) = setup().await;
+        let fs = LocalFs::new();
+        let p = root.join("n".repeat(250).as_str());
+        fs.write_file_bytes(&p, b"LONG NAME PAYLOAD").await.unwrap();
+        assert_eq!(
+            fs.read_file_bytes(&p).await.unwrap(),
+            b"LONG NAME PAYLOAD"
         );
         assert_no_tmp_residue(dir.path()).await;
         drop(dir);

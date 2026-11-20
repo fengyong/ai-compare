@@ -14,6 +14,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use async_trait::async_trait;
 use thiserror::Error;
 
+mod atomic;
 pub mod crc32;
 pub mod encoding;
 pub mod ftp;
