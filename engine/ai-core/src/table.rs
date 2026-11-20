@@ -15,9 +15,15 @@
 //! - 输出表格 section 模型：行类型 same/changed/added/removed + 单元格状态。
 
 use std::collections::VecDeque;
+use std::time::{Duration, Instant};
 
-use crate::myers::{diff_seq, RawOp};
+use crate::myers::{diff_seq_deadline, RawOp};
 use crate::options::WhitespaceMode;
+
+/// 无键 Standard 路径全表 Myers 行对齐的时间预算。行键无公共子序列时
+/// Myers 退化为 O(N²)，以时间兜底：超时降级为粗粒度全删全插（合法脚本），
+/// 避免冻结引擎 worker（与 hex FULL_REFINE_BUDGET_MS 同语义）。
+pub const MYERS_ROWS_BUDGET_MS: u64 = 1000;
 
 // ---------------------------------------------------------------------------
 // 解析（FR-TBL-005 / RFC4180）
@@ -661,6 +667,17 @@ pub fn diff_table_data(
     right: &TableData,
     opts: &TableDiffOptions,
 ) -> TableDiffModel {
+    let deadline = Instant::now() + Duration::from_millis(MYERS_ROWS_BUDGET_MS);
+    diff_table_data_with_deadline(left, right, opts, deadline)
+}
+
+/// 带时间预算的比较实现（deadline 传入供测试注入已过期时刻验证降级）
+fn diff_table_data_with_deadline(
+    left: &TableData,
+    right: &TableData,
+    opts: &TableDiffOptions,
+    deadline: Instant,
+) -> TableDiffModel {
     let columns = align_columns(left, right, opts.column_align);
     let imp = &opts.importance;
 
@@ -818,6 +835,7 @@ pub fn diff_table_data(
                     imp,
                     &mut rows,
                     &push_same_changed,
+                    deadline,
                 );
             }
         }
@@ -1064,6 +1082,7 @@ fn emit_myers_rows(
         &TableImportance,
         Option<TableRowKind>,
     ),
+    deadline: Instant,
 ) {
     let lkeys: Vec<String> = (0..left.row_count())
         .map(|i| row_key(left, i, Side::Left))
@@ -1071,7 +1090,7 @@ fn emit_myers_rows(
     let rkeys: Vec<String> = (0..right.row_count())
         .map(|i| row_key(right, i, Side::Right))
         .collect();
-    let ops = diff_seq(&lkeys, &rkeys);
+    let (ops, _degraded) = diff_seq_deadline(&lkeys, &rkeys, Some(deadline));
     let mut li = 0usize;
     let mut ri = 0usize;
     let mut k = 0usize;
@@ -1484,6 +1503,28 @@ mod tests {
         let r = csv("v\na\nB\nc\n");
         let m = diff_table_data(&l, &r, &TableDiffOptions::default());
         assert_eq!(kinds(&m), vec!["same", "changed", "same"], "{m:?}");
+    }
+
+    #[test]
+    fn standard_myers_degrades_on_expired_deadline() {
+        // 无键 Standard 全表 Myers 漏接 deadline 会冻结引擎；以时间预算兜底。
+        // 右表中部插入一行：最优对齐给出 same/added/same/same（无 changed）；
+        // 过期 deadline 降级为全删全插 → 按位置错配出 changed，仍覆盖全部行。
+        let l = csv("v\na\nb\nc\n");
+        let r = csv("v\na\nX\nb\nc\n");
+        let opts = TableDiffOptions {
+            row_align: RowAlign::Standard,
+            ..Default::default()
+        };
+        let m = diff_table_data_with_deadline(&l, &r, &opts, Instant::now());
+        assert!(
+            kinds(&m).contains(&"changed"),
+            "过期 deadline 应降级为位置错配（出现 changed）: {m:?}"
+        );
+        let left_rows = m.rows.iter().filter(|r| r.left.is_some()).count();
+        let right_rows = m.rows.iter().filter(|r| r.right.is_some()).count();
+        assert_eq!(left_rows, 3, "降级脚本左表每行须有归属");
+        assert_eq!(right_rows, 4, "降级脚本右表每行须有归属");
     }
 
     #[test]

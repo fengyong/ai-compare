@@ -12,7 +12,9 @@
 //! - ASCII 侧栏数据：16 字节/行渲染（视图窗口按 offset/length 分页取数，
 //!   大文件策略：引擎持有字节流 + 视窗查询，UI 虚拟网格按需拉取）。
 
-use crate::myers::{diff_seq, RawOp};
+use std::time::{Duration, Instant};
+
+use crate::myers::{diff_seq_deadline, RawOp};
 
 /// 对齐模式（FR-HEX-002：完全 / 快速 / 无）
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -47,6 +49,10 @@ impl Default for HexOptions {
 pub const DEFAULT_CHUNK_SIZE: usize = 4096;
 /// Full 模式字节级精对齐的单区域上限（超过降级 Fast，防 O(ND) 失控）
 pub const FULL_REGION_MAX: usize = 1024 * 1024;
+/// 分块对齐（块哈希 + 区域字节级 Myers）总时间预算。尺寸上限挡不住无公共
+/// 子序列的随机数据（D≈N → O(N²)），故以时间兜底：超时 Myers 降级为粗粒度
+/// 全删全插（合法脚本），避免冻结引擎 worker（PB-06 十六进制打开 1s 目标内）。
+pub const FULL_REFINE_BUDGET_MS: u64 = 1000;
 /// ASCII 侧栏每行字节数（十六进制编辑器惯例 16）
 pub const HEX_LINE_BYTES: usize = 16;
 
@@ -200,10 +206,11 @@ impl BlockBuilder {
 /// 字节级 hex diff 主入口（FR-HEX-002 三种对齐）
 pub fn diff_bytes(left: &[u8], right: &[u8], opts: &HexOptions) -> HexDiffModel {
     let mut b = BlockBuilder::new();
+    let deadline = Instant::now() + Duration::from_millis(FULL_REFINE_BUDGET_MS);
     match opts.align_mode {
         HexAlignMode::None => diff_bytewise(left, right, &mut b),
-        HexAlignMode::Fast => diff_chunked(left, right, opts.chunk_size.max(1), false, &mut b),
-        HexAlignMode::Full => diff_chunked(left, right, opts.chunk_size.max(1), true, &mut b),
+        HexAlignMode::Fast => diff_chunked(left, right, opts.chunk_size.max(1), false, deadline, &mut b),
+        HexAlignMode::Full => diff_chunked(left, right, opts.chunk_size.max(1), true, deadline, &mut b),
     }
     let summary = b.summary;
     HexDiffModel {
@@ -244,12 +251,12 @@ fn diff_bytewise(left: &[u8], right: &[u8], b: &mut BlockBuilder) {
 }
 
 /// 分块哈希粗对齐 + 块内精对齐（Fast/Full 共用骨架）
-fn diff_chunked(left: &[u8], right: &[u8], chunk: usize, full_refine: bool, b: &mut BlockBuilder) {
+fn diff_chunked(left: &[u8], right: &[u8], chunk: usize, full_refine: bool, deadline: Instant, b: &mut BlockBuilder) {
     let lh = chunk_hashes(left, chunk);
     let rh = chunk_hashes(right, chunk);
     let lhashes: Vec<u64> = lh.iter().map(|c| c.hash).collect();
     let rhashes: Vec<u64> = rh.iter().map(|c| c.hash).collect();
-    let ops = diff_seq(&lhashes, &rhashes);
+    let (ops, _degraded) = diff_seq_deadline(&lhashes, &rhashes, Some(deadline));
 
     let mut li = 0usize; // chunk index
     let mut ri = 0usize;
@@ -290,7 +297,7 @@ fn diff_chunked(left: &[u8], right: &[u8], chunk: usize, full_refine: bool, b: &
             let lspan = chunk_span(&lh[li..li + d], left);
             if ins > 0 {
                 let rspan = chunk_span(&rh[ri..ri + ins], right);
-                refine_region(left, lspan, right, rspan, full_refine, b);
+                refine_region(left, lspan, right, rspan, full_refine, deadline, b);
             } else {
                 emit_leftover(left, lspan, full_refine, b);
             }
@@ -373,6 +380,7 @@ fn refine_region(
     right: &[u8],
     rspan: (usize, usize),
     full: bool,
+    deadline: Instant,
     b: &mut BlockBuilder,
 ) {
     let lb = &left[lspan.0..lspan.1];
@@ -382,7 +390,7 @@ fn refine_region(
         refine_pair(lb, rb, full, b);
         return;
     }
-    let ops = diff_seq(lb, rb);
+    let (ops, _degraded) = diff_seq_deadline(lb, rb, Some(deadline));
     let mut li = 0usize;
     let mut ri = 0usize;
     let mut k = 0usize;
@@ -550,6 +558,28 @@ mod tests {
                 )
             })
             .collect()
+    }
+
+    #[test]
+    fn full_refine_degrades_on_expired_deadline() {
+        // 尺寸上限挡不住无公共子序列数据的 O(ND)：以时间预算兜底。已过期
+        // deadline 下块哈希与字节级 Myers 均立即降级为全删全插，产出粗粒度
+        // Changed（无 Same），但仍覆盖全部字节（合法脚本，不冻结引擎）。
+        let mut left = vec![0u8; 8192];
+        left.extend_from_slice(&[1u8; 4096]);
+        let mut right = vec![0u8; 8192];
+        right.extend_from_slice(&[2u8; 4096]);
+        let mut b = BlockBuilder::new();
+        // 前 8192 字节相同：最优对齐会给出 Same；过期 deadline 强制降级
+        diff_chunked(&left, &right, 4096, true, Instant::now(), &mut b);
+        let lsum: u64 = b.blocks.iter().filter_map(|x| x.left.map(|r| r.len)).sum();
+        let rsum: u64 = b.blocks.iter().filter_map(|x| x.right.map(|r| r.len)).sum();
+        assert_eq!(lsum, left.len() as u64, "降级脚本仍须覆盖全部左字节");
+        assert_eq!(rsum, right.len() as u64, "降级脚本仍须覆盖全部右字节");
+        assert!(
+            !b.blocks.iter().any(|x| x.kind == HexBlockKind::Same),
+            "过期 deadline 应降级为粗粒度，不应出现 Same（最优对齐才会）"
+        );
     }
 
     #[test]
